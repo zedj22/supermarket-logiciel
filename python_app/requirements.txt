@@ -1,0 +1,12 @@
+﻿customtkinter>=5.2.0
+flask>=2.3.0
+pillow>=10.0.0
+qrcode>=7.4.2
+reportlab>=4.0.0
+python-docx>=1.1.0
+opencv-python>=4.8.0
+arabic-reshaper>=3.0.0
+python-bidi>=0.4.2
+openpyxl>=3.1.0
+PyMySQL>=1.1.0
+cryptography>=42.0.0

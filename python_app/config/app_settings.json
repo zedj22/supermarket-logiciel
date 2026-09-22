@@ -1,0 +1,15 @@
+{
+    "store_name": "Supermarket Pro",
+    "store_phone": "",
+    "store_address": "",
+    "invoice_footer": "شكرًا لزيارتكم",
+    "default_paper": "80mm",
+    "ask_before_print": false,
+    "allow_debt": true,
+    "low_stock_threshold": 5,
+    "auto_print_invoice": false,
+    "theme_mode": "dark",
+    "appearance": "dark",
+    "language": "ar",
+    "pin_discount_threshold": 500
+}

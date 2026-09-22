@@ -1,0 +1,123 @@
+"""Models package — SQLAlchemy ORM models.
+
+Import all models here so they are registered with Base.metadata
+and discoverable by Alembic autogenerate.
+
+Usage:
+    from app.models import User, Product, Sale  # noqa
+    # or
+    from app.models import *  # noqa: F401, F403
+"""
+
+# Enums (re-export for convenience)
+from app.models.enums import (  # noqa: F401
+    AuditAction,
+    DeviceStatus,
+    ExpenseCategory,
+    PaymentMethod,
+    PermissionScope,
+    ReturnReason,
+    SaleStatus,
+    StockMovementType,
+    UserRoleEnum,
+    ProductUnit,
+)
+
+# User / RBAC
+from app.models.user import (  # noqa: F401
+    AuthSession,
+    Permission,
+    Role,
+    RolePermission,
+    User,
+    UserRole,
+)
+
+# Catalog
+from app.models.catalog import (  # noqa: F401
+    Category,
+    Pack,
+    PackItem,
+    Product,
+    ProductVariant,
+)
+
+# Customers / Suppliers
+from app.models.party import Customer, Supplier  # noqa: F401
+
+# Sales
+from app.models.sale import Sale, SaleLine, SalePayment  # noqa: F401
+
+# Purchases
+from app.models.purchase import Purchase, PurchaseLine  # noqa: F401
+
+# Returns
+from app.models.return_doc import Return, ReturnLine  # noqa: F401
+
+# Debt
+from app.models.debt import DebtLedgerEntry  # noqa: F401
+
+# Expenses
+from app.models.expense import Expense  # noqa: F401
+
+# Inventory
+from app.models.inventory import InventoryMovement  # noqa: F401
+
+# Audit
+from app.models.audit import AuditLog  # noqa: F401
+
+# Base (re-export for convenience)
+from app.db.base import Base, BaseModel, DocumentModel, MasterModel  # noqa: F401
+
+__all__ = [
+    # Enums
+    "AuditAction",
+    "DeviceStatus",
+    "ExpenseCategory",
+    "PaymentMethod",
+    "PermissionScope",
+    "ProductUnit",
+    "ReturnReason",
+    "SaleStatus",
+    "StockMovementType",
+    "UserRoleEnum",
+    # User / RBAC
+    "AuthSession",
+    "User",
+    "Role",
+    "Permission",
+    "UserRole",
+    "RolePermission",
+    # Catalog
+    "Category",
+    "Product",
+    "ProductVariant",
+    "Pack",
+    "PackItem",
+    # Customers / Suppliers
+    "Customer",
+    "Supplier",
+    # Sales
+    "Sale",
+    "SaleLine",
+    "SalePayment",
+    # Purchases
+    "Purchase",
+    "PurchaseLine",
+    # Returns
+    "Return",
+    "ReturnLine",
+    # Debt
+    "DebtLedgerEntry",
+    # Expenses
+    "Expense",
+    # Inventory
+    "InventoryMovement",
+    # Audit
+    "AuditLog",
+    # Base
+    "Base",
+    "BaseModel",
+    "DocumentModel",
+    "MasterModel",
+]

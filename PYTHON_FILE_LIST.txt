@@ -1,0 +1,43 @@
+# PYTHON FILE LIST
+
+All Python files included in the comparison package, sorted by path.
+
+```
+python_app/
+  main.py
+  requirements.txt
+  config/
+    app_settings.json
+    db_config.json
+  database/
+    __init__.py
+    db_manager.py
+  gui/
+    __init__.py
+    add_product_window.py
+    main_window.py
+    sale_window.py
+  locales/
+    translations_new_additions.json
+  modules/
+    __init__.py
+    customers.py
+    debts.py
+    favorites.py
+    inventory.py
+    packs.py
+    products.py
+    reports.py
+    sales.py
+    sales_v21.py
+  security/
+    __init__.py
+    license.py
+  server/
+    __init__.py
+    server.py
+  utils/
+    network_discovery.py
+```
+
+Total: 26 files

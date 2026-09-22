@@ -1,0 +1,5447 @@
+{
+  "Supermarket Pro • إدارة المتجر": {
+    "ar": "Supermarket Pro • إدارة المتجر",
+    "en": "Supermarket Pro • Store Management",
+    "fr": "Supermarket Pro • Gestion du magasin"
+  },
+  "سوبرماركت برو": {
+    "ar": "سوبرماركت برو",
+    "en": "Supermarket Pro",
+    "fr": "Supermarket Pro"
+  },
+  "نظام إدارة المتجر": {
+    "ar": "نظام إدارة المتجر",
+    "en": "Store Management System",
+    "fr": "Système de gestion du magasin"
+  },
+  "إدارة المتجر": {
+    "ar": "إدارة المتجر",
+    "en": "Store Management",
+    "fr": "Gestion du magasin"
+  },
+  "لوحة التحكم": {
+    "ar": "لوحة التحكم",
+    "en": "Dashboard",
+    "fr": "Tableau de bord"
+  },
+  "المنتجات": {
+    "ar": "المنتجات",
+    "en": "Products",
+    "fr": "Produits"
+  },
+  "المخزون": {
+    "ar": "المخزون",
+    "en": "Inventory",
+    "fr": "Stock"
+  },
+  "الباقات": {
+    "ar": "الباقات",
+    "en": "Packs",
+    "fr": "Packs"
+  },
+  "نقطة البيع": {
+    "ar": "نقطة البيع",
+    "en": "Point of Sale",
+    "fr": "Point de vente"
+  },
+  "الزبائن": {
+    "ar": "الزبائن",
+    "en": "Customers",
+    "fr": "Clients"
+  },
+  "الموردون": {
+    "ar": "الموردون",
+    "en": "Suppliers",
+    "fr": "Fournisseurs"
+  },
+  "التقارير": {
+    "ar": "التقارير",
+    "en": "Reports",
+    "fr": "Rapports"
+  },
+  "المصاريف والفواتير": {
+    "ar": "المصاريف والفواتير",
+    "en": "Expenses & Bills",
+    "fr": "Dépenses & Factures"
+  },
+  "الإعدادات": {
+    "ar": "الإعدادات",
+    "en": "Settings",
+    "fr": "Paramètres"
+  },
+  "البحث": {
+    "ar": "البحث",
+    "en": "Search",
+    "fr": "Recherche"
+  },
+  "العميل": {
+    "ar": "العميل",
+    "en": "Customer",
+    "fr": "Client"
+  },
+  "الدفع": {
+    "ar": "الدفع",
+    "en": "Pay",
+    "fr": "Payer"
+  },
+  "تعليق": {
+    "ar": "تعليق",
+    "en": "Hold",
+    "fr": "Mettre en attente"
+  },
+  "مسح السلة": {
+    "ar": "مسح السلة",
+    "en": "Clear Cart",
+    "fr": "Vider le panier"
+  },
+  "● النظام يعمل": {
+    "ar": "● النظام يعمل",
+    "en": "● System Online",
+    "fr": "● Système en ligne"
+  },
+  "جاهز لاستقبال المبيعات": {
+    "ar": "جاهز لاستقبال المبيعات",
+    "en": "Ready for sales",
+    "fr": "Prêt pour les encaissements"
+  },
+  "→  خروج": {
+    "ar": "→  خروج",
+    "en": "→  Exit",
+    "fr": "→  Quitter"
+  },
+  "→ خروج": {
+    "ar": "→ خروج",
+    "en": "→ Exit",
+    "fr": "→ Quitter"
+  },
+  "موافق": {
+    "ar": "موافق",
+    "en": "OK",
+    "fr": "OK"
+  },
+  "غير متصل بقاعدة البيانات": {
+    "ar": "غير متصل بقاعدة البيانات",
+    "en": "Database Offline",
+    "fr": "Base de données hors ligne"
+  },
+  "يرجى الانتظار أو التحقق من الاتصال بالخادم.": {
+    "ar": "يرجى الانتظار أو التحقق من الاتصال بالخادم.",
+    "en": "Please wait or verify server connection.",
+    "fr": "Veuillez patienter ou vérifier la connexion au serveur."
+  },
+  "سيعاد الاتصال تلقائيًا عند توفر الخادم.": {
+    "ar": "سيعاد الاتصال تلقائيًا عند توفر الخادم.",
+    "en": "Reconnection will occur automatically when server is online.",
+    "fr": "Reconnexion automatique dès disponibilité du serveur."
+  },
+  "● التنبيهات": {
+    "ar": "● التنبيهات",
+    "en": "● Notifications",
+    "fr": "● Notifications"
+  },
+  "✓ لا توجد تنبيهات مهمة حاليًا": {
+    "ar": "✓ لا توجد تنبيهات مهمة حاليًا",
+    "en": "✓ No critical alerts at present",
+    "fr": "✓ Aucune notification importante pour le moment"
+  },
+  "منتج": {
+    "ar": "منتج",
+    "en": "product",
+    "fr": "produit"
+  },
+  "قطعة": {
+    "ar": "قطعة",
+    "en": "pcs",
+    "fr": "pièce"
+  },
+  "عام": {
+    "ar": "عام",
+    "en": "General",
+    "fr": "Général"
+  },
+  "تأكيد الهوية": {
+    "ar": "تأكيد الهوية",
+    "en": "Identity Confirmation",
+    "fr": "Confirmation d'identité"
+  },
+  "رمز PIN": {
+    "ar": "رمز PIN",
+    "en": "PIN code",
+    "fr": "Code PIN"
+  },
+  "رمز PIN غير صحيح": {
+    "ar": "رمز PIN غير صحيح",
+    "en": "Incorrect PIN code",
+    "fr": "Code PIN incorrect"
+  },
+  "محاولات متبقية": {
+    "ar": "محاولات متبقية",
+    "en": "Attempts left",
+    "fr": "Tentatives restantes"
+  },
+  "تأكيد": {
+    "ar": "تأكيد",
+    "en": "Confirm",
+    "fr": "Confirmer"
+  },
+  "إلغاء": {
+    "ar": "إلغاء",
+    "en": "Cancel",
+    "fr": "Annuler"
+  },
+  "👤 تسجيل الدخول": {
+    "ar": "👤 تسجيل الدخول",
+    "en": "👤 Login",
+    "fr": "👤 Connexion"
+  },
+  "إعداد المدير": {
+    "ar": "إعداد المدير",
+    "en": "Admin Setup",
+    "fr": "Configuration administrateur"
+  },
+  "🔐 إعداد المدير": {
+    "ar": "🔐 إعداد المدير",
+    "en": "🔐 Admin Setup",
+    "fr": "🔐 Configuration administrateur"
+  },
+  "أنشئ حساب المدير الأول لاستخدام حماية PIN.": {
+    "ar": "أنشئ حساب المدير الأول لاستخدام حماية PIN.",
+    "en": "Create first admin account to enable PIN protection.",
+    "fr": "Créez le premier compte administrateur pour activer la protection PIN."
+  },
+  "اسم المدير": {
+    "ar": "اسم المدير",
+    "en": "Admin Name",
+    "fr": "Nom de l'administrateur"
+  },
+  "رمز PIN (4-6 أرقام)": {
+    "ar": "رمز PIN (4-6 أرقام)",
+    "en": "PIN code (4-6 digits)",
+    "fr": "Code PIN (4 à 6 chiffres)"
+  },
+  "تأكيد رمز PIN": {
+    "ar": "تأكيد رمز PIN",
+    "en": "Confirm PIN code",
+    "fr": "Confirmer le code PIN"
+  },
+  "الاسم مطلوب": {
+    "ar": "الاسم مطلوب",
+    "en": "Name is required",
+    "fr": "Le nom est requis"
+  },
+  "الرمز يجب أن يكون أرقامًا من 4 إلى 6 خانات": {
+    "ar": "الرمز يجب أن يكون أرقامًا من 4 إلى 6 خانات",
+    "en": "PIN must be 4 to 6 digits",
+    "fr": "Le code PIN doit comporter 4 à 6 chiffres"
+  },
+  "الرمزان غير متطابقين": {
+    "ar": "الرمزان غير متطابقين",
+    "en": "PIN codes do not match",
+    "fr": "Les codes PIN ne correspondent pas"
+  },
+  "تعذر إنشاء الحساب": {
+    "ar": "تعذر إنشاء الحساب",
+    "en": "Could not create account",
+    "fr": "Impossible de créer le compte"
+  },
+  "تم إنشاء حساب المدير": {
+    "ar": "تم إنشاء حساب المدير",
+    "en": "Admin account created",
+    "fr": "Compte administrateur créé"
+  },
+  "✓ إنشاء الحساب": {
+    "ar": "✓ إنشاء الحساب",
+    "en": "✓ Create Account",
+    "fr": "✓ Créer le compte"
+  },
+  "تسجيل الدخول": {
+    "ar": "تسجيل الدخول",
+    "en": "Login",
+    "fr": "Connexion"
+  },
+  "اختر المستخدم ثم أدخل رمز PIN": {
+    "ar": "اختر المستخدم ثم أدخل رمز PIN",
+    "en": "Select user and enter PIN",
+    "fr": "Sélectionnez l'utilisateur puis entrez le code PIN"
+  },
+  "تم تسجيل الدخول": {
+    "ar": "تم تسجيل الدخول",
+    "en": "Logged in successfully",
+    "fr": "Connecté avec succès"
+  },
+  "دخول": {
+    "ar": "دخول",
+    "en": "Sign In",
+    "fr": "Entrer"
+  },
+  "تخطي": {
+    "ar": "تخطي",
+    "en": "Skip",
+    "fr": "Passer"
+  },
+  "جهاز إضافي": {
+    "ar": "جهاز إضافي",
+    "en": "Additional Terminal",
+    "fr": "Poste supplémentaire"
+  },
+  "رئيسي": {
+    "ar": "رئيسي",
+    "en": "Server / Main",
+    "fr": "Serveur / Principal"
+  },
+  "إضافي": {
+    "ar": "إضافي",
+    "en": "Client / Additional",
+    "fr": "Client / Supplémentaire"
+  },
+  "جهاز واحد": {
+    "ar": "جهاز واحد",
+    "en": "Single PC",
+    "fr": "Poste unique"
+  },
+  "غير محدد": {
+    "ar": "غير محدد",
+    "en": "Unspecified",
+    "fr": "Non défini"
+  },
+  "إعادة الاتصال بالخادم": {
+    "ar": "إعادة الاتصال بالخادم",
+    "en": "Reconnect to Server",
+    "fr": "Reconnexion au serveur"
+  },
+  "جاري البحث عن الجهاز الرئيسي وإعادة الاتصال...": {
+    "ar": "جاري البحث عن الجهاز الرئيسي وإعادة الاتصال...",
+    "en": "Searching for server and reconnecting...",
+    "fr": "Recherche du serveur et reconnexion..."
+  },
+  "يرجى التأكد من تشغيل الجهاز الرئيسي واتصاله بنفس الشبكة.": {
+    "ar": "يرجى التأكد من تشغيل الجهاز الرئيسي واتصاله بنفس الشبكة.",
+    "en": "Please ensure main device is on and on the same network.",
+    "fr": "Assurez-vous que le serveur est allumé et sur le même réseau."
+  },
+  "تم استعادة الاتصال بالجهاز الرئيسي": {
+    "ar": "تم استعادة الاتصال بالجهاز الرئيسي",
+    "en": "Server connection restored",
+    "fr": "Connexion au serveur rétablie"
+  },
+  "تأكيد الاتصال بالمتجر": {
+    "ar": "تأكيد الاتصال بالمتجر",
+    "en": "Confirm Store Connection",
+    "fr": "Confirmer la connexion au magasin"
+  },
+  "تم العثور على الخادم الرئيسي للمتجر: ": {
+    "ar": "تم العثور على الخادم الرئيسي للمتجر: ",
+    "en": "Main store server found: ",
+    "fr": "Serveur principal trouvé : "
+  },
+  " على العنوان ": {
+    "ar": " على العنوان ",
+    "en": " at address ",
+    "fr": " à l'adresse "
+  },
+  "✕ إلغاء": {
+    "ar": "✕ إلغاء",
+    "en": "✕ Cancel",
+    "fr": "✕ Annuler"
+  },
+  "✓ نعم، الاتصال بهذا المتجر": {
+    "ar": "✓ نعم، الاتصال بهذا المتجر",
+    "en": "✓ Yes, connect to this store",
+    "fr": "✓ Oui, se connecter à ce magasin"
+  },
+  "بانتظار موافقة المدير": {
+    "ar": "بانتظار موافقة المدير",
+    "en": "Awaiting Admin Approval",
+    "fr": "En attente de l'accord administrateur"
+  },
+  "بانتظار موافقة الجهاز الرئيسي (PC1) على اتصال هذا الجهاز...": {
+    "ar": "بانتظار موافقة الجهاز الرئيسي (PC1) على اتصال هذا الجهاز...",
+    "en": "Waiting for Main Register (PC1) approval to connect...",
+    "fr": "En attente de l'approbation du poste principal (PC1)..."
+  },
+  "بانتظار الموافقة": {
+    "ar": "بانتظار الموافقة",
+    "en": "Awaiting Approval",
+    "fr": "En attente d'approbation"
+  },
+  " ث)": {
+    "ar": " ث)",
+    "en": " s)",
+    "fr": " s)"
+  },
+  "تمت الموافقة على اتصال هذا الجهاز": {
+    "ar": "تمت الموافقة على اتصال هذا الجهاز",
+    "en": "Device connection approved",
+    "fr": "Connexion de cet appareil approuvée"
+  },
+  "طلب اقتران جهاز جديد": {
+    "ar": "طلب اقتران جهاز جديد",
+    "en": "New Terminal Pairing Request",
+    "fr": "Demande de jumelage nouveau poste"
+  },
+  "جهاز غير معروف": {
+    "ar": "جهاز غير معروف",
+    "en": "Unknown Device",
+    "fr": "Appareil inconnu"
+  },
+  "يريد جهاز جديد الاتصال بالخادم الرئيسي:\n": {
+    "ar": "يريد جهاز جديد الاتصال بالخادم الرئيسي:\n",
+    "en": "A new device wants to connect to Main Server:\n",
+    "fr": "Un nouvel appareil demande à se connecter au serveur :\n"
+  },
+  "\nالعنوان: ": {
+    "ar": "\nالعنوان: ",
+    "en": "\nAddress: ",
+    "fr": "\nAdresse : "
+  },
+  "✕ رفض": {
+    "ar": "✕ رفض",
+    "en": "✕ Deny",
+    "fr": "✕ Refuser"
+  },
+  "✓ السماح بالاتصال": {
+    "ar": "✓ السماح بالاتصال",
+    "en": "✓ Allow Connection",
+    "fr": "✓ Autoriser la connexion"
+  },
+  "تم السماح للجهاز الجديد بالاتصال": {
+    "ar": "تم السماح للجهاز الجديد بالاتصال",
+    "en": "New device allowed to connect",
+    "fr": "Appareil autorisé à se connecter"
+  },
+  "إعداد الجهاز": {
+    "ar": "إعداد الجهاز",
+    "en": "Device Setup",
+    "fr": "Configuration du poste"
+  },
+  "🚀 إعداد الجهاز": {
+    "ar": "🚀 إعداد الجهاز",
+    "en": "🚀 Device Setup",
+    "fr": "🚀 Configuration du poste"
+  },
+  "اختر دور هذا الجهاز — يمكنك تغييره لاحقًا من الإعدادات.": {
+    "ar": "اختر دور هذا الجهاز — يمكنك تغييره لاحقًا من الإعدادات.",
+    "en": "Choose device role — you can modify this later in Settings.",
+    "fr": "Choisissez le rôle de ce poste — modifiable ultérieurement."
+  },
+  "هذا الجهاز الرئيسي": {
+    "ar": "هذا الجهاز الرئيسي",
+    "en": "This is the Main Server",
+    "fr": "Poste Serveur Principal"
+  },
+  "سيتم تخزين البيانات على هذا الجهاز ومشاركتها مع باقي الأجهزة.": {
+    "ar": "سيتم تخزين البيانات على هذا الجهاز ومشاركتها مع باقي الأجهزة.",
+    "en": "Data will be hosted here and shared across network.",
+    "fr": "Les données seront stockées ici et partagées sur le réseau."
+  },
+  "سيتصل تلقائيًا بالجهاز الرئيسي لاستخدام نفس قاعدة البيانات.": {
+    "ar": "سيتصل تلقائيًا بالجهاز الرئيسي لاستخدام نفس قاعدة البيانات.",
+    "en": "Will connect to main server automatically to share DB.",
+    "fr": "Se connectera automatiquement au serveur principal."
+  },
+  "لم يتم العثور على خادم MySQL/MariaDB محلي يعمل.": {
+    "ar": "لم يتم العثور على خادم MySQL/MariaDB محلي يعمل.",
+    "en": "No running local MySQL/MariaDB server found.",
+    "fr": "Aucun serveur local MySQL/MariaDB actif trouvé."
+  },
+  "هل تريد حفظ الإعدادات والمتابعة على أي حال؟": {
+    "ar": "هل تريد حفظ الإعدادات والمتابعة على أي حال؟",
+    "en": "Save settings and proceed anyway?",
+    "fr": "Enregistrer les paramètres et continuer quand même ?"
+  },
+  "تم ضبط هذا الجهاز كجهاز رئيسي": {
+    "ar": "تم ضبط هذا الجهاز كجهاز رئيسي",
+    "en": "Device set as Main Server",
+    "fr": "Poste configuré comme Serveur Principal"
+  },
+  "سيتم البحث عن الجهاز الرئيسي تلقائيًا على الشبكة المحلية.": {
+    "ar": "سيتم البحث عن الجهاز الرئيسي تلقائيًا على الشبكة المحلية.",
+    "en": "Automatically searching for main server on LAN.",
+    "fr": "Recherche automatique du serveur sur le réseau local."
+  },
+  "جاري البحث عن الجهاز الرئيسي": {
+    "ar": "جاري البحث عن الجهاز الرئيسي",
+    "en": "Searching for Main Server",
+    "fr": "Recherche du serveur principal"
+  },
+  "تأكد من تشغيل الجهاز الرئيسي واتصال الجهازين بنفس الشبكة.": {
+    "ar": "تأكد من تشغيل الجهاز الرئيسي واتصال الجهازين بنفس الشبكة.",
+    "en": "Ensure main server is powered on and on the same network.",
+    "fr": "Assurez-vous que le serveur est allumé et sur le même réseau."
+  },
+  "إلغاء البحث": {
+    "ar": "إلغاء البحث",
+    "en": "Cancel Search",
+    "fr": "Annuler la recherche"
+  },
+  "لم يتم العثور على الجهاز الرئيسي تلقائيًا": {
+    "ar": "لم يتم العثور على الجهاز الرئيسي تلقائيًا",
+    "en": "Main server was not found automatically",
+    "fr": "Serveur principal introuvable automatiquement"
+  },
+  "تأكد من أن الجهازين على نفس شبكة WiFi/الشبكة، وأن الجهاز الرئيسي يعمل، وأنك سمحت للبرنامج في جدار الحماية.": {
+    "ar": "تأكد من أن الجهازين على نفس شبكة WiFi/الشبكة، وأن الجهاز الرئيسي يعمل، وأنك سمحت للبرنامج في جدار الحماية.",
+    "en": "Verify both PCs share same LAN/WiFi, server runs, and port is open.",
+    "fr": "Vérifiez que les postes sont sur le même réseau et autorisés par le pare-feu."
+  },
+  "تعذر الاتصال": {
+    "ar": "تعذر الاتصال",
+    "en": "Connection failed",
+    "fr": "Échec de connexion"
+  },
+  "عنوان IP": {
+    "ar": "عنوان IP",
+    "en": "IP Address",
+    "fr": "Adresse IP"
+  },
+  "المنفذ": {
+    "ar": "المنفذ",
+    "en": "Port",
+    "fr": "Port"
+  },
+  "اسم المستخدم": {
+    "ar": "اسم المستخدم",
+    "en": "Username",
+    "fr": "Nom d'utilisateur"
+  },
+  "كلمة المرور": {
+    "ar": "كلمة المرور",
+    "en": "Password",
+    "fr": "Mot de passe"
+  },
+  "أدخل عنوان IP للجهاز الرئيسي": {
+    "ar": "أدخل عنوان IP للجهاز الرئيسي",
+    "en": "Enter Main Server IP Address",
+    "fr": "Saisissez l'adresse IP du serveur principal"
+  },
+  "المنفذ يجب أن يكون رقمًا صحيحًا بين 1 و 65535": {
+    "ar": "المنفذ يجب أن يكون رقمًا صحيحًا بين 1 و 65535",
+    "en": "Port must be an integer between 1 and 65535",
+    "fr": "Le port doit être un entier entre 1 et 65535"
+  },
+  "اتصال يدوي": {
+    "ar": "اتصال يدوي",
+    "en": "Manual Connect",
+    "fr": "Connexion manuelle"
+  },
+  "إعادة المحاولة": {
+    "ar": "إعادة المحاولة",
+    "en": "Retry",
+    "fr": "Réessayer"
+  },
+  "رجوع": {
+    "ar": "رجوع",
+    "en": "Back",
+    "fr": "Retour"
+  },
+  "جاري الاتصال ب": {
+    "ar": "جاري الاتصال ب",
+    "en": "Connecting to",
+    "fr": "Connexion à"
+  },
+  "تم الاتصال بالجهاز الرئيسي": {
+    "ar": "تم الاتصال بالجهاز الرئيسي",
+    "en": "Connected to Main Server",
+    "fr": "Connecté au serveur principal"
+  },
+  "تغيير وضع الشبكة": {
+    "ar": "تغيير وضع الشبكة",
+    "en": "Change Network Mode",
+    "fr": "Changer le mode réseau"
+  },
+  "جاري إعادة الاتصال": {
+    "ar": "جاري إعادة الاتصال",
+    "en": "Reconnecting",
+    "fr": "Reconnexion en cours"
+  },
+  "متصل": {
+    "ar": "متصل",
+    "en": "Online",
+    "fr": "Connecté"
+  },
+  "غير متصل بالخادم": {
+    "ar": "غير متصل بالخادم",
+    "en": "Server Offline",
+    "fr": "Serveur hors ligne"
+  },
+  "⚠ انقطع الاتصال بالخادم": {
+    "ar": "⚠ انقطع الاتصال بالخادم",
+    "en": "⚠ Connection to server lost",
+    "fr": "⚠ Connexion au serveur perdue"
+  },
+  "✓ تم استعادة الاتصال بالخادم": {
+    "ar": "✓ تم استعادة الاتصال بالخادم",
+    "en": "✓ Server connection restored",
+    "fr": "✓ Connexion au serveur rétablie"
+  },
+  "↩ إرجاع منتج": {
+    "ar": "↩ إرجاع منتج",
+    "en": "↩ Return Item",
+    "fr": "↩ Retourner un article"
+  },
+  "أعد منتجًا بشكل مستقل دون إدخال رقم فاتورة.": {
+    "ar": "أعد منتجًا بشكل مستقل دون إدخال رقم فاتورة.",
+    "en": "Process direct item return without receipt number.",
+    "fr": "Retourner directement un produit sans ticket."
+  },
+  "البحث عن المنتج": {
+    "ar": "البحث عن المنتج",
+    "en": "Search Product",
+    "fr": "Rechercher un produit"
+  },
+  "ابحث باسم المنتج أو الباركود...": {
+    "ar": "ابحث باسم المنتج أو الباركود...",
+    "en": "Search by product name or barcode...",
+    "fr": "Rechercher par nom ou code-barres..."
+  },
+  "المنتج المحدد": {
+    "ar": "المنتج المحدد",
+    "en": "Selected Product",
+    "fr": "Produit sélectionné"
+  },
+  "لم يتم اختيار منتج": {
+    "ar": "لم يتم اختيار منتج",
+    "en": "No product selected",
+    "fr": "Aucun produit sélectionné"
+  },
+  "طريقة الإرجاع": {
+    "ar": "طريقة الإرجاع",
+    "en": "Return Method",
+    "fr": "Mode de retour"
+  },
+  "الكمية / الوزن": {
+    "ar": "الكمية / الوزن",
+    "en": "Quantity / Weight",
+    "fr": "Quantité / Poids"
+  },
+  "المبلغ": {
+    "ar": "المبلغ",
+    "en": "Amount",
+    "fr": "Montant"
+  },
+  "الكمية / الوزن / المبلغ": {
+    "ar": "الكمية / الوزن / المبلغ",
+    "en": "Qty / Weight / Amount",
+    "fr": "Qté / Poids / Montant"
+  },
+  "أدخل الكمية أو الوزن أو المبلغ": {
+    "ar": "أدخل الكمية أو الوزن أو المبلغ",
+    "en": "Enter quantity, weight, or amount",
+    "fr": "Entrez la quantité, le poids ou le montant"
+  },
+  "قيمة المرتجع: 0.00 دج": {
+    "ar": "قيمة المرتجع: 0.00 دج",
+    "en": "Refund Amount: 0.00 DZD",
+    "fr": "Montant du retour : 0.00 DA"
+  },
+  "المنتج:": {
+    "ar": "المنتج:",
+    "en": "Product:",
+    "fr": "Produit :"
+  },
+  "السعر:": {
+    "ar": "السعر:",
+    "en": "Price:",
+    "fr": "Prix :"
+  },
+  "دج /": {
+    "ar": "دج /",
+    "en": "DZD /",
+    "fr": "DA /"
+  },
+  "• المخزون الحالي:": {
+    "ar": "• المخزون الحالي:",
+    "en": "• Current Stock:",
+    "fr": "• Stock actuel :"
+  },
+  "دج |": {
+    "ar": "دج |",
+    "en": "DZD |",
+    "fr": "DA |"
+  },
+  "الكمية:": {
+    "ar": "الكمية:",
+    "en": "Qty:",
+    "fr": "Qté :"
+  },
+  "• قيمة المرتجع:": {
+    "ar": "• قيمة المرتجع:",
+    "en": "• Refund Amount:",
+    "fr": "• Montant remboursé :"
+  },
+  "دج": {
+    "ar": "دج",
+    "en": "DZD",
+    "fr": "DA"
+  },
+  "اختر المنتج أولاً.": {
+    "ar": "اختر المنتج أولاً.",
+    "en": "Select product first.",
+    "fr": "Sélectionnez d'abord un produit."
+  },
+  "المنتج يباع بالقطعة، أدخل عددًا صحيحًا.": {
+    "ar": "المنتج يباع بالقطعة، أدخل عددًا صحيحًا.",
+    "en": "Item is sold by unit; enter an integer.",
+    "fr": "Article vendu à l'unité, entrez un nombre entier."
+  },
+  "تأكيد الإرجاع": {
+    "ar": "تأكيد الإرجاع",
+    "en": "Confirm Return",
+    "fr": "Confirmer le retour"
+  },
+  "إرجاع": {
+    "ar": "إرجاع",
+    "en": "Return",
+    "fr": "Retourner"
+  },
+  "من": {
+    "ar": "من",
+    "en": "from",
+    "fr": "de"
+  },
+  "؟ قيمة المرتجع:": {
+    "ar": "؟ قيمة المرتجع:",
+    "en": "? Refund Amount:",
+    "fr": "? Montant du retour :"
+  },
+  "مرتجع منتج مستقل": {
+    "ar": "مرتجع منتج مستقل",
+    "en": "Direct item return",
+    "fr": "Retour direct d'article"
+  },
+  "تم إرجاع": {
+    "ar": "تم إرجاع",
+    "en": "Returned",
+    "fr": "Retourné"
+  },
+  "وإضافتها للمخزون": {
+    "ar": "وإضافتها للمخزون",
+    "en": "and restocked",
+    "fr": "et réintégré au stock"
+  },
+  "خطأ في الإرجاع": {
+    "ar": "خطأ في الإرجاع",
+    "en": "Return Error",
+    "fr": "Erreur de retour"
+  },
+  "✓ تأكيد الإرجاع": {
+    "ar": "✓ تأكيد الإرجاع",
+    "en": "✓ Confirm Return",
+    "fr": "✓ Confirmer le retour"
+  },
+  "↩ مرتجع بيع": {
+    "ar": "↩ مرتجع بيع",
+    "en": "↩ Sale Refund",
+    "fr": "↩ Retour sur vente"
+  },
+  "إرجاع منتج": {
+    "ar": "إرجاع منتج",
+    "en": "Return Product",
+    "fr": "Retour produit"
+  },
+  "أدخل رقم الفاتورة واختر المنتج والكمية المرتجعة.": {
+    "ar": "أدخل رقم الفاتورة واختر المنتج والكمية المرتجعة.",
+    "en": "Enter invoice #, pick item, and specify returned qty.",
+    "fr": "Entrez le n° de ticket, l'article et la quantité à retourner."
+  },
+  "رقم الفاتورة": {
+    "ar": "رقم الفاتورة",
+    "en": "Invoice #",
+    "fr": "N° Facture"
+  },
+  "تحميل": {
+    "ar": "تحميل",
+    "en": "Load",
+    "fr": "Charger"
+  },
+  "أدخل رقم الفاتورة أولاً": {
+    "ar": "أدخل رقم الفاتورة أولاً",
+    "en": "Enter invoice number first",
+    "fr": "Entrez d'abord le n° de ticket"
+  },
+  "الكمية المرتجعة": {
+    "ar": "الكمية المرتجعة",
+    "en": "Returned Qty",
+    "fr": "Qté retournée"
+  },
+  "أدخل رقم الفاتورة": {
+    "ar": "أدخل رقم الفاتورة",
+    "en": "Enter invoice number",
+    "fr": "Entrez le n° de facture"
+  },
+  "الفاتورة غير موجودة": {
+    "ar": "الفاتورة غير موجودة",
+    "en": "Invoice not found",
+    "fr": "Facture introuvable"
+  },
+  "تعذر تحميل الفاتورة:": {
+    "ar": "تعذر تحميل الفاتورة:",
+    "en": "Failed to load invoice:",
+    "fr": "Échec du chargement de la facture :"
+  },
+  "لا توجد كميات قابلة للإرجاع في هذه الفاتورة": {
+    "ar": "لا توجد كميات قابلة للإرجاع في هذه الفاتورة",
+    "en": "No returnable quantities left on this receipt",
+    "fr": "Aucune quantité retournable sur ce ticket"
+  },
+  "— المتاح": {
+    "ar": "— المتاح",
+    "en": "— Available",
+    "fr": "— Disponible"
+  },
+  "• المتاح للإرجاع:": {
+    "ar": "• المتاح للإرجاع:",
+    "en": "• Returnable Available:",
+    "fr": "• Disponible au retour :"
+  },
+  "حمّل فاتورة أولاً": {
+    "ar": "حمّل فاتورة أولاً",
+    "en": "Load an invoice first",
+    "fr": "Chargez d'abord une facture"
+  },
+  "اختر المنتج": {
+    "ar": "اختر المنتج",
+    "en": "Select Product",
+    "fr": "Sélectionnez le produit"
+  },
+  "أدخل كمية صحيحة": {
+    "ar": "أدخل كمية صحيحة",
+    "en": "Enter a valid quantity",
+    "fr": "Entrez une quantité valide"
+  },
+  "الكمية يجب ألا تتجاوز": {
+    "ar": "الكمية يجب ألا تتجاوز",
+    "en": "Quantity cannot exceed",
+    "fr": "La quantité ne peut pas dépasser"
+  },
+  "تأكيد المرتجع": {
+    "ar": "تأكيد المرتجع",
+    "en": "Confirm Refund",
+    "fr": "Confirmer le remboursement"
+  },
+  "بقيمة": {
+    "ar": "بقيمة",
+    "en": "amounting to",
+    "fr": "d'un montant de"
+  },
+  "دج؟": {
+    "ar": "دج؟",
+    "en": "DZD?",
+    "fr": "DA ?"
+  },
+  "مرتجع بيع": {
+    "ar": "مرتجع بيع",
+    "en": "Sale return",
+    "fr": "Retour sur vente"
+  },
+  "فشل تسجيل المرتجع:": {
+    "ar": "فشل تسجيل المرتجع:",
+    "en": "Failed to record refund:",
+    "fr": "Échec de l'enregistrement du retour :"
+  },
+  "إلى المخزون": {
+    "ar": "إلى المخزون",
+    "en": "to inventory",
+    "fr": "au stock"
+  },
+  "اليوم": {
+    "ar": "اليوم",
+    "en": "Today",
+    "fr": "Aujourd'hui"
+  },
+  "↩ تسجيل المرتجع": {
+    "ar": "↩ تسجيل المرتجع",
+    "en": "↩ Process Return",
+    "fr": "↩ Enregistrer le retour"
+  },
+  "📈 الأرباح": {
+    "ar": "📈 الأرباح",
+    "en": "📈 Profit Report",
+    "fr": "📈 Analyse des bénéfices"
+  },
+  "تحليل الربح الحقيقي من المبيعات": {
+    "ar": "تحليل الربح الحقيقي من المبيعات",
+    "en": "Net profit margin analysis from actual sales",
+    "fr": "Analyse de la marge réelle sur les ventes"
+  },
+  "7 أيام": {
+    "ar": "7 أيام",
+    "en": "7 Days",
+    "fr": "7 Jours"
+  },
+  "30 يوم": {
+    "ar": "30 يوم",
+    "en": "30 Days",
+    "fr": "30 Jours"
+  },
+  "90 يوم": {
+    "ar": "90 يوم",
+    "en": "90 Days",
+    "fr": "90 Jours"
+  },
+  "سنة": {
+    "ar": "سنة",
+    "en": "1 Year",
+    "fr": "1 An"
+  },
+  "إجمالي المبيعات": {
+    "ar": "إجمالي المبيعات",
+    "en": "Gross Sales",
+    "fr": "Ventes brutes"
+  },
+  "الخصومات": {
+    "ar": "الخصومات",
+    "en": "Discounts",
+    "fr": "Remises"
+  },
+  "تكلفة البضاعة": {
+    "ar": "تكلفة البضاعة",
+    "en": "COGS",
+    "fr": "Coût des marchandises"
+  },
+  "صافي الربح": {
+    "ar": "صافي الربح",
+    "en": "Net Profit",
+    "fr": "Bénéfice net"
+  },
+  "د.ج": {
+    "ar": "د.ج",
+    "en": "DZD",
+    "fr": "DA"
+  },
+  "هامش الربح:": {
+    "ar": "هامش الربح:",
+    "en": "Profit Margin:",
+    "fr": "Marge :"
+  },
+  "فاتورة • صافي المبيعات بعد الخصم:": {
+    "ar": "فاتورة • صافي المبيعات بعد الخصم:",
+    "en": "invoices • Net sales after discount:",
+    "fr": "factures • Ventes nettes après remise :"
+  },
+  "تفاصيل المبيعات والربح": {
+    "ar": "تفاصيل المبيعات والربح",
+    "en": "Sales and Profit Breakdown",
+    "fr": "Détails des ventes et bénéfices"
+  },
+  "لا توجد مبيعات في الفترة المحددة": {
+    "ar": "لا توجد مبيعات في الفترة المحددة",
+    "en": "No sales recorded in this timeframe",
+    "fr": "Aucune vente sur la période sélectionnée"
+  },
+  "مبيعات": {
+    "ar": "مبيعات",
+    "en": "sales",
+    "fr": "ventes"
+  },
+  "ربح": {
+    "ar": "ربح",
+    "en": "profit",
+    "fr": "bénéfice"
+  },
+  "نظرة سريعة على أداء المتجر": {
+    "ar": "نظرة سريعة على أداء المتجر",
+    "en": "Quick overview of store performance",
+    "fr": "Aperçu rapide des performances du magasin"
+  },
+  "نظرة سريعة وواضحة على أداء المتجر": {
+    "ar": "نظرة سريعة وواضحة على أداء المتجر",
+    "en": "Clear and quick view of store performance",
+    "fr": "Vue rapide et claire des performances du magasin"
+  },
+  "مرحبًا بك 👋": {
+    "ar": "مرحبًا بك 👋",
+    "en": "Welcome 👋",
+    "fr": "Bienvenue 👋"
+  },
+  "اليوم:": {
+    "ar": "اليوم:",
+    "en": "Today:",
+    "fr": "Aujourd'hui :"
+  },
+  "عملية بيع": {
+    "ar": "عملية بيع",
+    "en": "sales",
+    "fr": "ventes"
+  },
+  "فتح نقطة البيع →": {
+    "ar": "فتح نقطة البيع →",
+    "en": "Open POS Terminal →",
+    "fr": "Ouvrir la caisse →"
+  },
+  "إجراءات سريعة": {
+    "ar": "إجراءات سريعة",
+    "en": "Quick Actions",
+    "fr": "Actions rapides"
+  },
+  "＋ منتج جديد": {
+    "ar": "＋ منتج جديد",
+    "en": "＋ New Product",
+    "fr": "＋ Nouveau produit"
+  },
+  "＋ زبون جديد": {
+    "ar": "＋ زبون جديد",
+    "en": "＋ New Customer",
+    "fr": "＋ Nouveau client"
+  },
+  "📦 فتح المخزون": {
+    "ar": "📦 فتح المخزون",
+    "en": "📦 Open Inventory",
+    "fr": "📦 Ouvrir le stock"
+  },
+  "⟳ تحديث البيانات": {
+    "ar": "⟳ تحديث البيانات",
+    "en": "⟳ Refresh Data",
+    "fr": "⟳ Actualiser les données"
+  },
+  "مبيعات اليوم": {
+    "ar": "مبيعات اليوم",
+    "en": "Today's Sales",
+    "fr": "Ventes du jour"
+  },
+  "فاتورة": {
+    "ar": "فاتورة",
+    "en": "invoice(s)",
+    "fr": "facture(s)"
+  },
+  "متوسط الفاتورة": {
+    "ar": "متوسط الفاتورة",
+    "en": "Average Receipt",
+    "fr": "Panier moyen"
+  },
+  "متوسط مبيعات اليوم": {
+    "ar": "متوسط مبيعات اليوم",
+    "en": "Today's sales average",
+    "fr": "Moyenne des ventes du jour"
+  },
+  "إجمالي الديون": {
+    "ar": "إجمالي الديون",
+    "en": "Total Debt",
+    "fr": "Total des créances"
+  },
+  "زبون": {
+    "ar": "زبون",
+    "en": "customer(s)",
+    "fr": "client(s)"
+  },
+  "قيمة المخزون": {
+    "ar": "قيمة المخزون",
+    "en": "Inventory Value",
+    "fr": "Valeur du stock"
+  },
+  "📦 المنتجات": {
+    "ar": "📦 المنتجات",
+    "en": "📦 Products",
+    "fr": "📦 Produits"
+  },
+  "🔴 نافد": {
+    "ar": "🔴 نافد",
+    "en": "🔴 Out of stock",
+    "fr": "🔴 Rupture"
+  },
+  "🟠 منخفض": {
+    "ar": "🟠 منخفض",
+    "en": "🟠 Low stock",
+    "fr": "🟠 Stock bas"
+  },
+  "🟡 قريب الانتهاء": {
+    "ar": "🟡 قريب الانتهاء",
+    "en": "🟡 Expiring soon",
+    "fr": "🟡 Expire bientôt"
+  },
+  "📈 مبيعات آخر 7 أيام": {
+    "ar": "📈 مبيعات آخر 7 أيام",
+    "en": "📈 Last 7 Days Sales",
+    "fr": "📈 Ventes des 7 derniers jours"
+  },
+  "إجمالي المبيعات اليومية المسجلة فعليًا": {
+    "ar": "إجمالي المبيعات اليومية المسجلة فعليًا",
+    "en": "Total actual daily recorded sales",
+    "fr": "Total réel des ventes quotidiennes enregistrées"
+  },
+  "⚠ يحتاج انتباهك": {
+    "ar": "⚠ يحتاج انتباهك",
+    "en": "⚠ Needs Attention",
+    "fr": "⚠ Attention requise"
+  },
+  "منتج نافد": {
+    "ar": "منتج نافد",
+    "en": "out of stock products",
+    "fr": "produits en rupture"
+  },
+  "افتح المخزون لمعرفة المنتجات": {
+    "ar": "افتح المخزون لمعرفة المنتجات",
+    "en": "Open inventory to inspect products",
+    "fr": "Ouvrez le stock pour consulter les produits"
+  },
+  "منتج منخفض": {
+    "ar": "منتج منخفض",
+    "en": "low stock products",
+    "fr": "produits à stock faible"
+  },
+  "يُنصح بإعادة التزويد": {
+    "ar": "يُنصح بإعادة التزويد",
+    "en": "Restock recommended",
+    "fr": "Réapprovisionnement conseillé"
+  },
+  "منتج قريب الانتهاء": {
+    "ar": "منتج قريب الانتهاء",
+    "en": "products expiring soon",
+    "fr": "produits proches de l'expiration"
+  },
+  "راجع تواريخ الصلاحية": {
+    "ar": "راجع تواريخ الصلاحية",
+    "en": "Review expiry dates",
+    "fr": "Vérifiez les dates de péremption"
+  },
+  "زبون لديهم ديون": {
+    "ar": "زبون لديهم ديون",
+    "en": "debtor customers",
+    "fr": "clients endettés"
+  },
+  "🏆 الأكثر مبيعًا": {
+    "ar": "🏆 الأكثر مبيعًا",
+    "en": "🏆 Best Sellers",
+    "fr": "🏆 Meilleures ventes"
+  },
+  "وحدة": {
+    "ar": "وحدة",
+    "en": "unit(s)",
+    "fr": "unité(s)"
+  },
+  "لا توجد مبيعات مسجلة بعد": {
+    "ar": "لا توجد مبيعات مسجلة بعد",
+    "en": "No sales recorded yet",
+    "fr": "Aucune vente enregistrée"
+  },
+  "✓ كل شيء على ما يرام": {
+    "ar": "✓ كل شيء على ما يرام",
+    "en": "✓ All systems normal",
+    "fr": "✓ Tout fonctionne normalement"
+  },
+  "لا توجد مبيعات خلال آخر 7 أيام": {
+    "ar": "لا توجد مبيعات خلال آخر 7 أيام",
+    "en": "No sales in the last 7 days",
+    "fr": "Aucune vente sur les 7 derniers jours"
+  },
+  "فتح": {
+    "ar": "فتح",
+    "en": "Open",
+    "fr": "Ouvrir"
+  },
+  "إدارة كمية المنتجات وتنبيهات النفاد": {
+    "ar": "إدارة كمية المنتجات وتنبيهات النفاد",
+    "en": "Stock quantity management and shortage alerts",
+    "fr": "Gestion des quantités et alertes de rupture"
+  },
+  "المخزون الذكي": {
+    "ar": "المخزون الذكي",
+    "en": "Smart Inventory",
+    "fr": "Stock Intelligent"
+  },
+  "متابعة الكميات والتنبيهات وحركات دخول وخروج المخزون": {
+    "ar": "متابعة الكميات والتنبيهات وحركات دخول وخروج المخزون",
+    "en": "Track stock movements, alerts and entry/exit logs",
+    "fr": "Suivi des mouvements, alertes et entrées/sorties"
+  },
+  "إجمالي المنتجات": {
+    "ar": "إجمالي المنتجات",
+    "en": "Total Products",
+    "fr": "Total des produits"
+  },
+  "نفد المخزون": {
+    "ar": "نفد المخزون",
+    "en": "Out of Stock",
+    "fr": "Rupture de stock"
+  },
+  "مخزون منخفض": {
+    "ar": "مخزون منخفض",
+    "en": "Low Stock",
+    "fr": "Stock faible"
+  },
+  "قريب الانتهاء": {
+    "ar": "قريب الانتهاء",
+    "en": "Expiring Soon",
+    "fr": "Expire bientôt"
+  },
+  "📋 سجل الحركات": {
+    "ar": "📋 سجل الحركات",
+    "en": "📋 Movement Log",
+    "fr": "📋 Journal des mouvements"
+  },
+  "+ إدخال مخزون": {
+    "ar": "+ إدخال مخزون",
+    "en": "+ Stock Entry",
+    "fr": "+ Entrée de stock"
+  },
+  "⟳ تحديث": {
+    "ar": "⟳ تحديث",
+    "en": "⟳ Refresh",
+    "fr": "⟳ Actualiser"
+  },
+  "📋 جرد المخزون": {
+    "ar": "📋 جرد المخزون",
+    "en": "📋 Inventory Audit",
+    "fr": "📋 Inventaire de stock"
+  },
+  "المنتج": {
+    "ar": "المنتج",
+    "en": "Product",
+    "fr": "Produit"
+  },
+  "الباركود": {
+    "ar": "الباركود",
+    "en": "Barcode",
+    "fr": "Code-barres"
+  },
+  "السعر": {
+    "ar": "السعر",
+    "en": "Price",
+    "fr": "Prix"
+  },
+  "الكمية": {
+    "ar": "الكمية",
+    "en": "Quantity",
+    "fr": "Quantité"
+  },
+  "الوحدة": {
+    "ar": "الوحدة",
+    "en": "Unit",
+    "fr": "Unité"
+  },
+  "الصلاحية": {
+    "ar": "الصلاحية",
+    "en": "Expiry",
+    "fr": "Expiration"
+  },
+  "الحالة": {
+    "ar": "الحالة",
+    "en": "Status",
+    "fr": "Statut"
+  },
+  "الحركة": {
+    "ar": "الحركة",
+    "en": "Movement",
+    "fr": "Mouvement"
+  },
+  "نفد": {
+    "ar": "نفد",
+    "en": "Out",
+    "fr": "Épuisé"
+  },
+  "منخفض": {
+    "ar": "منخفض",
+    "en": "Low",
+    "fr": "Bas"
+  },
+  "متوفر": {
+    "ar": "متوفر",
+    "en": "In Stock",
+    "fr": "En stock"
+  },
+  "سجل": {
+    "ar": "سجل",
+    "en": "Log",
+    "fr": "Historique"
+  },
+  "+ إضافة": {
+    "ar": "+ إضافة",
+    "en": "+ Add",
+    "fr": "+ Ajouter"
+  },
+  "عرض المزيد (": {
+    "ar": "عرض المزيد (",
+    "en": "View more (",
+    "fr": "Voir plus ("
+  },
+  "منتج)": {
+    "ar": "منتج)",
+    "en": "products)",
+    "fr": "produits)"
+  },
+  "تعذر تحميل المنتجات:": {
+    "ar": "تعذر تحميل المنتجات:",
+    "en": "Failed to load products:",
+    "fr": "Échec du chargement des produits :"
+  },
+  "لا توجد منتجات لإجراء الجرد.": {
+    "ar": "لا توجد منتجات لإجراء الجرد.",
+    "en": "No products available for audit.",
+    "fr": "Aucun produit pour inventaire."
+  },
+  "جرد المخزون": {
+    "ar": "جرد المخزون",
+    "en": "Stock Audit",
+    "fr": "Inventaire physique"
+  },
+  "أدخل الكمية الفعلية وسيحسب البرنامج الفرق تلقائيًا.": {
+    "ar": "أدخل الكمية الفعلية وسيحسب البرنامج الفرق تلقائيًا.",
+    "en": "Enter physical count; discrepancy calculates automatically.",
+    "fr": "Saisissez le stock réel; l'écart est calculé automatiquement."
+  },
+  "0 منتج": {
+    "ar": "0 منتج",
+    "en": "0 products",
+    "fr": "0 produit"
+  },
+  "النظام": {
+    "ar": "النظام",
+    "en": "System",
+    "fr": "Système"
+  },
+  "الفعلي": {
+    "ar": "الفعلي",
+    "en": "Actual",
+    "fr": "Réel"
+  },
+  "الفرق": {
+    "ar": "الفرق",
+    "en": "Difference",
+    "fr": "Écart"
+  },
+  "تحقق من الكمية:": {
+    "ar": "تحقق من الكمية:",
+    "en": "Check quantity:",
+    "fr": "Vérifiez la quantité :"
+  },
+  "لا توجد فروقات ليتم تسجيلها.": {
+    "ar": "لا توجد فروقات ليتم تسجيلها.",
+    "en": "No discrepancies to record.",
+    "fr": "Aucun écart à enregistrer."
+  },
+  "تأكيد الجرد": {
+    "ar": "تأكيد الجرد",
+    "en": "Confirm Audit",
+    "fr": "Confirmer l'inventaire"
+  },
+  "سيتم تطبيق": {
+    "ar": "سيتم تطبيق",
+    "en": "Will apply",
+    "fr": "Sera appliqué"
+  },
+  "تسوية. هل تريد المتابعة؟": {
+    "ar": "تسوية. هل تريد المتابعة؟",
+    "en": "adjustment(s). Do you want to proceed?",
+    "fr": "régularisation(s). Voulez-vous continuer ?"
+  },
+  "تسوية جرد": {
+    "ar": "تسوية جرد",
+    "en": "Audit adjustment",
+    "fr": "Ajustement d'inventaire"
+  },
+  "تعذر تطبيق بعض التسويات:": {
+    "ar": "تعذر تطبيق بعض التسويات:",
+    "en": "Some adjustments could not be applied:",
+    "fr": "Certaines régularisations ont échoué :"
+  },
+  "تسوية": {
+    "ar": "تسوية",
+    "en": "adjustments",
+    "fr": "régularisations"
+  },
+  "تم حفظ الجرد وتسجيل الفروقات بنجاح.": {
+    "ar": "تم حفظ الجرد وتسجيل الفروقات بنجاح.",
+    "en": "Audit and stock variances saved successfully.",
+    "fr": "Inventaire et écarts enregistrés avec succès."
+  },
+  "✓ حفظ الجرد": {
+    "ar": "✓ حفظ الجرد",
+    "en": "✓ Save Audit",
+    "fr": "✓ Enregistrer l'inventaire"
+  },
+  "تعذر تحميل سجل المخزون:": {
+    "ar": "تعذر تحميل سجل المخزون:",
+    "en": "Failed to load inventory log:",
+    "fr": "Échec du chargement de l'historique de stock :"
+  },
+  "سجل حركة المخزون": {
+    "ar": "سجل حركة المخزون",
+    "en": "Stock Movement Log",
+    "fr": "Historique des mouvements de stock"
+  },
+  "سجل المخزون —": {
+    "ar": "سجل المخزون —",
+    "en": "Stock Log —",
+    "fr": "Journal de stock —"
+  },
+  "كل عملية إدخال أو تعديل مسجلة مع التاريخ والسبب.": {
+    "ar": "كل عملية إدخال أو تعديل مسجلة مع التاريخ والسبب.",
+    "en": "Every stock change is logged with date and reason.",
+    "fr": "Chaque mouvement de stock est tracé avec date et motif."
+  },
+  "التاريخ": {
+    "ar": "التاريخ",
+    "en": "Date",
+    "fr": "Date"
+  },
+  "السبب": {
+    "ar": "السبب",
+    "en": "Reason",
+    "fr": "Motif"
+  },
+  "لا توجد حركات مسجلة حتى الآن.": {
+    "ar": "لا توجد حركات مسجلة حتى الآن.",
+    "en": "No inventory movements recorded yet.",
+    "fr": "Aucun mouvement enregistré jusqu'à présent."
+  },
+  "إغلاق": {
+    "ar": "إغلاق",
+    "en": "Close",
+    "fr": "Fermer"
+  },
+  "📋 سجل النشاطات": {
+    "ar": "📋 سجل النشاطات",
+    "en": "📋 Activity Log",
+    "fr": "📋 Journal d'activité"
+  },
+  "كل العمليات الحساسة مسجلة باسم المستخدم والتاريخ.": {
+    "ar": "كل العمليات الحساسة مسجلة باسم المستخدم والتاريخ.",
+    "en": "All sensitive actions are audited with username and timestamp.",
+    "fr": "Toutes les opérations sensibles sont tracées avec utilisateur et date."
+  },
+  "ابحث بالمستخدم أو نوع الإجراء...": {
+    "ar": "ابحث بالمستخدم أو نوع الإجراء...",
+    "en": "Search by user or action type...",
+    "fr": "Rechercher par utilisateur ou type d'action..."
+  },
+  "من 2026-01-01": {
+    "ar": "من 2026-01-01",
+    "en": "From 2026-01-01",
+    "fr": "Du 2026-01-01"
+  },
+  "إلى 2026-12-31": {
+    "ar": "إلى 2026-12-31",
+    "en": "To 2026-12-31",
+    "fr": "Au 2026-12-31"
+  },
+  "المستخدم": {
+    "ar": "المستخدم",
+    "en": "User",
+    "fr": "Utilisateur"
+  },
+  "الإجراء": {
+    "ar": "الإجراء",
+    "en": "Action",
+    "fr": "Action"
+  },
+  "النوع": {
+    "ar": "النوع",
+    "en": "Type",
+    "fr": "Type"
+  },
+  "التفاصيل": {
+    "ar": "التفاصيل",
+    "en": "Details",
+    "fr": "Détails"
+  },
+  "تعذر تحميل السجل": {
+    "ar": "تعذر تحميل السجل",
+    "en": "Could not load activity log",
+    "fr": "Impossible de charger le journal"
+  },
+  "لا توجد عمليات مسجلة بعد.": {
+    "ar": "لا توجد عمليات مسجلة بعد.",
+    "en": "No operations logged yet.",
+    "fr": "Aucune opération enregistrée pour le moment."
+  },
+  "تحديث": {
+    "ar": "تحديث",
+    "en": "Refresh",
+    "fr": "Actualiser"
+  },
+  "كل التصنيفات": {
+    "ar": "كل التصنيفات",
+    "en": "All Categories",
+    "fr": "Toutes les catégories"
+  },
+  "بدون تصنيف": {
+    "ar": "بدون تصنيف",
+    "en": "Uncategorized",
+    "fr": "Non catégorisé"
+  },
+  "🏷 التصنيفات": {
+    "ar": "🏷 التصنيفات",
+    "en": "🏷 Categories",
+    "fr": "🏷 Catégories"
+  },
+  "🏷 إدارة التصنيفات": {
+    "ar": "🏷 إدارة التصنيفات",
+    "en": "🏷 Category Management",
+    "fr": "🏷 Gestion des catégories"
+  },
+  "نظّم منتجاتك في أقسام، وحذف التصنيف ينقل منتجاته إلى 'بدون تصنيف'.": {
+    "ar": "نظّم منتجاتك في أقسام، وحذف التصنيف ينقل منتجاته إلى 'بدون تصنيف'.",
+    "en": "Organize products into sections; deleting a category sets items to 'Uncategorized'.",
+    "fr": "Organisez vos produits ; supprimer une catégorie déplace ses articles vers 'Non catégorisé'."
+  },
+  "اسم التصنيف الجديد": {
+    "ar": "اسم التصنيف الجديد",
+    "en": "New Category Name",
+    "fr": "Nouveau nom de catégorie"
+  },
+  "اسم التصنيف مطلوب": {
+    "ar": "اسم التصنيف مطلوب",
+    "en": "Category name is required",
+    "fr": "Le nom de la catégorie est requis"
+  },
+  "تمت إضافة التصنيف": {
+    "ar": "تمت إضافة التصنيف",
+    "en": "Category added",
+    "fr": "Catégorie ajoutée"
+  },
+  "هذا التصنيف موجود مسبقاً": {
+    "ar": "هذا التصنيف موجود مسبقاً",
+    "en": "Category already exists",
+    "fr": "Cette catégorie existe déjà"
+  },
+  "إضافة تصنيف": {
+    "ar": "إضافة تصنيف",
+    "en": "Add Category",
+    "fr": "Ajouter une catégorie"
+  },
+  "تعديل التصنيف": {
+    "ar": "تعديل التصنيف",
+    "en": "Edit Category",
+    "fr": "Modifier la catégorie"
+  },
+  "تم تحديث التصنيف": {
+    "ar": "تم تحديث التصنيف",
+    "en": "Category updated",
+    "fr": "Catégorie mise à jour"
+  },
+  "هذا الاسم مستخدم مسبقاً": {
+    "ar": "هذا الاسم مستخدم مسبقاً",
+    "en": "Name already in use",
+    "fr": "Ce nom est déjà utilisé"
+  },
+  "حفظ": {
+    "ar": "حفظ",
+    "en": "Save",
+    "fr": "Enregistrer"
+  },
+  "سيتم نقل منتجات هذا التصنيف إلى": {
+    "ar": "سيتم نقل منتجات هذا التصنيف إلى",
+    "en": "Products in this category will be moved to",
+    "fr": "Les produits de cette catégorie seront déplacés vers"
+  },
+  "هل تريد المتابعة؟": {
+    "ar": "هل تريد المتابعة؟",
+    "en": "Do you want to continue?",
+    "fr": "Voulez-vous continuer ?"
+  },
+  "هل تريد حذف هذا التصنيف؟": {
+    "ar": "هل تريد حذف هذا التصنيف؟",
+    "en": "Delete this category?",
+    "fr": "Supprimer cette catégorie ?"
+  },
+  "حذف التصنيف": {
+    "ar": "حذف التصنيف",
+    "en": "Delete Category",
+    "fr": "Supprimer la catégorie"
+  },
+  "حذف تصنيف": {
+    "ar": "حذف تصنيف",
+    "en": "Delete Category",
+    "fr": "Supprimer la catégorie"
+  },
+  "منتجات معاد تعيينها": {
+    "ar": "منتجات معاد تعيينها",
+    "en": "products reassigned",
+    "fr": "produits réassignés"
+  },
+  "تم حذف التصنيف": {
+    "ar": "تم حذف التصنيف",
+    "en": "Category deleted",
+    "fr": "Catégorie supprimée"
+  },
+  "تعذر الحذف": {
+    "ar": "تعذر الحذف",
+    "en": "Deletion failed",
+    "fr": "Échec de la suppression"
+  },
+  "لا توجد تصنيفات بعد": {
+    "ar": "لا توجد تصنيفات بعد",
+    "en": "No categories yet",
+    "fr": "Aucune catégorie existante"
+  },
+  "تعديل": {
+    "ar": "تعديل",
+    "en": "Edit",
+    "fr": "Modifier"
+  },
+  "حذف": {
+    "ar": "حذف",
+    "en": "Delete",
+    "fr": "Supprimer"
+  },
+  "إدارة المستخدمين": {
+    "ar": "إدارة المستخدمين",
+    "en": "User Management",
+    "fr": "Gestion des utilisateurs"
+  },
+  "👥 المستخدمون": {
+    "ar": "👥 المستخدمون",
+    "en": "👥 Users",
+    "fr": "👥 Utilisateurs"
+  },
+  "👥 إدارة المستخدمين": {
+    "ar": "👥 إدارة المستخدمين",
+    "en": "👥 User Management",
+    "fr": "👥 Gestion des utilisateurs"
+  },
+  "إنشاء المستخدمين وتغيير الرموز والأدوار.": {
+    "ar": "إنشاء المستخدمين وتغيير الرموز والأدوار.",
+    "en": "Create users, manage PINs and permissions.",
+    "fr": "Créer des utilisateurs, gérer les codes PIN et rôles."
+  },
+  "الاسم": {
+    "ar": "الاسم",
+    "en": "Name",
+    "fr": "Nom"
+  },
+  "مدير": {
+    "ar": "مدير",
+    "en": "Admin",
+    "fr": "Administrateur"
+  },
+  "كاشير": {
+    "ar": "كاشير",
+    "en": "Cashier",
+    "fr": "Caissier"
+  },
+  "اسم المستخدم مطلوب": {
+    "ar": "اسم المستخدم مطلوب",
+    "en": "Username is required",
+    "fr": "Le nom d'utilisateur est requis"
+  },
+  "يوجد مستخدم بنفس الاسم": {
+    "ar": "يوجد مستخدم بنفس الاسم",
+    "en": "A user with this name already exists",
+    "fr": "Un utilisateur porte déjà ce nom"
+  },
+  "تمت إضافة المستخدم": {
+    "ar": "تمت إضافة المستخدم",
+    "en": "User added",
+    "fr": "Utilisateur ajouté"
+  },
+  "إضافة مستخدم": {
+    "ar": "إضافة مستخدم",
+    "en": "Add User",
+    "fr": "Ajouter un utilisateur"
+  },
+  "تغيير الرمز": {
+    "ar": "تغيير الرمز",
+    "en": "Change PIN",
+    "fr": "Modifier le code PIN"
+  },
+  "رمز جديد": {
+    "ar": "رمز جديد",
+    "en": "New PIN",
+    "fr": "Nouveau PIN"
+  },
+  "تم تغيير الرمز": {
+    "ar": "تم تغيير الرمز",
+    "en": "PIN changed",
+    "fr": "Code PIN modifié"
+  },
+  "تعذر تغيير الرمز": {
+    "ar": "تعذر تغيير الرمز",
+    "en": "Could not change PIN",
+    "fr": "Impossible de modifier le code PIN"
+  },
+  "لا يمكن حذف آخر مدير": {
+    "ar": "لا يمكن حذف آخر مدير",
+    "en": "Cannot delete the sole admin account",
+    "fr": "Impossible de supprimer le seul administrateur"
+  },
+  "حذف المستخدم": {
+    "ar": "حذف المستخدم",
+    "en": "Delete User",
+    "fr": "Supprimer l'utilisateur"
+  },
+  "هل تريد حذف هذا المستخدم؟": {
+    "ar": "هل تريد حذف هذا المستخدم؟",
+    "en": "Are you sure you want to delete this user?",
+    "fr": "Voulez-vous supprimer cet utilisateur ?"
+  },
+  "تم حذف المستخدم": {
+    "ar": "تم حذف المستخدم",
+    "en": "User deleted",
+    "fr": "Utilisateur supprimé"
+  },
+  "تعذر حذف المستخدم": {
+    "ar": "تعذر حذف المستخدم",
+    "en": "Could not delete user",
+    "fr": "Impossible de supprimer l'utilisateur"
+  },
+  "لا يوجد مستخدمون": {
+    "ar": "لا يوجد مستخدمون",
+    "en": "No users found",
+    "fr": "Aucun utilisateur"
+  },
+  "الدور": {
+    "ar": "الدور",
+    "en": "Role",
+    "fr": "Rôle"
+  },
+  "الإجراءات": {
+    "ar": "الإجراءات",
+    "en": "Actions",
+    "fr": "Actions"
+  },
+  "خصم على المنتج": {
+    "ar": "خصم على المنتج",
+    "en": "Item Discount",
+    "fr": "Remise sur article"
+  },
+  "المجموع قبل الخصم": {
+    "ar": "المجموع قبل الخصم",
+    "en": "Subtotal before discount",
+    "fr": "Sous-total avant remise"
+  },
+  "مبلغ ثابت (دج)": {
+    "ar": "مبلغ ثابت (دج)",
+    "en": "Fixed Amount (DZD)",
+    "fr": "Montant fixe (DA)"
+  },
+  "نسبة مئوية (%)": {
+    "ar": "نسبة مئوية (%)",
+    "en": "Percentage (%)",
+    "fr": "Pourcentage (%)"
+  },
+  "أدخل قيمة الخصم بالدينار أو نسبة مئوية (0 لإلغاء الخصم).": {
+    "ar": "أدخل قيمة الخصم بالدينار أو نسبة مئوية (0 لإلغاء الخصم).",
+    "en": "Enter discount amount in DZD or % (0 to cancel).",
+    "fr": "Entrez la remise en DA ou % (0 pour annuler)."
+  },
+  "قيمة الخصم:": {
+    "ar": "قيمة الخصم:",
+    "en": "Discount Amount:",
+    "fr": "Montant de la remise :"
+  },
+  "أدخل قيمة خصم صحيحة": {
+    "ar": "أدخل قيمة خصم صحيحة",
+    "en": "Enter a valid discount value",
+    "fr": "Entrez une valeur de remise valide"
+  },
+  "الخصم لا يمكن أن يكون سالبًا": {
+    "ar": "الخصم لا يمكن أن يكون سالبًا",
+    "en": "Discount cannot be negative",
+    "fr": "La remise ne peut pas être négative"
+  },
+  "النسبة المئوية يجب أن تكون بين 0 و 100": {
+    "ar": "النسبة المئوية يجب أن تكون بين 0 و 100",
+    "en": "Percentage must be between 0 and 100",
+    "fr": "Le pourcentage doit être compris entre 0 et 100"
+  },
+  "الخصم يتجاوز قيمة هذا المنتج": {
+    "ar": "الخصم يتجاوز قيمة هذا المنتج",
+    "en": "Discount exceeds this item's total",
+    "fr": "La remise dépasse le total de cet article"
+  },
+  "تم تطبيق خصم المنتج": {
+    "ar": "تم تطبيق خصم المنتج",
+    "en": "Item discount applied",
+    "fr": "Remise sur article appliquée"
+  },
+  "إدخال مخزون": {
+    "ar": "إدخال مخزون",
+    "en": "Stock Entry",
+    "fr": "Entrée de stock"
+  },
+  "المنتج المراد تزويده *": {
+    "ar": "المنتج المراد تزويده *",
+    "en": "Product to restock *",
+    "fr": "Produit à réapprovisionner *"
+  },
+  "اكتب اسم المنتج أو الباركود...": {
+    "ar": "اكتب اسم المنتج أو الباركود...",
+    "en": "Type product name or barcode...",
+    "fr": "Tapez le nom du produit ou le code-barres..."
+  },
+  "لا توجد منتجات مطابقة": {
+    "ar": "لا توجد منتجات مطابقة",
+    "en": "No matching products",
+    "fr": "Aucun produit correspondant"
+  },
+  "باركود:": {
+    "ar": "باركود:",
+    "en": "Barcode:",
+    "fr": "Code-barres :"
+  },
+  "• المخزون:": {
+    "ar": "• المخزون:",
+    "en": "• Stock:",
+    "fr": "• Stock :"
+  },
+  "بدون": {
+    "ar": "بدون",
+    "en": "None",
+    "fr": "Aucun"
+  },
+  "اختيار": {
+    "ar": "اختيار",
+    "en": "Select",
+    "fr": "Sélectionner"
+  },
+  "الكمية المراد إضافتها إلى المخزون *": {
+    "ar": "الكمية المراد إضافتها إلى المخزون *",
+    "en": "Quantity to add to inventory *",
+    "fr": "Quantité à ajouter au stock *"
+  },
+  "أدخل الكمية المضافة": {
+    "ar": "أدخل الكمية المضافة",
+    "en": "Enter added quantity",
+    "fr": "Entrez la quantité ajoutée"
+  },
+  "المتغير": {
+    "ar": "المتغير",
+    "en": "Variant",
+    "fr": "Variante"
+  },
+  "المخزون الحالي": {
+    "ar": "المخزون الحالي",
+    "en": "Current Stock",
+    "fr": "Stock actuel"
+  },
+  "كمية الإدخال": {
+    "ar": "كمية الإدخال",
+    "en": "Entry Qty",
+    "fr": "Quantité entrée"
+  },
+  "سبب التزويد أو رقم وصل الشراء": {
+    "ar": "سبب التزويد أو رقم وصل الشراء",
+    "en": "Restock reason or purchase voucher #",
+    "fr": "Motif de réappro. ou n° de bon"
+  },
+  "مثال: فاتورة المورد رقم 104": {
+    "ar": "مثال: فاتورة المورد رقم 104",
+    "en": "e.g. Supplier Invoice #104",
+    "fr": "ex. Facture fournisseur N° 104"
+  },
+  "اختيار المنتج": {
+    "ar": "اختيار المنتج",
+    "en": "Select Product",
+    "fr": "Sélectionner le produit"
+  },
+  "أدخل كمية صحيحة للمتغير:": {
+    "ar": "أدخل كمية صحيحة للمتغير:",
+    "en": "Enter valid quantity for variant:",
+    "fr": "Entrez une quantité valide pour la variante :"
+  },
+  "لا يمكن إدخال كمية سالبة للمتغير:": {
+    "ar": "لا يمكن إدخال كمية سالبة للمتغير:",
+    "en": "Cannot enter negative quantity for variant:",
+    "fr": "Impossible de saisir une quantité négative pour la variante :"
+  },
+  "أدخل كمية إيجابية لمتغير واحد على الأقل.": {
+    "ar": "أدخل كمية إيجابية لمتغير واحد على الأقل.",
+    "en": "Enter positive quantity for at least one variant.",
+    "fr": "Entrez une quantité positive pour au moins une variante."
+  },
+  "تم إدخال المخزون وتسجيل الحركة بنجاح.": {
+    "ar": "تم إدخال المخزون وتسجيل الحركة بنجاح.",
+    "en": "Stock entry and movement recorded successfully.",
+    "fr": "Entrée de stock et mouvement enregistrés avec succès."
+  },
+  "تم": {
+    "ar": "تم",
+    "en": "Done",
+    "fr": "Terminé"
+  },
+  "أدخل كمية صحيحة أكبر من صفر.": {
+    "ar": "أدخل كمية صحيحة أكبر من صفر.",
+    "en": "Enter a valid quantity greater than zero.",
+    "fr": "Entrez une quantité valide supérieure à zéro."
+  },
+  "✓ حفظ": {
+    "ar": "✓ حفظ",
+    "en": "✓ Save",
+    "fr": "✓ Enregistrer"
+  },
+  "إدارة باقات المنتجات": {
+    "ar": "إدارة باقات المنتجات",
+    "en": "Manage Product Bundles",
+    "fr": "Gérer les packs de produits"
+  },
+  " الباقات": {
+    "ar": " الباقات",
+    "en": " Bundles",
+    "fr": " Packs"
+  },
+  "تعريف مجموعات من المنتجات تُباع بسعر ثابت مع خصم تلقائي من مخزون كل مكون": {
+    "ar": "تعريف مجموعات من المنتجات تُباع بسعر ثابت مع خصم تلقائي من مخزون كل مكون",
+    "en": "Define sets sold at a fixed price with automatic component stock reduction",
+    "fr": "Définir des lots vendus à prix fixe avec déduction automatique des composants"
+  },
+  "+ باقة جديدة": {
+    "ar": "+ باقة جديدة",
+    "en": "+ New Bundle",
+    "fr": "+ Nouveau pack"
+  },
+  "لا توجد باقات بعد. اضغط «+ باقة جديدة» لإنشاء الأولى": {
+    "ar": "لا توجد باقات بعد. اضغط «+ باقة جديدة» لإنشاء الأولى",
+    "en": "No bundles yet. Click «+ New Bundle» to create one",
+    "fr": "Aucun pack existant. Cliquez sur «+ Nouveau pack»"
+  },
+  "✗ مغلقة": {
+    "ar": "✗ مغلقة",
+    "en": "✗ Disabled",
+    "fr": "✗ Inactif"
+  },
+  "مكون •": {
+    "ar": "مكون •",
+    "en": "item •",
+    "fr": "composant •"
+  },
+  "تعطيل": {
+    "ar": "تعطيل",
+    "en": "Disable",
+    "fr": "Désactiver"
+  },
+  "تفعيل": {
+    "ar": "تفعيل",
+    "en": "Enable",
+    "fr": "Activer"
+  },
+  "تم تحديث حالة الباقة": {
+    "ar": "تم تحديث حالة الباقة",
+    "en": "Bundle status updated",
+    "fr": "Statut du pack mis à jour"
+  },
+  "تعذر التحديث": {
+    "ar": "تعذر التحديث",
+    "en": "Failed to update",
+    "fr": "Échec de mise à jour"
+  },
+  "حذف الباقة": {
+    "ar": "حذف الباقة",
+    "en": "Delete Bundle",
+    "fr": "Supprimer le pack"
+  },
+  "هل تريد حذف الباقة «": {
+    "ar": "هل تريد حذف الباقة «",
+    "en": "Do you want to delete bundle «",
+    "fr": "Voulez-vous supprimer le pack «"
+  },
+  "»؟": {
+    "ar": "»؟",
+    "en": "»?",
+    "fr": "» ?"
+  },
+  "تعديل باقة": {
+    "ar": "تعديل باقة",
+    "en": "Edit Bundle",
+    "fr": "Modifier le pack"
+  },
+  "باقة جديدة": {
+    "ar": "باقة جديدة",
+    "en": "New Bundle",
+    "fr": "Nouveau pack"
+  },
+  "تعديل الباقة": {
+    "ar": "تعديل الباقة",
+    "en": "Edit Bundle",
+    "fr": "Modifier le pack"
+  },
+  "اسم الباقة": {
+    "ar": "اسم الباقة",
+    "en": "Bundle Name",
+    "fr": "Nom du pack"
+  },
+  "سعر الباقة": {
+    "ar": "سعر الباقة",
+    "en": "Bundle Price",
+    "fr": "Prix du pack"
+  },
+  "سعر المجموع: 0.00 د.ج": {
+    "ar": "سعر المجموع: 0.00 د.ج",
+    "en": "Items Total: 0.00 DZD",
+    "fr": "Total articles : 0.00 DA"
+  },
+  ": 0.00 د.ج": {
+    "ar": ": 0.00 د.ج",
+    "en": ": 0.00 DZD",
+    "fr": ": 0.00 DA"
+  },
+  "الربح عن البيع الفردي": {
+    "ar": "الربح عن البيع الفردي",
+    "en": "Profit vs Individual Sale",
+    "fr": "Bénéfice vs vente au détail"
+  },
+  "إضافة منتج للباقة:": {
+    "ar": "إضافة منتج للباقة:",
+    "en": "Add item to bundle:",
+    "fr": "Ajouter un article au pack :"
+  },
+  "بحث بالاسم أو الباركود": {
+    "ar": "بحث بالاسم أو الباركود",
+    "en": "Search by name or barcode",
+    "fr": "Recherche par nom ou code-barres"
+  },
+  "مكونات الباقة:": {
+    "ar": "مكونات الباقة:",
+    "en": "Bundle Components:",
+    "fr": "Composants du pack :"
+  },
+  "سعر المجموع:": {
+    "ar": "سعر المجموع:",
+    "en": "Sum Total:",
+    "fr": "Total cumulé :"
+  },
+  "المنتج موجود بالفعل في الباقة": {
+    "ar": "المنتج موجود بالفعل في الباقة",
+    "en": "Product is already in the bundle",
+    "fr": "Le produit est déjà dans ce pack"
+  },
+  "كمية «": {
+    "ar": "كمية «",
+    "en": "Quantity of «",
+    "fr": "Quantité de «"
+  },
+  "» داخل الباقة:": {
+    "ar": "» داخل الباقة:",
+    "en": "» inside bundle:",
+    "fr": "» dans le pack :"
+  },
+  "إضافة": {
+    "ar": "إضافة",
+    "en": "Add",
+    "fr": "Ajouter"
+  },
+  "الكمية يجب أن تكون أكبر من صفر": {
+    "ar": "الكمية يجب أن تكون أكبر من صفر",
+    "en": "Quantity must be greater than zero",
+    "fr": "La quantité doit être supérieure à zéro"
+  },
+  "اسم الباقة مطلوب": {
+    "ar": "اسم الباقة مطلوب",
+    "en": "Bundle name is required",
+    "fr": "Le nom du pack est requis"
+  },
+  "سعر الباقة غير صحيح": {
+    "ar": "سعر الباقة غير صحيح",
+    "en": "Invalid bundle price",
+    "fr": "Prix de pack invalide"
+  },
+  "السعر لا يمكن أن يكون سالبًا": {
+    "ar": "السعر لا يمكن أن يكون سالبًا",
+    "en": "Price cannot be negative",
+    "fr": "Le prix ne peut pas être négatif"
+  },
+  "أضف منتجًا واحدًا على الأقل للباقة": {
+    "ar": "أضف منتجًا واحدًا على الأقل للباقة",
+    "en": "Add at least one item to bundle",
+    "fr": "Ajoutez au moins un produit au pack"
+  },
+  "✓ تم تحديث الباقة": {
+    "ar": "✓ تم تحديث الباقة",
+    "en": "✓ Bundle updated",
+    "fr": "✓ Pack mis à jour"
+  },
+  "✓ تم إنشاء الباقة": {
+    "ar": "✓ تم إنشاء الباقة",
+    "en": "✓ Bundle created",
+    "fr": "✓ Pack créé"
+  },
+  "باقة": {
+    "ar": "باقة",
+    "en": "Bundle",
+    "fr": "Pack"
+  },
+  "منتج مكوّن لم يعد موجودًا": {
+    "ar": "منتج مكوّن لم يعد موجودًا",
+    "en": "A component product no longer exists",
+    "fr": "Un produit composant n'existe plus"
+  },
+  "مخزون غير كافٍ لـ «": {
+    "ar": "مخزون غير كافٍ لـ «",
+    "en": "Insufficient stock for «",
+    "fr": "Stock insuffisant pour «"
+  },
+  "»: مطلوب": {
+    "ar": "»: مطلوب",
+    "en": "»: needed",
+    "fr": "» : requis"
+  },
+  "، متوفر": {
+    "ar": "، متوفر",
+    "en": ", available",
+    "fr": ", disponible"
+  },
+  "البحث والتعديل وإدارة المخزون": {
+    "ar": "البحث والتعديل وإدارة المخزون",
+    "en": "Search, edit and stock control",
+    "fr": "Recherche, modification et gestion des stocks"
+  },
+  "+ منتج جديد": {
+    "ar": "+ منتج جديد",
+    "en": "+ New Product",
+    "fr": "+ Nouveau produit"
+  },
+  "الكل": {
+    "ar": "الكل",
+    "en": "All",
+    "fr": "Tous"
+  },
+  "لا توجد منتجات في هذا التصنيف": {
+    "ar": "لا توجد منتجات في هذا التصنيف",
+    "en": "No products in this category",
+    "fr": "Aucun produit dans cette catégorie"
+  },
+  "جرّب تغيير الفلتر أو البحث": {
+    "ar": "جرّب تغيير الفلتر أو البحث",
+    "en": "Try changing filter or search query",
+    "fr": "Essayez de modifier le filtre ou la recherche"
+  },
+  "إجراءات": {
+    "ar": "إجراءات",
+    "en": "Actions",
+    "fr": "Actions"
+  },
+  "سعر الشراء": {
+    "ar": "سعر الشراء",
+    "en": "Cost Price",
+    "fr": "Prix d'achat"
+  },
+  "اسم المنتج *": {
+    "ar": "اسم المنتج *",
+    "en": "Product Name *",
+    "fr": "Nom du produit *"
+  },
+  "مثال: حليب كانديا 1 لتر": {
+    "ar": "مثال: حليب كانديا 1 لتر",
+    "en": "e.g. Candia Milk 1L",
+    "fr": "ex. Lait Candia 1L"
+  },
+  "سعر البيع (د.ج) *": {
+    "ar": "سعر البيع (د.ج) *",
+    "en": "Selling Price (DZD) *",
+    "fr": "Prix de vente (DA) *"
+  },
+  "مثال: 120.00": {
+    "ar": "مثال: 120.00",
+    "en": "e.g. 120.00",
+    "fr": "ex. 120,00"
+  },
+  "سعر الشراء / التكلفة (د.ج)": {
+    "ar": "سعر الشراء / التكلفة (د.ج)",
+    "en": "Cost Price (DZD)",
+    "fr": "Prix d'achat (DA)"
+  },
+  "مثال: 95.00": {
+    "ar": "مثال: 95.00",
+    "en": "e.g. 95.00",
+    "fr": "ex. 95,00"
+  },
+  "الكمية المتوفرة بالمخزون *": {
+    "ar": "الكمية المتوفرة بالمخزون *",
+    "en": "In-Stock Quantity *",
+    "fr": "Quantité en stock *"
+  },
+  "مثال: 50 أو 1.5 للوزن": {
+    "ar": "مثال: 50 أو 1.5 للوزن",
+    "en": "e.g. 50 or 1.5 for weight",
+    "fr": "ex. 50 ou 1,5 pour le poids"
+  },
+  "الباركود أو الرمز التعريفي (Barcode / SKU)": {
+    "ar": "الباركود أو الرمز التعريفي (Barcode / SKU)",
+    "en": "Barcode or SKU",
+    "fr": "Code-barres ou SKU"
+  },
+  "امسح بالماسح أو اتركه فارغاً للتوليد التلقائي": {
+    "ar": "امسح بالماسح أو اتركه فارغاً للتوليد التلقائي",
+    "en": "Scan or leave blank for auto-generation",
+    "fr": "Scannez ou laissez vide pour génération auto"
+  },
+  "وحدة القياس": {
+    "ar": "وحدة القياس",
+    "en": "Unit of Measure",
+    "fr": "Unité de mesure"
+  },
+  "كغ": {
+    "ar": "كغ",
+    "en": "kg",
+    "fr": "kg"
+  },
+  "غرام": {
+    "ar": "غرام",
+    "en": "g",
+    "fr": "g"
+  },
+  "لتر": {
+    "ar": "لتر",
+    "en": "L",
+    "fr": "L"
+  },
+  "مل": {
+    "ar": "مل",
+    "en": "mL",
+    "fr": "mL"
+  },
+  "متر": {
+    "ar": "متر",
+    "en": "m",
+    "fr": "m"
+  },
+  "تصنيف المنتج": {
+    "ar": "تصنيف المنتج",
+    "en": "Product Category",
+    "fr": "Catégorie du produit"
+  },
+  "صورة المنتج": {
+    "ar": "صورة المنتج",
+    "en": "Product Image",
+    "fr": "Image du produit"
+  },
+  "لا توجد صورة": {
+    "ar": "لا توجد صورة",
+    "en": "No image",
+    "fr": "Aucune image"
+  },
+  "صورة غير صالحة": {
+    "ar": "صورة غير صالحة",
+    "en": "Invalid image",
+    "fr": "Image non valide"
+  },
+  "اختيار صورة المنتج": {
+    "ar": "اختيار صورة المنتج",
+    "en": "Select Product Image",
+    "fr": "Sélectionner l'image du produit"
+  },
+  "اختيار صورة": {
+    "ar": "اختيار صورة",
+    "en": "Choose Image",
+    "fr": "Choisir une image"
+  },
+  "حذف الصورة": {
+    "ar": "حذف الصورة",
+    "en": "Delete Image",
+    "fr": "Supprimer l'image"
+  },
+  "▸ متغيرات المنتج (المقاس / اللون)": {
+    "ar": "▸ متغيرات المنتج (المقاس / اللون)",
+    "en": "▸ Product Variants (Size / Color)",
+    "fr": "▸ Variantes du produit (Taille / Couleur)"
+  },
+  "اسم المتغير": {
+    "ar": "اسم المتغير",
+    "en": "Variant Name",
+    "fr": "Nom de la variante"
+  },
+  "مثال: مقاس 42 أسود / Taille L": {
+    "ar": "مثال: مقاس 42 أسود / Taille L",
+    "en": "e.g. Size 42 Black / Size L",
+    "fr": "ex. Taille 42 Noir / Taille L"
+  },
+  "اختياري — يُترك فارغًا للتوليد التلقائي": {
+    "ar": "اختياري — يُترك فارغًا للتوليد التلقائي",
+    "en": "Optional — leave empty for auto generation",
+    "fr": "Optionnel — laisser vide pour génération auto"
+  },
+  "السعر (اختياري)": {
+    "ar": "السعر (اختياري)",
+    "en": "Price (Optional)",
+    "fr": "Prix (Optionnel)"
+  },
+  "سعر المنتج": {
+    "ar": "سعر المنتج",
+    "en": "Product Price",
+    "fr": "Prix du produit"
+  },
+  "لا توجد متغيرات بعد.": {
+    "ar": "لا توجد متغيرات بعد.",
+    "en": "No variants added yet.",
+    "fr": "Aucune variante pour le moment."
+  },
+  "اسم المتغير مطلوب": {
+    "ar": "اسم المتغير مطلوب",
+    "en": "Variant name is required",
+    "fr": "Le nom de la variante est requis"
+  },
+  "يرجى تحديد كمية المنتج الكلية أولاً قبل إضافة المتغيرات": {
+    "ar": "يرجى تحديد كمية المنتج الكلية أولاً قبل إضافة المتغيرات",
+    "en": "Please set total product quantity before adding variants",
+    "fr": "Veuillez définir la quantité totale avant d'ajouter des variantes"
+  },
+  "كمية المتغير يجب أن تكون أكبر من صفر": {
+    "ar": "كمية المتغير يجب أن تكون أكبر من صفر",
+    "en": "Variant quantity must be greater than zero",
+    "fr": "La quantité de la variante doit être supérieure à zéro"
+  },
+  "لا يمكن إضافة المتغير: الإجمالي (": {
+    "ar": "لا يمكن إضافة المتغير: الإجمالي (",
+    "en": "Cannot add variant: Total (",
+    "fr": "Impossible d'ajouter la variante : Total ("
+  },
+  ") يتجاوز كمية المنتج الكلية (": {
+    "ar": ") يتجاوز كمية المنتج الكلية (",
+    "en": ") exceeds total product quantity (",
+    "fr": ") dépasse la quantité globale ("
+  },
+  "). المتاح المتبقي:": {
+    "ar": "). المتاح المتبقي:",
+    "en": "). Remaining allowance:",
+    "fr": "). Reste disponible :"
+  },
+  "السعر يجب أن يكون رقمًا أو يُترك فارغًا": {
+    "ar": "السعر يجب أن يكون رقمًا أو يُترك فارغًا",
+    "en": "Price must be a number or left blank",
+    "fr": "Le prix doit être un nombre ou laissé vide"
+  },
+  "فشل إضافة المتغير:": {
+    "ar": "فشل إضافة المتغير:",
+    "en": "Failed to add variant:",
+    "fr": "Échec d'ajout de la variante :"
+  },
+  "✓ تمت إضافة المتغير": {
+    "ar": "✓ تمت إضافة المتغير",
+    "en": "✓ Variant added",
+    "fr": "✓ Variante ajoutée"
+  },
+  "✓ تمت إضافة المتغير (سيُحفظ مع المنتج)": {
+    "ar": "✓ تمت إضافة المتغير (سيُحفظ مع المنتج)",
+    "en": "✓ Variant staged (will be saved with product)",
+    "fr": "✓ Variante préparée (sera enregistrée avec le produit)"
+  },
+  "حذف متغير": {
+    "ar": "حذف متغير",
+    "en": "Delete Variant",
+    "fr": "Supprimer la variante"
+  },
+  "حذف هذا المتغير نهائيًا؟": {
+    "ar": "حذف هذا المتغير نهائيًا؟",
+    "en": "Permanently delete this variant?",
+    "fr": "Supprimer définitivement cette variante ?"
+  },
+  "فشل حذف المتغير": {
+    "ar": "فشل حذف المتغير",
+    "en": "Failed to delete variant",
+    "fr": "Échec de suppression de la variante"
+  },
+  "✓ تم حذف المتغير": {
+    "ar": "✓ تم حذف المتغير",
+    "en": "✓ Variant deleted",
+    "fr": "✓ Variante supprimée"
+  },
+  "+ إضافة متغير": {
+    "ar": "+ إضافة متغير",
+    "en": "+ Add Variant",
+    "fr": "+ Ajouter une variante"
+  },
+  "متغيرات المنتج (المقاس / اللون)": {
+    "ar": "متغيرات المنتج (المقاس / اللون)",
+    "en": "Product Variants (Size / Color)",
+    "fr": "Variantes du produit (Taille / Couleur)"
+  },
+  "للوزن: اختر كغ أو غرام. مثال: 0.075 كغ = 75 غرام. السعر يكون حسب الوحدة المختارة.": {
+    "ar": "للوزن: اختر كغ أو غرام. مثال: 0.075 كغ = 75 غرام. السعر يكون حسب الوحدة المختارة.",
+    "en": "For weight items: pick kg or g (e.g. 0.075 kg = 75g). Price updates to match unit.",
+    "fr": "Pour les articles au poids : kg ou g (ex. 0,075 kg = 75g). Le prix s'ajuste selon l'unité."
+  },
+  "اسم المنتج مطلوب": {
+    "ar": "اسم المنتج مطلوب",
+    "en": "Product name is required",
+    "fr": "Le nom du produit est requis"
+  },
+  "لا يمكن إدخال قيم سالبة": {
+    "ar": "لا يمكن إدخال قيم سالبة",
+    "en": "Cannot enter negative values",
+    "fr": "Valeurs négatives non autorisées"
+  },
+  "منتج القطعة يجب أن تكون كميته عددًا صحيحًا": {
+    "ar": "منتج القطعة يجب أن تكون كميته عددًا صحيحًا",
+    "en": "Piece/unit product quantity must be an integer",
+    "fr": "La quantité d'un article à la pièce doit être entière"
+  },
+  "لا يمكن الحفظ: مجموع كميات المتغيرات (": {
+    "ar": "لا يمكن الحفظ: مجموع كميات المتغيرات (",
+    "en": "Cannot save: Total variant quantities (",
+    "fr": "Enregistrement impossible : Somme des variantes ("
+  },
+  "دج • الكمية": {
+    "ar": "دج • الكمية",
+    "en": "DZD • Qty",
+    "fr": "DA • Qté"
+  },
+  "✓ تم تحديث المنتج": {
+    "ar": "✓ تم تحديث المنتج",
+    "en": "✓ Product updated",
+    "fr": "✓ Produit mis à jour"
+  },
+  "✓ تمت إضافة المنتج": {
+    "ar": "✓ تمت إضافة المنتج",
+    "en": "✓ Product added",
+    "fr": "✓ Produit ajouté"
+  },
+  "تأكد من إدخال الأرقام بشكل صحيح، مثل 0.075": {
+    "ar": "تأكد من إدخال الأرقام بشكل صحيح، مثل 0.075",
+    "en": "Ensure numbers are entered correctly, e.g. 0.075",
+    "fr": "Assurez-vous de saisir des nombres valides, ex. 0,075"
+  },
+  "فشل الحفظ:": {
+    "ar": "فشل الحفظ:",
+    "en": "Save failed:",
+    "fr": "Échec de l'enregistrement :"
+  },
+  "المنتج غير موجود": {
+    "ar": "المنتج غير موجود",
+    "en": "Product not found",
+    "fr": "Produit introuvable"
+  },
+  "تعديل المنتج": {
+    "ar": "تعديل المنتج",
+    "en": "Edit Product",
+    "fr": "Modifier le produit"
+  },
+  "إضافة منتج جديد": {
+    "ar": "إضافة منتج جديد",
+    "en": "Add New Product",
+    "fr": "Nouveau produit"
+  },
+  "حذف منتج": {
+    "ar": "حذف منتج",
+    "en": "Delete Product",
+    "fr": "Supprimer le produit"
+  },
+  "تأكيد الحذف": {
+    "ar": "تأكيد الحذف",
+    "en": "Confirm Deletion",
+    "fr": "Confirmer la suppression"
+  },
+  "هل أنت متأكد من حذف هذا المنتج؟ لا يمكن التراجع عن العملية.": {
+    "ar": "هل أنت متأكد من حذف هذا المنتج؟ لا يمكن التراجع عن العملية.",
+    "en": "Are you sure you want to delete this product? This action cannot be undone.",
+    "fr": "Êtes-vous sûr de vouloir supprimer cet article ? Cette action est irréversible."
+  },
+  "✓ تم حذف المنتج": {
+    "ar": "✓ تم حذف المنتج",
+    "en": "✓ Product deleted",
+    "fr": "✓ Produit supprimé"
+  },
+  "تعذر تحديث قائمة المنتجات:": {
+    "ar": "تعذر تحديث قائمة المنتجات:",
+    "en": "Failed to refresh product catalogue:",
+    "fr": "Échec de l'actualisation du catalogue :"
+  },
+  "بيع سريع • مخزون مباشر": {
+    "ar": "بيع سريع • مخزون مباشر",
+    "en": "Quick sale • Live stock",
+    "fr": "Vente rapide • Stock direct"
+  },
+  "بيع سريع • مخزون مباشر • سلة واحدة": {
+    "ar": "بيع سريع • مخزون مباشر • سلة واحدة",
+    "en": "Quick sale • Live inventory • Single cart",
+    "fr": "Vente rapide • Stock direct • Panier unique"
+  },
+  "🧾 سجل الوصولات": {
+    "ar": "🧾 سجل الوصولات",
+    "en": "🧾 Receipts Log",
+    "fr": "🧾 Registre des tickets"
+  },
+  "|| المعلّق": {
+    "ar": "|| المعلّق",
+    "en": "|| Held Carts",
+    "fr": "|| En attente"
+  },
+  "＋ بيع جديد": {
+    "ar": "＋ بيع جديد",
+    "en": "＋ New Sale",
+    "fr": "＋ Nouvelle vente"
+  },
+  "ابحث باسم المنتج، Barcode أو SKU…": {
+    "ar": "ابحث باسم المنتج، Barcode أو SKU…",
+    "en": "Search by product name, Barcode or SKU...",
+    "fr": "Rechercher par nom, code-barres ou SKU..."
+  },
+  "Enter  ↵": {
+    "ar": "Enter  ↵",
+    "en": "Enter  ↵",
+    "fr": "Entrée  ↵"
+  },
+  "المفضّلة": {
+    "ar": "المفضّلة",
+    "en": "Favorites",
+    "fr": "Favoris"
+  },
+  "السلة": {
+    "ar": "السلة",
+    "en": "Cart",
+    "fr": "Panier"
+  },
+  "0 عنصر": {
+    "ar": "0 عنصر",
+    "en": "0 items",
+    "fr": "0 article"
+  },
+  "زبون نقدي": {
+    "ar": "زبون نقدي",
+    "en": "Cash Customer",
+    "fr": "Client comptant"
+  },
+  "المجموع الفرعي": {
+    "ar": "المجموع الفرعي",
+    "en": "Subtotal",
+    "fr": "Sous-total"
+  },
+  "0.00 د.ج": {
+    "ar": "0.00 د.ج",
+    "en": "0.00 DZD",
+    "fr": "0.00 DA"
+  },
+  "الخصم": {
+    "ar": "الخصم",
+    "en": "Discount",
+    "fr": "Remise"
+  },
+  "الإجمالي": {
+    "ar": "الإجمالي",
+    "en": "Total",
+    "fr": "Total"
+  },
+  "الدفع [F8]": {
+    "ar": "الدفع [F8]",
+    "en": "Pay [F8]",
+    "fr": "Payer [F8]"
+  },
+  "|| تعليق": {
+    "ar": "|| تعليق",
+    "en": "|| Hold Sale",
+    "fr": "|| Mettre en attente"
+  },
+  "خصم الفاتورة": {
+    "ar": "خصم الفاتورة",
+    "en": "Invoice Discount",
+    "fr": "Remise sur facture"
+  },
+  "أضف منتجات إلى السلة أولاً": {
+    "ar": "أضف منتجات إلى السلة أولاً",
+    "en": "Add items to cart first",
+    "fr": "Ajoutez d'abord des articles au panier"
+  },
+  "المجموع قبل الخصم:": {
+    "ar": "المجموع قبل الخصم:",
+    "en": "Subtotal before discount:",
+    "fr": "Sous-total avant remise :"
+  },
+  "الخصم لا يمكن أن يتجاوز قيمة السلة": {
+    "ar": "الخصم لا يمكن أن يتجاوز قيمة السلة",
+    "en": "Discount cannot exceed cart value",
+    "fr": "La remise ne peut dépasser la valeur du panier"
+  },
+  "خصم فاتورة كبير": {
+    "ar": "خصم فاتورة كبير",
+    "en": "Significant invoice discount",
+    "fr": "Remise importante sur facture"
+  },
+  "تم تحديث خصم الفاتورة": {
+    "ar": "تم تحديث خصم الفاتورة",
+    "en": "Invoice discount updated",
+    "fr": "Remise sur facture mise à jour"
+  },
+  "السلة فارغة": {
+    "ar": "السلة فارغة",
+    "en": "Cart is empty",
+    "fr": "Le panier est vide"
+  },
+  "تم تعليق البيع •": {
+    "ar": "تم تعليق البيع •",
+    "en": "Sale suspended •",
+    "fr": "Vente mise en attente •"
+  },
+  "عملية معلقة": {
+    "ar": "عملية معلقة",
+    "en": "held sale",
+    "fr": "vente en attente"
+  },
+  "لا توجد مبيعات معلقة": {
+    "ar": "لا توجد مبيعات معلقة",
+    "en": "No held sales",
+    "fr": "Aucune vente en attente"
+  },
+  "السلات المعلقة": {
+    "ar": "السلات المعلقة",
+    "en": "Held Carts",
+    "fr": "Paniers en attente"
+  },
+  "اختر سلة لاسترجاعها أو حذفها": {
+    "ar": "اختر سلة لاسترجاعها أو حذفها",
+    "en": "Select a cart to restore or delete",
+    "fr": "Sélectionnez un panier à restaurer ou supprimer"
+  },
+  "استرجاع السلة": {
+    "ar": "استرجاع السلة",
+    "en": "Restore Cart",
+    "fr": "Restaurer le panier"
+  },
+  "هل تريد استبدال السلة الحالية بالسلة المعلقة؟": {
+    "ar": "هل تريد استبدال السلة الحالية بالسلة المعلقة؟",
+    "en": "Replace current active cart with this held cart?",
+    "fr": "Remplacer le panier actif par ce panier en attente ?"
+  },
+  "تم استرجاع السلة": {
+    "ar": "تم استرجاع السلة",
+    "en": "Cart restored",
+    "fr": "Panier restauré"
+  },
+  "حذف السلة المعلقة": {
+    "ar": "حذف السلة المعلقة",
+    "en": "Delete Held Cart",
+    "fr": "Supprimer le panier en attente"
+  },
+  "هل تريد حذف هذه السلة المعلقة؟": {
+    "ar": "هل تريد حذف هذه السلة المعلقة؟",
+    "en": "Are you sure you want to delete this held cart?",
+    "fr": "Voulez-vous supprimer ce panier en attente ?"
+  },
+  "تم حذف السلة المعلقة": {
+    "ar": "تم حذف السلة المعلقة",
+    "en": "Held cart deleted",
+    "fr": "Panier en attente supprimé"
+  },
+  "عنصر": {
+    "ar": "عنصر",
+    "en": "items",
+    "fr": "articles"
+  },
+  "استرجاع": {
+    "ar": "استرجاع",
+    "en": "Restore",
+    "fr": "Restaurer"
+  },
+  "لا توجد نتائج": {
+    "ar": "لا توجد نتائج",
+    "en": "No results found",
+    "fr": "Aucun résultat trouvé"
+  },
+  "جرّب كلمة بحث أخرى أو غيّر حالة المخزون": {
+    "ar": "جرّب كلمة بحث أخرى أو غيّر حالة المخزون",
+    "en": "Try another search keyword or adjust stock filters",
+    "fr": "Essayez un autre mot-clé ou modifiez le filtre de stock"
+  },
+  "غير متوفر": {
+    "ar": "غير متوفر",
+    "en": "Unavailable",
+    "fr": "Indisponible"
+  },
+  "إضافة إلى السلة ＋": {
+    "ar": "إضافة إلى السلة ＋",
+    "en": "Add to Cart ＋",
+    "fr": "Ajouter au panier ＋"
+  },
+  "أضف نجمة ⭐ للمنتج ليظهر هنا": {
+    "ar": "أضف نجمة ⭐ للمنتج ليظهر هنا",
+    "en": "Star ⭐ an item to pin it here",
+    "fr": "Étoilez ⭐ un produit pour l'épingler ici"
+  },
+  "تعذر تحديث المفضّلة:": {
+    "ar": "تعذر تحديث المفضّلة:",
+    "en": "Failed to update favorites:",
+    "fr": "Échec de mise à jour des favoris :"
+  },
+  "اختيار العميل": {
+    "ar": "اختيار العميل",
+    "en": "Select Customer",
+    "fr": "Sélectionner le client"
+  },
+  "ابحث بالاسم أو الهاتف…": {
+    "ar": "ابحث بالاسم أو الهاتف…",
+    "en": "Search by name or phone...",
+    "fr": "Rechercher par nom ou téléphone..."
+  },
+  "بدون هاتف": {
+    "ar": "بدون هاتف",
+    "en": "No phone",
+    "fr": "Sans téléphone"
+  },
+  "خطأ في البحث:": {
+    "ar": "خطأ في البحث:",
+    "en": "Search error:",
+    "fr": "Erreur de recherche :"
+  },
+  "المتغير غير موجود": {
+    "ar": "المتغير غير موجود",
+    "en": "Variant not found",
+    "fr": "Variante introuvable"
+  },
+  "لا يمكن إضافة المزيد: المتوفر من (": {
+    "ar": "لا يمكن إضافة المزيد: المتوفر من (",
+    "en": "Cannot add more: Available stock for (",
+    "fr": "Ajout impossible : Stock disponible pour ("
+  },
+  ") هو (": {
+    "ar": ") هو (",
+    "en": ") is (",
+    "fr": ") est ("
+  },
+  ") فقط": {
+    "ar": ") فقط",
+    "en": ") only",
+    "fr": ") uniquement"
+  },
+  "المقاس/اللون غير متوفر في المخزون": {
+    "ar": "المقاس/اللون غير متوفر في المخزون",
+    "en": "This size/color is out of stock",
+    "fr": "Cette taille/couleur est en rupture"
+  },
+  "اختر المقاس / اللون": {
+    "ar": "اختر المقاس / اللون",
+    "en": "Select Size / Color",
+    "fr": "Choisir Taille / Couleur"
+  },
+  "اختر المقاس / اللون المناسب": {
+    "ar": "اختر المقاس / اللون المناسب",
+    "en": "Choose appropriate size / color",
+    "fr": "Choisissez la taille ou couleur souhaitée"
+  },
+  "• نفد المخزون": {
+    "ar": "• نفد المخزون",
+    "en": "• Out of stock",
+    "fr": "• Rupture"
+  },
+  "تحديد كمية المتغير": {
+    "ar": "تحديد كمية المتغير",
+    "en": "Specify Variant Quantity",
+    "fr": "Spécifier la quantité de la variante"
+  },
+  "• المتاح:": {
+    "ar": "• المتاح:",
+    "en": "• Available:",
+    "fr": "• Disponible :"
+  },
+  "الكمية (": {
+    "ar": "الكمية (",
+    "en": "Qty (",
+    "fr": "Qté ("
+  },
+  "أدخل رقمًا صحيحًا": {
+    "ar": "أدخل رقمًا صحيحًا",
+    "en": "Enter a valid number",
+    "fr": "Entrez un nombre valide"
+  },
+  "أدخل رقمًا أكبر من صفر": {
+    "ar": "أدخل رقمًا أكبر من صفر",
+    "en": "Enter a number greater than zero",
+    "fr": "Entrez un nombre supérieur à zéro"
+  },
+  "الكمية المطلوبة أكبر من المتاح (": {
+    "ar": "الكمية المطلوبة أكبر من المتاح (",
+    "en": "Requested qty exceeds available stock (",
+    "fr": "Quantité demandée supérieure au stock ("
+  },
+  "وصلت للكمية القصوى المتوفرة من هذا المقاس (": {
+    "ar": "وصلت للكمية القصوى المتوفرة من هذا المقاس (",
+    "en": "Maximum available quantity reached for this size (",
+    "fr": "Quantité maximale atteinte pour cette taille ("
+  },
+  "إضافة إلى السلة": {
+    "ar": "إضافة إلى السلة",
+    "en": "Add to Cart",
+    "fr": "Ajouter au panier"
+  },
+  "تحديد كمية المنتج": {
+    "ar": "تحديد كمية المنتج",
+    "en": "Set Product Quantity",
+    "fr": "Définir la quantité du produit"
+  },
+  "أدخل الوزن / الكمية": {
+    "ar": "أدخل الوزن / الكمية",
+    "en": "Enter Weight / Quantity",
+    "fr": "Entrez le poids / la quantité"
+  },
+  "أدخل السعر": {
+    "ar": "أدخل السعر",
+    "en": "Enter Price",
+    "fr": "Entrez le prix"
+  },
+  "الوزن / الكمية": {
+    "ar": "الوزن / الكمية",
+    "en": "Weight / Quantity",
+    "fr": "Poids / Quantité"
+  },
+  "الوزن / الكمية (": {
+    "ar": "الوزن / الكمية (",
+    "en": "Weight / Qty (",
+    "fr": "Poids / Qté ("
+  },
+  "مثال: 0.075": {
+    "ar": "مثال: 0.075",
+    "en": "e.g. 0.075",
+    "fr": "ex. 0,075"
+  },
+  "= 75 غرام إذا كانت الوحدة كغ": {
+    "ar": "= 75 غرام إذا كانت الوحدة كغ",
+    "en": "= 75g when unit is kg",
+    "fr": "= 75g si l'unité est kg"
+  },
+  "أدخل الكمية المطلوبة بوحدة": {
+    "ar": "أدخل الكمية المطلوبة بوحدة",
+    "en": "Enter requested quantity in unit",
+    "fr": "Saisissez la quantité demandée en"
+  },
+  "السعر الذي تريد شراءه (دج)": {
+    "ar": "السعر الذي تريد شراءه (دج)",
+    "en": "Purchase price you require (DZD)",
+    "fr": "Montant souhaité (DA)"
+  },
+  "مثال: أدخل 100 دج ليحسب البرنامج الكمية المقابلة تلقائيًا": {
+    "ar": "مثال: أدخل 100 دج ليحسب البرنامج الكمية المقابلة تلقائيًا",
+    "en": "e.g. enter 100 DZD to auto-calculate corresponding quantity",
+    "fr": "ex. saisissez 100 DA pour calculer la quantité correspondante"
+  },
+  "سعر المنتج يجب أن يكون أكبر من صفر": {
+    "ar": "سعر المنتج يجب أن يكون أكبر من صفر",
+    "en": "Product price must be greater than zero",
+    "fr": "Le prix du produit doit être supérieur à zéro"
+  },
+  "الكمية المطلوبة أكبر من المخزون المتاح (": {
+    "ar": "الكمية المطلوبة أكبر من المخزون المتاح (",
+    "en": "Requested qty exceeds current stock (",
+    "fr": "Quantité demandée supérieure au stock disponible ("
+  },
+  "الكمية الإجمالية في السلة تتجاوز المخزون": {
+    "ar": "الكمية الإجمالية في السلة تتجاوز المخزون",
+    "en": "Total quantity in cart exceeds current stock",
+    "fr": "La quantité totale dans le panier dépasse le stock"
+  },
+  "أدخل رقمًا صحيحًا، مثل 0.075 أو 100": {
+    "ar": "أدخل رقمًا صحيحًا، مثل 0.075 أو 100",
+    "en": "Enter a valid number, e.g. 0.075 or 100",
+    "fr": "Saisissez un nombre valide, ex. 0,075 ou 100"
+  },
+  "المنتج غير متوفر في المخزون": {
+    "ar": "المنتج غير متوفر في المخزون",
+    "en": "Product is out of stock",
+    "fr": "Produit en rupture de stock"
+  },
+  "وصلت للكمية المتوفرة في المخزون": {
+    "ar": "وصلت للكمية المتوفرة في المخزون",
+    "en": "Reached max available stock quantity",
+    "fr": "Stock maximum disponible atteint"
+  },
+  "تعذر تحميل الباقة": {
+    "ar": "تعذر تحميل الباقة",
+    "en": "Failed to load bundle",
+    "fr": "Échec du chargement du pack"
+  },
+  "ابدأ بمسح Barcode أو اختر منتجاً من الشبكة": {
+    "ar": "ابدأ بمسح Barcode أو اختر منتجاً من الشبكة",
+    "en": "Scan a barcode or choose an item from catalogue",
+    "fr": "Scannez un code-barres ou choisissez un produit"
+  },
+  "يحتوي:": {
+    "ar": "يحتوي:",
+    "en": "Contains:",
+    "fr": "Contient :"
+  },
+  "د.ج / بـاقة": {
+    "ar": "د.ج / بـاقة",
+    "en": "DZD / Bundle",
+    "fr": "DA / Pack"
+  },
+  "لا توجد كمية إضافية في المخزون": {
+    "ar": "لا توجد كمية إضافية في المخزون",
+    "en": "No additional stock available",
+    "fr": "Pas de quantité supplémentaire en stock"
+  },
+  "هل تريد مسح جميع المنتجات من السلة؟": {
+    "ar": "هل تريد مسح جميع المنتجات من السلة؟",
+    "en": "Clear all items from active cart?",
+    "fr": "Voulez-vous vider le panier en cours ?"
+  },
+  "تم مسح السلة": {
+    "ar": "تم مسح السلة",
+    "en": "Cart cleared",
+    "fr": "Panier vidé"
+  },
+  "إتمام البيع": {
+    "ar": "إتمام البيع",
+    "en": "Complete Sale",
+    "fr": "Finaliser la vente"
+  },
+  "اختر طريقة الدفع ثم أكد العملية": {
+    "ar": "اختر طريقة الدفع ثم أكد العملية",
+    "en": "Choose payment method and confirm checkout",
+    "fr": "Sélectionnez le mode de paiement puis validez"
+  },
+  "إجمالي الفاتورة": {
+    "ar": "إجمالي الفاتورة",
+    "en": "Invoice Total",
+    "fr": "Total de la facture"
+  },
+  "طريقة الدفع": {
+    "ar": "طريقة الدفع",
+    "en": "Payment Method",
+    "fr": "Mode de paiement"
+  },
+  "نقدي": {
+    "ar": "نقدي",
+    "en": "Cash",
+    "fr": "Espèces"
+  },
+  "بطاقة": {
+    "ar": "بطاقة",
+    "en": "Card",
+    "fr": "Carte bancaire"
+  },
+  "دفع جزئي": {
+    "ar": "دفع جزئي",
+    "en": "Partial Payment",
+    "fr": "Paiement partiel"
+  },
+  "دين كامل": {
+    "ar": "دين كامل",
+    "en": "Full Credit (Debt)",
+    "fr": "À crédit total"
+  },
+  "المبلغ المدفوع": {
+    "ar": "المبلغ المدفوع",
+    "en": "Amount Paid",
+    "fr": "Montant payé"
+  },
+  "عميل نقدي": {
+    "ar": "عميل نقدي",
+    "en": "Cash Customer",
+    "fr": "Client comptant"
+  },
+  "اكتب اسم العميل أو رقم الهاتف:": {
+    "ar": "اكتب اسم العميل أو رقم الهاتف:",
+    "en": "Type customer name or phone:",
+    "fr": "Tapez le nom du client ou son téléphone :"
+  },
+  "العميل غير موجود": {
+    "ar": "العميل غير موجود",
+    "en": "Customer not found",
+    "fr": "Client introuvable"
+  },
+  "اختيار / تغيير العميل": {
+    "ar": "اختيار / تغيير العميل",
+    "en": "Select / Change Customer",
+    "fr": "Sélectionner / Changer le client"
+  },
+  "الباقي": {
+    "ar": "الباقي",
+    "en": "Change Due",
+    "fr": "Monnaie à rendre"
+  },
+  "دين هذه الفاتورة": {
+    "ar": "دين هذه الفاتورة",
+    "en": "Receipt Credit Due",
+    "fr": "Créance sur ce ticket"
+  },
+  "رصيد العميل بعد العملية": {
+    "ar": "رصيد العميل بعد العملية",
+    "en": "Customer Balance after Sale",
+    "fr": "Solde client après opération"
+  },
+  "الدين الكامل يتطلب اختيار عميل": {
+    "ar": "الدين الكامل يتطلب اختيار عميل",
+    "en": "Credit sale requires selecting a customer",
+    "fr": "La vente à crédit requiert de choisir un client"
+  },
+  "أدخل مبلغًا صحيحًا": {
+    "ar": "أدخل مبلغًا صحيحًا",
+    "en": "Enter a valid amount",
+    "fr": "Entrez un montant valide"
+  },
+  "المبلغ لا يمكن أن يكون سالبًا": {
+    "ar": "المبلغ لا يمكن أن يكون سالبًا",
+    "en": "Amount cannot be negative",
+    "fr": "Le montant ne peut pas être négatif"
+  },
+  "استخدم دفعًا جزئيًا إذا كان المبلغ أقل من الإجمالي": {
+    "ar": "استخدم دفعًا جزئيًا إذا كان المبلغ أقل من الإجمالي",
+    "en": "Use partial payment if paying less than total",
+    "fr": "Utilisez le paiement partiel si le montant est inférieur"
+  },
+  "للدفع الكامل اختر نقدي أو بطاقة": {
+    "ar": "للدفع الكامل اختر نقدي أو بطاقة",
+    "en": "For full settlement choose Cash or Card",
+    "fr": "Pour paiement intégral choisissez Espèces ou Carte"
+  },
+  "تسجيل الدين معطل من الإعدادات": {
+    "ar": "تسجيل الدين معطل من الإعدادات",
+    "en": "Credit transactions disabled in settings",
+    "fr": "Vente à crédit désactivée dans les paramètres"
+  },
+  "يجب اختيار عميل لتسجيل الدين": {
+    "ar": "يجب اختيار عميل لتسجيل الدين",
+    "en": "Must select a customer to record credit",
+    "fr": "Vous devez sélectionner un client pour le crédit"
+  },
+  "فشل إنشاء الفاتورة:": {
+    "ar": "فشل إنشاء الفاتورة:",
+    "en": "Failed to create invoice:",
+    "fr": "Échec de génération de facture :"
+  },
+  "فشلت عملية البيع:": {
+    "ar": "فشلت عملية البيع:",
+    "en": "Checkout transaction failed:",
+    "fr": "Échec de la vente :"
+  },
+  "• الإجمالي": {
+    "ar": "• الإجمالي",
+    "en": "• Total",
+    "fr": "• Total"
+  },
+  "بيع بالدين": {
+    "ar": "بيع بالدين",
+    "en": "Credit sale",
+    "fr": "Vente à crédit"
+  },
+  "تم البيع، لكن تعذر حفظ سجل الدين:": {
+    "ar": "تم البيع، لكن تعذر حفظ سجل الدين:",
+    "en": "Sale recorded, but failed to log debt entry:",
+    "fr": "Vente réussie, mais échec d'enregistrement de la dette :"
+  },
+  "طباعة الفاتورة": {
+    "ar": "طباعة الفاتورة",
+    "en": "Print Receipt",
+    "fr": "Imprimer le ticket"
+  },
+  "تمت عملية البيع بنجاح. هل تريد طباعة الفاتورة الآن؟ رقم الفاتورة:": {
+    "ar": "تمت عملية البيع بنجاح. هل تريد طباعة الفاتورة الآن؟ رقم الفاتورة:",
+    "en": "Sale completed. Do you want to print the receipt now? Receipt #:",
+    "fr": "Vente réussie. Voulez-vous imprimer le ticket maintenant ? Ticket N° :"
+  },
+  "تم البيع. الدين المسجل:": {
+    "ar": "تم البيع. الدين المسجل:",
+    "en": "Sale complete. Credit recorded:",
+    "fr": "Vente validée. Dette enregistrée :"
+  },
+  "تم البيع. الباقي:": {
+    "ar": "تم البيع. الباقي:",
+    "en": "Sale complete. Change due:",
+    "fr": "Vente validée. Monnaie rendue :"
+  },
+  "تمت عملية البيع بنجاح": {
+    "ar": "تمت عملية البيع بنجاح",
+    "en": "Sale completed successfully",
+    "fr": "Vente effectuée avec succès"
+  },
+  "تأكيد البيع": {
+    "ar": "تأكيد البيع",
+    "en": "Confirm Checkout",
+    "fr": "Confirmer l'encaissement"
+  },
+  "العملاء": {
+    "ar": "العملاء",
+    "en": "Customers",
+    "fr": "Clients"
+  },
+  "إدارة العملاء والديون": {
+    "ar": "إدارة العملاء والديون",
+    "en": "Manage Customers and Credits",
+    "fr": "Gestion des clients et des crédits"
+  },
+  "إدارة العملاء والديون والمدفوعات": {
+    "ar": "إدارة العملاء والديون والمدفوعات",
+    "en": "Manage Customers, Debts and Payments",
+    "fr": "Gestion des clients, créances et versements"
+  },
+  "عليهم ديون": {
+    "ar": "عليهم ديون",
+    "en": "with debts",
+    "fr": "endettés"
+  },
+  "💰 تسديد ديون العملاء": {
+    "ar": "💰 تسديد ديون العملاء",
+    "en": "💰 Customer Debt Settlements",
+    "fr": "💰 Règlement des créances clients"
+  },
+  "إجمالي الديون المستحقة:": {
+    "ar": "إجمالي الديون المستحقة:",
+    "en": "Total Outstanding Debt:",
+    "fr": "Total des créances dues :"
+  },
+  "د.ج • العملاء المدينون:": {
+    "ar": "د.ج • العملاء المدينون:",
+    "en": "DZD • Debtor Customers:",
+    "fr": "DA • Clients débiteurs :"
+  },
+  "تسديد دين ←": {
+    "ar": "تسديد دين ←",
+    "en": "Pay Debt ←",
+    "fr": "Régler dette ←"
+  },
+  "ابحث باسم العميل أو الهاتف...": {
+    "ar": "ابحث باسم العميل أو الهاتف...",
+    "en": "Search by customer name or phone...",
+    "fr": "Rechercher par nom de client ou téléphone..."
+  },
+  "إضافة عميل": {
+    "ar": "إضافة عميل",
+    "en": "Add Customer",
+    "fr": "Ajouter un client"
+  },
+  "تسديد دين": {
+    "ar": "تسديد دين",
+    "en": "Pay Debt",
+    "fr": "Règlement de dette"
+  },
+  "تعذر تحميل العملاء": {
+    "ar": "تعذر تحميل العملاء",
+    "en": "Failed to load customers",
+    "fr": "Échec du chargement des clients"
+  },
+  "لا يوجد عملاء": {
+    "ar": "لا يوجد عملاء",
+    "en": "No customers found",
+    "fr": "Aucun client"
+  },
+  "جرّب تغيير البحث أو أضف عميلًا جديدًا": {
+    "ar": "جرّب تغيير البحث أو أضف عميلًا جديدًا",
+    "en": "Try changing search or add a new customer",
+    "fr": "Essayez une autre recherche ou ajoutez un client"
+  },
+  "الهاتف": {
+    "ar": "الهاتف",
+    "en": "Phone",
+    "fr": "Téléphone"
+  },
+  "الرصيد": {
+    "ar": "الرصيد",
+    "en": "Balance",
+    "fr": "Solde"
+  },
+  "عليه دين": {
+    "ar": "عليه دين",
+    "en": "Has debt",
+    "fr": "Endetté"
+  },
+  "مسدد": {
+    "ar": "مسدد",
+    "en": "Settled",
+    "fr": "Réglé"
+  },
+  "تسديد الدين": {
+    "ar": "تسديد الدين",
+    "en": "Settle Debt",
+    "fr": "Règlement de dette"
+  },
+  "تسديد": {
+    "ar": "تسديد",
+    "en": "Pay",
+    "fr": "Régler"
+  },
+  "عرض": {
+    "ar": "عرض",
+    "en": "View",
+    "fr": "Voir"
+  },
+  "تفاصيل العميل": {
+    "ar": "تفاصيل العميل",
+    "en": "Customer Profile",
+    "fr": "Fiche client"
+  },
+  "الهاتف:": {
+    "ar": "الهاتف:",
+    "en": "Phone:",
+    "fr": "Téléphone :"
+  },
+  "غير مسجل": {
+    "ar": "غير مسجل",
+    "en": "Not registered",
+    "fr": "Non renseigné"
+  },
+  "الرصيد المستحق": {
+    "ar": "الرصيد المستحق",
+    "en": "Balance Due",
+    "fr": "Solde dû"
+  },
+  "يمكن تسجيل دفعة مباشرة من هنا.": {
+    "ar": "يمكن تسجيل دفعة مباشرة من هنا.",
+    "en": "A payment can be registered directly here.",
+    "fr": "Un versement peut être enregistré ici directement."
+  },
+  "لا يوجد دين حالي على هذا العميل.": {
+    "ar": "لا يوجد دين حالي على هذا العميل.",
+    "en": "This customer has no outstanding debt.",
+    "fr": "Ce client n'a aucune dette en cours."
+  },
+  "سجل الديون والمدفوعات": {
+    "ar": "سجل الديون والمدفوعات",
+    "en": "Debts & Payments History",
+    "fr": "Historique des dettes et versements"
+  },
+  "اختيار في نقطة البيع": {
+    "ar": "اختيار في نقطة البيع",
+    "en": "Select in POS",
+    "fr": "Sélectionner en caisse"
+  },
+  "تعذر تحميل سجل الديون:": {
+    "ar": "تعذر تحميل سجل الديون:",
+    "en": "Failed to load debt log:",
+    "fr": "Échec du chargement du registre des dettes :"
+  },
+  "إجمالي الديون المسجلة": {
+    "ar": "إجمالي الديون المسجلة",
+    "en": "Total Recorded Debt",
+    "fr": "Total des dettes inscrites"
+  },
+  "إجمالي المدفوعات المسجلة": {
+    "ar": "إجمالي المدفوعات المسجلة",
+    "en": "Total Recorded Payments",
+    "fr": "Total des paiements reçus"
+  },
+  "الدين الحالي": {
+    "ar": "الدين الحالي",
+    "en": "Current Debt",
+    "fr": "Dette actuelle"
+  },
+  "لا توجد عمليات مسجلة في سجل الديون بعد": {
+    "ar": "لا توجد عمليات مسجلة في سجل الديون بعد",
+    "en": "No entries logged in debt ledger yet",
+    "fr": "Aucune opération dans le journal des dettes"
+  },
+  "الرصيد الحالي محفوظ في حساب العميل. العمليات الجديدة ستظهر هنا تلقائيًا.": {
+    "ar": "الرصيد الحالي محفوظ في حساب العميل. العمليات الجديدة ستظهر هنا تلقائيًا.",
+    "en": "Current balance is preserved. New transactions will appear automatically.",
+    "fr": "Le solde actuel est conservé. Les nouvelles opérations apparaîtront ici."
+  },
+  "العملية": {
+    "ar": "العملية",
+    "en": "Transaction",
+    "fr": "Opération"
+  },
+  "البيان": {
+    "ar": "البيان",
+    "en": "Description",
+    "fr": "Libellé"
+  },
+  "المرجع": {
+    "ar": "المرجع",
+    "en": "Reference",
+    "fr": "Référence"
+  },
+  "دين / بيع": {
+    "ar": "دين / بيع",
+    "en": "Debt / Sale",
+    "fr": "Dette / Vente"
+  },
+  "💰 تسديد المتبقي": {
+    "ar": "💰 تسديد المتبقي",
+    "en": "💰 Settle Remaining",
+    "fr": "💰 Régler le reste"
+  },
+  "فاتورة بيع": {
+    "ar": "فاتورة بيع",
+    "en": "Sales Receipt",
+    "fr": "Ticket de caisse"
+  },
+  "رقم الفاتورة:": {
+    "ar": "رقم الفاتورة:",
+    "en": "Invoice #:",
+    "fr": "N° Facture :"
+  },
+  "التاريخ:": {
+    "ar": "التاريخ:",
+    "en": "Date:",
+    "fr": "Date :"
+  },
+  "العميل:": {
+    "ar": "العميل:",
+    "en": "Customer:",
+    "fr": "Client :"
+  },
+  "العنوان:": {
+    "ar": "العنوان:",
+    "en": "Address:",
+    "fr": "Adresse :"
+  },
+  "المجموع": {
+    "ar": "المجموع",
+    "en": "Total",
+    "fr": "Total"
+  },
+  "خصم المنتج": {
+    "ar": "خصم المنتج",
+    "en": "Item discount",
+    "fr": "Remise article"
+  },
+  "مضمّن في الخصم أعلاه": {
+    "ar": "مضمّن في الخصم أعلاه",
+    "en": "included in discount above",
+    "fr": "inclus dans la remise ci-dessus"
+  },
+  "الصافي": {
+    "ar": "الصافي",
+    "en": "Net",
+    "fr": "Net"
+  },
+  "المدفوع": {
+    "ar": "المدفوع",
+    "en": "Paid",
+    "fr": "Payé"
+  },
+  "الدين المتبقي": {
+    "ar": "الدين المتبقي",
+    "en": "Remaining Debt",
+    "fr": "Dette restante"
+  },
+  "تم إرسال الفاتورة إلى الطابعة": {
+    "ar": "تم إرسال الفاتورة إلى الطابعة",
+    "en": "Receipt sent to printer",
+    "fr": "Ticket envoyé à l'imprimante"
+  },
+  "تم فتح الفاتورة. اختر طباعة من عارض PDF.": {
+    "ar": "تم فتح الفاتورة. اختر طباعة من عارض PDF.",
+    "en": "Receipt opened. Choose print from your PDF reader.",
+    "fr": "Facture ouverte. Utilisez la commande imprimer de votre lecteur PDF."
+  },
+  "تم حفظ الفاتورة لكن تعذر فتحها:": {
+    "ar": "تم حفظ الفاتورة لكن تعذر فتحها:",
+    "en": "Invoice saved, but could not be opened:",
+    "fr": "Facture enregistrée mais impossible de l'ouvrir :"
+  },
+  "تم حفظ الفاتورة:": {
+    "ar": "تم حفظ الفاتورة:",
+    "en": "Invoice saved:",
+    "fr": "Facture enregistrée :"
+  },
+  "تعذر طباعة فاتورة 80mm:": {
+    "ar": "تعذر طباعة فاتورة 80mm:",
+    "en": "Failed to print 80mm receipt:",
+    "fr": "Échec d'impression ticket 80mm :"
+  },
+  "تعذر طباعة فاتورة A4:": {
+    "ar": "تعذر طباعة فاتورة A4:",
+    "en": "Failed to print A4 invoice:",
+    "fr": "Échec d'impression facture A4 :"
+  },
+  "تفاصيل الفاتورة": {
+    "ar": "تفاصيل الفاتورة",
+    "en": "Invoice Details",
+    "fr": "Détails de la facture"
+  },
+  "الإجمالي قبل الخصم": {
+    "ar": "الإجمالي قبل الخصم",
+    "en": "Total Before Discount",
+    "fr": "Total avant remise"
+  },
+  "الباقي/المتبقي": {
+    "ar": "الباقي/المتبقي",
+    "en": "Remaining Balance",
+    "fr": "Reste dû"
+  },
+  "سعر الوحدة": {
+    "ar": "سعر الوحدة",
+    "en": "Unit Price",
+    "fr": "Prix unitaire"
+  },
+  "منتج محذوف": {
+    "ar": "منتج محذوف",
+    "en": "Deleted Product",
+    "fr": "Produit supprimé"
+  },
+  "🧾 طباعة 80mm": {
+    "ar": "🧾 طباعة 80mm",
+    "en": "🧾 Print 80mm",
+    "fr": "🧾 Imprimer 80mm"
+  },
+  "📄 طباعة A4": {
+    "ar": "📄 طباعة A4",
+    "en": "📄 Print A4",
+    "fr": "📄 Imprimer A4"
+  },
+  "💰 تسديد المتبقي (": {
+    "ar": "💰 تسديد المتبقي (",
+    "en": "💰 Settle Remaining (",
+    "fr": "💰 Régler le reste ("
+  },
+  "د.ج)": {
+    "ar": "د.ج)",
+    "en": "DZD)",
+    "fr": "DA)"
+  },
+  "🧾 سجل الفواتير والوصولات": {
+    "ar": "🧾 سجل الفواتير والوصولات",
+    "en": "🧾 Receipts & Invoices Register",
+    "fr": "🧾 Registre des tickets et factures"
+  },
+  "سجل الفواتير والوصولات": {
+    "ar": "سجل الفواتير والوصولات",
+    "en": "Receipts & Invoices History",
+    "fr": "Historique des tickets et factures"
+  },
+  "ابحث برقم الوصل...": {
+    "ar": "ابحث برقم الوصل...",
+    "en": "Search by receipt number...",
+    "fr": "Rechercher par n° de ticket..."
+  },
+  "كل الأجهزة": {
+    "ar": "كل الأجهزة",
+    "en": "All Registers",
+    "fr": "Tous les postes"
+  },
+  "الجهاز:": {
+    "ar": "الجهاز:",
+    "en": "Register:",
+    "fr": "Poste :"
+  },
+  "سجل الفواتير": {
+    "ar": "سجل الفواتير",
+    "en": "Invoices Ledger",
+    "fr": "Registre des factures"
+  },
+  "استخدم زر '⟳ تحديث' داخل النافذة": {
+    "ar": "استخدم زر '⟳ تحديث' داخل النافذة",
+    "en": "Use the '⟳ Refresh' button inside dialog",
+    "fr": "Utilisez le bouton '⟳ Actualiser' dans la fenêtre"
+  },
+  "لا توجد فواتير مطابقة": {
+    "ar": "لا توجد فواتير مطابقة",
+    "en": "No matching receipts found",
+    "fr": "Aucun ticket correspondant"
+  },
+  "اختر وصلًا لعرض تفاصيله": {
+    "ar": "اختر وصلًا لعرض تفاصيله",
+    "en": "Select a receipt to view details",
+    "fr": "Sélectionnez un ticket pour afficher les détails"
+  },
+  "رقم الوصل": {
+    "ar": "رقم الوصل",
+    "en": "Receipt #",
+    "fr": "N° Ticket"
+  },
+  "الجهاز": {
+    "ar": "الجهاز",
+    "en": "Device / Register",
+    "fr": "Poste"
+  },
+  "الزبون": {
+    "ar": "الزبون",
+    "en": "Customer",
+    "fr": "Client"
+  },
+  "وصل:": {
+    "ar": "وصل:",
+    "en": "Receipt:",
+    "fr": "Ticket :"
+  },
+  "لا توجد بنود لهذا الوصل": {
+    "ar": "لا توجد بنود لهذا الوصل",
+    "en": "No items in this receipt",
+    "fr": "Aucun article pour ce ticket"
+  },
+  "(منتج محذوف)": {
+    "ar": "(منتج محذوف)",
+    "en": "(deleted item)",
+    "fr": "(produit supprimé)"
+  },
+  "الإجمالي:": {
+    "ar": "الإجمالي:",
+    "en": "Total:",
+    "fr": "Total :"
+  },
+  "🧾 إعادة الطباعة": {
+    "ar": "🧾 إعادة الطباعة",
+    "en": "🧾 Reprint",
+    "fr": "🧾 Réimprimer"
+  },
+  "✕ إلغاء الوصل": {
+    "ar": "✕ إلغاء الوصل",
+    "en": "✕ Void Receipt",
+    "fr": "✕ Annuler le ticket"
+  },
+  "تأكيد إلغاء الوصل": {
+    "ar": "تأكيد إلغاء الوصل",
+    "en": "Confirm Receipt Cancellation",
+    "fr": "Confirmer l'annulation du ticket"
+  },
+  "هل تريد إلغاء الوصل": {
+    "ar": "هل تريد إلغاء الوصل",
+    "en": "Do you want to void receipt",
+    "fr": "Voulez-vous annuler le ticket"
+  },
+  "نهائيًا؟ سيتم استرجاع المنتجات إلى المخزون ولا يمكن التراجع عن هذه العملية.": {
+    "ar": "نهائيًا؟ سيتم استرجاع المنتجات إلى المخزون ولا يمكن التراجع عن هذه العملية.",
+    "en": "permanently? Items will be returned to stock. Irreversible action.",
+    "fr": "définitivement ? Les articles réintégreront le stock. Action irréversible."
+  },
+  "تم إلغاء الوصل": {
+    "ar": "تم إلغاء الوصل",
+    "en": "Receipt voided",
+    "fr": "Ticket annulé"
+  },
+  "واسترجاع المنتجات": {
+    "ar": "واسترجاع المنتجات",
+    "en": "and items restocked",
+    "fr": "et articles réintégrés"
+  },
+  "فشل إلغاء الوصل": {
+    "ar": "فشل إلغاء الوصل",
+    "en": "Failed to void receipt",
+    "fr": "Échec de l'annulation du ticket"
+  },
+  "+ إضافة زبون جديد": {
+    "ar": "+ إضافة زبون جديد",
+    "en": "+ Add New Customer",
+    "fr": "+ Nouveau client"
+  },
+  "الاسم الكامل *": {
+    "ar": "الاسم الكامل *",
+    "en": "Full Name *",
+    "fr": "Nom complet *"
+  },
+  "مثال: أحمد بن يوسف": {
+    "ar": "مثال: أحمد بن يوسف",
+    "en": "e.g. Ahmed Ben Youssef",
+    "fr": "ex. Ahmed Ben Youssef"
+  },
+  "رقم الهاتف": {
+    "ar": "رقم الهاتف",
+    "en": "Phone Number",
+    "fr": "Numéro de téléphone"
+  },
+  "مثال: 0550123456": {
+    "ar": "مثال: 0550123456",
+    "en": "e.g. 0550123456",
+    "fr": "ex. 0550123456"
+  },
+  "العنوان أو المنطقة": {
+    "ar": "العنوان أو المنطقة",
+    "en": "Address or City",
+    "fr": "Adresse ou Ville"
+  },
+  "مثال: وسط المدينة": {
+    "ar": "مثال: وسط المدينة",
+    "en": "e.g. Downtown",
+    "fr": "ex. Centre-ville"
+  },
+  "سقف الدين المسموح به (د.ج)": {
+    "ar": "سقف الدين المسموح به (د.ج)",
+    "en": "Max Allowed Debt Limit (DZD)",
+    "fr": "Plafond de dette autorisé (DA)"
+  },
+  "0 يعني غير محدد": {
+    "ar": "0 يعني غير محدد",
+    "en": "0 means unlimited",
+    "fr": "0 signifie illimité"
+  },
+  "اسم الزبون مطلوب": {
+    "ar": "اسم الزبون مطلوب",
+    "en": "Customer name is required",
+    "fr": "Le nom du client est requis"
+  },
+  "✓ تمت إضافة الزبون": {
+    "ar": "✓ تمت إضافة الزبون",
+    "en": "✓ Customer added",
+    "fr": "✓ Client ajouté"
+  },
+  "تعذر تحميل العملاء:": {
+    "ar": "تعذر تحميل العملاء:",
+    "en": "Failed to load customers:",
+    "fr": "Échec du chargement des clients :"
+  },
+  "💰 تسديد دين عميل": {
+    "ar": "💰 تسديد دين عميل",
+    "en": "💰 Settle Customer Debt",
+    "fr": "💰 Règlement dette client"
+  },
+  "اختر العميل الذي تريد تسجيل دفعة له": {
+    "ar": "اختر العميل الذي تريد تسجيل دفعة له",
+    "en": "Choose debtor customer to record a payment for",
+    "fr": "Choisissez le client débiteur pour enregistrer un versement"
+  },
+  "لا يوجد عملاء عليهم ديون حاليًا": {
+    "ar": "لا يوجد عملاء عليهم ديون حاليًا",
+    "en": "No customers with outstanding debts currently",
+    "fr": "Aucun client endetté actuellement"
+  },
+  "تعذر قراءة بيانات العميل:": {
+    "ar": "تعذر قراءة بيانات العميل:",
+    "en": "Failed to read customer data:",
+    "fr": "Impossible de lire les données du client :"
+  },
+  "هذا العميل لا يملك دينًا مستحقًا": {
+    "ar": "هذا العميل لا يملك دينًا مستحقًا",
+    "en": "Customer has no outstanding balance",
+    "fr": "Ce client n'a aucune dette en cours"
+  },
+  "مبلغ التسديد": {
+    "ar": "مبلغ التسديد",
+    "en": "Payment Amount",
+    "fr": "Montant du règlement"
+  },
+  "مثال: 5000": {
+    "ar": "مثال: 5000",
+    "en": "e.g. 5000",
+    "fr": "ex. 5000"
+  },
+  "تسديد كامل": {
+    "ar": "تسديد كامل",
+    "en": "Pay in Full",
+    "fr": "Paiement intégral"
+  },
+  "المتبقي بعد التسديد:": {
+    "ar": "المتبقي بعد التسديد:",
+    "en": "Remaining after payment:",
+    "fr": "Reste après paiement :"
+  },
+  "المتبقي بعد التسديد: —": {
+    "ar": "المتبقي بعد التسديد: —",
+    "en": "Remaining after payment: —",
+    "fr": "Reste après paiement : —"
+  },
+  "المبلغ غير صالح": {
+    "ar": "المبلغ غير صالح",
+    "en": "Invalid amount",
+    "fr": "Montant non valide"
+  },
+  "المبلغ أكبر من الدين": {
+    "ar": "المبلغ أكبر من الدين",
+    "en": "Amount exceeds balance",
+    "fr": "Le montant dépasse la dette"
+  },
+  "تسديد دين عميل": {
+    "ar": "تسديد دين عميل",
+    "en": "Customer Debt Payment",
+    "fr": "Paiement de dette client"
+  },
+  "أدخل مبلغًا أكبر من صفر": {
+    "ar": "أدخل مبلغًا أكبر من صفر",
+    "en": "Enter an amount greater than zero",
+    "fr": "Entrez un montant supérieur à zéro"
+  },
+  "لا يمكن تسديد أكثر من الدين الحالي (": {
+    "ar": "لا يمكن تسديد أكثر من الدين الحالي (",
+    "en": "Cannot settle more than outstanding balance (",
+    "fr": "Impossible de régler plus que la dette en cours ("
+  },
+  "فشل تسجيل التسديد:": {
+    "ar": "فشل تسجيل التسديد:",
+    "en": "Failed to log payment:",
+    "fr": "Échec d'enregistrement du règlement :"
+  },
+  "تم التسديد، لكن تعذر حفظ السجل:": {
+    "ar": "تم التسديد، لكن تعذر حفظ السجل:",
+    "en": "Payment completed, but failed to save history:",
+    "fr": "Paiement effectué, mais historique non sauvegardé :"
+  },
+  "تم تسديد دين": {
+    "ar": "تم تسديد دين",
+    "en": "Debt settled for",
+    "fr": "Dette réglée pour"
+  },
+  "بالكامل": {
+    "ar": "بالكامل",
+    "en": "in full",
+    "fr": "totalement"
+  },
+  "تم تسديد": {
+    "ar": "تم تسديد",
+    "en": "Paid",
+    "fr": "Versé"
+  },
+  "د.ج — المتبقي": {
+    "ar": "د.ج — المتبقي",
+    "en": "DZD — Remaining",
+    "fr": "DA — Reste"
+  },
+  "تأكيد التسديد": {
+    "ar": "تأكيد التسديد",
+    "en": "Confirm Payment",
+    "fr": "Confirmer le règlement"
+  },
+  "هذا الأسبوع": {
+    "ar": "هذا الأسبوع",
+    "en": "This Week",
+    "fr": "Cette semaine"
+  },
+  "هذا الشهر": {
+    "ar": "هذا الشهر",
+    "en": "This Month",
+    "fr": "Ce mois-ci"
+  },
+  "هذا العام": {
+    "ar": "هذا العام",
+    "en": "This Year",
+    "fr": "Cette année"
+  },
+  "حفظ تقرير Excel": {
+    "ar": "حفظ تقرير Excel",
+    "en": "Export Excel Report",
+    "fr": "Exporter en Excel"
+  },
+  "حفظ تقرير PDF": {
+    "ar": "حفظ تقرير PDF",
+    "en": "Export PDF Report",
+    "fr": "Exporter en PDF"
+  },
+  "حفظ التقرير CSV": {
+    "ar": "حفظ التقرير CSV",
+    "en": "Export CSV Report",
+    "fr": "Exporter en CSV"
+  },
+  "ملخص التقرير": {
+    "ar": "ملخص التقرير",
+    "en": "Report Summary",
+    "fr": "Résumé du rapport"
+  },
+  "تقرير Supermarket Pro": {
+    "ar": "تقرير Supermarket Pro",
+    "en": "Supermarket Pro Report",
+    "fr": "Rapport Supermarket Pro"
+  },
+  "عدد الفواتير": {
+    "ar": "عدد الفواتير",
+    "en": "Invoice Count",
+    "fr": "Nombre de factures"
+  },
+  "أعلى فاتورة": {
+    "ar": "أعلى فاتورة",
+    "en": "Highest Ticket",
+    "fr": "Plus gros ticket"
+  },
+  "أقل فاتورة": {
+    "ar": "أقل فاتورة",
+    "en": "Lowest Ticket",
+    "fr": "Plus petit ticket"
+  },
+  "تم إنشاء التقرير": {
+    "ar": "تم إنشاء التقرير",
+    "en": "Report Generated",
+    "fr": "Rapport généré"
+  },
+  "الفواتير": {
+    "ar": "الفواتير",
+    "en": "Invoices",
+    "fr": "Factures"
+  },
+  "الأكثر مبيعاً": {
+    "ar": "الأكثر مبيعاً",
+    "en": "Top Sellers",
+    "fr": "Meilleures ventes"
+  },
+  "الإيراد": {
+    "ar": "الإيراد",
+    "en": "Revenue",
+    "fr": "Revenu"
+  },
+  "تم تصدير التقرير الاحترافي إلى:": {
+    "ar": "تم تصدير التقرير الاحترافي إلى:",
+    "en": "Professional report exported to:",
+    "fr": "Rapport professionnel exporté vers :"
+  },
+  "مكتبة Excel غير موجودة": {
+    "ar": "مكتبة Excel غير موجودة",
+    "en": "Excel module missing",
+    "fr": "Module Excel manquant"
+  },
+  "خطأ في التصدير": {
+    "ar": "خطأ في التصدير",
+    "en": "Export Error",
+    "fr": "Erreur d'exportation"
+  },
+  "تعذر إنشاء ملف Excel:": {
+    "ar": "تعذر إنشاء ملف Excel:",
+    "en": "Failed to create Excel file:",
+    "fr": "Impossible de créer le fichier Excel :"
+  },
+  "تقرير المبيعات": {
+    "ar": "تقرير المبيعات",
+    "en": "Sales Report",
+    "fr": "Rapport des ventes"
+  },
+  "تم تصدير CSV:": {
+    "ar": "تم تصدير CSV:",
+    "en": "CSV exported:",
+    "fr": "CSV exporté :"
+  },
+  "تعذر إنشاء CSV:": {
+    "ar": "تعذر إنشاء CSV:",
+    "en": "Could not generate CSV:",
+    "fr": "Impossible de générer le CSV :"
+  },
+  "تقرير المبيعات -": {
+    "ar": "تقرير المبيعات -",
+    "en": "Sales Report -",
+    "fr": "Rapport des ventes -"
+  },
+  "تقرير المبيعات والأداء": {
+    "ar": "تقرير المبيعات والأداء",
+    "en": "Sales & Performance Report",
+    "fr": "Rapport des ventes et performances"
+  },
+  "الفترة:": {
+    "ar": "الفترة:",
+    "en": "Period:",
+    "fr": "Période :"
+  },
+  "• تاريخ الإنشاء:": {
+    "ar": "• تاريخ الإنشاء:",
+    "en": "• Created on:",
+    "fr": "• Créé le :"
+  },
+  "المنتجات الأكثر مبيعًا": {
+    "ar": "المنتجات الأكثر مبيعًا",
+    "en": "Top Selling Products",
+    "fr": "Produits les plus vendus"
+  },
+  "لا توجد بيانات للفترة المحددة": {
+    "ar": "لا توجد بيانات للفترة المحددة",
+    "en": "No data for selected period",
+    "fr": "Aucune donnée pour la période sélectionnée"
+  },
+  "المخزون الذي يحتاج إلى انتباه": {
+    "ar": "المخزون الذي يحتاج إلى انتباه",
+    "en": "Stock Requiring Attention",
+    "fr": "Stock nécessitant une attention"
+  },
+  "لا توجد منتجات منخفضة المخزون": {
+    "ar": "لا توجد منتجات منخفضة المخزون",
+    "en": "No low-stock items",
+    "fr": "Aucun produit en stock bas"
+  },
+  "لا توجد فواتير للفترة المحددة": {
+    "ar": "لا توجد فواتير للفترة المحددة",
+    "en": "No receipts in selected period",
+    "fr": "Aucune facture sur cette période"
+  },
+  "تم إنشاء تقرير PDF احترافي:": {
+    "ar": "تم إنشاء تقرير PDF احترافي:",
+    "en": "Professional PDF report generated:",
+    "fr": "Rapport PDF professionnel créé :"
+  },
+  "مكتبة PDF غير موجودة": {
+    "ar": "مكتبة PDF غير موجودة",
+    "en": "PDF library not found",
+    "fr": "Module PDF introuvable"
+  },
+  "تعذر إنشاء ملف PDF:": {
+    "ar": "تعذر إنشاء ملف PDF:",
+    "en": "Could not create PDF file:",
+    "fr": "Impossible de créer le fichier PDF :"
+  },
+  "خطأ في PDF": {
+    "ar": "خطأ في PDF",
+    "en": "PDF Error",
+    "fr": "Erreur PDF"
+  },
+  "💸 المصاريف والفواتير": {
+    "ar": "💸 المصاريف والفواتير",
+    "en": "💸 Expenses & Bills",
+    "fr": "💸 Dépenses & Factures"
+  },
+  "تسجيل ومتابعة المصاريف التشغيلية": {
+    "ar": "تسجيل ومتابعة المصاريف التشغيلية",
+    "en": "Record and monitor operating expenses",
+    "fr": "Enregistrer et suivre les dépenses opérationnelles"
+  },
+  "＋ تسجيل مصروف جديد": {
+    "ar": "＋ تسجيل مصروف جديد",
+    "en": "＋ Add New Expense",
+    "fr": "＋ Nouvelle dépense"
+  },
+  "📊 ملخص المصاريف": {
+    "ar": "📊 ملخص المصاريف",
+    "en": "📊 Expenses Summary",
+    "fr": "📊 Résumé des dépenses"
+  },
+  "إجمالي المصاريف": {
+    "ar": "إجمالي المصاريف",
+    "en": "Total Expenses",
+    "fr": "Total des dépenses"
+  },
+  "من الصندوق (نقد)": {
+    "ar": "من الصندوق (نقد)",
+    "en": "From Drawer (Cash)",
+    "fr": "Payé de caisse (Espèces)"
+  },
+  "سُدد خارجيًا": {
+    "ar": "سُدد خارجيًا",
+    "en": "Settled Externally",
+    "fr": "Payé en externe"
+  },
+  "عدد المصروفات": {
+    "ar": "عدد المصروفات",
+    "en": "Expense Count",
+    "fr": "Nombre de dépenses"
+  },
+  "العنوان": {
+    "ar": "العنوان",
+    "en": "Title",
+    "fr": "Titre"
+  },
+  "الفئة": {
+    "ar": "الفئة",
+    "en": "Category",
+    "fr": "Catégorie"
+  },
+  "ملاحظة": {
+    "ar": "ملاحظة",
+    "en": "Note",
+    "fr": "Note"
+  },
+  "لا توجد مصاريف مسجلة": {
+    "ar": "لا توجد مصاريف مسجلة",
+    "en": "No expenses recorded",
+    "fr": "Aucune dépense enregistrée"
+  },
+  "نقدًا من الصندوق": {
+    "ar": "نقدًا من الصندوق",
+    "en": "Cash from drawer",
+    "fr": "Espèces (caisse)"
+  },
+  "تسجيل مصروف جديد": {
+    "ar": "تسجيل مصروف جديد",
+    "en": "Record New Expense",
+    "fr": "Enregistrer une dépense"
+  },
+  "💸 تسجيل مصروف جديد": {
+    "ar": "💸 تسجيل مصروف جديد",
+    "en": "💸 Add New Expense",
+    "fr": "💸 Enregistrer une dépense"
+  },
+  "بيان أو عنوان المصروف *": {
+    "ar": "بيان أو عنوان المصروف *",
+    "en": "Expense Title / Description *",
+    "fr": "Libellé de la dépense *"
+  },
+  "مثال: فاتورة الكهرباء - شهر سبتمبر": {
+    "ar": "مثال: فاتورة الكهرباء - شهر سبتمبر",
+    "en": "e.g. Electricity bill - September",
+    "fr": "ex. Facture d'électricité - Septembre"
+  },
+  "فئة المصروف": {
+    "ar": "فئة المصروف",
+    "en": "Expense Category",
+    "fr": "Catégorie de dépense"
+  },
+  "كهرباء/ماء": {
+    "ar": "كهرباء/ماء",
+    "en": "Electricity/Water",
+    "fr": "Électricité/Eau"
+  },
+  "إيجار": {
+    "ar": "إيجار",
+    "en": "Rent",
+    "fr": "Loyer"
+  },
+  "رواتب": {
+    "ar": "رواتب",
+    "en": "Salaries",
+    "fr": "Salaires"
+  },
+  "مستلزمات": {
+    "ar": "مستلزمات",
+    "en": "Supplies",
+    "fr": "Fournitures"
+  },
+  "صيانة": {
+    "ar": "صيانة",
+    "en": "Maintenance",
+    "fr": "Maintenance"
+  },
+  "أخرى": {
+    "ar": "أخرى",
+    "en": "Other",
+    "fr": "Autre"
+  },
+  "المبلغ المطلوب دفعه (د.ج) *": {
+    "ar": "المبلغ المطلوب دفعه (د.ج) *",
+    "en": "Amount to pay (DZD) *",
+    "fr": "Montant à payer (DA) *"
+  },
+  "مثال: 15000": {
+    "ar": "مثال: 15000",
+    "en": "e.g. 15000",
+    "fr": "ex. 15000"
+  },
+  "يُدفع من الصندوق (نقدًا)": {
+    "ar": "يُدفع من الصندوق (نقدًا)",
+    "en": "Deducted from Cash Drawer (Cash)",
+    "fr": "Prélevé de la caisse (Espèces)"
+  },
+  "ملاحظات إضافية (اختياري)": {
+    "ar": "ملاحظات إضافية (اختياري)",
+    "en": "Additional Notes (Optional)",
+    "fr": "Remarques additionnelles (Optionnel)"
+  },
+  "أدخل أي تفاصيل إضافية هنا...": {
+    "ar": "أدخل أي تفاصيل إضافية هنا...",
+    "en": "Enter any additional details here...",
+    "fr": "Saisissez les détails complémentaires ici..."
+  },
+  "أدخل عنوان المصروف": {
+    "ar": "أدخل عنوان المصروف",
+    "en": "Enter expense title",
+    "fr": "Saisissez le titre de la dépense"
+  },
+  "أدخل مبلغ صحيح أكبر من صفر": {
+    "ar": "أدخل مبلغ صحيح أكبر من صفر",
+    "en": "Enter a valid amount greater than zero",
+    "fr": "Saisissez un montant supérieur à zéro"
+  },
+  "تم تسجيل المصروف بنجاح": {
+    "ar": "تم تسجيل المصروف بنجاح",
+    "en": "Expense recorded successfully",
+    "fr": "Dépense enregistrée avec succès"
+  },
+  "تعذر حفظ المصروف": {
+    "ar": "تعذر حفظ المصروف",
+    "en": "Failed to save expense",
+    "fr": "Impossible d'enregistrer la dépense"
+  },
+  "💾 حفظ المصروف": {
+    "ar": "💾 حفظ المصروف",
+    "en": "💾 Save Expense",
+    "fr": "💾 Enregistrer la dépense"
+  },
+  "حذف مصروف": {
+    "ar": "حذف مصروف",
+    "en": "Delete Expense",
+    "fr": "Supprimer la dépense"
+  },
+  "هل تريد حذف المصروف رقم": {
+    "ar": "هل تريد حذف المصروف رقم",
+    "en": "Delete expense record #",
+    "fr": "Supprimer la dépense N°"
+  },
+  "تم الحذف بنجاح": {
+    "ar": "تم الحذف بنجاح",
+    "en": "Deleted successfully",
+    "fr": "Supprimé avec succès"
+  },
+  "التقارير والإحصائيات": {
+    "ar": "التقارير والإحصائيات",
+    "en": "Reports & Analytics",
+    "fr": "Rapports & Statistiques"
+  },
+  "تحليل شامل للمبيعات والأرباح والمصاريف": {
+    "ar": "تحليل شامل للمبيعات والأرباح والمصاريف",
+    "en": "Comprehensive analysis of sales, profits, and expenses",
+    "fr": "Analyse complète des ventes, marges et dépenses"
+  },
+  "البارحة": {
+    "ar": "البارحة",
+    "en": "Yesterday",
+    "fr": "Hier"
+  },
+  "آخر 7 أيام": {
+    "ar": "آخر 7 أيام",
+    "en": "Last 7 Days",
+    "fr": "7 derniers jours"
+  },
+  "مخصص": {
+    "ar": "مخصص",
+    "en": "Custom",
+    "fr": "Personnalisé"
+  },
+  "من:": {
+    "ar": "من:",
+    "en": "From:",
+    "fr": "Du :"
+  },
+  "إلى:": {
+    "ar": "إلى:",
+    "en": "To:",
+    "fr": "Au :"
+  },
+  "📥 تصدير التقرير": {
+    "ar": "📥 تصدير التقرير",
+    "en": "📥 Export Report",
+    "fr": "📥 Exporter le rapport"
+  },
+  "أدخل تاريخ البداية والنهاية": {
+    "ar": "أدخل تاريخ البداية والنهاية",
+    "en": "Enter start and end date",
+    "fr": "Saisissez la date de début et de fin"
+  },
+  "خطأ في تحميل التقرير:": {
+    "ar": "خطأ في تحميل التقرير:",
+    "en": "Error loading report:",
+    "fr": "Erreur de chargement du rapport :"
+  },
+  "صافي المداخيل": {
+    "ar": "صافي المداخيل",
+    "en": "Net Revenue",
+    "fr": "Revenu net"
+  },
+  "تكلفة السلع المباعة": {
+    "ar": "تكلفة السلع المباعة",
+    "en": "Cost of Goods Sold (COGS)",
+    "fr": "Coût des marchandises vendues"
+  },
+  "المصاريف:": {
+    "ar": "المصاريف:",
+    "en": "Expenses:",
+    "fr": "Dépenses :"
+  },
+  "دج • هامش الربح": {
+    "ar": "دج • هامش الربح",
+    "en": "DZD • Profit Margin",
+    "fr": "DA • Marge bénéficiaire"
+  },
+  "💵 تسوية الصندوق النقدي": {
+    "ar": "💵 تسوية الصندوق النقدي",
+    "en": "💵 Cash Drawer Reconciliation",
+    "fr": "💵 Rapprochement de caisse"
+  },
+  "نقدي بالصندوق": {
+    "ar": "نقدي بالصندوق",
+    "en": "Cash in Drawer",
+    "fr": "Espèces en caisse"
+  },
+  "مبيعات بالدين": {
+    "ar": "مبيعات بالدين",
+    "en": "Credit Sales",
+    "fr": "Ventes à crédit"
+  },
+  "ديون محصلة": {
+    "ar": "ديون محصلة",
+    "en": "Debts Collected",
+    "fr": "Créances recouvrées"
+  },
+  "مرتجعات نقدية": {
+    "ar": "مرتجعات نقدية",
+    "en": "Cash Refunds",
+    "fr": "Remboursements espèces"
+  },
+  "مصاريف من الصندوق": {
+    "ar": "مصاريف من الصندوق",
+    "en": "Expenses Paid from Drawer",
+    "fr": "Dépenses payées de la caisse"
+  },
+  "🏆 أفضل المنتجات": {
+    "ar": "🏆 أفضل المنتجات",
+    "en": "🏆 Top Products",
+    "fr": "🏆 Meilleurs produits"
+  },
+  "🕒 أوقات الذروة وتوقع الازدحام": {
+    "ar": "🕒 أوقات الذروة وتوقع الازدحام",
+    "en": "🕒 Peak Hours & Traffic Forecast",
+    "fr": "🕒 Heures d'affluence & Prévisions"
+  },
+  "📦 المنتجات الراكدة": {
+    "ar": "📦 المنتجات الراكدة",
+    "en": "📦 Slow-Moving Stock",
+    "fr": "📦 Produits à faible rotation"
+  },
+  "🖥️ توزيع الأجهزة": {
+    "ar": "🖥️ توزيع الأجهزة",
+    "en": "🖥️ Register Breakdown",
+    "fr": "🖥️ Répartition par caisse"
+  },
+  "↩️ المرتجعات والإلغاء": {
+    "ar": "↩️ المرتجعات والإلغاء",
+    "en": "↩️ Returns & Voids",
+    "fr": "↩️ Retours & Annulations"
+  },
+  "📊 الأرباح التفصيلية": {
+    "ar": "📊 الأرباح التفصيلية",
+    "en": "📊 Profit Breakdown",
+    "fr": "📊 Analyse détaillée des marges"
+  },
+  "تصدير Excel (xlsx)": {
+    "ar": "تصدير Excel (xlsx)",
+    "en": "Export Excel (xlsx)",
+    "fr": "Exporter Excel (xlsx)"
+  },
+  "تصدير CSV (UTF-8)": {
+    "ar": "تصدير CSV (UTF-8)",
+    "en": "Export CSV (UTF-8)",
+    "fr": "Exporter CSV (UTF-8)"
+  },
+  "طباعة تقرير نهاية الوردية": {
+    "ar": "طباعة تقرير نهاية الوردية",
+    "en": "Print Shift-End Z-Report",
+    "fr": "Imprimer rapport Z de fin de poste"
+  },
+  "حفظ تقرير CSV": {
+    "ar": "حفظ تقرير CSV",
+    "en": "Save CSV Report",
+    "fr": "Enregistrer rapport CSV"
+  },
+  "تفريغ البيانات المالية": {
+    "ar": "تفريغ البيانات المالية",
+    "en": "Financial Summary",
+    "fr": "Récapitulatif financier"
+  },
+  "خصومات": {
+    "ar": "خصومات",
+    "en": "Discounts",
+    "fr": "Remises"
+  },
+  "المرتجعات": {
+    "ar": "المرتجعات",
+    "en": "Returns",
+    "fr": "Retours"
+  },
+  "الهامش": {
+    "ar": "الهامش",
+    "en": "Margin",
+    "fr": "Marge"
+  },
+  "العدد": {
+    "ar": "العدد",
+    "en": "Count",
+    "fr": "Nombre"
+  },
+  "المصاريف": {
+    "ar": "المصاريف",
+    "en": "Expenses",
+    "fr": "Dépenses"
+  },
+  "تسوية الصندوق النقدي": {
+    "ar": "تسوية الصندوق النقدي",
+    "en": "Cash Drawer Reconciliation",
+    "fr": "Rapprochement de caisse"
+  },
+  "النقد المحصل": {
+    "ar": "النقد المحصل",
+    "en": "Cash Collected",
+    "fr": "Espèces encaissées"
+  },
+  "الصافي النقدي في الصندوق": {
+    "ar": "الصافي النقدي في الصندوق",
+    "en": "Net Drawer Cash",
+    "fr": "Solde net en caisse"
+  },
+  "أفضل المنتجات مبيعاً": {
+    "ar": "أفضل المنتجات مبيعاً",
+    "en": "Top Selling Products",
+    "fr": "Produits les plus vendus"
+  },
+  "التكلفة": {
+    "ar": "التكلفة",
+    "en": "Cost",
+    "fr": "Coût"
+  },
+  "قائمة المصاريف": {
+    "ar": "قائمة المصاريف",
+    "en": "Expenses List",
+    "fr": "Liste des dépenses"
+  },
+  "نقدًا": {
+    "ar": "نقدًا",
+    "en": "Cash",
+    "fr": "Espèces"
+  },
+  "خارجي": {
+    "ar": "خارجي",
+    "en": "External",
+    "fr": "Externe"
+  },
+  "فواتير المرتجعات والإلغاء": {
+    "ar": "فواتير المرتجعات والإلغاء",
+    "en": "Returns & Voided Receipts",
+    "fr": "Retours et tickets annulés"
+  },
+  "الفواتير الملغاة": {
+    "ar": "الفواتير الملغاة",
+    "en": "Voided Receipts",
+    "fr": "Tickets annulés"
+  },
+  "تم تصدير التقرير بنجاح": {
+    "ar": "تم تصدير التقرير بنجاح",
+    "en": "Report exported successfully",
+    "fr": "Rapport exporté avec succès"
+  },
+  "تعذر تصدير التقرير": {
+    "ar": "تعذر تصدير التقرير",
+    "en": "Failed to export report",
+    "fr": "Impossible d'exporter le rapport"
+  },
+  "يحتاج تثبيت المكتبة": {
+    "ar": "يحتاج تثبيت المكتبة",
+    "en": "Library installation required",
+    "fr": "Installation de bibliothèque requise"
+  },
+  "المؤشر": {
+    "ar": "المؤشر",
+    "en": "Metric",
+    "fr": "Indicateur"
+  },
+  "القيمة": {
+    "ar": "القيمة",
+    "en": "Value",
+    "fr": "Valeur"
+  },
+  "تنسيق 80mm حراري؟ (لا = A4)": {
+    "ar": "تنسيق 80mm حراري؟ (لا = A4)",
+    "en": "80mm thermal format? (No = A4)",
+    "fr": "Format thermique 80mm ? (Non = A4)"
+  },
+  "تقرير نهاية الوردية — Z-Report": {
+    "ar": "تقرير نهاية الوردية — Z-Report",
+    "en": "Shift-End Z-Report",
+    "fr": "Rapport de fin de poste — Z"
+  },
+  "اسم الجهاز": {
+    "ar": "اسم الجهاز",
+    "en": "Register / Device",
+    "fr": "Poste"
+  },
+  "التاريخ والوقت": {
+    "ar": "التاريخ والوقت",
+    "en": "Date & Time",
+    "fr": "Date et heure"
+  },
+  "شكراً لكم — Supermarket Pro": {
+    "ar": "شكراً لكم — Supermarket Pro",
+    "en": "Thank you — Supermarket Pro",
+    "fr": "Merci — Supermarket Pro"
+  },
+  "الإيراد بالساعة": {
+    "ar": "الإيراد بالساعة",
+    "en": "Hourly Revenue",
+    "fr": "Recette horaire"
+  },
+  "الإتجاه اليومي": {
+    "ar": "الإتجاه اليومي",
+    "en": "Daily Trend",
+    "fr": "Tendance journalière"
+  },
+  "إجمالي الإيراد": {
+    "ar": "إجمالي الإيراد",
+    "en": "Total Revenue",
+    "fr": "Chiffre d'affaires"
+  },
+  "مرّر المؤشر فوق النقاط لعرض التفاصيل": {
+    "ar": "مرّر المؤشر فوق النقاط لعرض التفاصيل",
+    "en": "Hover over data points for details",
+    "fr": "Survolez les points pour les détails"
+  },
+  "لا توجد بيانات كافية للرسم": {
+    "ar": "لا توجد بيانات كافية للرسم",
+    "en": "Insufficient data to plot chart",
+    "fr": "Données insuffisantes pour tracer le graphique"
+  },
+  "دج •": {
+    "ar": "دج •",
+    "en": "DZD •",
+    "fr": "DA •"
+  },
+  "صافي الربح بعد المصاريف": {
+    "ar": "صافي الربح بعد المصاريف",
+    "en": "Net Profit After Expenses",
+    "fr": "Bénéfice net après dépenses"
+  },
+  "الفئات المربحة": {
+    "ar": "الفئات المربحة",
+    "en": "Profitable Categories",
+    "fr": "Rayons rentables"
+  },
+  "تحذيرات الهامش": {
+    "ar": "تحذيرات الهامش",
+    "en": "Margin Alerts",
+    "fr": "Alertes sur les marges"
+  },
+  "الأرباح حسب الفئة": {
+    "ar": "الأرباح حسب الفئة",
+    "en": "Profit by Category",
+    "fr": "Bénéfice par catégorie"
+  },
+  "غير مصنّف": {
+    "ar": "غير مصنّف",
+    "en": "Uncategorized",
+    "fr": "Non classé"
+  },
+  "(خسارة)": {
+    "ar": "(خسارة)",
+    "en": "(Loss)",
+    "fr": "(Perte)"
+  },
+  "تحذيرات هامش الربح": {
+    "ar": "تحذيرات هامش الربح",
+    "en": "Profit Margin Warnings",
+    "fr": "Alertes de marge bénéficiaire"
+  },
+  "لا توجد منتجات بهامش منخفض": {
+    "ar": "لا توجد منتجات بهامش منخفض",
+    "en": "No products with low margins",
+    "fr": "Aucun produit à faible marge"
+  },
+  "منتجات قريبة من التكلفة": {
+    "ar": "منتجات قريبة من التكلفة",
+    "en": "Products near cost",
+    "fr": "Produits proches du coût d'achat"
+  },
+  "منتجات تُباع بخسارة": {
+    "ar": "منتجات تُباع بخسارة",
+    "en": "Products sold at a loss",
+    "fr": "Produits vendus à perte"
+  },
+  "لا توجد بيانات مبيعات لهذه الفترة": {
+    "ar": "لا توجد بيانات مبيعات لهذه الفترة",
+    "en": "No sales data for this period",
+    "fr": "Aucune vente pour cette période"
+  },
+  "ترتيب حسب:": {
+    "ar": "ترتيب حسب:",
+    "en": "Sort by:",
+    "fr": "Trier par :"
+  },
+  "الكمية المباعة": {
+    "ar": "الكمية المباعة",
+    "en": "Sold Quantity",
+    "fr": "Quantité vendue"
+  },
+  "الأحد": {
+    "ar": "الأحد",
+    "en": "Sunday",
+    "fr": "Dimanche"
+  },
+  "الاثنين": {
+    "ar": "الاثنين",
+    "en": "Monday",
+    "fr": "Lundi"
+  },
+  "الثلاثاء": {
+    "ar": "الثلاثاء",
+    "en": "Tuesday",
+    "fr": "Mardi"
+  },
+  "الأربعاء": {
+    "ar": "الأربعاء",
+    "en": "Wednesday",
+    "fr": "Mercredi"
+  },
+  "الخميس": {
+    "ar": "الخميس",
+    "en": "Thursday",
+    "fr": "Jeudi"
+  },
+  "الجمعة": {
+    "ar": "الجمعة",
+    "en": "Friday",
+    "fr": "Vendredi"
+  },
+  "السبت": {
+    "ar": "السبت",
+    "en": "Saturday",
+    "fr": "Samedi"
+  },
+  "الساعة:": {
+    "ar": "الساعة:",
+    "en": "Hour:",
+    "fr": "Heure :"
+  },
+  "🕒 الوقت الحالي": {
+    "ar": "🕒 الوقت الحالي",
+    "en": "🕒 Current Time",
+    "fr": "🕒 Heure actuelle"
+  },
+  "توقع الازدحام": {
+    "ar": "توقع الازدحام",
+    "en": "Traffic Forecast",
+    "fr": "Prévision d'affluence"
+  },
+  "🕒 التوقيت الحالي:": {
+    "ar": "🕒 التوقيت الحالي:",
+    "en": "🕒 Current Time:",
+    "fr": "🕒 Heure actuelle :"
+  },
+  "هدوء تام": {
+    "ar": "هدوء تام",
+    "en": "Calm / Low Footfall",
+    "fr": "Calme / Faible affluence"
+  },
+  "كاشير واحد كافي": {
+    "ar": "كاشير واحد كافي",
+    "en": "One cashier is sufficient",
+    "fr": "Un caissier suffit"
+  },
+  "📊 حركة الزبائن": {
+    "ar": "📊 حركة الزبائن",
+    "en": "📊 Customer Footfall",
+    "fr": "📊 Fréquentation clients"
+  },
+  "مستوى الإشغال: —": {
+    "ar": "مستوى الإشغال: —",
+    "en": "Occupancy Level: —",
+    "fr": "Niveau d'affluence : —"
+  },
+  "💰 الإيراد المتوقع": {
+    "ar": "💰 الإيراد المتوقع",
+    "en": "💰 Expected Revenue",
+    "fr": "💰 Recette estimée"
+  },
+  "متوسط الفاتورة: —": {
+    "ar": "متوسط الفاتورة: —",
+    "en": "Average Receipt: —",
+    "fr": "Panier moyen : —"
+  },
+  "متوسط الفواتير لكل ساعة": {
+    "ar": "متوسط الفواتير لكل ساعة",
+    "en": "Average Invoices per Hour",
+    "fr": "Tickets moyens par heure"
+  },
+  "ساعة ذروة": {
+    "ar": "ساعة ذروة",
+    "en": "Peak Hour",
+    "fr": "Heure de pointe"
+  },
+  "يُنصح بكاشير إضافي": {
+    "ar": "يُنصح بكاشير إضافي",
+    "en": "Extra cashier recommended",
+    "fr": "Caissier d'appoint conseillé"
+  },
+  "حركة متوسطة": {
+    "ar": "حركة متوسطة",
+    "en": "Moderate Traffic",
+    "fr": "Affluence moyenne"
+  },
+  "كاشيران مطلوبان": {
+    "ar": "كاشيران مطلوبان",
+    "en": "Two cashiers required",
+    "fr": "Deux caissiers requis"
+  },
+  "فاتورة/يوم": {
+    "ar": "فاتورة/يوم",
+    "en": "receipts/day",
+    "fr": "tickets/jour"
+  },
+  "مستوى الإشغال:": {
+    "ar": "مستوى الإشغال:",
+    "en": "Occupancy Level:",
+    "fr": "Niveau d'affluence :"
+  },
+  "متوسط الفاتورة:": {
+    "ar": "متوسط الفاتورة:",
+    "en": "Average Ticket:",
+    "fr": "Panier moyen :"
+  },
+  "🔥 أكثر الساعات ازدحاماً في هذا اليوم:": {
+    "ar": "🔥 أكثر الساعات ازدحاماً في هذا اليوم:",
+    "en": "🔥 Busiest hours today:",
+    "fr": "🔥 Heures les plus chargées aujourd'hui :"
+  },
+  "(متوسط إجمالي:": {
+    "ar": "(متوسط إجمالي:",
+    "en": "(Average total:",
+    "fr": "(Moyenne totale :"
+  },
+  "فاتورة)": {
+    "ar": "فاتورة)",
+    "en": "invoices)",
+    "fr": "factures)"
+  },
+  "لا توجد بيانات كافية لتحديد ساعات الذروة": {
+    "ar": "لا توجد بيانات كافية لتحديد ساعات الذروة",
+    "en": "Insufficient data to determine peak hours",
+    "fr": "Données insuffisantes pour déterminer les heures de pointe"
+  },
+  "لا توجد حركة زبائن مسجلة لهذا اليوم": {
+    "ar": "لا توجد حركة زبائن مسجلة لهذا اليوم",
+    "en": "No customer visits recorded today",
+    "fr": "Aucune visite client enregistrée aujourd'hui"
+  },
+  "لا توجد منتجات بطيئة الحركة 🎉": {
+    "ar": "لا توجد منتجات بطيئة الحركة 🎉",
+    "en": "No slow-moving products 🎉",
+    "fr": "Aucun produit à faible rotation 🎉"
+  },
+  "المنتجات التي بيعت 2 قطعة أو أقل خلال 30 يومًا (": {
+    "ar": "المنتجات التي بيعت 2 قطعة أو أقل خلال 30 يومًا (",
+    "en": "Products with 2 or fewer units sold in 30 days (",
+    "fr": "Produits vendus à 2 unités ou moins en 30 jours ("
+  },
+  "لا توجد بيانات أجهزة لهذه الفترة": {
+    "ar": "لا توجد بيانات أجهزة لهذه الفترة",
+    "en": "No register activity for this timeframe",
+    "fr": "Aucune activité de caisse sur cette période"
+  },
+  "عدد الوصلات": {
+    "ar": "عدد الوصلات",
+    "en": "Receipts Count",
+    "fr": "Nombre de tickets"
+  },
+  "📋 المرتجعات (": {
+    "ar": "📋 المرتجعات (",
+    "en": "📋 Returns (",
+    "fr": "📋 Retours ("
+  },
+  "لا توجد مرتجعات": {
+    "ar": "لا توجد مرتجعات",
+    "en": "No returns recorded",
+    "fr": "Aucun retour enregistré"
+  },
+  "🚫 الفواتير الملغاة (": {
+    "ar": "🚫 الفواتير الملغاة (",
+    "en": "🚫 Voided Receipts (",
+    "fr": "🚫 Tickets annulés ("
+  },
+  "لا توجد فواتير ملغاة 🎉": {
+    "ar": "لا توجد فواتير ملغاة 🎉",
+    "en": "No voided receipts 🎉",
+    "fr": "Aucun ticket annulé 🎉"
+  },
+  "لا توجد مصاريف مسجلة لهذه الفترة": {
+    "ar": "لا توجد مصاريف مسجلة لهذه الفترة",
+    "en": "No expenses recorded for this timeframe",
+    "fr": "Aucune dépense sur cette période"
+  },
+  "حفظ نسخة احتياطية": {
+    "ar": "حفظ نسخة احتياطية",
+    "en": "Save Backup",
+    "fr": "Créer une sauvegarde"
+  },
+  "تم إنشاء النسخة الاحتياطية بنجاح": {
+    "ar": "تم إنشاء النسخة الاحتياطية بنجاح",
+    "en": "Backup created successfully",
+    "fr": "Sauvegarde créée avec succès"
+  },
+  "الحجم:": {
+    "ar": "الحجم:",
+    "en": "Size:",
+    "fr": "Taille :"
+  },
+  "فشل إنشاء النسخة الاحتياطية:": {
+    "ar": "فشل إنشاء النسخة الاحتياطية:",
+    "en": "Failed to create backup:",
+    "fr": "Échec de création de la sauvegarde :"
+  },
+  "شكرًا لزيارتكم": {
+    "ar": "شكرًا لزيارتكم",
+    "en": "Thank you for visiting",
+    "fr": "Merci de votre visite"
+  },
+  "تعذر حفظ الإعدادات:": {
+    "ar": "تعذر حفظ الإعدادات:",
+    "en": "Failed to save settings:",
+    "fr": "Échec de l'enregistrement des paramètres :"
+  },
+  "ضبط النظام والشبكة": {
+    "ar": "ضبط النظام والشبكة",
+    "en": "System & Network Configuration",
+    "fr": "Configuration système et réseau"
+  },
+  "إعدادات المتجر والفواتير والبيع وحماية البيانات": {
+    "ar": "إعدادات المتجر والفواتير والبيع وحماية البيانات",
+    "en": "Store, invoicing, checkout, and data protection settings",
+    "fr": "Paramètres du magasin, facturation et protection des données"
+  },
+  "🏪 معلومات المتجر": {
+    "ar": "🏪 معلومات المتجر",
+    "en": "🏪 Store Profile",
+    "fr": "🏪 Informations magasin"
+  },
+  "تظهر هذه المعلومات في الفواتير.": {
+    "ar": "تظهر هذه المعلومات في الفواتير.",
+    "en": "This information appears on printed receipts.",
+    "fr": "Ces informations apparaissent sur les tickets."
+  },
+  "اسم المتجر": {
+    "ar": "اسم المتجر",
+    "en": "Store Name",
+    "fr": "Nom du magasin"
+  },
+  "🧾 الفواتير والطباعة": {
+    "ar": "🧾 الفواتير والطباعة",
+    "en": "🧾 Receipts & Printing",
+    "fr": "🧾 Facturation et impression"
+  },
+  "حجم الفاتورة الافتراضي": {
+    "ar": "حجم الفاتورة الافتراضي",
+    "en": "Default Receipt Size",
+    "fr": "Format de ticket par défaut"
+  },
+  "طباعة الفاتورة تلقائياً بعد الدفع": {
+    "ar": "طباعة الفاتورة تلقائياً بعد الدفع",
+    "en": "Print receipt automatically after checkout",
+    "fr": "Impression automatique après encaissement"
+  },
+  "اسألني قبل طباعة الفاتورة": {
+    "ar": "اسألني قبل طباعة الفاتورة",
+    "en": "Prompt before printing receipt",
+    "fr": "Demander avant d'imprimer"
+  },
+  "رسالة أسفل الفاتورة": {
+    "ar": "رسالة أسفل الفاتورة",
+    "en": "Receipt Footer Note",
+    "fr": "Pied de ticket"
+  },
+  "💰 البيع والديون": {
+    "ar": "💰 البيع والديون",
+    "en": "💰 Sales & Credits",
+    "fr": "💰 Ventes & Crédits"
+  },
+  "السماح بتسجيل المبيعات بالدين": {
+    "ar": "السماح بتسجيل المبيعات بالدين",
+    "en": "Allow sales on credit",
+    "fr": "Autoriser les ventes à crédit"
+  },
+  "حد الخصم الذي يتطلب رمز PIN": {
+    "ar": "حد الخصم الذي يتطلب رمز PIN",
+    "en": "Discount threshold requiring PIN",
+    "fr": "Seuil de remise nécessitant un PIN"
+  },
+  "📦 المخزون": {
+    "ar": "📦 المخزون",
+    "en": "📦 Inventory",
+    "fr": "📦 Stock"
+  },
+  "حد المخزون المنخفض": {
+    "ar": "حد المخزون المنخفض",
+    "en": "Low Stock Alert Threshold",
+    "fr": "Seuil d'alerte de stock bas"
+  },
+  "🔌 قاعدة البيانات": {
+    "ar": "🔌 قاعدة البيانات",
+    "en": "🔌 Database",
+    "fr": "🔌 Base de données"
+  },
+  "الاتصال بخادم MySQL/MariaDB لمشاركة البيانات بين عدة أجهزة.": {
+    "ar": "الاتصال بخادم MySQL/MariaDB لمشاركة البيانات بين عدة أجهزة.",
+    "en": "Connect to MySQL/MariaDB to share data across network.",
+    "fr": "Connexion MySQL/MariaDB pour partage multi-postes."
+  },
+  "الوضع الحالي": {
+    "ar": "الوضع الحالي",
+    "en": "Current Mode",
+    "fr": "Mode actuel"
+  },
+  "عنوان الخادم": {
+    "ar": "عنوان الخادم",
+    "en": "Server Host",
+    "fr": "Hôte du serveur"
+  },
+  "اسم قاعدة البيانات": {
+    "ar": "اسم قاعدة البيانات",
+    "en": "Database Name",
+    "fr": "Nom de la base"
+  },
+  "تعديل إعدادات قاعدة البيانات": {
+    "ar": "تعديل إعدادات قاعدة البيانات",
+    "en": "Edit Database Settings",
+    "fr": "Modifier les paramètres de la base"
+  },
+  "فشل الاتصال بالخادم": {
+    "ar": "فشل الاتصال بالخادم",
+    "en": "Server connection failed",
+    "fr": "Échec de connexion au serveur"
+  },
+  "تم حفظ إعدادات قاعدة البيانات. أعد تشغيل البرنامج لتطبيق التغييرات.": {
+    "ar": "تم حفظ إعدادات قاعدة البيانات. أعد تشغيل البرنامج لتطبيق التغييرات.",
+    "en": "Database settings saved. Restart application to apply changes.",
+    "fr": "Configuration enregistrée. Redémarrez l'application."
+  },
+  "تعذر حفظ ملف الإعدادات": {
+    "ar": "تعذر حفظ ملف الإعدادات",
+    "en": "Could not save configuration file",
+    "fr": "Impossible de sauvegarder le fichier de configuration"
+  },
+  "اختبار وحفظ الاتصال": {
+    "ar": "اختبار وحفظ الاتصال",
+    "en": "Test & Save Connection",
+    "fr": "Tester et enregistrer"
+  },
+  "اللغة": {
+    "ar": "اللغة",
+    "en": "Language",
+    "fr": "Langue"
+  },
+  "اختر لغة البرنامج": {
+    "ar": "اختر لغة البرنامج",
+    "en": "Select UI Language",
+    "fr": "Sélectionner la langue"
+  },
+  "العربية": {
+    "ar": "العربية",
+    "en": "Arabic",
+    "fr": "Arabe"
+  },
+  "🎨 المظهر": {
+    "ar": "🎨 المظهر",
+    "en": "🎨 Appearance",
+    "fr": "🎨 Apparence"
+  },
+  "اختر مظهر البرنامج": {
+    "ar": "اختر مظهر البرنامج",
+    "en": "Select Color Theme",
+    "fr": "Sélectionner le thème"
+  },
+  "☀ فاتح": {
+    "ar": "☀ فاتح",
+    "en": "☀ Light",
+    "fr": "☀ Clair"
+  },
+  "● داكن": {
+    "ar": "● داكن",
+    "en": "● Dark",
+    "fr": "● Sombre"
+  },
+  "■ رمادي": {
+    "ar": "■ رمادي",
+    "en": "■ Grey",
+    "fr": "■ Gris"
+  },
+  "حفظ الإعدادات": {
+    "ar": "حفظ الإعدادات",
+    "en": "Save Settings",
+    "fr": "Enregistrer les paramètres"
+  },
+  "حد المخزون يجب أن يكون رقماً صحيحاً موجباً أو صفراً.": {
+    "ar": "حد المخزون يجب أن يكون رقماً صحيحاً موجباً أو صفراً.",
+    "en": "Stock threshold must be a non-negative integer.",
+    "fr": "Le seuil de stock doit être un entier positif ou nul."
+  },
+  "حد الخصم الذي يتطلب PIN يجب أن يكون رقماً صحيحاً موجباً أو صفراً.": {
+    "ar": "حد الخصم الذي يتطلب PIN يجب أن يكون رقماً صحيحاً موجباً أو صفراً.",
+    "en": "PIN discount limit must be a positive number or zero.",
+    "fr": "Le seuil PIN de remise doit être positif ou nul."
+  },
+  "تم حفظ الإعدادات بنجاح.": {
+    "ar": "تم حفظ الإعدادات بنجاح.",
+    "en": "Settings saved successfully.",
+    "fr": "Paramètres enregistrés avec succès."
+  },
+  "💾 حفظ الإعدادات": {
+    "ar": "💾 حفظ الإعدادات",
+    "en": "💾 Save Settings",
+    "fr": "💾 Enregistrer les paramètres"
+  },
+  "💾 نسخة احتياطية الآن": {
+    "ar": "💾 نسخة احتياطية الآن",
+    "en": "💾 Backup Now",
+    "fr": "💾 Sauvegarder maintenant"
+  },
+  "اختصارات لوحة المفاتيح": {
+    "ar": "اختصارات لوحة المفاتيح",
+    "en": "Keyboard Shortcuts",
+    "fr": "Raccourcis clavier"
+  },
+  "معلومات الترخيص": {
+    "ar": "معلومات الترخيص",
+    "en": "License Info",
+    "fr": "Licence"
+  },
+  "✓ البرنامج مفعل —": {
+    "ar": "✓ البرنامج مفعل —",
+    "en": "✓ License Active —",
+    "fr": "✓ Logiciel activé —"
+  },
+  "معلومات الترخيص غير متوفرة": {
+    "ar": "معلومات الترخيص غير متوفرة",
+    "en": "License info not available",
+    "fr": "Informations de licence indisponibles"
+  },
+  "طباعة الفاتورة بعد الدفع": {
+    "ar": "طباعة الفاتورة بعد الدفع",
+    "en": "Print receipt after payment",
+    "fr": "Imprimer le ticket après paiement"
+  },
+  "طباعة الفاتورة تلقائياً": {
+    "ar": "طباعة الفاتورة تلقائياً",
+    "en": "Print receipt automatically",
+    "fr": "Impression automatique du ticket"
+  },
+  "دليل اختصارات لوحة المفاتيح": {
+    "ar": "دليل اختصارات لوحة المفاتيح",
+    "en": "Keyboard Shortcuts Guide",
+    "fr": "Guide des raccourcis clavier"
+  },
+  "اضغط Escape للإغلاق": {
+    "ar": "اضغط Escape للإغلاق",
+    "en": "Press Escape to close",
+    "fr": "Appuyez sur Échap pour fermer"
+  },
+  "نقطة البيع (POS)": {
+    "ar": "نقطة البيع (POS)",
+    "en": "Point of Sale (POS)",
+    "fr": "Point de vente (Caisse)"
+  },
+  "الانتقال الفوري إلى شاشة البيع والكاشير الرئيسية": {
+    "ar": "الانتقال الفوري إلى شاشة البيع والكاشير الرئيسية",
+    "en": "Instant jump to cashier sales screen",
+    "fr": "Accès instantané à l'écran de caisse"
+  },
+  "فتح قائمة المنتجات لتعديل الأسعار أو مراجعة المخزون": {
+    "ar": "فتح قائمة المنتجات لتعديل الأسعار أو مراجعة المخزون",
+    "en": "Open product catalogue to adjust prices or stock",
+    "fr": "Ouvrir les produits pour ajuster prix ou stock"
+  },
+  "فتح نافذة تسجيل صنف جديد في المتجر": {
+    "ar": "فتح نافذة تسجيل صنف جديد في المتجر",
+    "en": "Open dialog to add a new inventory item",
+    "fr": "Ouvrir la fenêtre d'ajout d'article"
+  },
+  "التركيز على البحث": {
+    "ar": "التركيز على البحث",
+    "en": "Focus Search Bar",
+    "fr": "Activer la recherche"
+  },
+  "نقل المؤشر مباشرة لخانة البحث لمسح الباركود في أي شاشة": {
+    "ar": "نقل المؤشر مباشرة لخانة البحث لمسح الباركود في أي شاشة",
+    "en": "Focus input bar to scan barcode on any active screen",
+    "fr": "Placer le curseur dans la recherche pour scanner"
+  },
+  "تحديث البيانات": {
+    "ar": "تحديث البيانات",
+    "en": "Refresh Data",
+    "fr": "Actualiser les données"
+  },
+  "إعادة تحميل وتحديث الصفحة والبيانات الحالية": {
+    "ar": "إعادة تحميل وتحديث الصفحة والبيانات الحالية",
+    "en": "Reload active page and refresh records",
+    "fr": "Recharger la page et rafraîchir les données"
+  },
+  "تحديد زبون نقدي أو اختيار عميل لتسجيل البيع بالدين": {
+    "ar": "تحديد زبون نقدي أو اختيار عميل لتسجيل البيع بالدين",
+    "en": "Select cash client or link sale to debtor account",
+    "fr": "Choisir client comptant ou vente à crédit"
+  },
+  "خصم الفاتورة / المنتج": {
+    "ar": "خصم الفاتورة / المنتج",
+    "en": "Invoice / Item Discount",
+    "fr": "Remise sur ticket / produit"
+  },
+  "تطبيق تخفيض بمبلغ ثابت (دج) أو نسبة مئوية (%)": {
+    "ar": "تطبيق تخفيض بمبلغ ثابت (دج) أو نسبة مئوية (%)",
+    "en": "Apply fixed amount discount (DZD) or percentage (%)",
+    "fr": "Appliquer une remise fixe (DA) ou en pourcentage (%)"
+  },
+  "الدفع وإتمام البيع": {
+    "ar": "الدفع وإتمام البيع",
+    "en": "Checkout & Settle",
+    "fr": "Encaisser et valider"
+  },
+  "تأكيد واستلام المبلغ وإنهاء عملية البيع وطباعة الفاتورة": {
+    "ar": "تأكيد واستلام المبلغ وإنهاء عملية البيع وطباعة الفاتورة",
+    "en": "Confirm payment, finalize transaction and print receipt",
+    "fr": "Encaisser le montant, finaliser la vente et imprimer"
+  },
+  "تعليق السلة الحالية": {
+    "ar": "تعليق السلة الحالية",
+    "en": "Hold Current Cart",
+    "fr": "Mettre le panier en attente"
+  },
+  "حفظ سلة الزبون مؤقتاً لخدمة زبون آخر سريعاً": {
+    "ar": "حفظ سلة الزبون مؤقتاً لخدمة زبون آخر سريعاً",
+    "en": "Suspend active cart to serve next customer",
+    "fr": "Mettre en attente pour servir le client suivant"
+  },
+  "استعراض قائمة السلات المؤجلة لاسترجاعها أو حذفها": {
+    "ar": "استعراض قائمة السلات المؤجلة لاسترجاعها أو حذفها",
+    "en": "View suspended sales list to restore or discard",
+    "fr": "Consulter les paniers en attente pour reprise ou suppression"
+  },
+  "تفريغ ومسح السلة": {
+    "ar": "تفريغ ومسح السلة",
+    "en": "Clear Cart Contents",
+    "fr": "Vider le panier"
+  },
+  "إلغاء وإفراغ جميع محتويات السلة بعد التأكيد": {
+    "ar": "إلغاء وإفراغ جميع محتويات السلة بعد التأكيد",
+    "en": "Discard all cart items after confirmation",
+    "fr": "Supprimer le contenu du panier après confirmation"
+  },
+  "البحث العام": {
+    "ar": "البحث العام",
+    "en": "Universal Search",
+    "fr": "Recherche globale"
+  },
+  "نقل المؤشر إلى خانة البحث في الصفحة النشطة": {
+    "ar": "نقل المؤشر إلى خانة البحث في الصفحة النشطة",
+    "en": "Jump cursor to search bar on active tab",
+    "fr": "Déplacer le curseur vers la recherche"
+  },
+  "منتج جديد سريع": {
+    "ar": "منتج جديد سريع",
+    "en": "Quick New Item",
+    "fr": "Ajout rapide d'article"
+  },
+  "اختصار بديل لإضافة صنف جديد": {
+    "ar": "اختصار بديل لإضافة صنف جديد",
+    "en": "Alternative shortcut to register a new item",
+    "fr": "Raccourci pour ajouter un produit"
+  },
+  "إلغاء / إغلاق النوافذ": {
+    "ar": "إلغاء / إغلاق النوافذ",
+    "en": "Dismiss / Close Modals",
+    "fr": "Fermer / Quitter les fenêtres"
+  },
+  "إغلاق أي نافذة منبثقة مفتوحة أو مسح خانة البحث": {
+    "ar": "إغلاق أي نافذة منبثقة مفتوحة أو مسح خانة البحث",
+    "en": "Close top dialog or clear active search input",
+    "fr": "Fermer la boîte de dialogue ou vider la recherche"
+  },
+  "تأكيد الخروج": {
+    "ar": "تأكيد الخروج",
+    "en": "Confirm Exit",
+    "fr": "Confirmer la sortie"
+  },
+  "هل أنت متأكد من إغلاق البرنامج؟": {
+    "ar": "هل أنت متأكد من إغلاق البرنامج؟",
+    "en": "Are you sure you want to quit the application?",
+    "fr": "Êtes-vous sûr de vouloir quitter l'application ?"
+  },
+  "إدارة بيانات الموردين": {
+    "ar": "إدارة بيانات الموردين",
+    "en": "Supplier Records Management",
+    "fr": "Gestion des fournisseurs"
+  },
+  "إدارة بيانات الموردين ومعلومات التواصل": {
+    "ar": "إدارة بيانات الموردين ومعلومات التواصل",
+    "en": "Manage supplier profiles and contact records",
+    "fr": "Gestion des coordonnées et profils fournisseurs"
+  },
+  "＋ إضافة مورد": {
+    "ar": "＋ إضافة مورد",
+    "en": "＋ Add Supplier",
+    "fr": "＋ Nouveau fournisseur"
+  },
+  "ابحث باسم المورد أو الهاتف...": {
+    "ar": "ابحث باسم المورد أو الهاتف...",
+    "en": "Search by supplier name or phone...",
+    "fr": "Rechercher par nom de fournisseur ou téléphone..."
+  },
+  "لا توجد نتائج.": {
+    "ar": "لا توجد نتائج.",
+    "en": "No results.",
+    "fr": "Aucun résultat."
+  },
+  "• المسؤول:": {
+    "ar": "• المسؤول:",
+    "en": "• Contact Person:",
+    "fr": "• Contact :"
+  },
+  "• البريد:": {
+    "ar": "• البريد:",
+    "en": "• Email:",
+    "fr": "• E-mail :"
+  },
+  "إضافة مورد": {
+    "ar": "إضافة مورد",
+    "en": "Add Supplier",
+    "fr": "Ajouter un fournisseur"
+  },
+  "تعديل المورد": {
+    "ar": "تعديل المورد",
+    "en": "Edit Supplier",
+    "fr": "Modifier le fournisseur"
+  },
+  "أدخل معلومات المورد في الحقول التالية": {
+    "ar": "أدخل معلومات المورد في الحقول التالية",
+    "en": "Enter supplier information in fields below",
+    "fr": "Saisissez les informations du fournisseur ci-dessous"
+  },
+  "اسم المورد *": {
+    "ar": "اسم المورد *",
+    "en": "Supplier Name *",
+    "fr": "Nom du fournisseur *"
+  },
+  "مثال: مؤسسة التوزيع الحديثة": {
+    "ar": "مثال: مؤسسة التوزيع الحديثة",
+    "en": "e.g. Modern Distribution Enterprise",
+    "fr": "ex. Société Moderne de Distribution"
+  },
+  "البريد الإلكتروني": {
+    "ar": "البريد الإلكتروني",
+    "en": "Email Address",
+    "fr": "Adresse e-mail"
+  },
+  "اسم المسؤول": {
+    "ar": "اسم المسؤول",
+    "en": "Contact Person",
+    "fr": "Nom du responsable"
+  },
+  "ملاحظات": {
+    "ar": "ملاحظات",
+    "en": "Notes",
+    "fr": "Remarques"
+  },
+  "المورد": {
+    "ar": "المورد",
+    "en": "Supplier",
+    "fr": "Fournisseur"
+  },
+  "اسم المورد مطلوب.": {
+    "ar": "اسم المورد مطلوب.",
+    "en": "Supplier name is required.",
+    "fr": "Le nom du fournisseur est requis."
+  },
+  "تعذر حفظ المورد:": {
+    "ar": "تعذر حفظ المورد:",
+    "en": "Failed to save supplier:",
+    "fr": "Échec de l'enregistrement du fournisseur :"
+  },
+  "✓ حفظ المورد": {
+    "ar": "✓ حفظ المورد",
+    "en": "✓ Save Supplier",
+    "fr": "✓ Enregistrer le fournisseur"
+  },
+  "حذف مورد": {
+    "ar": "حذف مورد",
+    "en": "Delete Supplier",
+    "fr": "Supprimer le fournisseur"
+  },
+  "حذف المورد": {
+    "ar": "حذف المورد",
+    "en": "Delete Supplier",
+    "fr": "Supprimer le fournisseur"
+  },
+  "هل تريد حذف هذا المورد؟": {
+    "ar": "هل تريد حذف هذا المورد؟",
+    "en": "Are you sure you want to delete this supplier?",
+    "fr": "Voulez-vous supprimer ce fournisseur ?"
+  },
+  "مكونات الباقة": {
+    "ar": "مكونات الباقة",
+    "en": "Bundle Components",
+    "fr": "Composants du pack"
+  },
+  "سعر المجموع": {
+    "ar": "سعر المجموع",
+    "en": "Items Sum Price",
+    "fr": "Prix total des composants"
+  },
+  "الربح": {
+    "ar": "الربح",
+    "en": "Profit",
+    "fr": "Bénéfice"
+  },
+  "يحتوي": {
+    "ar": "يحتوي",
+    "en": "Contains",
+    "fr": "Contient"
+  },
+  "إضافة الباقة": {
+    "ar": "إضافة الباقة",
+    "en": "Add Bundle",
+    "fr": "Ajouter le pack"
+  },
+  "حفظ الباقة": {
+    "ar": "حفظ الباقة",
+    "en": "Save Bundle",
+    "fr": "Enregistrer le pack"
+  },
+  "الباقيات": {
+    "ar": "الباقيات",
+    "en": "Bundles",
+    "fr": "Packs"
+  },
+  "إدارة المفضّلة": {
+    "ar": "إدارة المفضّلة",
+    "en": "Manage Favorites",
+    "fr": "Gérer les favoris"
+  },
+  "لا توجد منتجات مفضّلة بعد": {
+    "ar": "لا توجد منتجات مفضّلة بعد",
+    "en": "No favorite items yet",
+    "fr": "Aucun produit favori pour le moment"
+  },
+  "أزِل من المفضّلة": {
+    "ar": "أزِل من المفضّلة",
+    "en": "Remove from Favorites",
+    "fr": "Retirer des favoris"
+  },
+  "أضِف إلى المفضّلة": {
+    "ar": "أضِف إلى المفضّلة",
+    "en": "Add to Favorites",
+    "fr": "Ajouter aux favoris"
+  },
+  "الموارد": {
+    "ar": "الموارد",
+    "en": "Resources",
+    "fr": "Ressources"
+  },
+  "خروج": {
+    "ar": "خروج",
+    "en": "Exit",
+    "fr": "Quitter"
+  },
+  "النظام يعمل": {
+    "ar": "النظام يعمل",
+    "en": "System Online",
+    "fr": "Système opérationnel"
+  },
+  "التنبيهات": {
+    "ar": "التنبيهات",
+    "en": "Notifications",
+    "fr": "Notifications"
+  },
+  "لا توجد تنبيهات مهمة حاليًا": {
+    "ar": "لا توجد تنبيهات مهمة حاليًا",
+    "en": "No critical alerts at this time",
+    "fr": "Aucune notification importante"
+  },
+  "الكمية المراد إدخالها": {
+    "ar": "الكمية المراد إدخالها",
+    "en": "Quantity to Enter",
+    "fr": "Quantité à ajouter"
+  },
+  "السبب (مثال: شراء من المورد)": {
+    "ar": "السبب (مثال: شراء من المورد)",
+    "en": "Reason (e.g. Purchase from supplier)",
+    "fr": "Motif (ex. Achat fournisseur)"
+  },
+  "ابحث بالاسم أو الباركود...": {
+    "ar": "ابحث بالاسم أو الباركود...",
+    "en": "Search by name or barcode...",
+    "fr": "Rechercher par nom ou code-barres..."
+  },
+  "تغيير": {
+    "ar": "تغيير",
+    "en": "Change",
+    "fr": "Modifier"
+  },
+  "📈 تقرير الأرباح": {
+    "ar": "📈 تقرير الأرباح",
+    "en": "📈 Profit Report",
+    "fr": "📈 Rapport des marges"
+  },
+  "لا توجد تنبيهات أو بيانات إضافية": {
+    "ar": "لا توجد تنبيهات أو بيانات إضافية",
+    "en": "No additional alerts or data",
+    "fr": "Aucune alerte ni donnée supplémentaire"
+  },
+  "مظهر البرنامج": {
+    "ar": "مظهر البرنامج",
+    "en": "Application Theme",
+    "fr": "Thème de l'application"
+  },
+  "فاتح": {
+    "ar": "فاتح",
+    "en": "Light",
+    "fr": "Clair"
+  },
+  "داكن": {
+    "ar": "داكن",
+    "en": "Dark",
+    "fr": "Sombre"
+  },
+  "رمادي": {
+    "ar": "رمادي",
+    "en": "Grey",
+    "fr": "Gris"
+  },
+  "تبديل المستخدم": {
+    "ar": "تبديل المستخدم",
+    "en": "Switch User",
+    "fr": "Changer d'utilisateur"
+  },
+  "التصنيف": {
+    "ar": "التصنيف",
+    "en": "Category",
+    "fr": "Catégorie"
+  },
+  "＋ إضافة مستخدم": {
+    "ar": "＋ إضافة مستخدم",
+    "en": "＋ Add User",
+    "fr": "＋ Ajouter un utilisateur"
+  },
+  "أدخل قيمة الخصم بالدينار (0 لإلغاء الخصم).": {
+    "ar": "أدخل قيمة الخصم بالدينار (0 لإلغاء الخصم).",
+    "en": "Enter discount amount in DZD (0 to cancel).",
+    "fr": "Entrez la remise en DA (0 pour annuler)."
+  },
+  "تقرير_نهاية_الوردية": {
+    "ar": "تقرير_نهاية_الوردية",
+    "en": "Shift_End_Report",
+    "fr": "Rapport_Fin_De_Poste"
+  },
+  "تقرير_المبيعات_المفصل": {
+    "ar": "تقرير_المبيعات_المفصل",
+    "en": "Detailed_Sales_Report",
+    "fr": "Rapport_Detaille_Ventes"
+  },
+  "رقم الصندوق": {
+    "ar": "رقم الصندوق",
+    "en": "Register #",
+    "fr": "N° de caisse"
+  },
+  "الأرباح التفصيلية": {
+    "ar": "الأرباح التفصيلية",
+    "en": "Profit Breakdown",
+    "fr": "Détails des bénéfices"
+  },
+  "نعم": {
+    "ar": "نعم",
+    "en": "Yes",
+    "fr": "Oui"
+  },
+  "بيانات الفترة": {
+    "ar": "بيانات الفترة",
+    "en": "Period Data",
+    "fr": "Données de la période"
+  },
+  "الديون المحصلة في التقرير": {
+    "ar": "الديون المحصلة في التقرير",
+    "en": "Debts Collected in Report",
+    "fr": "Créances recouvrées dans le rapport"
+  },
+  "الملف محفوظ عند": {
+    "ar": "الملف محفوظ عند",
+    "en": "File saved at",
+    "fr": "Fichier enregistré sous"
+  },
+  "ثبّت openpyxl في نفس Python المستخدم لتشغيل البرنامج": {
+    "ar": "ثبّت openpyxl في نفس Python المستخدم لتشغيل البرنامج",
+    "en": "Install openpyxl in the Python environment running the application",
+    "fr": "Installez openpyxl dans l'environnement Python utilisé"
+  },
+  "حالة": {
+    "ar": "حالة",
+    "en": "Status",
+    "fr": "Statut"
+  },
+  "نوع الآلة": {
+    "ar": "نوع الآلة",
+    "en": "Machine Type",
+    "fr": "Type d'appareil"
+  },
+  "قيمة": {
+    "ar": "قيمة",
+    "en": "Value",
+    "fr": "Valeur"
+  },
+  "إجماليات الفترة": {
+    "ar": "إجماليات الفترة",
+    "en": "Period Totals",
+    "fr": "Totaux de la période"
+  },
+  "اختر تنسيق التصدير": {
+    "ar": "اختر تنسيق التصدير",
+    "en": "Select Export Format",
+    "fr": "Choisir le format d'exportation"
+  },
+  "خسارة": {
+    "ar": "خسارة",
+    "en": "Loss",
+    "fr": "Perte"
+  },
+  "تم العثور على الخادم الرئيسي للمتجر:": {
+    "ar": "تم العثور على الخادم الرئيسي للمتجر:",
+    "en": "Discovered main store server:",
+    "fr": "Serveur principal trouvé :"
+  },
+  "على العنوان": {
+    "ar": "على العنوان",
+    "en": "at address",
+    "fr": "à l'adresse"
+  },
+  "ث)": {
+    "ar": "ث)",
+    "en": "s)",
+    "fr": "s)"
+  },
+  "يريد جهاز جديد الاتصال بالخادم الرئيسي:": {
+    "ar": "يريد جهاز جديد الاتصال بالخادم الرئيسي:",
+    "en": "A new terminal requests connection to Main Server:",
+    "fr": "Un nouveau poste demande à se connecter au serveur :"
+  },
+  "تم المرتجع وإضافة": {
+    "ar": "تم المرتجع وإضافة",
+    "en": "Refund processed and added",
+    "fr": "Retour validé et ajouté"
+  },
+  "الجرد": {
+    "ar": "الجرد",
+    "en": "Inventory Count",
+    "fr": "Inventaire"
+  },
+  "خطأ": {
+    "ar": "خطأ",
+    "en": "Error",
+    "fr": "Erreur"
+  },
+  "اختر منتجًا من الاقتراحات أولًا.": {
+    "ar": "اختر منتجًا من الاقتراحات أولًا.",
+    "en": "Select an item from suggestions first.",
+    "fr": "Sélectionnez d'abord un article dans les suggestions."
+  },
+  "متغير) •": {
+    "ar": "متغير) •",
+    "en": "variants) •",
+    "fr": "variantes) •"
+  },
+  "إدارة المنتجات": {
+    "ar": "إدارة المنتجات",
+    "en": "Product Management",
+    "fr": "Gestion des produits"
+  },
+  "خطأ في تحميل المنتجات:": {
+    "ar": "خطأ في تحميل المنتجات:",
+    "en": "Failed to load products:",
+    "fr": "Erreur de chargement des produits :"
+  },
+  "فشل الحذف:": {
+    "ar": "فشل الحذف:",
+    "en": "Deletion failed:",
+    "fr": "Échec de la suppression :"
+  },
+  "منتج •": {
+    "ar": "منتج •",
+    "en": "product •",
+    "fr": "produit •"
+  },
+  "د.ج /": {
+    "ar": "د.ج /",
+    "en": "DZD /",
+    "fr": "DA /"
+  },
+  "كيلوغرام": {
+    "ar": "كيلوغرام",
+    "en": "Kilogram",
+    "fr": "Kilogramme"
+  },
+  "غ": {
+    "ar": "غ",
+    "en": "g",
+    "fr": "g"
+  },
+  "وضع المبيعات": {
+    "ar": "وضع المبيعات",
+    "en": "Sales Mode",
+    "fr": "Mode des ventes"
+  },
+  "فاتورة_": {
+    "ar": "فاتورة_",
+    "en": "Invoice_",
+    "fr": "Facture_"
+  },
+  "حفظ الفاتورة": {
+    "ar": "حفظ الفاتورة",
+    "en": "Save Invoice",
+    "fr": "Enregistrer la facture"
+  },
+  "دج (": {
+    "ar": "دج (",
+    "en": "DZD (",
+    "fr": "DA ("
+  },
+  "الفاتورة": {
+    "ar": "الفاتورة",
+    "en": "Invoice",
+    "fr": "Facture"
+  },
+  "• تم إلغاء الوصل واسترجاع المخزون": {
+    "ar": "• تم إلغاء الوصل واسترجاع المخزون",
+    "en": "• Receipt voided and items restocked",
+    "fr": "• Ticket annulé et stock réintégré"
+  },
+  "تقرير_المبيعات_": {
+    "ar": "تقرير_المبيعات_",
+    "en": "Sales_Report_",
+    "fr": "Rapport_Ventes_"
+  },
+  "الفترة": {
+    "ar": "الفترة",
+    "en": "Period",
+    "fr": "Période"
+  },
+  "تسجيل وعرض المصاريف التشغيلية": {
+    "ar": "تسجيل وعرض المصاريف التشغيلية",
+    "en": "Record and display operational expenses",
+    "fr": "Enregistrer et consulter les dépenses de fonctionnement"
+  },
+  "إحصائيات المبيعات والربح": {
+    "ar": "إحصائيات المبيعات والربح",
+    "en": "Sales and Profit Statistics",
+    "fr": "Statistiques des ventes et bénéfices"
+  },
+  "آخر_7_أيام": {
+    "ar": "آخر_7_أيام",
+    "en": "Last_7_Days",
+    "fr": "7_Derniers_Jours"
+  },
+  "هذا_الشهر": {
+    "ar": "هذا_الشهر",
+    "en": "This_Month",
+    "fr": "Ce_Mois_Ci"
+  }
+}

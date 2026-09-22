@@ -1,0 +1,254 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+import '../core/strings.dart';
+import '../features/auth/auth_provider.dart';
+import '../features/auth/login_screen.dart';
+import '../features/auth/permission_helpers.dart';
+import '../features/auth/setup_screen.dart';
+import '../l10n/locale_provider.dart';
+import '../features/dashboard/dashboard_screen.dart';
+import '../features/clients/clients_screen.dart';
+import '../features/products/products_screen.dart';
+import '../features/stock/stock_screen.dart';
+import '../features/sales/sales_screen.dart';
+import '../features/debts/debts_screen.dart';
+import '../features/reports/reports_screen.dart';
+import '../features/settings/settings_screen.dart';
+import '../features/users/users_screen.dart';
+
+final routerProvider = Provider<GoRouter>((ref) {
+  // Keep ONE GoRouter instance for the app's lifetime. Recreating the
+  // router on every AuthState change remounted LoginScreen and wiped its
+  // local selected-user/PIN state (wrong PIN appeared to "return" to the
+  // user list). Instead, notify GoRouter so it re-runs redirect only.
+  final authRefresh = ValueNotifier<int>(0);
+  ref.listen<AuthState>(
+    authProvider,
+    (previous, next) => authRefresh.value++,
+  );
+
+  final router = GoRouter(
+    initialLocation: '/',
+    refreshListenable: authRefresh,
+    redirect: (context, state) {
+      // Read live state — do not capture a snapshot from provider build.
+      final authState = ref.read(authProvider);
+      final path = state.matchedLocation;
+      final isAuthenticated = authState.status == AuthStatus.authenticated;
+      final isSetupRequired = authState.status == AuthStatus.setupRequired;
+      final isChecking = authState.status == AuthStatus.checking;
+
+      // While checking, show nothing (loading handled by app)
+      if (isChecking) return null;
+
+      // Setup required → force setup screen
+      if (isSetupRequired && path != '/setup') return '/setup';
+
+      // Unauthenticated (including login failure / session expiry)
+      // → force login. Staying on /login returns null (no remount loop).
+      if (!isAuthenticated && path != '/login' && path != '/setup') {
+        return '/login';
+      }
+
+      // Authenticated on login/setup → redirect to home
+      if (isAuthenticated && (path == '/login' || path == '/setup')) return '/';
+
+      return null;
+    },
+    routes: [
+      GoRoute(
+        path: '/setup',
+        name: 'setup',
+        builder: (context, state) => const SetupScreen(),
+      ),
+      GoRoute(
+        path: '/login',
+        name: 'login',
+        builder: (context, state) => const LoginScreen(),
+      ),
+      ShellRoute(
+        builder: (context, state, child) =>
+            ScaffoldWithNav(location: state.matchedLocation, child: child),
+        routes: [
+          GoRoute(
+            path: '/',
+            name: 'dashboard',
+            builder: (context, state) => const DashboardScreen(),
+          ),
+          GoRoute(
+            path: '/pos',
+            name: 'pos',
+            builder: (context, state) =>
+                const Placeholder(title: 'Point of Sale'),
+          ),
+          GoRoute(
+            path: '/clients',
+            name: 'clients',
+            builder: (context, state) => const ClientsScreen(),
+          ),
+          GoRoute(
+            path: '/products',
+            name: 'products',
+            builder: (context, state) => const ProductsScreen(),
+          ),
+          GoRoute(
+            path: '/stock',
+            name: 'stock',
+            builder: (context, state) => const StockScreen(),
+          ),
+          GoRoute(
+            path: '/sales',
+            name: 'sales',
+            builder: (context, state) => const SalesScreen(),
+          ),
+          GoRoute(
+            path: '/debts',
+            name: 'debts',
+            builder: (context, state) => const DebtsScreen(),
+          ),
+          GoRoute(
+            path: '/reports',
+            name: 'reports',
+            builder: (context, state) => const ReportsScreen(),
+          ),
+          GoRoute(
+            path: '/users',
+            name: 'users',
+            builder: (context, state) => const UsersScreen(),
+          ),
+          GoRoute(
+            path: '/settings',
+            name: 'settings',
+            builder: (context, state) => const SettingsScreen(),
+          ),
+        ],
+      ),
+    ],
+  );
+
+  ref.onDispose(() {
+    authRefresh.dispose();
+    router.dispose();
+  });
+
+  return router;
+});
+
+/// Minimal authenticated desktop shell: app title, current user, logout,
+/// permission-gated navigation, and page content. No business features.
+class ScaffoldWithNav extends ConsumerWidget {
+  final String location;
+  final Widget child;
+  const ScaffoldWithNav({super.key, required this.location, required this.child});
+
+  /// Scope required by the backend for `GET /api/v1/users` and user CRUD.
+  static const String userManageScope = 'user_manage';
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    final loc = ref.watch(localeProvider).flutterLocale.languageCode;
+    final user = ref.watch(currentUserProvider);
+    final canManageUsers = ref.watch(hasPermissionProvider(userManageScope));
+
+    final destinations = <NavigationRailDestination>[
+      NavigationRailDestination(
+        icon: const Icon(Icons.dashboard_outlined),
+        selectedIcon: const Icon(Icons.dashboard),
+        label: Text(AppStrings.t('dashboard', loc)),
+      ),
+      if (canManageUsers)
+        NavigationRailDestination(
+          icon: const Icon(Icons.people_outline),
+          selectedIcon: const Icon(Icons.people),
+          label: Text(AppStrings.t('user_list', loc)),
+        ),
+    ];
+
+    int? selectedIndex;
+    if (location == '/') {
+      selectedIndex = 0;
+    } else if (location == '/users' && canManageUsers) {
+      selectedIndex = 1;
+    }
+
+    void onDestinationSelected(int index) {
+      if (index == 0) {
+        context.go('/');
+      } else if (index == 1 && canManageUsers) {
+        context.go('/users');
+      }
+    }
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(AppStrings.t('app_name', loc)),
+        actions: [
+          if (user != null) ...[
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.end,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    user.fullName,
+                    key: const Key('shell-user-name'),
+                    style: theme.textTheme.titleSmall,
+                  ),
+                  Text(
+                    user.roles
+                        .map((r) => AppStrings.t(r, loc))
+                        .join(', '),
+                    key: const Key('shell-user-roles'),
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.only(right: 12),
+              child: TextButton.icon(
+                key: const Key('logout-button'),
+                onPressed: () => ref.read(authProvider.notifier).logout(),
+                icon: const Icon(Icons.logout, size: 18),
+                label: Text(AppStrings.t('logout', loc)),
+              ),
+            ),
+          ],
+        ],
+      ),
+      body: Row(
+        children: [
+          if (destinations.isNotEmpty) ...[
+            NavigationRail(
+              selectedIndex: selectedIndex,
+              labelType: NavigationRailLabelType.all,
+              onDestinationSelected: onDestinationSelected,
+              destinations: destinations,
+            ),
+            const VerticalDivider(width: 1),
+          ],
+          Expanded(child: child),
+        ],
+      ),
+    );
+  }
+}
+
+class Placeholder extends StatelessWidget {
+  final String title;
+  const Placeholder({super.key, required this.title});
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child:
+          Text(title, style: Theme.of(context).textTheme.headlineMedium),
+    );
+  }
+}
