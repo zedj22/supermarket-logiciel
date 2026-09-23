@@ -5,5 +5,6 @@ Domain-specific repositories extend BaseRepository for each model.
 """
 
 from app.repositories.base import BaseRepository
+from app.repositories.catalog import CategoryRepository, ProductRepository
 
-__all__ = ["BaseRepository"]
+__all__ = ["BaseRepository", "CategoryRepository", "ProductRepository"]

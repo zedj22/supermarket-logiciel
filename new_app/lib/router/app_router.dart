@@ -145,12 +145,16 @@ class ScaffoldWithNav extends ConsumerWidget {
   /// Scope required by the backend for `GET /api/v1/users` and user CRUD.
   static const String userManageScope = 'user_manage';
 
+  /// Scope required to see the Products destination and screens.
+  static const String productViewScope = 'product_view';
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
     final loc = ref.watch(localeProvider).flutterLocale.languageCode;
     final user = ref.watch(currentUserProvider);
     final canManageUsers = ref.watch(hasPermissionProvider(userManageScope));
+    final canViewProducts = ref.watch(hasPermissionProvider(productViewScope));
 
     final destinations = <NavigationRailDestination>[
       NavigationRailDestination(
@@ -158,6 +162,12 @@ class ScaffoldWithNav extends ConsumerWidget {
         selectedIcon: const Icon(Icons.dashboard),
         label: Text(AppStrings.t('dashboard', loc)),
       ),
+      if (canViewProducts)
+        NavigationRailDestination(
+          icon: const Icon(Icons.inventory_2_outlined),
+          selectedIcon: const Icon(Icons.inventory_2),
+          label: Text(AppStrings.t('products', loc)),
+        ),
       if (canManageUsers)
         NavigationRailDestination(
           icon: const Icon(Icons.people_outline),
@@ -167,16 +177,30 @@ class ScaffoldWithNav extends ConsumerWidget {
     ];
 
     int? selectedIndex;
+    var index = 0;
     if (location == '/') {
-      selectedIndex = 0;
-    } else if (location == '/users' && canManageUsers) {
-      selectedIndex = 1;
+      selectedIndex = index;
+    }
+    if (canViewProducts) {
+      index += 1;
+      if (location == '/products') selectedIndex = index;
+    }
+    if (canManageUsers) {
+      index += 1;
+      if (location == '/users') selectedIndex = index;
     }
 
-    void onDestinationSelected(int index) {
-      if (index == 0) {
+    void onDestinationSelected(int target) {
+      var i = 0;
+      if (i++ == target) {
         context.go('/');
-      } else if (index == 1 && canManageUsers) {
+        return;
+      }
+      if (canViewProducts && i++ == target) {
+        context.go('/products');
+        return;
+      }
+      if (canManageUsers && i++ == target) {
         context.go('/users');
       }
     }

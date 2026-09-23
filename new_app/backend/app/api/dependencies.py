@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 
 from app.core.exceptions import AuthenticationError, ForbiddenError, UnauthorizedError
 from app.core.security import decode_access_token, hash_token
+from app.db.session import get_db
 from app.models.enums import PermissionScope
 from app.models.user import AuthSession, User
 
@@ -43,7 +44,7 @@ def _get_token_from_header(authorization: str | None = Header(None)) -> str | No
 def get_current_user(
     request: Request,
     token: str | None = Depends(_get_token_from_header),
-    db: Session = Depends(lambda: None),  # Overridden by router
+    db: Session = Depends(get_db),
 ) -> User:
     """Extract and verify the current user from JWT.
 
@@ -53,58 +54,50 @@ def get_current_user(
     3. Validates the session exists and is not revoked
     4. Returns the User object
 
+    Uses the request-scoped session from `get_db` so FastAPI dependency
+    overrides (used by tests) apply to authentication as well.
+
     Raises UnauthorizedError if authentication fails.
     """
     if not token:
         raise UnauthorizedError(message="Missing authentication token")
 
-    # We need the DB session — get it from the request state or override
-    from app.db.session import get_db as _get_db
-    from app.db.engine import _factory
+    payload = decode_access_token(token)
+    if payload is None:
+        raise UnauthorizedError(message="Invalid or expired token")
 
-    SessionLocal = _factory.session_factory
-    db = SessionLocal()
+    user_id = payload.get("sub")
+    session_id = payload.get("sid")
 
-    try:
-        payload = decode_access_token(token)
-        if payload is None:
-            raise UnauthorizedError(message="Invalid or expired token")
+    if not user_id or not session_id:
+        raise UnauthorizedError(message="Invalid token claims")
 
-        user_id = payload.get("sub")
-        session_id = payload.get("sid")
+    import uuid
+    session = db.get(AuthSession, uuid.UUID(session_id))
+    if session is None or session.revoked_at is not None:
+        raise UnauthorizedError(message="Session revoked or not found")
 
-        if not user_id or not session_id:
-            raise UnauthorizedError(message="Invalid token claims")
+    if session.is_expired:
+        raise UnauthorizedError(message="Session expired")
 
-        import uuid
-        session = db.get(AuthSession, uuid.UUID(session_id))
-        if session is None or session.revoked_at is not None:
-            raise UnauthorizedError(message="Session revoked or not found")
+    if session.token_hash != hash_token(token):
+        raise UnauthorizedError(message="Invalid token")
 
-        if session.is_expired:
-            raise UnauthorizedError(message="Session expired")
+    user = db.get(User, uuid.UUID(user_id))
+    if user is None or not user.is_active:
+        raise UnauthorizedError(message="User not found or inactive")
 
-        if session.token_hash != hash_token(token):
-            raise UnauthorizedError(message="Invalid token")
+    # Update last_seen_at (committed with the request-scoped session)
+    from datetime import datetime, timezone
+    session.last_seen_at = datetime.now(timezone.utc)
+    db.commit()
 
-        user = db.get(User, uuid.UUID(user_id))
-        if user is None or not user.is_active:
-            raise UnauthorizedError(message="User not found or inactive")
+    # Store user on request state for other dependencies
+    request.state.user = user
+    request.state.user_id = str(user.id)
+    request.state.session_id = str(session.id)
 
-        # Update last_seen_at
-        from datetime import datetime, timezone
-        session.last_seen_at = datetime.now(timezone.utc)
-        db.commit()
-
-        # Store user on request state for other dependencies
-        request.state.user = user
-        request.state.user_id = str(user.id)
-        request.state.session_id = str(session.id)
-
-        return user
-    except Exception:
-        db.close()
-        raise
+    return user
 
 
 CurrentUser = Annotated[User, Depends(get_current_user)]

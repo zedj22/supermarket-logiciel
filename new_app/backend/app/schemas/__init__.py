@@ -1,9 +1,20 @@
 """Schemas package -- Pydantic request/response schemas.
 
-Common schemas are defined here. Domain-specific schemas will be
-added in their respective feature modules.
+Common schemas are defined here. Domain-specific schemas are
+in their respective feature modules.
 """
 
+from app.schemas.catalog import (
+    CategoryCreateRequest,
+    CategoryListResponse,
+    CategoryResponse,
+    CategoryUpdateRequest,
+    ProductCreateRequest,
+    ProductListResponse,
+    ProductResponse,
+    ProductSearchResponse,
+    ProductUpdateRequest,
+)
 from app.schemas.common import (
     ErrorResponse,
     IDResponse,
@@ -15,10 +26,19 @@ from app.schemas.common import (
 )
 
 __all__ = [
+    "CategoryCreateRequest",
+    "CategoryListResponse",
+    "CategoryResponse",
+    "CategoryUpdateRequest",
     "ErrorResponse",
     "IDResponse",
     "PaginatedResponse",
     "PaginationParams",
+    "ProductCreateRequest",
+    "ProductListResponse",
+    "ProductResponse",
+    "ProductSearchResponse",
+    "ProductUpdateRequest",
     "StrictBaseModel",
     "SuccessResponse",
     "TimestampMixin",
