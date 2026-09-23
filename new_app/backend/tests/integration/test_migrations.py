@@ -230,3 +230,352 @@ class TestMigrationTableStructure:
         assert count >= 37, f"Expected >= 37 FKs, got {count}"
         cur.close()
         conn.close()
+
+
+class TestPhase6SellingUnitsMigration:
+    """Migration 0005/0006 — product_selling_units + purchase packaging tables."""
+
+    SELLING_UNITS_REV = "c3d4e5f6a7b8"
+    HEAD_REV = "e5f6a7b8c9d0"  # 0007 selling_price nullable
+
+    @pytest.fixture(autouse=True)
+    def _setup_db(self):
+        result = _run_alembic("upgrade head")
+        assert result.returncode == 0, f"Setup upgrade failed: {result.stderr}"
+
+    def test_chain_reaches_phase6_revision(self):
+        result = _run_alembic("current")
+        assert result.returncode == 0, result.stderr
+        assert self.HEAD_REV in result.stdout, (
+            f"Expected alembic current at {self.HEAD_REV}, got: {result.stdout}"
+        )
+        # Selling-units revision is still in the linear chain
+        history = _run_alembic("history")
+        assert history.returncode == 0
+        assert self.SELLING_UNITS_REV in history.stdout
+        # Single head remains Phase 6 packaging correction
+        heads = _run_alembic("heads")
+        assert heads.returncode == 0
+        assert self.HEAD_REV in heads.stdout
+
+    def test_product_selling_units_table_exists(self):
+        conn = _get_test_conn()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT COUNT(*)
+            FROM information_schema.tables
+            WHERE table_schema = 'public'
+              AND table_name = 'product_selling_units'
+            """
+        )
+        assert cur.fetchone()[0] == 1, "product_selling_units missing after upgrade"
+        cur.close()
+        conn.close()
+
+    def test_product_selling_units_columns(self):
+        conn = _get_test_conn()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT column_name, data_type, numeric_precision, numeric_scale
+            FROM information_schema.columns
+            WHERE table_name = 'product_selling_units'
+            ORDER BY ordinal_position
+            """
+        )
+        cols = {row[0]: row for row in cur.fetchall()}
+        for required in (
+            "id",
+            "product_id",
+            "name",
+            "unit_type",
+            "multiplier",
+            "barcode",
+            "selling_price",
+            "is_base_unit",
+            "archived_at",
+        ):
+            assert required in cols, f"missing column {required}"
+        # multiplier NUMERIC(18,3)
+        mult = cols["multiplier"]
+        assert mult[1].startswith("numeric"), mult[1]
+        assert mult[2] == 18 and mult[3] == 3, mult
+        cur.close()
+        conn.close()
+
+    def test_selling_unit_unique_indexes(self):
+        conn = _get_test_conn()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT indexname FROM pg_indexes
+            WHERE tablename = 'product_selling_units'
+            """
+        )
+        names = {r[0] for r in cur.fetchall()}
+        assert "ix_product_selling_units_barcode" in names, names
+        assert any("product_id" in n for n in names), names
+        cur.close()
+        conn.close()
+
+    def test_existing_products_and_variants_remain_valid(self):
+        """0005 must not rewrite or drop products / product_variants rows."""
+        conn = _get_test_conn()
+        cur = conn.cursor()
+
+        # Baseline: tables still queryable with expected columns
+        cur.execute(
+            """
+            SELECT COUNT(*)
+            FROM information_schema.columns
+            WHERE table_name = 'products'
+              AND column_name IN ('id', 'name', 'barcode', 'price', 'quantity')
+            """
+        )
+        assert cur.fetchone()[0] == 5
+
+        cur.execute(
+            """
+            SELECT COUNT(*)
+            FROM information_schema.columns
+            WHERE table_name = 'product_variants'
+              AND column_name IN ('id', 'product_id', 'name', 'price', 'cost')
+            """
+        )
+        assert cur.fetchone()[0] == 5
+
+        # No destructive phase-6 rewrite: products still insertable with prior shape
+        cur.execute(
+            """
+            INSERT INTO products (name, price, cost, quantity, unit)
+            VALUES ('migration_canary', 1, 0, 1, 'piece')
+            RETURNING id
+            """
+        )
+        row = cur.fetchone()
+        assert row is not None
+        product_id = row[0]
+
+        cur.execute(
+            """
+            INSERT INTO product_variants (product_id, name, quantity)
+            VALUES (%s, 'canary-variant', 1)
+            RETURNING id
+            """,
+            (product_id,),
+        )
+        var_row = cur.fetchone()
+        assert var_row is not None
+
+        # Cleanup canary
+        cur.execute("DELETE FROM products WHERE id = %s", (product_id,))
+        conn.commit()
+        cur.close()
+        conn.close()
+
+    def test_no_destructive_rewrite_of_phase5_auth(self):
+        """0005 only adds product_selling_units — does not drop Phase 4 tables."""
+        conn = _get_test_conn()
+        cur = conn.cursor()
+        for table in ("users", "roles", "permissions", "auth_sessions", "products"):
+            cur.execute(
+                """
+                SELECT COUNT(*) FROM information_schema.tables
+                WHERE table_schema = 'public' AND table_name = %s
+                """,
+                (table,),
+            )
+            assert cur.fetchone()[0] == 1, f"table {table} missing"
+        cur.close()
+        conn.close()
+
+
+class TestPhase6PurchasePackagingMigration:
+    """Migration 0006 (d4e5f6a7b8c9) — purchase packaging / stock-breaking."""
+
+    HEAD_REV = "e5f6a7b8c9d0"  # linear chain head after 0007
+
+    @pytest.fixture(autouse=True)
+    def _setup_db(self):
+        result = _run_alembic("upgrade head")
+        assert result.returncode == 0, f"Setup upgrade failed: {result.stderr}"
+
+    def test_current_is_packaging_head(self):
+        result = _run_alembic("current")
+        assert result.returncode == 0, result.stderr
+        assert self.HEAD_REV in result.stdout, result.stdout
+
+    def test_product_purchase_units_exists(self):
+        conn = _get_test_conn()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT COUNT(*)
+            FROM information_schema.tables
+            WHERE table_schema = 'public'
+              AND table_name = 'product_purchase_units'
+            """
+        )
+        assert cur.fetchone()[0] == 1, "product_purchase_units missing"
+        cur.close()
+        conn.close()
+
+    def test_product_stock_packages_exists(self):
+        conn = _get_test_conn()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT COUNT(*)
+            FROM information_schema.tables
+            WHERE table_schema = 'public'
+              AND table_name = 'product_stock_packages'
+            """
+        )
+        assert cur.fetchone()[0] == 1, "product_stock_packages missing"
+        cur.close()
+        conn.close()
+
+    def test_purchase_unit_columns(self):
+        conn = _get_test_conn()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT column_name, data_type, numeric_precision, numeric_scale
+            FROM information_schema.columns
+            WHERE table_name = 'product_purchase_units'
+            """
+        )
+        cols = {row[0]: row for row in cur.fetchall()}
+        for required in (
+            "id",
+            "product_id",
+            "name",
+            "unit_type",
+            "multiplier",
+            "barcode",
+            "is_default",
+            "archived_at",
+        ):
+            assert required in cols, f"missing column {required}"
+        mult = cols["multiplier"]
+        assert mult[1].startswith("numeric"), mult[1]
+        assert mult[2] == 18 and mult[3] == 3, mult
+        # No selling_price on purchase units
+        assert "selling_price" not in cols, "purchase units must not have selling_price"
+        cur.close()
+        conn.close()
+
+    def test_stock_package_columns(self):
+        conn = _get_test_conn()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT column_name, data_type, numeric_precision, numeric_scale
+            FROM information_schema.columns
+            WHERE table_name = 'product_stock_packages'
+            """
+        )
+        cols = {row[0]: row for row in cur.fetchall()}
+        for required in ("id", "product_id", "purchase_unit_id", "full_packages"):
+            assert required in cols, f"missing column {required}"
+        fp = cols["full_packages"]
+        assert fp[1].startswith("numeric"), fp[1]
+        assert fp[2] == 18 and fp[3] == 3, fp
+        cur.close()
+        conn.close()
+
+    def test_purchase_line_document_unit_columns(self):
+        conn = _get_test_conn()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT column_name FROM information_schema.columns
+            WHERE table_name = 'purchase_lines'
+              AND column_name IN (
+                'purchase_unit_id', 'purchase_unit_name',
+                'unit_multiplier', 'base_qty_equivalent'
+              )
+            """
+        )
+        names = {row[0] for row in cur.fetchall()}
+        assert names == {
+            "purchase_unit_id",
+            "purchase_unit_name",
+            "unit_multiplier",
+            "base_qty_equivalent",
+        }, names
+        cur.close()
+        conn.close()
+
+    def test_inventory_movement_packaging_columns(self):
+        conn = _get_test_conn()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT column_name FROM information_schema.columns
+            WHERE table_name = 'inventory_movements'
+              AND column_name IN (
+                'document_quantity', 'document_unit',
+                'purchase_unit_id', 'packages_change'
+              )
+            """
+        )
+        names = {row[0] for row in cur.fetchall()}
+        assert names == {
+            "document_quantity",
+            "document_unit",
+            "purchase_unit_id",
+            "packages_change",
+        }, names
+        cur.close()
+        conn.close()
+
+    def test_unique_indexes_purchase_units(self):
+        conn = _get_test_conn()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT indexname FROM pg_indexes
+            WHERE tablename = 'product_purchase_units'
+            """
+        )
+        names = {r[0] for r in cur.fetchall()}
+        assert "ix_product_purchase_units_barcode" in names, names
+        cur.close()
+        conn.close()
+
+    def test_selling_units_preserved_after_0006(self):
+        """0006 must not rewrite product_selling_units (Piece ×1, Box ×24)."""
+        conn = _get_test_conn()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT COUNT(*)
+            FROM information_schema.tables
+            WHERE table_schema = 'public'
+              AND table_name = 'product_selling_units'
+            """
+        )
+        assert cur.fetchone()[0] == 1
+        cur.close()
+        conn.close()
+
+    def test_products_quantity_still_base_canonical(self):
+        """products.quantity remains insertable in base units after 0006."""
+        conn = _get_test_conn()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO products (name, price, cost, quantity, unit)
+            VALUES ('packaging_canary', 1, 0, 240, 'piece')
+            RETURNING id
+            """
+        )
+        row = cur.fetchone()
+        assert row is not None
+        product_id = row[0]
+        cur.execute("DELETE FROM products WHERE id = %s", (product_id,))
+        conn.commit()
+        cur.close()
+        conn.close()

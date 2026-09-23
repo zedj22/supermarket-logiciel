@@ -1,16 +1,34 @@
-"""Product management API endpoints (Phase 5).
+"""Product, variant, selling unit & barcode API endpoints (Phase 5 + 6).
 
 Endpoints:
-- GET    /api/v1/products            — List products (paginated, search, filter, sort)
-- GET    /api/v1/products/search     — Bounded search (text + exact barcode)
-- GET    /api/v1/products/low-stock  — Active products at/below low-stock threshold
-- GET    /api/v1/products/{id}       — Get product by ID
-- POST   /api/v1/products            — Create product
-- PUT    /api/v1/products/{id}       — Update product (partial)
-- DELETE /api/v1/products/{id}       — Archive product (soft-delete)
+- GET    /api/v1/products                      — List products (paginated, search, filter, sort)
+- GET    /api/v1/products/search               — Bounded search (text + exact barcode)
+- GET    /api/v1/products/low-stock            — Active products at/below low-stock threshold
+- GET    /api/v1/products/barcode-lookup       — Unified barcode scan (Phase 8 ready)
+- GET    /api/v1/products/{id}                 — Get product by ID
+- POST   /api/v1/products                      — Create product
+- PUT    /api/v1/products/{id}                 — Update product (partial)
+- DELETE /api/v1/products/{id}                 — Archive product (soft-delete)
+- GET    /api/v1/products/{id}/variants        — List variants (on demand)
+- POST   /api/v1/products/{id}/variants        — Create variant
+- PUT    /api/v1/products/{id}/variants/{vid}  — Update variant
+- DELETE /api/v1/products/{id}/variants/{vid}  — Archive variant
+- GET    /api/v1/products/{id}/selling-units   — List selling units (on demand)
+- POST   /api/v1/products/{id}/selling-units   — Create selling unit
+- PUT    /api/v1/products/{id}/selling-units/{uid}  — Update selling unit
+- DELETE /api/v1/products/{id}/selling-units/{uid}  — Archive selling unit
+- GET    /api/v1/products/{id}/purchase-units  — List purchase units (on demand)
+- POST   /api/v1/products/{id}/purchase-units  — Create purchase unit
+- PUT    /api/v1/products/{id}/purchase-units/{uid} — Update purchase unit
+- DELETE /api/v1/products/{id}/purchase-units/{uid} — Archive purchase unit
+- GET    /api/v1/products/{id}/packaging-state — Full packages + loose base
+- POST   /api/v1/products/{id}/packaging-state/receive — Receive sealed packages
+- POST   /api/v1/products/{id}/packaging-state/sell     — Consume base (may break)
+- POST   /api/v1/products/{id}/packaging-state/sell-packages — Sell sealed packages
 
 Authorization uses the Phase 4 permission infrastructure
-(require_permission + PermissionScope).
+(require_permission + PermissionScope). Variants/selling/purchase units reuse
+product_view / product_create / product_update / product_archive.
 """
 
 from __future__ import annotations
@@ -19,7 +37,7 @@ import math
 import uuid
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import require_permission
@@ -29,19 +47,56 @@ from app.models.catalog import Product
 from app.models.enums import PermissionScope
 from app.models.user import User
 from app.schemas.catalog import (
+    BarcodeLookupResponse,
+    PackagingStateResponse,
     ProductCreateRequest,
     ProductListResponse,
     ProductResponse,
     ProductSearchResponse,
     ProductUpdateRequest,
+    ProductVariantCreateRequest,
+    ProductVariantListResponse,
+    ProductVariantResponse,
+    ProductVariantUpdateRequest,
+    PurchaseUnitCreateRequest,
+    PurchaseUnitListResponse,
+    PurchaseUnitResponse,
+    PurchaseUnitUpdateRequest,
+    SellingUnitCreateRequest,
+    SellingUnitListResponse,
+    SellingUnitResponse,
+    SellingUnitUpdateRequest,
 )
-from app.services.catalog import ProductService
+from app.schemas.common import StrictBaseModel
+from app.services.catalog import (
+    BarcodeLookupService,
+    ProductService,
+    ProductVariantService,
+    PurchaseUnitService,
+    SellingUnitService,
+)
 
 router = APIRouter()
 
 
 def _get_product_service(db: Session = Depends(get_db)) -> ProductService:
     return ProductService(db)
+
+
+def _get_variant_service(db: Session = Depends(get_db)) -> ProductVariantService:
+    return ProductVariantService(db)
+
+
+def _get_selling_unit_service(db: Session = Depends(get_db)) -> SellingUnitService:
+    return SellingUnitService(db)
+
+
+def _get_purchase_unit_service(db: Session = Depends(get_db)) -> PurchaseUnitService:
+    return PurchaseUnitService(db)
+
+
+def _get_barcode_service(db: Session = Depends(get_db)) -> BarcodeLookupService:
+    return BarcodeLookupService(db)
 
 
 def to_product_response(product: Product) -> ProductResponse:
@@ -53,6 +108,35 @@ def to_product_response(product: Product) -> ProductResponse:
 
 def _pages(total: int, page_size: int) -> int:
     return math.ceil(total / page_size) if total > 0 and page_size > 0 else 1
+
+
+# ---------------------------------------------------------------------------
+# Barcode lookup (Phase 6 → Phase 8 ready) — MUST precede /{product_id}
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/barcode-lookup",
+    response_model=BarcodeLookupResponse,
+    summary="Barcode lookup",
+    tags=["products"],
+)
+def barcode_lookup(
+    barcode: str = Query(
+        ..., min_length=1, max_length=50, description="Exact barcode to resolve"
+    ),
+    include_archived: bool = Query(
+        False, description="Include archived records (default: active only)"
+    ),
+    user: User = Depends(require_permission(PermissionScope.PRODUCT_VIEW)),
+    service: BarcodeLookupService = Depends(_get_barcode_service),
+) -> BarcodeLookupResponse:
+    """Resolve a scanned barcode to product, variant, or selling unit.
+
+    Lookup order: selling unit → variant → product (exact match).
+    Used by POS scan flows in Phase 8; no sale mutation here.
+    """
+    return service.lookup(barcode, include_archived=include_archived)
 
 
 @router.get(
@@ -240,3 +324,362 @@ def archive_product(
     """Archive (soft-delete) a product. Never destroys historical data."""
     product = service.archive(product_id)
     return to_product_response(product)
+
+
+# ---------------------------------------------------------------------------
+# Variants (Phase 6)
+# ---------------------------------------------------------------------------
+
+
+def _variant_response(variant) -> ProductVariantResponse:
+    return ProductVariantResponse.model_validate(variant)
+
+
+@router.get(
+    "/{product_id}/variants",
+    response_model=ProductVariantListResponse,
+    summary="List product variants",
+    tags=["products", "variants"],
+)
+def list_variants(
+    product_id: uuid.UUID,
+    include_archived: bool = Query(False, description="Include archived variants"),
+    user: User = Depends(require_permission(PermissionScope.PRODUCT_VIEW)),
+    service: ProductVariantService = Depends(_get_variant_service),
+) -> ProductVariantListResponse:
+    """List variants for one product (on demand — not with product list)."""
+    items = service.list_for_product(
+        product_id, include_archived=include_archived
+    )
+    return ProductVariantListResponse(
+        items=[_variant_response(v) for v in items],
+        total=len(items),
+    )
+
+
+@router.post(
+    "/{product_id}/variants",
+    response_model=ProductVariantResponse,
+    status_code=201,
+    summary="Create product variant",
+    tags=["products", "variants"],
+)
+def create_variant(
+    product_id: uuid.UUID,
+    request: ProductVariantCreateRequest,
+    user: User = Depends(require_permission(PermissionScope.PRODUCT_CREATE)),
+    service: ProductVariantService = Depends(_get_variant_service),
+) -> ProductVariantResponse:
+    """Create a variant. barcode unique when provided; price NULL = inherit."""
+    variant = service.create(product_id, request)
+    return _variant_response(variant)
+
+
+@router.put(
+    "/{product_id}/variants/{variant_id}",
+    response_model=ProductVariantResponse,
+    summary="Update product variant",
+    tags=["products", "variants"],
+)
+def update_variant(
+    product_id: uuid.UUID,
+    variant_id: uuid.UUID,
+    request: ProductVariantUpdateRequest,
+    user: User = Depends(require_permission(PermissionScope.PRODUCT_UPDATE)),
+    service: ProductVariantService = Depends(_get_variant_service),
+) -> ProductVariantResponse:
+    """Partial update of a variant."""
+    # Ensure variant belongs to the path product.
+    variant = service.get(variant_id)
+    if str(variant.product_id) != str(product_id):
+        from app.core.exceptions import NotFoundError
+
+        raise NotFoundError(
+            message="Variant not found for this product",
+            details={"variant_id": str(variant_id)},
+        )
+    variant = service.update(variant_id, request)
+    return _variant_response(variant)
+
+
+@router.delete(
+    "/{product_id}/variants/{variant_id}",
+    response_model=ProductVariantResponse,
+    summary="Archive product variant",
+    tags=["products", "variants"],
+)
+def archive_variant(
+    product_id: uuid.UUID,
+    variant_id: uuid.UUID,
+    user: User = Depends(require_permission(PermissionScope.PRODUCT_ARCHIVE)),
+    service: ProductVariantService = Depends(_get_variant_service),
+) -> ProductVariantResponse:
+    """Archive (soft-delete) a variant."""
+    variant = service.get(variant_id)
+    if str(variant.product_id) != str(product_id):
+        from app.core.exceptions import NotFoundError
+
+        raise NotFoundError(
+            message="Variant not found for this product",
+            details={"variant_id": str(variant_id)},
+        )
+    variant = service.archive(variant_id)
+    return _variant_response(variant)
+
+
+# ---------------------------------------------------------------------------
+# Selling units (Phase 6)
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/{product_id}/selling-units",
+    response_model=SellingUnitListResponse,
+    summary="List selling units",
+    tags=["products", "selling-units"],
+)
+def list_selling_units(
+    product_id: uuid.UUID,
+    include_archived: bool = Query(False, description="Include archived units"),
+    user: User = Depends(require_permission(PermissionScope.PRODUCT_VIEW)),
+    service: SellingUnitService = Depends(_get_selling_unit_service),
+) -> SellingUnitListResponse:
+    """List selling units for one product with derived availability."""
+    items = service.list_for_product(
+        product_id, include_archived=include_archived
+    )
+    return SellingUnitListResponse(items=items, total=len(items))
+
+
+@router.post(
+    "/{product_id}/selling-units",
+    response_model=SellingUnitResponse,
+    status_code=201,
+    summary="Create selling unit",
+    tags=["products", "selling-units"],
+)
+def create_selling_unit(
+    product_id: uuid.UUID,
+    request: SellingUnitCreateRequest,
+    user: User = Depends(require_permission(PermissionScope.PRODUCT_CREATE)),
+    service: SellingUnitService = Depends(_get_selling_unit_service),
+) -> SellingUnitResponse:
+    """Create a selling unit (piece ×1 / box ×24 / …). Exactly one base unit."""
+    return service.create(product_id, request)
+
+
+@router.put(
+    "/{product_id}/selling-units/{unit_id}",
+    response_model=SellingUnitResponse,
+    summary="Update selling unit",
+    tags=["products", "selling-units"],
+)
+def update_selling_unit(
+    product_id: uuid.UUID,
+    unit_id: uuid.UUID,
+    request: SellingUnitUpdateRequest,
+    user: User = Depends(require_permission(PermissionScope.PRODUCT_UPDATE)),
+    service: SellingUnitService = Depends(_get_selling_unit_service),
+) -> SellingUnitResponse:
+    """Partial update of a selling unit."""
+    unit = service.get(unit_id)
+    if str(unit.product_id) != str(product_id):
+        from app.core.exceptions import NotFoundError
+
+        raise NotFoundError(
+            message="Selling unit not found for this product",
+            details={"unit_id": str(unit_id)},
+        )
+    return service.update(unit_id, request)
+
+
+@router.delete(
+    "/{product_id}/selling-units/{unit_id}",
+    response_model=SellingUnitResponse,
+    summary="Archive selling unit",
+    tags=["products", "selling-units"],
+)
+def archive_selling_unit(
+    product_id: uuid.UUID,
+    unit_id: uuid.UUID,
+    user: User = Depends(require_permission(PermissionScope.PRODUCT_ARCHIVE)),
+    service: SellingUnitService = Depends(_get_selling_unit_service),
+) -> SellingUnitResponse:
+    """Archive (soft-delete) a selling unit. Cannot archive sole base unit."""
+    unit = service.get(unit_id)
+    if str(unit.product_id) != str(product_id):
+        from app.core.exceptions import NotFoundError
+
+        raise NotFoundError(
+            message="Selling unit not found for this product",
+            details={"unit_id": str(unit_id)},
+        )
+    return service.archive(unit_id)
+
+
+# ---------------------------------------------------------------------------
+# Purchase units + packaging state (Phase 6 architectural correction)
+# ---------------------------------------------------------------------------
+
+
+class PackagingReceiveRequest(StrictBaseModel):
+    purchase_unit_id: uuid.UUID
+    quantity: Decimal
+    reason: str | None = None
+
+
+class PackagingSellRequest(StrictBaseModel):
+    base_quantity: Decimal
+    reason: str | None = None
+
+
+class PackagingSellPackagesRequest(StrictBaseModel):
+    purchase_unit_id: uuid.UUID
+    quantity: Decimal
+    reason: str | None = None
+
+
+@router.get(
+    "/{product_id}/purchase-units",
+    response_model=PurchaseUnitListResponse,
+    summary="List purchase units",
+    tags=["products", "purchase-units"],
+)
+def list_purchase_units(
+    product_id: uuid.UUID,
+    include_archived: bool = Query(False, description="Include archived units"),
+    user: User = Depends(require_permission(PermissionScope.PRODUCT_VIEW)),
+    service: PurchaseUnitService = Depends(_get_purchase_unit_service),
+) -> PurchaseUnitListResponse:
+    """List purchase packaging units for one product with full-package counts."""
+    items = service.list_units(product_id, include_archived=include_archived)
+    return PurchaseUnitListResponse(items=items, total=len(items))
+
+
+@router.post(
+    "/{product_id}/purchase-units",
+    response_model=PurchaseUnitResponse,
+    status_code=201,
+    summary="Create purchase unit",
+    tags=["products", "purchase-units"],
+)
+def create_purchase_unit(
+    product_id: uuid.UUID,
+    request: PurchaseUnitCreateRequest,
+    user: User = Depends(require_permission(PermissionScope.PRODUCT_CREATE)),
+    service: PurchaseUnitService = Depends(_get_purchase_unit_service),
+) -> PurchaseUnitResponse:
+    """Create a purchase packaging unit (Box ×24, Carton ×48, …). No selling price."""
+    return service.create_unit(product_id, request)
+
+
+@router.put(
+    "/{product_id}/purchase-units/{unit_id}",
+    response_model=PurchaseUnitResponse,
+    summary="Update purchase unit",
+    tags=["products", "purchase-units"],
+)
+def update_purchase_unit(
+    product_id: uuid.UUID,
+    unit_id: uuid.UUID,
+    request: PurchaseUnitUpdateRequest,
+    user: User = Depends(require_permission(PermissionScope.PRODUCT_UPDATE)),
+    service: PurchaseUnitService = Depends(_get_purchase_unit_service),
+) -> PurchaseUnitResponse:
+    """Partial update of a purchase unit."""
+    return service.update_unit(product_id, unit_id, request)
+
+
+@router.delete(
+    "/{product_id}/purchase-units/{unit_id}",
+    status_code=204,
+    response_class=Response,
+    summary="Archive purchase unit",
+    tags=["products", "purchase-units"],
+)
+def archive_purchase_unit(
+    product_id: uuid.UUID,
+    unit_id: uuid.UUID,
+    user: User = Depends(require_permission(PermissionScope.PRODUCT_ARCHIVE)),
+    service: PurchaseUnitService = Depends(_get_purchase_unit_service),
+) -> Response:
+    """Archive (soft-delete) a purchase unit. Blocked while full packages remain."""
+    service.archive_unit(product_id, unit_id)
+    return Response(status_code=204)
+
+
+@router.get(
+    "/{product_id}/packaging-state",
+    response_model=PackagingStateResponse,
+    summary="Get packaging state",
+    tags=["products", "packaging"],
+)
+def get_packaging_state(
+    product_id: uuid.UUID,
+    user: User = Depends(require_permission(PermissionScope.PRODUCT_VIEW)),
+    service: PurchaseUnitService = Depends(_get_purchase_unit_service),
+) -> PackagingStateResponse:
+    """Full packages + loose base + total base for one product."""
+    return service.packaging_state(product_id)
+
+
+@router.post(
+    "/{product_id}/packaging-state/receive",
+    response_model=PackagingStateResponse,
+    summary="Receive sealed packages",
+    tags=["products", "packaging"],
+)
+def receive_packages(
+    product_id: uuid.UUID,
+    request: PackagingReceiveRequest,
+    user: User = Depends(require_permission(PermissionScope.INVENTORY_ADJUST)),
+    service: PurchaseUnitService = Depends(_get_purchase_unit_service),
+) -> PackagingStateResponse:
+    """Receive N sealed packages in document unit; base qty increases by N×mult."""
+    return service.receive(
+        product_id,
+        request.purchase_unit_id,
+        request.quantity,
+        reason=request.reason,
+    )
+
+
+@router.post(
+    "/{product_id}/packaging-state/sell",
+    response_model=PackagingStateResponse,
+    summary="Consume base quantity (may break packages)",
+    tags=["products", "packaging"],
+)
+def sell_base(
+    product_id: uuid.UUID,
+    request: PackagingSellRequest,
+    user: User = Depends(require_permission(PermissionScope.INVENTORY_ADJUST)),
+    service: PurchaseUnitService = Depends(_get_purchase_unit_service),
+) -> PackagingStateResponse:
+    """Consume base units; may open sealed packages (explicit PACKAGE_BREAK events)."""
+    return service.sell(
+        product_id,
+        request.base_quantity,
+        reason=request.reason,
+    )
+
+
+@router.post(
+    "/{product_id}/packaging-state/sell-packages",
+    response_model=PackagingStateResponse,
+    summary="Sell sealed packages",
+    tags=["products", "packaging"],
+)
+def sell_sealed_packages(
+    product_id: uuid.UUID,
+    request: PackagingSellPackagesRequest,
+    user: User = Depends(require_permission(PermissionScope.INVENTORY_ADJUST)),
+    service: PurchaseUnitService = Depends(_get_purchase_unit_service),
+) -> PackagingStateResponse:
+    """Sell N sealed packages of a purchase unit without breaking others."""
+    return service.sell_packages(
+        product_id,
+        request.purchase_unit_id,
+        request.quantity,
+        reason=request.reason,
+    )

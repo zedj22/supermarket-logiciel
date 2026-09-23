@@ -39,6 +39,9 @@ from app.models.catalog import (  # noqa: F401
     Pack,
     PackItem,
     Product,
+    ProductPurchaseUnit,
+    ProductSellingUnit,
+    ProductStockPackage,
     ProductVariant,
 )
 
@@ -92,6 +95,9 @@ __all__ = [
     "Category",
     "Product",
     "ProductVariant",
+    "ProductSellingUnit",
+    "ProductPurchaseUnit",
+    "ProductStockPackage",
     "Pack",
     "PackItem",
     # Customers / Suppliers

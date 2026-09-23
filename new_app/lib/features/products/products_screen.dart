@@ -1707,10 +1707,8 @@ class _UnitPill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Units are backend enum values (piece/kg/…) — show raw value when
-    // no locale key exists; fall back through AppStrings.t.
-    final localized = AppStrings.t(label, loc);
-    final text = localized == label ? label : localized;
+    // Units are backend enum values (piece/kg/…) — localized via unitLabel.
+    final text = AppStrings.unitLabel(label, loc);
     final theme = Theme.of(context);
     return Container(
       key: Key('product-unit-$label'),

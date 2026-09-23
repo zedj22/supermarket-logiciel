@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 enum AppLocale { ar, fr, en }
 
@@ -27,10 +28,26 @@ class LocaleState {
 }
 
 class LocaleNotifier extends StateNotifier<LocaleState> {
-  LocaleNotifier() : super(const LocaleState());
+  static const prefsKey = 'app_locale';
+
+  final SharedPreferences? _prefs;
+
+  LocaleNotifier([SharedPreferences? prefs])
+      : _prefs = prefs,
+        super(LocaleState(locale: _read(prefs)));
+
+  static AppLocale _read(SharedPreferences? prefs) {
+    final raw = prefs?.getString(prefsKey);
+    if (raw == null || raw.isEmpty) return AppLocale.ar;
+    for (final value in AppLocale.values) {
+      if (value.name == raw) return value;
+    }
+    return AppLocale.ar;
+  }
 
   void setLocale(AppLocale locale) {
     state = state.copyWith(locale: locale);
+    _persist();
   }
 
   void cycleLocale() {
@@ -45,6 +62,11 @@ class LocaleNotifier extends StateNotifier<LocaleState> {
         state = state.copyWith(locale: AppLocale.ar);
         break;
     }
+    _persist();
+  }
+
+  void _persist() {
+    _prefs?.setString(prefsKey, state.locale.name);
   }
 }
 

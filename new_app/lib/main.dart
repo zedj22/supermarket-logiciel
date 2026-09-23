@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'core/constants.dart';
 import 'features/auth/auth_provider.dart';
 import 'theme/app_theme.dart';
@@ -22,9 +23,18 @@ const List<LocalizationsDelegate<dynamic>> appLocalizationsDelegates =
       GlobalCupertinoLocalizations.delegate,
     ];
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  runApp(const ProviderScope(child: SupermarketPosApp()));
+  final prefs = await SharedPreferences.getInstance();
+  runApp(
+    ProviderScope(
+      overrides: [
+        localeProvider.overrideWith((ref) => LocaleNotifier(prefs)),
+        themeProvider.overrideWith((ref) => ThemeNotifier(prefs)),
+      ],
+      child: const SupermarketPosApp(),
+    ),
+  );
 }
 
 class SupermarketPosApp extends ConsumerWidget {

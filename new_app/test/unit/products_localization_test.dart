@@ -84,4 +84,90 @@ void main() {
       expect(AppStrings.t('add_product', 'de'), 'add_product');
     });
   });
+
+  group('Phase 6 unit labels (unitLabel)', () {
+    const unitCodes = [
+      'kg',
+      'gram',
+      'liter',
+      'milliliter',
+      'meter',
+      'pack',
+      'piece',
+      'box',
+    ];
+
+    for (final locale in ['ar', 'fr', 'en']) {
+      test('unitLabel returns non-empty label for every code in "$locale"', () {
+        for (final code in unitCodes) {
+          final label = AppStrings.unitLabel(code, locale);
+          expect(label, isNotEmpty, reason: 'empty unitLabel: $code@$locale');
+        }
+      });
+    }
+
+    test('unitLabel is translated (differs from raw code) for ar', () {
+      // fr/en intentionally map some codes to themselves (kg → kg).
+      for (final code in unitCodes) {
+        final label = AppStrings.unitLabel(code, 'ar');
+        expect(
+          label,
+          isNot(code),
+          reason: 'unitLabel fell back to raw code for $code@ar',
+        );
+      }
+    });
+
+    test('unitLabel translates non-identity codes for fr', () {
+      const frIdentityOk = {'kg'};
+      for (final code in unitCodes) {
+        if (frIdentityOk.contains(code)) continue;
+        final label = AppStrings.unitLabel(code, 'fr');
+        expect(
+          label,
+          isNot(code),
+          reason: 'unitLabel fell back to raw code for $code@fr',
+        );
+      }
+    });
+
+    test('unitLabel falls back to code when code is null or unknown', () {
+      expect(AppStrings.unitLabel(null, 'en'), '');
+      expect(AppStrings.unitLabel(null, 'ar'), '');
+      expect(AppStrings.unitLabel('weird', 'en'), 'weird');
+      expect(AppStrings.unitLabel('weird', 'fr'), 'weird');
+      expect(AppStrings.unitLabel('weird', 'ar'), 'weird');
+    });
+
+    test('Arabic and English unit labels differ', () {
+      var differs = 0;
+      for (final code in unitCodes) {
+        if (AppStrings.unitLabel(code, 'ar') !=
+            AppStrings.unitLabel(code, 'en')) {
+          differs++;
+        }
+      }
+      expect(differs, greaterThan(unitCodes.length ~/ 2));
+    });
+  });
+
+  group('Phase 6 archive snackbar strings', () {
+    const archiveKeys = [
+      'variant_archived',
+      'selling_unit_archived',
+      'purchase_unit_archived',
+      'archived_purchase_unit',
+      'unit_type',
+    ];
+
+    for (final locale in ['ar', 'fr', 'en']) {
+      test('every archive/unit key exists in "$locale"', () {
+        for (final key in archiveKeys) {
+          final value = AppStrings.t(key, locale);
+          expect(value, isNotEmpty, reason: 'missing: $key@$locale');
+          expect(value, isNot(key), reason: 'untranslated: $key@$locale');
+        }
+      });
+    }
+  });
 }

@@ -390,3 +390,587 @@ final categoriesProvider =
     () => ref.read(localeProvider).flutterLocale.languageCode,
   );
 });
+
+// ---------------------------------------------------------------------------
+// Variants (Phase 6) — loaded on demand per product (no N+1 on list)
+// ---------------------------------------------------------------------------
+
+class VariantsState {
+  final String? productId;
+  final List<VariantModel> items;
+  final bool loading;
+  final String? error;
+
+  const VariantsState({
+    this.productId,
+    this.items = const [],
+    this.loading = false,
+    this.error,
+  });
+
+  VariantsState copyWith({
+    String? productId,
+    List<VariantModel>? items,
+    bool? loading,
+    String? error,
+    bool clearError = false,
+    bool clearProduct = false,
+  }) {
+    return VariantsState(
+      productId: clearProduct ? null : (productId ?? this.productId),
+      items: items ?? this.items,
+      loading: loading ?? this.loading,
+      error: clearError ? null : (error ?? this.error),
+    );
+  }
+}
+
+class VariantsNotifier extends StateNotifier<VariantsState> {
+  final Dio _dio;
+  final String Function() _localeCode;
+  int _requestId = 0;
+
+  VariantsNotifier(this._dio, this._localeCode)
+      : super(const VariantsState());
+
+  String _message(DioException e) {
+    final loc = _localeCode();
+    if (isConnectionError(e)) {
+      return AppStrings.t('network_error_retry', loc);
+    }
+    final backend = backendErrorMessage(e);
+    if (backend != null) return backend;
+    final code = e.response?.statusCode;
+    if (code == 401) return AppStrings.t('session_expired_login', loc);
+    if (code == 403) return AppStrings.t('permission_denied', loc);
+    if (code == 422) return AppStrings.t('validation_error', loc);
+    return AppStrings.t('api_error_retry', loc);
+  }
+
+  Future<void> load(String productId, {bool includeArchived = false}) async {
+    final requestId = ++_requestId;
+    state = state.copyWith(
+      productId: productId,
+      loading: true,
+      clearError: true,
+      items: const [],
+    );
+    try {
+      final response = await _dio.get(
+        '/api/v1/products/$productId/variants',
+        queryParameters: {'include_archived': includeArchived},
+      );
+      if (requestId != _requestId) return;
+      final data = response.data as Map<String, dynamic>? ?? const {};
+      final items = (data['items'] as List<dynamic>? ?? const [])
+          .map((e) => VariantModel.fromJson(e as Map<String, dynamic>))
+          .toList();
+      state = state.copyWith(items: items, loading: false, clearError: true);
+    } on DioException catch (e) {
+      if (requestId != _requestId) return;
+      state = state.copyWith(loading: false, error: _message(e));
+    } catch (_) {
+      if (requestId != _requestId) return;
+      state = state.copyWith(loading: false, items: const []);
+    }
+  }
+
+  Future<String?> create(
+    String productId,
+    Map<String, dynamic> payload,
+  ) async {
+    try {
+      await _dio.post('/api/v1/products/$productId/variants', data: payload);
+      await load(productId, includeArchived: true);
+      return null;
+    } on DioException catch (e) {
+      return _message(e);
+    }
+  }
+
+  Future<String?> update(
+    String productId,
+    String variantId,
+    Map<String, dynamic> payload,
+  ) async {
+    try {
+      await _dio.put(
+        '/api/v1/products/$productId/variants/$variantId',
+        data: payload,
+      );
+      await load(productId, includeArchived: true);
+      return null;
+    } on DioException catch (e) {
+      return _message(e);
+    }
+  }
+
+  Future<String?> archive(String productId, String variantId) async {
+    try {
+      await _dio.delete('/api/v1/products/$productId/variants/$variantId');
+      await load(productId, includeArchived: true);
+      return null;
+    } on DioException catch (e) {
+      return _message(e);
+    }
+  }
+}
+
+final variantsProvider =
+    StateNotifierProvider<VariantsNotifier, VariantsState>((ref) {
+  final dio = ref.watch(apiClientProvider).dio;
+  return VariantsNotifier(
+    dio,
+    () => ref.read(localeProvider).flutterLocale.languageCode,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Selling units (Phase 6)
+// ---------------------------------------------------------------------------
+
+class SellingUnitsState {
+  final String? productId;
+  final List<SellingUnitModel> items;
+  final bool loading;
+  final String? error;
+
+  const SellingUnitsState({
+    this.productId,
+    this.items = const [],
+    this.loading = false,
+    this.error,
+  });
+
+  SellingUnitsState copyWith({
+    String? productId,
+    List<SellingUnitModel>? items,
+    bool? loading,
+    String? error,
+    bool clearError = false,
+  }) {
+    return SellingUnitsState(
+      productId: productId ?? this.productId,
+      items: items ?? this.items,
+      loading: loading ?? this.loading,
+      error: clearError ? null : (error ?? this.error),
+    );
+  }
+
+  SellingUnitModel? get baseUnit {
+    for (final u in items) {
+      if (u.isBaseUnit && !u.isArchived) return u;
+    }
+    return null;
+  }
+}
+
+class SellingUnitsNotifier extends StateNotifier<SellingUnitsState> {
+  final Dio _dio;
+  final String Function() _localeCode;
+  int _requestId = 0;
+
+  SellingUnitsNotifier(this._dio, this._localeCode)
+      : super(const SellingUnitsState());
+
+  String _message(DioException e) {
+    final loc = _localeCode();
+    if (isConnectionError(e)) {
+      return AppStrings.t('network_error_retry', loc);
+    }
+    final backend = backendErrorMessage(e);
+    if (backend != null) return backend;
+    final code = e.response?.statusCode;
+    if (code == 401) return AppStrings.t('session_expired_login', loc);
+    if (code == 403) return AppStrings.t('permission_denied', loc);
+    if (code == 422) return AppStrings.t('validation_error', loc);
+    return AppStrings.t('api_error_retry', loc);
+  }
+
+  Future<void> load(String productId, {bool includeArchived = false}) async {
+    final requestId = ++_requestId;
+    state = state.copyWith(
+      productId: productId,
+      loading: true,
+      clearError: true,
+      items: const [],
+    );
+    try {
+      final response = await _dio.get(
+        '/api/v1/products/$productId/selling-units',
+        queryParameters: {'include_archived': includeArchived},
+      );
+      if (requestId != _requestId) return;
+      final data = response.data as Map<String, dynamic>? ?? const {};
+      final items = (data['items'] as List<dynamic>? ?? const [])
+          .map((e) => SellingUnitModel.fromJson(e as Map<String, dynamic>))
+          .toList();
+      state = state.copyWith(items: items, loading: false, clearError: true);
+    } on DioException catch (e) {
+      if (requestId != _requestId) return;
+      state = state.copyWith(loading: false, error: _message(e));
+    } catch (_) {
+      if (requestId != _requestId) return;
+      state = state.copyWith(loading: false, items: const []);
+    }
+  }
+
+  Future<String?> create(
+    String productId,
+    Map<String, dynamic> payload,
+  ) async {
+    try {
+      await _dio.post(
+        '/api/v1/products/$productId/selling-units',
+        data: payload,
+      );
+      await load(productId, includeArchived: true);
+      return null;
+    } on DioException catch (e) {
+      return _message(e);
+    }
+  }
+
+  Future<String?> update(
+    String productId,
+    String unitId,
+    Map<String, dynamic> payload,
+  ) async {
+    try {
+      await _dio.put(
+        '/api/v1/products/$productId/selling-units/$unitId',
+        data: payload,
+      );
+      await load(productId, includeArchived: true);
+      return null;
+    } on DioException catch (e) {
+      return _message(e);
+    }
+  }
+
+  Future<String?> archive(String productId, String unitId) async {
+    try {
+      await _dio.delete('/api/v1/products/$productId/selling-units/$unitId');
+      await load(productId, includeArchived: true);
+      return null;
+    } on DioException catch (e) {
+      return _message(e);
+    }
+  }
+}
+
+final sellingUnitsProvider =
+    StateNotifierProvider<SellingUnitsNotifier, SellingUnitsState>((ref) {
+  final dio = ref.watch(apiClientProvider).dio;
+  return SellingUnitsNotifier(
+    dio,
+    () => ref.read(localeProvider).flutterLocale.languageCode,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Purchase units + packaging state (Phase 6 architectural correction)
+// ---------------------------------------------------------------------------
+
+class PurchaseUnitsState {
+  final String? productId;
+  final List<PurchaseUnitModel> items;
+  final bool loading;
+  final String? error;
+
+  const PurchaseUnitsState({
+    this.productId,
+    this.items = const [],
+    this.loading = false,
+    this.error,
+  });
+
+  PurchaseUnitsState copyWith({
+    String? productId,
+    List<PurchaseUnitModel>? items,
+    bool? loading,
+    String? error,
+    bool clearError = false,
+  }) {
+    return PurchaseUnitsState(
+      productId: productId ?? this.productId,
+      items: items ?? this.items,
+      loading: loading ?? this.loading,
+      error: clearError ? null : (error ?? this.error),
+    );
+  }
+
+  PurchaseUnitModel? get defaultUnit {
+    for (final u in items) {
+      if (u.isDefault && !u.isArchived) return u;
+    }
+    return null;
+  }
+}
+
+class PurchaseUnitsNotifier extends StateNotifier<PurchaseUnitsState> {
+  final Dio _dio;
+  final String Function() _localeCode;
+  int _requestId = 0;
+
+  PurchaseUnitsNotifier(this._dio, this._localeCode)
+      : super(const PurchaseUnitsState());
+
+  String _message(DioException e) {
+    final loc = _localeCode();
+    if (isConnectionError(e)) {
+      return AppStrings.t('network_error_retry', loc);
+    }
+    final backend = backendErrorMessage(e);
+    if (backend != null) return backend;
+    final code = e.response?.statusCode;
+    if (code == 401) return AppStrings.t('session_expired_login', loc);
+    if (code == 403) return AppStrings.t('permission_denied', loc);
+    if (code == 422) return AppStrings.t('validation_error', loc);
+    return AppStrings.t('api_error_retry', loc);
+  }
+
+  Future<void> load(String productId, {bool includeArchived = false}) async {
+    final requestId = ++_requestId;
+    state = state.copyWith(
+      productId: productId,
+      loading: true,
+      clearError: true,
+      items: const [],
+    );
+    try {
+      final response = await _dio.get(
+        '/api/v1/products/$productId/purchase-units',
+        queryParameters: {'include_archived': includeArchived},
+      );
+      if (requestId != _requestId) return;
+      final data = response.data as Map<String, dynamic>? ?? const {};
+      final items = (data['items'] as List<dynamic>? ?? const [])
+          .map((e) => PurchaseUnitModel.fromJson(e as Map<String, dynamic>))
+          .toList();
+      state = state.copyWith(items: items, loading: false, clearError: true);
+    } on DioException catch (e) {
+      if (requestId != _requestId) return;
+      state = state.copyWith(loading: false, error: _message(e));
+    } catch (_) {
+      if (requestId != _requestId) return;
+      state = state.copyWith(loading: false, items: const []);
+    }
+  }
+
+  Future<String?> create(
+    String productId,
+    Map<String, dynamic> payload,
+  ) async {
+    try {
+      await _dio.post(
+        '/api/v1/products/$productId/purchase-units',
+        data: payload,
+      );
+      await load(productId, includeArchived: true);
+      return null;
+    } on DioException catch (e) {
+      return _message(e);
+    }
+  }
+
+  Future<String?> update(
+    String productId,
+    String unitId,
+    Map<String, dynamic> payload,
+  ) async {
+    try {
+      await _dio.put(
+        '/api/v1/products/$productId/purchase-units/$unitId',
+        data: payload,
+      );
+      await load(productId, includeArchived: true);
+      return null;
+    } on DioException catch (e) {
+      return _message(e);
+    }
+  }
+
+  Future<String?> archive(String productId, String unitId) async {
+    try {
+      await _dio.delete('/api/v1/products/$productId/purchase-units/$unitId');
+      await load(productId, includeArchived: true);
+      return null;
+    } on DioException catch (e) {
+      return _message(e);
+    }
+  }
+}
+
+final purchaseUnitsProvider =
+    StateNotifierProvider<PurchaseUnitsNotifier, PurchaseUnitsState>((ref) {
+  final dio = ref.watch(apiClientProvider).dio;
+  return PurchaseUnitsNotifier(
+    dio,
+    () => ref.read(localeProvider).flutterLocale.languageCode,
+  );
+});
+
+class PackagingStateModel {
+  final String productId;
+  final String totalBaseQty;
+  final String looseBaseQty;
+  final List<Map<String, dynamic>> fullPackages;
+
+  const PackagingStateModel({
+    required this.productId,
+    required this.totalBaseQty,
+    required this.looseBaseQty,
+    required this.fullPackages,
+  });
+
+  factory PackagingStateModel.fromJson(Map<String, dynamic> json) {
+    return PackagingStateModel(
+      productId: json['product_id'] as String? ?? '',
+      totalBaseQty: '${json['total_base_qty'] ?? 0}',
+      looseBaseQty: '${json['loose_base_qty'] ?? 0}',
+      fullPackages: (json['full_packages'] as List<dynamic>? ?? const [])
+          .map((e) => Map<String, dynamic>.from(e as Map))
+          .toList(),
+    );
+  }
+}
+
+class PackagingStateNotifier extends StateNotifier<PackagingStateModel?> {
+  final Dio _dio;
+  final String Function() _localeCode;
+
+  PackagingStateNotifier(this._dio, this._localeCode) : super(null);
+
+  String _message(DioException e) {
+    final loc = _localeCode();
+    if (isConnectionError(e)) {
+      return AppStrings.t('network_error_retry', loc);
+    }
+    final backend = backendErrorMessage(e);
+    if (backend != null) return backend;
+    return AppStrings.t('api_error_retry', loc);
+  }
+
+  Future<String?> load(String productId) async {
+    try {
+      final response = await _dio.get(
+        '/api/v1/products/$productId/packaging-state',
+      );
+      final data = response.data as Map<String, dynamic>? ?? const {};
+      state = PackagingStateModel.fromJson(data);
+      return null;
+    } on DioException catch (e) {
+      return _message(e);
+    }
+  }
+
+  Future<String?> receive(
+    String productId,
+    String purchaseUnitId,
+    String quantity,
+  ) async {
+    try {
+      final response = await _dio.post(
+        '/api/v1/products/$productId/packaging-state/receive',
+        data: {
+          'purchase_unit_id': purchaseUnitId,
+          'quantity': quantity,
+        },
+      );
+      final data = response.data as Map<String, dynamic>? ?? const {};
+      state = PackagingStateModel.fromJson(data);
+      return null;
+    } on DioException catch (e) {
+      return _message(e);
+    }
+  }
+
+  Future<String?> sellBase(String productId, String baseQuantity) async {
+    try {
+      final response = await _dio.post(
+        '/api/v1/products/$productId/packaging-state/sell',
+        data: {'base_quantity': baseQuantity},
+      );
+      final data = response.data as Map<String, dynamic>? ?? const {};
+      state = PackagingStateModel.fromJson(data);
+      return null;
+    } on DioException catch (e) {
+      return _message(e);
+    }
+  }
+}
+
+final packagingStateProvider =
+    StateNotifierProvider<PackagingStateNotifier, PackagingStateModel?>((ref) {
+  final dio = ref.watch(apiClientProvider).dio;
+  return PackagingStateNotifier(
+    dio,
+    () => ref.read(localeProvider).flutterLocale.languageCode,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Barcode lookup (Phase 8 ready)
+// ---------------------------------------------------------------------------
+
+class BarcodeLookupNotifier extends StateNotifier<BarcodeLookupModel?> {
+  final Dio _dio;
+  final String Function() _localeCode;
+
+  BarcodeLookupNotifier(this._dio, this._localeCode) : super(null);
+
+  String _message(DioException e) {
+    final loc = _localeCode();
+    if (isConnectionError(e)) {
+      return AppStrings.t('network_error_retry', loc);
+    }
+    final backend = backendErrorMessage(e);
+    if (backend != null) return backend;
+    return AppStrings.t('api_error_retry', loc);
+  }
+
+  Future<BarcodeLookupModel?> lookup(String barcode) async {
+    state = null;
+    try {
+      final response = await _dio.get(
+        '/api/v1/products/barcode-lookup',
+        queryParameters: {'barcode': barcode},
+      );
+      final model = BarcodeLookupModel.fromJson(
+        response.data as Map<String, dynamic>,
+      );
+      state = model;
+      return model;
+    } on DioException {
+      return null;
+    }
+  }
+
+  Future<String?> lookupWithError(String barcode) async {
+    state = null;
+    try {
+      final response = await _dio.get(
+        '/api/v1/products/barcode-lookup',
+        queryParameters: {'barcode': barcode},
+      );
+      state = BarcodeLookupModel.fromJson(
+        response.data as Map<String, dynamic>,
+      );
+      return null;
+    } on DioException catch (e) {
+      return _message(e);
+    }
+  }
+
+  void clear() => state = null;
+}
+
+final barcodeLookupProvider =
+    StateNotifierProvider<BarcodeLookupNotifier, BarcodeLookupModel?>((ref) {
+  final dio = ref.watch(apiClientProvider).dio;
+  return BarcodeLookupNotifier(
+    dio,
+    () => ref.read(localeProvider).flutterLocale.languageCode,
+  );
+});

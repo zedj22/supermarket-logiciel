@@ -112,6 +112,9 @@ class StockMovementType(str, enum.Enum):
     RETURN = "return"
     ADJUSTMENT = "adjustment"
     PACK_COMPONENT = "pack_component"
+    # Phase 6 packaging / stock-breaking (audit of open/break events)
+    PACKAGE_BREAK = "package_break"
+    PACKAGE_RECEIVE = "package_receive"
 
 
 # ── Expenses ───────────────────────────────────────────────────────────

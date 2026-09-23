@@ -12,7 +12,14 @@ from typing import Sequence
 
 from sqlalchemy import asc, desc, func, or_, select
 
-from app.models.catalog import Category, Product
+from app.models.catalog import (
+    Category,
+    Product,
+    ProductPurchaseUnit,
+    ProductSellingUnit,
+    ProductStockPackage,
+    ProductVariant,
+)
 from app.repositories.base import BaseRepository
 
 # Ordering allowlists (never accept arbitrary column names from clients).
@@ -54,8 +61,9 @@ class ProductRepository(BaseRepository[Product]):
     ) -> tuple[Sequence[Product], int]:
         """Paginated product list with search/category/archive filters.
 
-        Returns (items, total). Category data loads via the model's
-        existing selectin relationship (constant queries, not N+1).
+        Returns (items, total). Category loads via Product.category
+        selectin only. Product.variants / Product.selling_units are
+        noload on the model — never fetched on this path.
         """
         filters: list = []
 
@@ -241,3 +249,218 @@ class CategoryRepository(BaseRepository[Category]):
         if exclude_id is not None:
             stmt = stmt.where(Category.id != exclude_id)
         return self.db.scalar(stmt) is not None
+
+
+class ProductVariantRepository(BaseRepository[ProductVariant]):
+    """Persistence for product variants (loaded on demand — no N+1)."""
+
+    model = ProductVariant
+
+    def list_for_product(
+        self, product_id: uuid.UUID, *, include_archived: bool = False
+    ) -> list[ProductVariant]:
+        """All variants for one product, active first then by name."""
+        stmt = select(ProductVariant).where(
+            ProductVariant.product_id == product_id
+        )
+        if not include_archived:
+            stmt = stmt.where(ProductVariant.archived_at.is_(None))
+        stmt = stmt.order_by(
+            ProductVariant.archived_at.is_not(None),
+            ProductVariant.name.asc(),
+            ProductVariant.id,
+        )
+        return list(self.db.scalars(stmt).all())
+
+    def name_exists_for_product(
+        self,
+        product_id: uuid.UUID,
+        name: str,
+        exclude_id: uuid.UUID | None = None,
+    ) -> bool:
+        stmt = select(ProductVariant.id).where(
+            ProductVariant.product_id == product_id,
+            ProductVariant.name == name,
+        )
+        if exclude_id is not None:
+            stmt = stmt.where(ProductVariant.id != exclude_id)
+        return self.db.scalar(stmt) is not None
+
+    def barcode_exists(
+        self, barcode: str, exclude_id: uuid.UUID | None = None
+    ) -> bool:
+        stmt = select(ProductVariant.id).where(
+            ProductVariant.barcode == barcode
+        )
+        if exclude_id is not None:
+            stmt = stmt.where(ProductVariant.id != exclude_id)
+        return self.db.scalar(stmt) is not None
+
+    def find_by_barcode(
+        self, barcode: str, *, include_archived: bool = False
+    ) -> ProductVariant | None:
+        stmt = select(ProductVariant).where(
+            ProductVariant.barcode == barcode
+        )
+        if not include_archived:
+            stmt = stmt.where(ProductVariant.archived_at.is_(None))
+        return self.db.scalar(stmt)
+
+
+class SellingUnitRepository(BaseRepository[ProductSellingUnit]):
+    """Persistence for commercial selling units."""
+
+    model = ProductSellingUnit
+
+    def list_for_product(
+        self, product_id: uuid.UUID, *, include_archived: bool = False
+    ) -> list[ProductSellingUnit]:
+        stmt = select(ProductSellingUnit).where(
+            ProductSellingUnit.product_id == product_id
+        )
+        if not include_archived:
+            stmt = stmt.where(ProductSellingUnit.archived_at.is_(None))
+        stmt = stmt.order_by(
+            ProductSellingUnit.is_base_unit.desc(),
+            ProductSellingUnit.multiplier.asc(),
+            ProductSellingUnit.name.asc(),
+        )
+        return list(self.db.scalars(stmt).all())
+
+    def get_base_unit(
+        self, product_id: uuid.UUID, *, include_archived: bool = False
+    ) -> ProductSellingUnit | None:
+        stmt = select(ProductSellingUnit).where(
+            ProductSellingUnit.product_id == product_id,
+            ProductSellingUnit.is_base_unit.is_(True),
+        )
+        if not include_archived:
+            stmt = stmt.where(ProductSellingUnit.archived_at.is_(None))
+        return self.db.scalar(stmt)
+
+    def name_exists_for_product(
+        self,
+        product_id: uuid.UUID,
+        name: str,
+        exclude_id: uuid.UUID | None = None,
+    ) -> bool:
+        stmt = select(ProductSellingUnit.id).where(
+            ProductSellingUnit.product_id == product_id,
+            ProductSellingUnit.name == name,
+        )
+        if exclude_id is not None:
+            stmt = stmt.where(ProductSellingUnit.id != exclude_id)
+        return self.db.scalar(stmt) is not None
+
+    def barcode_exists(
+        self, barcode: str, exclude_id: uuid.UUID | None = None
+    ) -> bool:
+        """Barcode unique across selling units (and products checked in service)."""
+        stmt = select(ProductSellingUnit.id).where(
+            ProductSellingUnit.barcode == barcode
+        )
+        if exclude_id is not None:
+            stmt = stmt.where(ProductSellingUnit.id != exclude_id)
+        return self.db.scalar(stmt) is not None
+
+    def find_by_barcode(
+        self, barcode: str, *, include_archived: bool = False
+    ) -> ProductSellingUnit | None:
+        stmt = select(ProductSellingUnit).where(
+            ProductSellingUnit.barcode == barcode
+        )
+        if not include_archived:
+            stmt = stmt.where(ProductSellingUnit.archived_at.is_(None))
+        return self.db.scalar(stmt)
+
+
+class PurchaseUnitRepository(BaseRepository[ProductPurchaseUnit]):
+    """Persistence for purchase packaging units."""
+
+    model = ProductPurchaseUnit
+
+    def list_for_product(
+        self, product_id: uuid.UUID, *, include_archived: bool = False
+    ) -> list[ProductPurchaseUnit]:
+        stmt = select(ProductPurchaseUnit).where(
+            ProductPurchaseUnit.product_id == product_id
+        )
+        if not include_archived:
+            stmt = stmt.where(ProductPurchaseUnit.archived_at.is_(None))
+        stmt = stmt.order_by(
+            ProductPurchaseUnit.is_default.desc(),
+            ProductPurchaseUnit.multiplier.asc(),
+            ProductPurchaseUnit.name.asc(),
+        )
+        return list(self.db.scalars(stmt).all())
+
+    def name_exists_for_product(
+        self,
+        product_id: uuid.UUID,
+        name: str,
+        exclude_id: uuid.UUID | None = None,
+    ) -> bool:
+        stmt = select(ProductPurchaseUnit.id).where(
+            ProductPurchaseUnit.product_id == product_id,
+            ProductPurchaseUnit.name == name,
+        )
+        if exclude_id is not None:
+            stmt = stmt.where(ProductPurchaseUnit.id != exclude_id)
+        return self.db.scalar(stmt) is not None
+
+    def barcode_exists(
+        self, barcode: str, exclude_id: uuid.UUID | None = None
+    ) -> bool:
+        stmt = select(ProductPurchaseUnit.id).where(
+            ProductPurchaseUnit.barcode == barcode
+        )
+        if exclude_id is not None:
+            stmt = stmt.where(ProductPurchaseUnit.id != exclude_id)
+        return self.db.scalar(stmt) is not None
+
+    def find_by_barcode(
+        self, barcode: str, *, include_archived: bool = False
+    ) -> ProductPurchaseUnit | None:
+        stmt = select(ProductPurchaseUnit).where(
+            ProductPurchaseUnit.barcode == barcode
+        )
+        if not include_archived:
+            stmt = stmt.where(ProductPurchaseUnit.archived_at.is_(None))
+        return self.db.scalar(stmt)
+
+    def get_default(
+        self, product_id: uuid.UUID, *, include_archived: bool = False
+    ) -> ProductPurchaseUnit | None:
+        stmt = select(ProductPurchaseUnit).where(
+            ProductPurchaseUnit.product_id == product_id,
+            ProductPurchaseUnit.is_default.is_(True),
+        )
+        if not include_archived:
+            stmt = stmt.where(ProductPurchaseUnit.archived_at.is_(None))
+        return self.db.scalar(stmt)
+
+
+class StockPackageRepository(BaseRepository[ProductStockPackage]):
+    """Persistence for sealed full-package counts."""
+
+    model = ProductStockPackage
+
+    def list_for_product(
+        self, product_id: uuid.UUID, *, include_archived: bool = False
+    ) -> list[ProductStockPackage]:
+        stmt = select(ProductStockPackage).where(
+            ProductStockPackage.product_id == product_id
+        )
+        if not include_archived:
+            stmt = stmt.where(ProductStockPackage.archived_at.is_(None))
+        stmt = stmt.order_by(ProductStockPackage.purchase_unit_id)
+        return list(self.db.scalars(stmt).all())
+
+    def get_for_unit(
+        self, product_id: uuid.UUID, purchase_unit_id: uuid.UUID
+    ) -> ProductStockPackage | None:
+        stmt = select(ProductStockPackage).where(
+            ProductStockPackage.product_id == product_id,
+            ProductStockPackage.purchase_unit_id == purchase_unit_id,
+        )
+        return self.db.scalar(stmt)

@@ -10,7 +10,7 @@ Design principles:
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, String, Text, func
+from sqlalchemy import DateTime, ForeignKey, Numeric, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, TimestampMixin, UUIDMixin, numeric_quantity
@@ -37,6 +37,15 @@ class InventoryMovement(Base, UUIDMixin, TimestampMixin):
     quantity_change: Mapped[float] = numeric_quantity()
     quantity_before: Mapped[float] = numeric_quantity()
     quantity_after: Mapped[float] = numeric_quantity()
+    # Phase 6 packaging: document unit + package open/break bookkeeping.
+    # quantity_* stay in BASE units; document_* preserve what was on paper.
+    document_quantity: Mapped[float | None] = mapped_column(Numeric(18, 3), nullable=True)
+    document_unit: Mapped[str | None] = mapped_column(String(50))
+    purchase_unit_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("product_purchase_units.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    packages_change: Mapped[float | None] = mapped_column(Numeric(18, 3), nullable=True)
     reason: Mapped[str | None] = mapped_column(Text)
     source_document_type: Mapped[str | None] = mapped_column(String(30))
     source_document_id: Mapped[uuid.UUID | None] = mapped_column(index=True)

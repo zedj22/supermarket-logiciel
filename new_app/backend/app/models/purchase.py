@@ -11,7 +11,7 @@ Design principles:
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, String, Text, func
+from sqlalchemy import DateTime, ForeignKey, Numeric, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, DocumentModel, TimestampMixin, UUIDMixin, numeric_money, numeric_quantity
@@ -90,6 +90,16 @@ class PurchaseLine(Base, UUIDMixin, TimestampMixin):
     unit_cost: Mapped[float] = numeric_money()
     quantity: Mapped[float] = numeric_quantity()
     line_total: Mapped[float] = numeric_money()
+    # Phase 6 packaging: document unit may be Box ×24 while stock adds base.
+    purchase_unit_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("product_purchase_units.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    purchase_unit_name: Mapped[str | None] = mapped_column(String(50))
+    unit_multiplier: Mapped[float | None] = mapped_column(Numeric(18, 3), nullable=True)
+    base_qty_equivalent: Mapped[float | None] = mapped_column(
+        Numeric(18, 3), nullable=True
+    )
 
     # Relationships
     purchase: Mapped["Purchase"] = relationship(

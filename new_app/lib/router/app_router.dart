@@ -174,6 +174,11 @@ class ScaffoldWithNav extends ConsumerWidget {
           selectedIcon: const Icon(Icons.people),
           label: Text(AppStrings.t('user_list', loc)),
         ),
+      NavigationRailDestination(
+        icon: const Icon(Icons.settings_outlined),
+        selectedIcon: const Icon(Icons.settings),
+        label: Text(AppStrings.t('settings', loc)),
+      ),
     ];
 
     int? selectedIndex;
@@ -189,6 +194,8 @@ class ScaffoldWithNav extends ConsumerWidget {
       index += 1;
       if (location == '/users') selectedIndex = index;
     }
+    index += 1;
+    if (location == '/settings') selectedIndex = index;
 
     void onDestinationSelected(int target) {
       var i = 0;
@@ -202,6 +209,10 @@ class ScaffoldWithNav extends ConsumerWidget {
       }
       if (canManageUsers && i++ == target) {
         context.go('/users');
+        return;
+      }
+      if (i++ == target) {
+        context.go('/settings');
       }
     }
 

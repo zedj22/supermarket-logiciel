@@ -1,12 +1,14 @@
-"""Catalog models: categories, products, variants, packs, pack items.
+"""Catalog models: categories, products, variants, selling units, packs.
 
-Tables: categories, products, product_variants, packs, pack_items
+Tables: categories, products, product_variants, product_selling_units,
+packs, pack_items
 """
 
 import uuid
 from datetime import date
+from decimal import Decimal
 
-from sqlalchemy import Boolean, Date, ForeignKey, String, UniqueConstraint
+from sqlalchemy import Boolean, Date, ForeignKey, Numeric, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import (
@@ -49,7 +51,9 @@ class Category(MasterModel):
     products: Mapped[list["Product"]] = relationship(
         "Product",
         back_populates="category",
-        lazy="selectin",
+        # On-demand only: category list uses list_with_counts (subquery);
+        # product list must not reverse-load every product in the category.
+        lazy="noload",
     )
 
 
@@ -82,6 +86,10 @@ class Product(MasterModel):
     )
 
     # Relationships
+    # category stays selectin so GET /products resolves category_name
+    # without N+1. Child collections are noload: catalog list must NOT
+    # select all variants/selling units/pack lines for every product.
+    # Explicit endpoints load them via repositories (variants / selling-units).
     category: Mapped["Category | None"] = relationship(
         "Category",
         back_populates="products",
@@ -91,12 +99,30 @@ class Product(MasterModel):
         "ProductVariant",
         back_populates="product",
         cascade="all, delete-orphan",
-        lazy="selectin",
+        lazy="noload",
+    )
+    selling_units: Mapped[list["ProductSellingUnit"]] = relationship(
+        "ProductSellingUnit",
+        back_populates="product",
+        cascade="all, delete-orphan",
+        lazy="noload",
+    )
+    purchase_units: Mapped[list["ProductPurchaseUnit"]] = relationship(
+        "ProductPurchaseUnit",
+        back_populates="product",
+        cascade="all, delete-orphan",
+        lazy="noload",
+    )
+    stock_packages: Mapped[list["ProductStockPackage"]] = relationship(
+        "ProductStockPackage",
+        back_populates="product",
+        cascade="all, delete-orphan",
+        lazy="noload",
     )
     pack_items_as_component: Mapped[list["PackItem"]] = relationship(
         "PackItem",
         back_populates="component_product",
-        lazy="selectin",
+        lazy="noload",
     )
 
 
@@ -113,8 +139,12 @@ class ProductVariant(MasterModel):
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     barcode: Mapped[str | None] = mapped_column(String(50), unique=True, index=True)
     sku: Mapped[str | None] = mapped_column(String(50))
-    price: Mapped[float | None] = numeric_money(nullable=True)
-    cost: Mapped[float | None] = numeric_money(nullable=True)
+    price: Mapped[Decimal | None] = mapped_column(
+        Numeric(18, 3), nullable=True, default=None, server_default=None,
+    )
+    cost: Mapped[Decimal | None] = mapped_column(
+        Numeric(18, 3), nullable=True, default=None, server_default=None,
+    )
     quantity: Mapped[float] = numeric_quantity(default=0)
 
     # Relationships
@@ -126,6 +156,139 @@ class ProductVariant(MasterModel):
 
     __table_args__ = (
         UniqueConstraint("product_id", "name", name="uq_variant_product_name"),
+    )
+
+
+class ProductSellingUnit(MasterModel):
+    """Commercial selling unit for a product (Phase 6).
+
+    One product may be sold in multiple selling forms simultaneously
+    (e.g. piece ×1 and box ×24) sharing a single base stock quantity.
+    Selling units live at PRODUCT level — variants inherit them
+    (legacy: product unit is the only unit; variants have no unit field).
+
+    multiplier = how many base units equal 1 selling unit.
+    is_base_unit marks the authoritative base form (multiplier must be 1).
+    Prices are independent rows — never derived from multiplier × base price.
+    """
+
+    __tablename__ = "product_selling_units"
+
+    product_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("products.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    name: Mapped[str] = mapped_column(String(50), nullable=False)
+    unit_type: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default=ProductUnit.PIECE.value,
+        server_default=ProductUnit.PIECE.value,
+    )
+    multiplier: Mapped[Decimal] = mapped_column(
+        Numeric(18, 3), nullable=False, default=Decimal("1"), server_default="1",
+    )
+    barcode: Mapped[str | None] = mapped_column(String(50), unique=True, index=True)
+    # NULL means inherit product.price — never coerce to 0 (0 is a valid free price).
+    selling_price: Mapped[Decimal | None] = mapped_column(
+        Numeric(18, 3), nullable=True, default=None, server_default=None,
+    )
+    is_base_unit: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false",
+    )
+
+    # Relationships
+    product: Mapped["Product"] = relationship(
+        "Product",
+        back_populates="selling_units",
+        lazy="selectin",
+    )
+
+    __table_args__ = (
+        UniqueConstraint("product_id", "name", name="uq_selling_unit_product_name"),
+    )
+
+
+class ProductPurchaseUnit(MasterModel):
+    """Purchase packaging unit for a product (Phase 6 correction).
+
+    Separate from selling units: used on supplier purchase documents.
+    Example: Box ×24 means 1 purchased Box = 24 base Pieces.
+    Document quantity stays in this unit (10 Box stays 10 Box).
+    No selling_price — commercial price lives on selling units.
+    """
+
+    __tablename__ = "product_purchase_units"
+
+    product_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("products.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    name: Mapped[str] = mapped_column(String(50), nullable=False)
+    unit_type: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default=ProductUnit.PIECE.value,
+        server_default=ProductUnit.PIECE.value,
+    )
+    multiplier: Mapped[Decimal] = mapped_column(
+        Numeric(18, 3), nullable=False, default=Decimal("1"), server_default="1",
+    )
+    barcode: Mapped[str | None] = mapped_column(String(50), unique=True, index=True)
+    is_default: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false",
+    )
+
+    product: Mapped["Product"] = relationship(
+        "Product",
+        back_populates="purchase_units",
+        lazy="selectin",
+    )
+
+    __table_args__ = (
+        UniqueConstraint("product_id", "name", name="uq_purchase_unit_product_name"),
+    )
+
+
+class ProductStockPackage(MasterModel):
+    """Sealed full-package stock per product + purchase unit (Phase 6).
+
+    Aggregated packaging state (Option A generalized to multi sizes):
+    full_packages of Box/Carton/… live here; loose base is derived as
+    product.quantity − Σ(full × multiplier). Never store only a decimal
+    fraction of a box as the physical package state.
+    """
+
+    __tablename__ = "product_stock_packages"
+
+    product_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("products.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    purchase_unit_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("product_purchase_units.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    full_packages: Mapped[Decimal] = numeric_quantity(default=0, server_default="0")
+
+    product: Mapped["Product"] = relationship(
+        "Product",
+        back_populates="stock_packages",
+        lazy="noload",
+    )
+    purchase_unit: Mapped["ProductPurchaseUnit"] = relationship(
+        "ProductPurchaseUnit",
+        lazy="selectin",
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "product_id", "purchase_unit_id", name="uq_stock_package_product_unit"
+        ),
     )
 
 
