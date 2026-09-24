@@ -42,6 +42,12 @@ bool isConnectionError(DioException e) => e.response == null;
 
 /// Extracts the backend-provided message from an error response body.
 ///
+/// Supports:
+/// - Standard envelope: `{"error": {"message": "..."}}`
+/// - Top-level `message`
+/// - String `detail` (legacy)
+/// - FastAPI default `detail: [{loc, msg, type}, ...]` list (Pydantic 422)
+///
 /// Returns null when there is no response or no usable message field.
 String? backendErrorMessage(DioException e) {
   if (e.response == null) return null;
@@ -56,6 +62,26 @@ String? backendErrorMessage(DioException e) {
     if (msg is String && msg.isNotEmpty) return msg;
     final detail = data['detail'];
     if (detail is String && detail.isNotEmpty) return detail;
+    if (detail is List && detail.isNotEmpty) {
+      final parts = <String>[];
+      for (final item in detail) {
+        if (item is Map) {
+          final m = item['msg'];
+          if (m is String && m.isNotEmpty) {
+            final loc = item['loc'];
+            if (loc is List && loc.length > 1) {
+              final field = loc.skip(1).join('.');
+              parts.add(field.isNotEmpty ? '$field: $m' : m);
+            } else {
+              parts.add(m);
+            }
+          }
+        } else if (item is String && item.isNotEmpty) {
+          parts.add(item);
+        }
+      }
+      if (parts.isNotEmpty) return parts.join('; ');
+    }
   }
   return null;
 }

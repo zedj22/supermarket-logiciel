@@ -167,6 +167,51 @@ def translate_db_error(exc: Exception) -> AppError:
 def register_exception_handlers(app: FastAPI) -> None:
     """Register all exception handlers on the FastAPI app."""
 
+    @app.exception_handler(RequestValidationError)
+    async def request_validation_handler(
+        request: Request, exc: RequestValidationError
+    ) -> JSONResponse:
+        """Convert FastAPI/Pydantic body errors into the standard error envelope.
+
+        Default FastAPI returns ``{"detail": [{loc, msg, type}, ...]}`` which
+        Flutter cannot surface usefully. We emit a human-readable ``message``
+        (joined field errors) plus structured ``details`` keyed by field.
+        """
+        request_id = getattr(request.state, "request_id", None)
+        messages: list[str] = []
+        details: dict[str, Any] = {}
+        for err in exc.errors():
+            loc_parts = [str(p) for p in err.get("loc", ()) if p != "body"]
+            field = ".".join(loc_parts) or "body"
+            msg = str(err.get("msg", "Invalid value"))
+            # Pydantic wraps model_validator ValueError as "Value error, ..."
+            if msg.startswith("Value error, "):
+                msg = msg[len("Value error, ") :]
+            messages.append(f"{field}: {msg}" if loc_parts else msg)
+            details[field] = msg
+
+        message = "; ".join(messages) if messages else "Validation failed"
+        logger.warning(
+            "request_validation_error",
+            message=message,
+            details=details,
+            path=request.url.path,
+            method=request.method,
+            request_id=request_id,
+        )
+        return JSONResponse(
+            status_code=422,
+            content={
+                "error": {
+                    "code": "VALIDATION_ERROR",
+                    "message_key": "errors.validation",
+                    "message": message,
+                    "details": details,
+                    "request_id": request_id,
+                }
+            },
+        )
+
     @app.exception_handler(StarletteHTTPException)
     async def http_exception_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:
         """Handle Starlette/FastAPI HTTP exceptions with structured response.

@@ -296,6 +296,8 @@ class ProductService(BaseService):
 
         with self.transaction():
             product = Product(**product_fields)
+            # Phase 7: seed PMP from nominal cost at create (updated by receipts).
+            product.avg_cost = float(request.cost or 0)
             self.repo.create(product)
             self.db.flush()  # assign product.id for child FKs
 
@@ -371,6 +373,14 @@ class ProductService(BaseService):
             selling_units=len(selling_units),
             purchase_units=len(purchase_units),
         )
+
+        # Phase 7: seed an ADJUSTMENT movement for create-with-quantity so
+        # stock is movement-audited from the first write (PMP already seeded).
+        if product.quantity and float(product.quantity) > 0:
+            from app.services.inventory import InventoryService
+
+            InventoryService(self.db).seed_initial_stock(product)
+
         return product
 
     def _validate_staged_children(
@@ -948,6 +958,8 @@ class PurchaseUnitService(BaseService):
         document_unit: str | None = None,
         purchase_unit_id: uuid.UUID | None = None,
         packages_change: Decimal | None = None,
+        unit_cost: Decimal | None = None,
+        avg_cost_after: Decimal | None = None,
         reason: str | None = None,
     ) -> None:
         self.db.add(
@@ -964,6 +976,10 @@ class PurchaseUnitService(BaseService):
                 purchase_unit_id=purchase_unit_id,
                 packages_change=(
                     float(packages_change) if packages_change is not None else None
+                ),
+                unit_cost=float(unit_cost) if unit_cost is not None else None,
+                avg_cost_after=(
+                    float(avg_cost_after) if avg_cost_after is not None else None
                 ),
                 reason=reason,
             )
@@ -1115,8 +1131,14 @@ class PurchaseUnitService(BaseService):
         quantity: Decimal,
         *,
         reason: str | None = None,
+        unit_cost: Decimal | None = None,
     ) -> PackagingStateResponse:
-        """Receive sealed packages (purchase receipt in package units)."""
+        """Receive sealed packages (purchase receipt in package units).
+
+        Phase 7: optional `unit_cost` is the cost PER PACKAGE on the document.
+        When provided, product.avg_cost (PMP) is updated via the weighted
+        average using the BASE unit cost (unit_cost / multiplier).
+        """
         product = self._get_product(product_id)
         unit = self._get_unit(purchase_unit_id, include_archived=False)
         if unit is None or unit.product_id != product_id:
@@ -1126,13 +1148,39 @@ class PurchaseUnitService(BaseService):
             )
         state = self._load_state(product)
         before_total = state.total_base
+        before_avg = to_decimal(product.avg_cost)
         try:
             new_state = receive_packages(state, self._get_unit_def(unit), quantity)
             added_base = new_state.total_base - before_total
         except PackagingError as exc:
             raise ValidationError(str(exc)) from exc
+
+        new_avg = before_avg
+        base_unit_cost: Decimal | None = None
+        if unit_cost is not None:
+            from app.domain.valuation import (
+                base_unit_cost_from_package,
+                quantize_money,
+                weighted_average_cost,
+            )
+
+            if unit_cost < 0:
+                raise ValidationError("unit_cost cannot be negative")
+            base_unit_cost = base_unit_cost_from_package(
+                unit_cost, unit.multiplier
+            )
+            try:
+                new_avg = weighted_average_cost(
+                    before_total, before_avg, added_base, base_unit_cost
+                )
+            except ValueError as exc:
+                raise ValidationError(str(exc)) from exc
+            new_avg = quantize_money(new_avg)
+
         with self.transaction():
             self._save_state(product, new_state, total_base=new_state.total_base)
+            if unit_cost is not None:
+                product.avg_cost = float(new_avg)
             self._record_movement(
                 product,
                 movement_type=StockMovementType.PACKAGE_RECEIVE,
@@ -1143,6 +1191,8 @@ class PurchaseUnitService(BaseService):
                 document_unit=unit.name,
                 purchase_unit_id=unit.id,
                 packages_change=quantity,
+                unit_cost=unit_cost,
+                avg_cost_after=float(new_avg) if unit_cost is not None else None,
                 reason=reason or f"Received {quantity} {unit.name}",
             )
             self.db.flush()

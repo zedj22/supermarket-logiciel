@@ -24,6 +24,14 @@ from app.schemas.common import (
     SuccessResponse,
     TimestampMixin,
 )
+from app.schemas.inventory import (
+    InventoryAdjustRequest,
+    InventoryItemResponse,
+    InventoryListResponse,
+    InventoryMovementListResponse,
+    InventoryMovementResponse,
+    InventoryProductDetailResponse,
+)
 
 __all__ = [
     "CategoryCreateRequest",
@@ -32,6 +40,12 @@ __all__ = [
     "CategoryUpdateRequest",
     "ErrorResponse",
     "IDResponse",
+    "InventoryAdjustRequest",
+    "InventoryItemResponse",
+    "InventoryListResponse",
+    "InventoryMovementListResponse",
+    "InventoryMovementResponse",
+    "InventoryProductDetailResponse",
     "PaginatedResponse",
     "PaginationParams",
     "ProductCreateRequest",

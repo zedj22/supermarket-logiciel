@@ -526,6 +526,7 @@ class PackagingReceiveRequest(StrictBaseModel):
     purchase_unit_id: uuid.UUID
     quantity: Decimal
     reason: str | None = None
+    unit_cost: Decimal | None = None  # Phase 7: cost per package → PMP
 
 
 class PackagingSellRequest(StrictBaseModel):
@@ -635,12 +636,16 @@ def receive_packages(
     user: User = Depends(require_permission(PermissionScope.INVENTORY_ADJUST)),
     service: PurchaseUnitService = Depends(_get_purchase_unit_service),
 ) -> PackagingStateResponse:
-    """Receive N sealed packages in document unit; base qty increases by N×mult."""
+    """Receive N sealed packages in document unit; base qty increases by N×mult.
+
+    Optional `unit_cost` (cost per package) updates product.avg_cost (PMP).
+    """
     return service.receive(
         product_id,
         request.purchase_unit_id,
         request.quantity,
         reason=request.reason,
+        unit_cost=request.unit_cost,
     )
 
 

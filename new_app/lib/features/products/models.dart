@@ -39,6 +39,7 @@ class ProductModel {
   final String unit;
   final String price;
   final String cost;
+  final String avgCost;
   final String quantity;
   final String lowStockThreshold;
   final bool allowNegativeStock;
@@ -57,6 +58,7 @@ class ProductModel {
     this.unit = 'piece',
     this.price = '0',
     this.cost = '0',
+    this.avgCost = '0',
     this.quantity = '0',
     this.lowStockThreshold = '5',
     this.allowNegativeStock = false,
@@ -77,6 +79,7 @@ class ProductModel {
       unit: json['unit'] as String? ?? 'piece',
       price: '${json['price'] ?? 0}',
       cost: '${json['cost'] ?? 0}',
+      avgCost: '${json['avg_cost'] ?? 0}',
       quantity: '${json['quantity'] ?? 0}',
       lowStockThreshold: '${json['low_stock_threshold'] ?? 5}',
       allowNegativeStock: json['allow_negative_stock'] as bool? ?? false,

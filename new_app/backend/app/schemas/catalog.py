@@ -124,6 +124,7 @@ class ProductResponse(StrictBaseModel):
     unit: str = ProductUnit.PIECE.value
     price: Decimal
     cost: Decimal
+    avg_cost: Decimal = Decimal("0")
     quantity: Decimal
     low_stock_threshold: Decimal = Decimal("5")
     allow_negative_stock: bool = False
@@ -202,7 +203,11 @@ class ProductCreateRequest(StrictBaseModel):
 
 
 class ProductUpdateRequest(StrictBaseModel):
-    """Partial update of a product. Unset fields are preserved."""
+    """Partial update of a product. Unset fields are preserved.
+
+    Phase 7: `quantity` is intentionally NOT updatable here — stock changes
+    must go through the inventory service (movement-audited, PMP-aware).
+    """
 
     name: str | None = Field(None, min_length=1, max_length=200)
     barcode: str | None = Field(None, max_length=BARCODE_MAX_LENGTH)
@@ -211,9 +216,6 @@ class ProductUpdateRequest(StrictBaseModel):
     unit: str | None = Field(None, max_length=20)
     price: Decimal | None = Field(None, ge=0, max_digits=18, decimal_places=3)
     cost: Decimal | None = Field(
-        None, ge=0, max_digits=18, decimal_places=3
-    )
-    quantity: Decimal | None = Field(
         None, ge=0, max_digits=18, decimal_places=3
     )
     low_stock_threshold: Decimal | None = Field(

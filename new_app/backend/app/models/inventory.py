@@ -46,6 +46,9 @@ class InventoryMovement(Base, UUIDMixin, TimestampMixin):
         nullable=True,
     )
     packages_change: Mapped[float | None] = mapped_column(Numeric(18, 3), nullable=True)
+    # Phase 7 PMP: cost at time of receipt + PMP snapshot after movement.
+    unit_cost: Mapped[float | None] = mapped_column(Numeric(18, 3), nullable=True)
+    avg_cost_after: Mapped[float | None] = mapped_column(Numeric(18, 3), nullable=True)
     reason: Mapped[str | None] = mapped_column(Text)
     source_document_type: Mapped[str | None] = mapped_column(String(30))
     source_document_id: Mapped[uuid.UUID | None] = mapped_column(index=True)
@@ -57,6 +60,7 @@ class InventoryMovement(Base, UUIDMixin, TimestampMixin):
     movement_date: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False,
         server_default=func.now(),
+        index=True,
     )
 
     # Relationships

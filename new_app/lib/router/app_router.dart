@@ -148,6 +148,9 @@ class ScaffoldWithNav extends ConsumerWidget {
   /// Scope required to see the Products destination and screens.
   static const String productViewScope = 'product_view';
 
+  /// Scope required to see the Stock / Inventory destination (Phase 7).
+  static const String inventoryViewScope = 'inventory_view';
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
@@ -155,6 +158,7 @@ class ScaffoldWithNav extends ConsumerWidget {
     final user = ref.watch(currentUserProvider);
     final canManageUsers = ref.watch(hasPermissionProvider(userManageScope));
     final canViewProducts = ref.watch(hasPermissionProvider(productViewScope));
+    final canViewInventory = ref.watch(hasPermissionProvider(inventoryViewScope));
 
     final destinations = <NavigationRailDestination>[
       NavigationRailDestination(
@@ -167,6 +171,12 @@ class ScaffoldWithNav extends ConsumerWidget {
           icon: const Icon(Icons.inventory_2_outlined),
           selectedIcon: const Icon(Icons.inventory_2),
           label: Text(AppStrings.t('products', loc)),
+        ),
+      if (canViewInventory)
+        NavigationRailDestination(
+          icon: const Icon(Icons.warehouse_outlined),
+          selectedIcon: const Icon(Icons.warehouse),
+          label: Text(AppStrings.t('stock', loc)),
         ),
       if (canManageUsers)
         NavigationRailDestination(
@@ -190,6 +200,10 @@ class ScaffoldWithNav extends ConsumerWidget {
       index += 1;
       if (location == '/products') selectedIndex = index;
     }
+    if (canViewInventory) {
+      index += 1;
+      if (location == '/stock') selectedIndex = index;
+    }
     if (canManageUsers) {
       index += 1;
       if (location == '/users') selectedIndex = index;
@@ -205,6 +219,10 @@ class ScaffoldWithNav extends ConsumerWidget {
       }
       if (canViewProducts && i++ == target) {
         context.go('/products');
+        return;
+      }
+      if (canViewInventory && i++ == target) {
+        context.go('/stock');
         return;
       }
       if (canManageUsers && i++ == target) {

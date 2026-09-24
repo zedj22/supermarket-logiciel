@@ -236,7 +236,7 @@ class TestPhase6SellingUnitsMigration:
     """Migration 0005/0006 — product_selling_units + purchase packaging tables."""
 
     SELLING_UNITS_REV = "c3d4e5f6a7b8"
-    HEAD_REV = "e5f6a7b8c9d0"  # 0007 selling_price nullable
+    HEAD_REV = "f1a2b3c4d5e6"  # 0008 phase7 inventory pmp
 
     @pytest.fixture(autouse=True)
     def _setup_db(self):
@@ -394,7 +394,7 @@ class TestPhase6SellingUnitsMigration:
 class TestPhase6PurchasePackagingMigration:
     """Migration 0006 (d4e5f6a7b8c9) — purchase packaging / stock-breaking."""
 
-    HEAD_REV = "e5f6a7b8c9d0"  # linear chain head after 0007
+    HEAD_REV = "f1a2b3c4d5e6"  # linear chain head after 0008
 
     @pytest.fixture(autouse=True)
     def _setup_db(self):
@@ -577,5 +577,135 @@ class TestPhase6PurchasePackagingMigration:
         product_id = row[0]
         cur.execute("DELETE FROM products WHERE id = %s", (product_id,))
         conn.commit()
+        cur.close()
+        conn.close()
+
+
+class TestPhase7InventoryPMPMigration:
+    """Migration 0008 (f1a2b3c4d5e6) — products.avg_cost + movement cost cols."""
+
+    HEAD_REV = "f1a2b3c4d5e6"
+
+    @pytest.fixture(autouse=True)
+    def _setup_db(self):
+        result = _run_alembic("upgrade head")
+        assert result.returncode == 0, f"Setup upgrade failed: {result.stderr}"
+
+    def test_current_is_phase7_head(self):
+        result = _run_alembic("current")
+        assert result.returncode == 0, result.stderr
+        assert self.HEAD_REV in result.stdout, result.stdout
+        heads = _run_alembic("heads")
+        assert heads.returncode == 0
+        assert self.HEAD_REV in heads.stdout
+
+    def test_products_avg_cost_column(self):
+        conn = _get_test_conn()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT column_name, data_type, numeric_precision, numeric_scale,
+                   is_nullable, column_default
+            FROM information_schema.columns
+            WHERE table_name = 'products' AND column_name = 'avg_cost'
+            """
+        )
+        row = cur.fetchone()
+        assert row is not None, "products.avg_cost missing after 0008"
+        assert row[1].startswith("numeric"), row[1]
+        assert row[2] == 18 and row[3] == 3, row
+        assert row[4] == "NO", f"avg_cost should be NOT NULL, got {row[4]}"
+        cur.close()
+        conn.close()
+
+    def test_inventory_movement_cost_columns(self):
+        conn = _get_test_conn()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT column_name, data_type, numeric_precision, numeric_scale,
+                   is_nullable
+            FROM information_schema.columns
+            WHERE table_name = 'inventory_movements'
+              AND column_name IN ('unit_cost', 'avg_cost_after')
+            """
+        )
+        cols = {row[0]: row for row in cur.fetchall()}
+        assert "unit_cost" in cols, "unit_cost missing"
+        assert "avg_cost_after" in cols, "avg_cost_after missing"
+        for name, row in cols.items():
+            assert row[1].startswith("numeric"), (name, row[1])
+            assert row[2] == 18 and row[3] == 3, (name, row)
+            assert row[4] == "YES", f"{name} should be nullable"
+        cur.close()
+        conn.close()
+
+    def test_movement_date_index_exists(self):
+        conn = _get_test_conn()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT indexname FROM pg_indexes
+            WHERE tablename = 'inventory_movements'
+              AND indexname = 'ix_inventory_movements_movement_date'
+            """
+        )
+        assert cur.fetchone() is not None, "movement_date index missing"
+        cur.close()
+        conn.close()
+
+    def test_products_cost_not_renamed(self):
+        """products.cost must still exist (nominal/last-purchase)."""
+        conn = _get_test_conn()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT COUNT(*) FROM information_schema.columns
+            WHERE table_name = 'products' AND column_name = 'cost'
+            """
+        )
+        assert cur.fetchone()[0] == 1
+        cur.close()
+        conn.close()
+
+    def test_existing_rows_default_avg_cost_zero(self):
+        conn = _get_test_conn()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO products (name, price, cost, quantity, unit)
+            VALUES ('pmp_canary', 1, 0, 1, 'piece')
+            RETURNING id, avg_cost
+            """
+        )
+        row = cur.fetchone()
+        assert row is not None
+        assert float(row[1]) == 0.0
+        cur.execute("DELETE FROM products WHERE id = %s", (row[0],))
+        conn.commit()
+        cur.close()
+        conn.close()
+
+    def test_no_destructive_rewrite(self):
+        """0008 only adds columns — does not drop prior tables/columns."""
+        conn = _get_test_conn()
+        cur = conn.cursor()
+        for table in (
+            "products",
+            "product_variants",
+            "inventory_movements",
+            "product_selling_units",
+            "product_purchase_units",
+            "product_stock_packages",
+            "users",
+        ):
+            cur.execute(
+                """
+                SELECT COUNT(*) FROM information_schema.tables
+                WHERE table_schema = 'public' AND table_name = %s
+                """,
+                (table,),
+            )
+            assert cur.fetchone()[0] == 1, f"table {table} missing"
         cur.close()
         conn.close()

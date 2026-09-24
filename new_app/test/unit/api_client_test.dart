@@ -136,6 +136,77 @@ void main() {
       );
       expect(backendErrorMessage(err), isNull);
     });
+
+    test('joins FastAPI detail list into a readable message', () {
+      final err = DioException(
+        requestOptions: RequestOptions(path: '/api/v1/inventory/adjust'),
+        response: Response(
+          requestOptions: RequestOptions(path: '/api/v1/inventory/adjust'),
+          statusCode: 422,
+          data: {
+            'detail': [
+              {
+                'loc': ['body', 'reason'],
+                'msg': 'reason is required for decrease and set',
+                'type': 'value_error',
+              },
+            ],
+          },
+        ),
+      );
+      expect(
+        backendErrorMessage(err),
+        'reason: reason is required for decrease and set',
+      );
+    });
+
+    test('joins multiple detail-list field errors with semicolons', () {
+      final err = DioException(
+        requestOptions: RequestOptions(path: '/x'),
+        response: Response(
+          requestOptions: RequestOptions(path: '/x'),
+          statusCode: 422,
+          data: {
+            'detail': [
+              {
+                'loc': ['body', 'quantity'],
+                'msg': 'greater than 0',
+                'type': 'value_error',
+              },
+              {
+                'loc': ['body', 'reason'],
+                'msg': 'required',
+                'type': 'value_error',
+              },
+            ],
+          },
+        ),
+      );
+      expect(
+        backendErrorMessage(err),
+        'quantity: greater than 0; reason: required',
+      );
+    });
+
+    test('prefers structured error envelope over detail list', () {
+      final err = DioException(
+        requestOptions: RequestOptions(path: '/x'),
+        response: Response(
+          requestOptions: RequestOptions(path: '/x'),
+          statusCode: 422,
+          data: {
+            'error': {
+              'code': 'VALIDATION_ERROR',
+              'message': 'reason is required',
+            },
+            'detail': [
+              {'loc': ['body'], 'msg': 'fallback'},
+            ],
+          },
+        ),
+      );
+      expect(backendErrorMessage(err), 'reason is required');
+    });
   });
 
   group('AuthInterceptor 401 behavior', () {

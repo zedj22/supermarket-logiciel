@@ -72,6 +72,9 @@ class Product(MasterModel):
     )
     price: Mapped[float] = numeric_money()
     cost: Mapped[float] = numeric_money()
+    # Phase 7: authoritative moving weighted average cost (PMP).
+    # products.cost stays nominal / last-purchase reference cost.
+    avg_cost: Mapped[float] = numeric_money()
     quantity: Mapped[float] = numeric_quantity()
     low_stock_threshold: Mapped[float] = numeric_quantity(default=5, server_default="5")
     allow_negative_stock: Mapped[bool] = mapped_column(
