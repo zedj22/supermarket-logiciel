@@ -26,6 +26,8 @@ from typing import Any
 import structlog
 from sqlalchemy.orm import Session
 
+from sqlalchemy.exc import SQLAlchemyError
+
 from app.core.exceptions import AppError, DatabaseError, translate_db_error
 
 logger = structlog.get_logger(__name__)
@@ -59,7 +61,7 @@ class BaseService:
         except AppError:
             self.db.rollback()
             raise
-        except Exception as exc:
+        except SQLAlchemyError as exc:
             self.db.rollback()
             logger.error(
                 "transaction_failed",
@@ -67,6 +69,9 @@ class BaseService:
                 exc_message=str(exc),
             )
             raise translate_db_error(exc) from exc
+        except Exception:
+            self.db.rollback()
+            raise
 
     def run_in_transaction(self, fn: Callable[[Session], Any]) -> Any:
         """Execute a callable within a transaction boundary.
@@ -89,7 +94,7 @@ class BaseService:
         except AppError:
             self.db.rollback()
             raise
-        except Exception as exc:
+        except SQLAlchemyError as exc:
             self.db.rollback()
             logger.error(
                 "transaction_failed",
@@ -97,3 +102,7 @@ class BaseService:
                 exc_message=str(exc),
             )
             raise translate_db_error(exc) from exc
+        except Exception:
+            self.db.rollback()
+            raise
+        return result

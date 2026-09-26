@@ -9,6 +9,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/quantity_expression.dart';
 import '../../core/strings.dart';
 import '../../l10n/locale_provider.dart';
 import 'models.dart';
@@ -71,16 +72,21 @@ class _QuantityDialogState extends ConsumerState<QuantityDialog> {
 
   double _multiplier() => double.tryParse(_unit.multiplier) ?? 1;
 
-  double _enteredQty() => double.tryParse(_qty.text.trim()) ?? 0;
+  /// Shared parser (UX FIX #12 — FIX #3): plain numbers **and** quantity
+  /// expressions (`10*24` → 240) — same rules as the POS cart.
+  PosQuantityExpression get _parsed => parseQuantityExpression(_qty.text);
+
+  double _enteredQty() => _parsed.value;
 
   double _baseNeeded() => _enteredQty() * _multiplier();
 
   String? _validate() {
     final loc = ref.read(localeProvider).flutterLocale.languageCode;
-    final q = _enteredQty();
-    if (_qty.text.trim().isEmpty || q <= 0) {
+    if (_qty.text.trim().isEmpty) {
       return AppStrings.t('enter_quantity', loc);
     }
+    final parseError = validateRequestedQuantity(_qty.text, loc);
+    if (parseError != null) return parseError;
     final needed = _baseNeeded();
     final stock = _baseStock();
     if (needed > stock) {
@@ -95,7 +101,8 @@ class _QuantityDialogState extends ConsumerState<QuantityDialog> {
       setState(() => _error = err);
       return;
     }
-    Navigator.pop(context, _qty.text.trim());
+    // Plain numbers keep the typed text; an expression stores its product.
+    Navigator.pop(context, _parsed.text);
   }
 
   @override

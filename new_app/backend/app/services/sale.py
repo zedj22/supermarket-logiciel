@@ -1,0 +1,1180 @@
+"""POS SaleService — atomic checkout, holds, favorites (Phase 8).
+
+Transaction policy:
+- create_sale runs ALL of: sales header, sale_lines, stock decrement,
+  inventory_movements, sale_payments, customer balance + debt ledger
+  inside ONE transaction. Any failure rolls back completely.
+- No silent exception handling; every failure is logged and re-raised
+  as a structured AppError.
+- Sales never modify products.avg_cost (PMP).
+- Variant sales decrement variant.quantity ONLY (no parent double-decrement).
+"""
+
+from __future__ import annotations
+
+import uuid
+from datetime import datetime, timezone
+from decimal import Decimal, ROUND_HALF_UP
+from typing import Any
+
+import structlog
+from sqlalchemy import update
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
+
+from app.core.exceptions import (
+    AuthorizationError,
+    BusinessRuleError,
+    ConflictError,
+    NotFoundError,
+    ValidationError,
+)
+from app.domain.unit_conversions import QTY_QUANTUM, effective_unit_price, selling_to_base, to_decimal
+from app.domain.valuation import quantize_money
+from app.models.catalog import Product, ProductSellingUnit, ProductVariant
+from app.models.debt import DebtLedgerEntry
+from app.models.enums import PaymentMethod, PermissionScope, StockMovementType
+from app.models.inventory import InventoryMovement
+from app.models.party import Customer
+from app.models.pos import PosHold, ProductFavorite
+from app.models.sale import Sale, SaleLine, SalePayment
+from app.models.user import User
+from app.repositories.catalog import (
+    ProductRepository,
+    ProductVariantRepository,
+    SellingUnitRepository,
+)
+from app.repositories.sale import (
+    PosHoldRepository,
+    ProductFavoriteRepository,
+    SaleRepository,
+)
+from app.schemas.sale import (
+    CartLineValidation,
+    CartValidateRequest,
+    CartValidateResponse,
+    CreateSaleRequest,
+    FavoriteListResponse,
+    FavoriteResponse,
+    FavoriteToggleResponse,
+    HoldCartItem,
+    HoldCreateRequest,
+    HoldListResponse,
+    HoldRestoreResponse,
+    HoldResponse,
+    PriceOverride,
+    SaleCreateResponse,
+    SaleLineResponse,
+    SalePaymentResponse,
+    SaleResponse,
+)
+from app.services.base import BaseService
+
+logger = structlog.get_logger(__name__)
+
+MONEY_QUANTUM = Decimal("0.001")
+
+
+def _money(value: Decimal | int | float | str) -> Decimal:
+    return to_decimal(value).quantize(MONEY_QUANTUM, rounding=ROUND_HALF_UP)
+
+
+def _generate_invoice_number() -> str:
+    """INV-YYYYMMDD-HHMMSS-mmm-xxxx (xxxx = 4 hex chars to reduce collisions)."""
+    now = datetime.now(timezone.utc)
+    suffix = uuid.uuid4().hex[:4]
+    return (
+        f"INV-{now.strftime('%Y%m%d-%H%M%S')}-"
+        f"{now.microsecond // 1000:03d}-{suffix}"
+    )
+
+
+def _display_qty(value: Decimal) -> str:
+    """Plain decimal text for a quantity (`48.000` → `48`, `2.500` → `2.5`)."""
+    text = format(value.normalize(), "f")
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return text or "0"
+
+
+def unit_summary_from_lines(lines: list[dict[str, Any]]) -> str | None:
+    """Compact sold-units line for sale-history rows (UX FIX #12 — FIX #1).
+
+    Groups line quantities by sold unit (selling-unit name when the line
+    had one, else the base product unit), keeps first-seen order and caps
+    the list at three groups (``2 Box · 48 piece +1``). Built purely from
+    the persisted line snapshots — informational only, never feeds totals
+    or stock. Returns None when no line carries a usable unit.
+    """
+    order: list[str] = []
+    totals: dict[str, Decimal] = {}
+    for line in lines:
+        label = str(
+            line.get("selling_unit_name") or line.get("product_unit") or ""
+        ).strip()
+        if not label:
+            continue
+        raw_qty = line.get("quantity", 0)
+        qty = raw_qty if isinstance(raw_qty, Decimal) else Decimal(str(raw_qty or 0))
+        if label not in totals:
+            order.append(label)
+            totals[label] = Decimal("0")
+        totals[label] += qty
+    if not order:
+        return None
+    groups = [f"{_display_qty(totals[label])} {label}" for label in order[:3]]
+    summary = " · ".join(groups)
+    if len(order) > 3:
+        summary = f"{summary} +{len(order) - 3}"
+    return summary
+
+
+class _ResolvedLine:
+    """Internal: one validated cart line ready for persistence."""
+
+    __slots__ = (
+        "index",
+        "product",
+        "variant",
+        "selling_unit",
+        "quantity_base",
+        "quantity_line",
+        "unit_price",
+        "unit_cost",
+        "line_discount",
+        "line_total",
+        "line_gross",
+        "price_override",
+        "stock_quantity",
+        "stock_before",
+        "stock_after",
+        "decrement_variant",
+    )
+
+    def __init__(self) -> None:
+        self.index: int = 0
+        self.product: Product | None = None
+        self.variant: ProductVariant | None = None
+        self.selling_unit: ProductSellingUnit | None = None
+        self.quantity_base: Decimal = Decimal("0")
+        self.quantity_line: Decimal = Decimal("0")
+        self.unit_price: Decimal = Decimal("0")
+        self.unit_cost: Decimal = Decimal("0")
+        self.line_discount: Decimal = Decimal("0")
+        self.line_total: Decimal = Decimal("0")
+        self.line_gross: Decimal = Decimal("0")
+        self.price_override: PriceOverride | None = None
+        self.stock_quantity: Decimal = Decimal("0")
+        self.stock_before: Decimal | None = None
+        self.stock_after: Decimal | None = None
+        self.decrement_variant: bool = False
+
+
+class SaleService(BaseService):
+    """Application service for POS checkout, holds, and favorites."""
+
+    def __init__(self, db: Session):
+        super().__init__(db)
+        self.sales = SaleRepository(db)
+        self.products = ProductRepository(db)
+        self.variants = ProductVariantRepository(db)
+        self.selling_units = SellingUnitRepository(db)
+        self.holds = PosHoldRepository(db)
+        self.favorites = ProductFavoriteRepository(db)
+
+    # ------------------------------------------------------------------
+    # Line resolution / validation helpers
+    # ------------------------------------------------------------------
+
+    def _get_product(self, product_id: uuid.UUID, *, allow_archived: bool = False) -> Product:
+        product = self.products.get_by_id(product_id)
+        if product is None:
+            raise NotFoundError(
+                message="Product not found",
+                details={"product_id": str(product_id)},
+            )
+        if not allow_archived and product.archived_at is not None:
+            raise BusinessRuleError(
+                message="Archived product cannot be sold",
+                details={"product_id": str(product_id)},
+            )
+        return product
+
+    def _get_customer(self, customer_id: uuid.UUID) -> Customer:
+        customer = self.db.get(Customer, customer_id)
+        if customer is None:
+            raise NotFoundError(
+                message="Customer not found",
+                details={"customer_id": str(customer_id)},
+            )
+        if customer.archived_at is not None:
+            raise BusinessRuleError(
+                message="Archived customer cannot be used for credit sales",
+                details={"customer_id": str(customer_id)},
+            )
+        return customer
+
+    def _resolve_line(self, item, index: int, *, validate_stock: bool = True) -> _ResolvedLine:
+        """Load product/variant/selling unit, resolve price, convert quantity."""
+        line = _ResolvedLine()
+        line.index = index
+
+        product = self._get_product(item.product_id)
+        line.product = product
+
+        variant: ProductVariant | None = None
+        if item.variant_id is not None:
+            variant = self.variants.get_by_id(item.variant_id)
+            if variant is None:
+                raise NotFoundError(
+                    message="Variant not found",
+                    details={"variant_id": str(item.variant_id)},
+                )
+            if variant.product_id != product.id:
+                raise ValidationError(
+                    message="Variant does not belong to product",
+                    details={
+                        "variant_id": str(variant.id),
+                        "product_id": str(product.id),
+                    },
+                )
+            if variant.archived_at is not None:
+                raise BusinessRuleError(
+                    message="Archived variant cannot be sold",
+                    details={"variant_id": str(variant.id)},
+                )
+            line.variant = variant
+            line.decrement_variant = True
+
+        selling_unit: ProductSellingUnit | None = None
+        if item.selling_unit_id is not None:
+            if item.variant_id is not None:
+                raise ValidationError(
+                    message="selling_unit_id cannot be combined with variant_id",
+                    details={
+                        "variant_id": str(item.variant_id),
+                        "selling_unit_id": str(item.selling_unit_id),
+                    },
+                )
+            selling_unit = self.selling_units.get_by_id(item.selling_unit_id)
+            if selling_unit is None or selling_unit.product_id != product.id:
+                raise ValidationError(
+                    message="Selling unit does not belong to product",
+                    details={
+                        "selling_unit_id": str(item.selling_unit_id),
+                        "product_id": str(product.id),
+                    },
+                )
+            if selling_unit.archived_at is not None:
+                raise BusinessRuleError(
+                    message="Archived selling unit cannot be sold",
+                    details={"selling_unit_id": str(selling_unit.id)},
+                )
+            line.selling_unit = selling_unit
+
+        qty = to_decimal(item.quantity)
+        if qty <= 0:
+            raise ValidationError(
+                message="quantity must be > 0",
+                details={"line_index": index, "quantity": str(qty)},
+            )
+
+        if selling_unit is not None:
+            line.quantity_line = qty
+            line.quantity_base = selling_to_base(qty, selling_unit.multiplier)
+            server_price = effective_unit_price(
+                selling_unit.selling_price, product.price
+            )
+        else:
+            line.quantity_line = qty
+            line.quantity_base = qty.quantize(QTY_QUANTUM)
+            if variant is not None and variant.price is not None:
+                server_price = to_decimal(variant.price)
+            else:
+                server_price = to_decimal(product.price)
+
+        # Price policy: server authoritative price always wins.
+        # Client unit_price is a display hint; mismatch is reported, not fatal.
+        requested = to_decimal(item.unit_price)
+        line.unit_price = _money(server_price)
+        if requested != line.unit_price:
+            line.price_override = PriceOverride(
+                line_index=index,
+                product_id=product.id,
+                requested_unit_price=_money(requested),
+                applied_unit_price=line.unit_price,
+            )
+
+        # Cost snapshot: variant cost if set, else product.avg_cost (PMP).
+        # Never used to recompute PMP.
+        if variant is not None and variant.cost is not None:
+            line.unit_cost = _money(variant.cost)
+        else:
+            line.unit_cost = _money(product.avg_cost)
+
+        # Stock availability
+        if variant is not None:
+            line.stock_quantity = to_decimal(variant.quantity)
+        else:
+            line.stock_quantity = to_decimal(product.quantity)
+
+        if validate_stock:
+            # Note: for packaging-aware products, stock packages are NOT
+            # auto-broken here (Phase 10 / packaging sell path owns that).
+            # Base quantity guard still applies.
+            if line.quantity_base > line.stock_quantity:
+                # allow_negative_stock is a product-level escape hatch
+                if not product.allow_negative_stock:
+                    raise BusinessRuleError(
+                        message="Insufficient stock",
+                        details={
+                            "line_index": index,
+                            "product_id": str(product.id),
+                            "variant_id": str(variant.id) if variant else None,
+                            "available": str(line.stock_quantity),
+                            "required": str(line.quantity_base),
+                        },
+                    )
+
+        line.line_gross = _money(line.unit_price * line.quantity_line)
+        line_discount = _money(item.line_discount)
+        if line_discount < 0:
+            raise ValidationError(
+                message="line_discount must be >= 0",
+                details={"line_index": index},
+            )
+        if line_discount > line.line_gross:
+            raise ValidationError(
+                message="line_discount cannot exceed line gross",
+                details={
+                    "line_index": index,
+                    "line_discount": str(line_discount),
+                    "line_gross": str(line.line_gross),
+                },
+            )
+        line.line_discount = line_discount
+        line.line_total = _money(line.line_gross - line_discount)
+        return line
+
+    # ------------------------------------------------------------------
+    # Totals / payment validation
+    # ------------------------------------------------------------------
+
+    def _compute_totals(
+        self,
+        lines: list[_ResolvedLine],
+        invoice_discount: Decimal,
+        payment_method: str,
+        paid: Decimal,
+        customer_id: uuid.UUID | None,
+    ) -> dict[str, Any]:
+        invoice_discount = _money(invoice_discount)
+        if invoice_discount < 0:
+            raise ValidationError(message="invoice_discount must be >= 0")
+
+        subtotal = _money(sum((ln.line_gross for ln in lines), Decimal("0")))
+        line_discounts = _money(sum((ln.line_discount for ln in lines), Decimal("0")))
+        if invoice_discount > subtotal:
+            raise ValidationError(
+                message="invoice_discount cannot exceed subtotal",
+                details={
+                    "invoice_discount": str(invoice_discount),
+                    "subtotal": str(subtotal),
+                },
+            )
+
+        # final = subtotal - line_discounts - invoice_discount
+        # (line discounts already excluded from line_total; invoice applies to remaining)
+        after_line_discounts = _money(subtotal - line_discounts)
+        if invoice_discount > after_line_discounts:
+            raise ValidationError(
+                message="invoice_discount cannot exceed remaining amount after line discounts",
+                details={
+                    "invoice_discount": str(invoice_discount),
+                    "remaining": str(after_line_discounts),
+                },
+            )
+        total = _money(after_line_discounts - invoice_discount)
+        paid = _money(paid)
+        if paid < 0:
+            raise ValidationError(message="paid must be >= 0")
+
+        debt = _money(max(Decimal("0"), total - paid))
+        change = _money(max(Decimal("0"), paid - total))
+
+        method = PaymentMethod(payment_method)
+        if method == PaymentMethod.CASH or method == PaymentMethod.CARD:
+            if paid < total:
+                raise ValidationError(
+                    message=f"{method.value} payment requires paid >= total",
+                    details={"paid": str(paid), "total": str(total)},
+                )
+            debt = Decimal("0")
+            change = _money(paid - total)
+        elif method == PaymentMethod.PARTIAL:
+            if paid >= total and total > 0:
+                raise ValidationError(
+                    message="partial payment requires paid < total",
+                    details={"paid": str(paid), "total": str(total)},
+                )
+            if debt <= 0:
+                raise ValidationError(
+                    message="partial payment with no remaining debt is invalid",
+                    details={"paid": str(paid), "total": str(total)},
+                )
+            change = Decimal("0")
+        elif method == PaymentMethod.CREDIT:
+            if paid != 0:
+                raise ValidationError(
+                    message="credit payment requires paid = 0",
+                    details={"paid": str(paid)},
+                )
+            debt = total
+            change = Decimal("0")
+        else:  # pragma: no cover — schema restricts to known methods
+            raise ValidationError(
+                message="unsupported payment method",
+                details={"payment_method": payment_method},
+            )
+
+        if debt > 0:
+            if customer_id is None:
+                raise ValidationError(
+                    message="customer_id is required when debt > 0",
+                    details={"debt": str(debt)},
+                )
+            if total == 0:
+                raise BusinessRuleError(
+                    message="credit/partial not applicable to zero-total sale",
+                    details={"total": str(total)},
+                )
+
+        return {
+            "invoice_discount": invoice_discount,
+            "subtotal": subtotal,
+            "line_discounts": line_discounts,
+            "total": total,
+            "paid": paid if method != PaymentMethod.CREDIT else Decimal("0"),
+            "change": change,
+            "debt": debt,
+            "payment_method": method,
+        }
+
+    # ------------------------------------------------------------------
+    # Create sale (THE transaction)
+    # ------------------------------------------------------------------
+
+    def create_sale(
+        self,
+        request: CreateSaleRequest,
+        *,
+        user: User | None = None,
+        device_id: str | None = None,
+        require_pos_discount: bool = False,
+        require_pos_credit: bool = False,
+    ) -> SaleCreateResponse:
+        """Create a sale atomically.
+
+        Idempotency: if client_request_id already exists, return the original
+        sale with idempotent_replay=True and do NOT create a second sale.
+        """
+        user_id = user.id if user is not None else None
+        effective_device = device_id or request.device_id
+
+        # --- Idempotency fast path (outside transaction) ---
+        existing = self.sales.find_by_client_request_id(request.client_request_id)
+        if existing is not None:
+            logger.info(
+                "sale_idempotent_replay",
+                client_request_id=request.client_request_id,
+                sale_id=str(existing.id),
+            )
+            return self._to_create_response(
+                existing, idempotent_replay=True, price_overrides=[]
+            )
+
+        if not request.items:
+            raise ValidationError(message="items must not be empty")
+
+        # --- Resolve + validate all lines (read-only; raises before tx) ---
+        lines: list[_ResolvedLine] = []
+        for idx, item in enumerate(request.items):
+            lines.append(self._resolve_line(item, idx, validate_stock=True))
+
+        customer: Customer | None = None
+        if request.customer_id is not None:
+            customer = self._get_customer(request.customer_id)
+
+        totals = self._compute_totals(
+            lines,
+            request.invoice_discount,
+            request.payment_method,
+            request.paid,
+            request.customer_id,
+        )
+
+        if require_pos_discount:
+            has_discount = totals["invoice_discount"] > 0 or any(
+                ln.line_discount > 0 for ln in lines
+            )
+            if has_discount and (
+                user is None or not user.has_permission(PermissionScope.POS_DISCOUNT)
+            ):
+                raise AuthorizationError(
+                    message="Permission denied: pos_discount required for discounts",
+                    details={"required_permission": "pos_discount"},
+                )
+
+        if require_pos_credit and totals["debt"] > 0:
+            if user is None or not user.has_permission(PermissionScope.POS_CREDIT_SALE):
+                raise AuthorizationError(
+                    message="Permission denied: pos_credit_sale required for credit sales",
+                    details={"required_permission": "pos_credit_sale"},
+                )
+
+        invoice_number = _generate_invoice_number()
+        price_overrides = [
+            ln.price_override for ln in lines if ln.price_override is not None
+        ]
+
+        # --- ONE transaction: everything or nothing ---
+        try:
+            with self.transaction() as tx:
+                # Guarded stock decrements first (rowcount = concurrency safety)
+                for ln in lines:
+                    self._decrement_stock(ln)
+
+                sale = Sale(
+                    invoice_number=invoice_number,
+                    customer_id=request.customer_id,
+                    user_id=user_id,
+                    subtotal=float(totals["subtotal"]),
+                    discount=float(totals["invoice_discount"]),
+                    total=float(totals["total"]),
+                    paid=float(totals["paid"]),
+                    change=float(totals["change"]),
+                    payment_method=totals["payment_method"].value,
+                    client_request_id=request.client_request_id,
+                    note=request.note,
+                    device_id=effective_device,
+                )
+                tx.add(sale)
+                tx.flush()  # assign sale.id for FKs
+
+                for ln in lines:
+                    assert ln.product is not None
+                    sale_line = SaleLine(
+                        sale_id=sale.id,
+                        product_id=ln.product.id,
+                        variant_id=ln.variant.id if ln.variant else None,
+                        product_name=ln.product.name,
+                        product_sku=ln.product.sku,
+                        product_barcode=(
+                            ln.variant.barcode
+                            if ln.variant and ln.variant.barcode
+                            else ln.product.barcode
+                        ),
+                        product_unit=ln.product.unit,
+                        # UX FIX #11: historical display snapshots resolved
+                        # from the authoritative catalog inside this same
+                        # transaction (client never sends names).
+                        variant_name=ln.variant.name if ln.variant else None,
+                        selling_unit_name=(
+                            ln.selling_unit.name if ln.selling_unit else None
+                        ),
+                        selling_unit_multiplier=(
+                            float(ln.selling_unit.multiplier)
+                            if ln.selling_unit
+                            else None
+                        ),
+                        unit_price=float(ln.unit_price),
+                        unit_cost=float(ln.unit_cost),
+                        quantity=float(ln.quantity_line),
+                        line_discount=float(ln.line_discount),
+                        line_total=float(ln.line_total),
+                    )
+                    tx.add(sale_line)
+
+                    # Inventory movement (sale) — atomic with the sale
+                    self._record_sale_movement(
+                        tx,
+                        line=ln,
+                        sale_id=sale.id,
+                        user_id=user_id,
+                        device_id=effective_device,
+                        invoice_number=invoice_number,
+                    )
+
+                # Payment row
+                tx.add(
+                    SalePayment(
+                        sale_id=sale.id,
+                        method=totals["payment_method"].value,
+                        amount=float(totals["paid"]),
+                    )
+                )
+
+                # Debt: balance + ledger in SAME transaction
+                if totals["debt"] > 0 and customer is not None:
+                    customer.balance = float(
+                        _money(to_decimal(customer.balance) + totals["debt"])
+                    )
+                    tx.add(
+                        DebtLedgerEntry(
+                            customer_id=customer.id,
+                            entry_type="sale",
+                            amount=float(totals["debt"]),
+                            reference_sale_id=sale.id,
+                            note=f"Sale {invoice_number}",
+                            user_id=user_id,
+                        )
+                    )
+
+                tx.flush()
+                sale_id = sale.id
+
+            # After commit — re-read for response relationships
+            sale = self.sales.get_by_id(sale_id)
+            if sale is None:  # pragma: no cover — commit succeeded
+                raise ConflictError(
+                    message="Sale committed but could not be re-read",
+                    details={"sale_id": str(sale_id)},
+                )
+            logger.info(
+                "sale_created",
+                sale_id=str(sale.id),
+                invoice_number=invoice_number,
+                total=str(totals["total"]),
+                debt=str(totals["debt"]),
+                payment_method=totals["payment_method"].value,
+                lines=len(lines),
+            )
+            return self._to_create_response(
+                sale, idempotent_replay=False, price_overrides=price_overrides
+            )
+
+        except IntegrityError as exc:
+            # Unique client_request_id race: another request won — return theirs.
+            self.db.rollback()
+            winner = self.sales.find_by_client_request_id(request.client_request_id)
+            if winner is not None:
+                logger.info(
+                    "sale_idempotent_race_replay",
+                    client_request_id=request.client_request_id,
+                    sale_id=str(winner.id),
+                )
+                return self._to_create_response(
+                    winner, idempotent_replay=True, price_overrides=[]
+                )
+            logger.error(
+                "sale_integrity_error",
+                exc_message=str(exc),
+                client_request_id=request.client_request_id,
+            )
+            raise ConflictError(
+                message="Sale could not be saved due to a conflict",
+                details={"client_request_id": request.client_request_id},
+            ) from exc
+
+    def _decrement_stock(self, ln: _ResolvedLine) -> None:
+        """Guarded stock decrement inside the open transaction.
+
+        Captures stock_before / stock_after on the line for movement rows
+        so multi-line sales of the same product stay correct.
+        """
+        assert ln.product is not None
+        product = ln.product
+        qty = ln.quantity_base
+
+        if ln.decrement_variant:
+            assert ln.variant is not None
+            before = to_decimal(ln.variant.quantity)
+            # DECIDED: variant sale decrements variant.quantity ONLY.
+            # Parent products.quantity is NOT touched (no double decrement).
+            # Use Decimal (not float) so ORM post-sync evaluation succeeds.
+            stmt = (
+                update(ProductVariant)
+                .where(ProductVariant.id == ln.variant.id)
+                .values(quantity=ProductVariant.quantity - qty)
+            )
+            if not product.allow_negative_stock:
+                stmt = stmt.where(ProductVariant.quantity >= qty)
+            result = self.db.execute(
+                stmt.execution_options(synchronize_session=False)
+            )
+            if result.rowcount != 1:
+                raise ConflictError(
+                    message="Insufficient variant stock (concurrent sale)",
+                    details={
+                        "variant_id": str(ln.variant.id),
+                        "product_id": str(product.id),
+                        "required": str(qty),
+                        "available": str(ln.stock_quantity),
+                    },
+                )
+            self.db.refresh(ln.variant)
+            ln.stock_before = before
+            ln.stock_after = to_decimal(ln.variant.quantity)
+            return
+
+        before = to_decimal(product.quantity)
+        stmt = (
+            update(Product)
+            .where(Product.id == product.id)
+            .values(quantity=Product.quantity - qty)
+        )
+        if not product.allow_negative_stock:
+            stmt = stmt.where(Product.quantity >= qty)
+        result = self.db.execute(
+            stmt.execution_options(synchronize_session=False)
+        )
+        if result.rowcount != 1:
+            raise ConflictError(
+                message="Insufficient stock (concurrent sale)",
+                details={
+                    "product_id": str(product.id),
+                    "required": str(qty),
+                    "available": str(ln.stock_quantity),
+                },
+            )
+        self.db.refresh(product)
+        ln.stock_before = before
+        ln.stock_after = to_decimal(product.quantity)
+
+    def _record_sale_movement(
+        self,
+        tx: Session,
+        *,
+        line: _ResolvedLine,
+        sale_id: uuid.UUID,
+        user_id: uuid.UUID | None,
+        device_id: str | None,
+        invoice_number: str,
+    ) -> None:
+        assert line.product is not None
+        product = line.product
+        variant = line.variant
+
+        if line.stock_before is None or line.stock_after is None:
+            # Fallback if movement is recorded without a prior decrement.
+            if variant is not None:
+                after = to_decimal(variant.quantity)
+                before = after + line.quantity_base
+            else:
+                after = to_decimal(product.quantity)
+                before = after + line.quantity_base
+        else:
+            before = line.stock_before
+            after = line.stock_after
+
+        # PMP snapshot: avg_cost is authoritative and MUST remain unchanged.
+        avg_after = quantize_money(to_decimal(product.avg_cost))
+
+        movement = InventoryMovement(
+            product_id=product.id,
+            variant_id=variant.id if variant else None,
+            movement_type=StockMovementType.SALE.value,
+            quantity_change=float(-line.quantity_base),
+            quantity_before=float(before),
+            quantity_after=float(after),
+            unit_cost=float(line.unit_cost),
+            avg_cost_after=float(avg_after),
+            reason=f"Sale {invoice_number}",
+            user_id=user_id,
+            device_id=device_id,
+            source_document_type="sale",
+            source_document_id=sale_id,
+        )
+        tx.add(movement)
+
+    # ------------------------------------------------------------------
+    # Response mapping
+    # ------------------------------------------------------------------
+
+    def _to_create_response(
+        self,
+        sale: Sale,
+        *,
+        idempotent_replay: bool,
+        price_overrides: list[PriceOverride],
+    ) -> SaleCreateResponse:
+        debt = _money(max(Decimal("0"), to_decimal(sale.total) - to_decimal(sale.paid)))
+        if sale.payment_method == PaymentMethod.CREDIT.value:
+            debt = to_decimal(sale.total)
+            paid = Decimal("0")
+            change = Decimal("0")
+        else:
+            paid = to_decimal(sale.paid)
+            change = to_decimal(sale.change)
+            if sale.payment_method in (
+                PaymentMethod.CASH.value,
+                PaymentMethod.CARD.value,
+            ):
+                debt = Decimal("0")
+
+        lines = [
+            SaleLineResponse(
+                id=ln.id,
+                product_id=ln.product_id,
+                variant_id=ln.variant_id,
+                product_name=ln.product_name,
+                product_sku=ln.product_sku,
+                product_barcode=ln.product_barcode,
+                product_unit=ln.product_unit,
+                variant_name=ln.variant_name,
+                selling_unit_name=ln.selling_unit_name,
+                selling_unit_multiplier=(
+                    to_decimal(ln.selling_unit_multiplier)
+                    if ln.selling_unit_multiplier is not None
+                    else None
+                ),
+                unit_price=to_decimal(ln.unit_price),
+                unit_cost=to_decimal(ln.unit_cost),
+                quantity=to_decimal(ln.quantity),
+                line_discount=to_decimal(ln.line_discount),
+                line_total=to_decimal(ln.line_total),
+            )
+            for ln in sale.lines
+        ]
+        payments = [
+            SalePaymentResponse(
+                id=p.id,
+                method=p.method,
+                amount=to_decimal(p.amount),
+            )
+            for p in sale.payments
+        ]
+        return SaleCreateResponse(
+            id=sale.id,
+            invoice_number=sale.invoice_number,
+            client_request_id=sale.client_request_id,
+            customer_id=sale.customer_id,
+            status=sale.status,
+            subtotal=to_decimal(sale.subtotal),
+            discount=to_decimal(sale.discount),
+            total=to_decimal(sale.total),
+            paid=paid,
+            change=change,
+            debt=debt,
+            payment_method=sale.payment_method,
+            device_id=sale.device_id,
+            note=sale.note,
+            sale_date=sale.sale_date,
+            lines=lines,
+            payments=payments,
+            idempotent_replay=idempotent_replay,
+            price_overrides=price_overrides,
+        )
+
+    def _to_sale_response(self, sale: Sale) -> SaleResponse:
+        created = self._to_create_response(
+            sale, idempotent_replay=False, price_overrides=[]
+        )
+        payload = created.model_dump(exclude={"price_overrides"})
+        # Computed, additive: history rows can show what was sold without
+        # opening Sale Detail (UX FIX #12 — FIX #1).
+        payload["unit_summary"] = unit_summary_from_lines(payload.get("lines") or [])
+        return SaleResponse.model_validate(payload)
+
+    # ------------------------------------------------------------------
+    # Sale history (minimal — pos_sale)
+    # ------------------------------------------------------------------
+
+    def get_sale(self, sale_id: uuid.UUID) -> SaleResponse:
+        sale = self.sales.get_by_id(sale_id)
+        if sale is None:
+            raise NotFoundError(
+                message="Sale not found",
+                details={"sale_id": str(sale_id)},
+            )
+        return self._to_sale_response(sale)
+
+    def get_sale_by_invoice(self, invoice_number: str) -> SaleResponse:
+        sale = self.sales.find_by_invoice_number(invoice_number)
+        if sale is None:
+            raise NotFoundError(
+                message="Sale not found",
+                details={"invoice_number": invoice_number},
+            )
+        return self._to_sale_response(sale)
+
+    def list_sales(
+        self, *, page: int = 1, page_size: int = 50, user_id: uuid.UUID | None = None
+    ) -> dict[str, Any]:
+        page = max(1, page)
+        page_size = max(1, min(page_size, 100))
+        total = self.sales.count_sales()
+        items = self.sales.list_recent(
+            limit=page_size, offset=(page - 1) * page_size, user_id=user_id
+        )
+        import math
+
+        pages = math.ceil(total / page_size) if total > 0 else 1
+        return {
+            "items": [self._to_sale_response(s) for s in items],
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "pages": pages,
+        }
+
+    # ------------------------------------------------------------------
+    # Cart validate (stateless revalidation before payment)
+    # ------------------------------------------------------------------
+
+    def validate_cart(self, request: CartValidateRequest) -> CartValidateResponse:
+        lines_out: list[CartLineValidation] = []
+        errors: list[str] = []
+        resolved: list[_ResolvedLine] = []
+        subtotal = Decimal("0")
+        line_discounts = Decimal("0")
+
+        for idx, item in enumerate(request.items):
+            try:
+                ln = self._resolve_line(item, idx, validate_stock=True)
+                resolved.append(ln)
+                subtotal += ln.line_gross
+                line_discounts += ln.line_discount
+                lines_out.append(
+                    CartLineValidation(
+                        line_index=idx,
+                        product_id=ln.product.id if ln.product else item.product_id,
+                        variant_id=ln.variant.id if ln.variant else None,
+                        ok=True,
+                        available_stock=ln.stock_quantity,
+                        required_quantity=ln.quantity_base,
+                        unit_price=ln.unit_price,
+                        is_archived=False,
+                    )
+                )
+            except (NotFoundError, BusinessRuleError, ValidationError) as exc:
+                errors.append(f"line {idx}: {exc.message}")
+                lines_out.append(
+                    CartLineValidation(
+                        line_index=idx,
+                        product_id=item.product_id,
+                        variant_id=item.variant_id,
+                        ok=False,
+                        message=exc.message,
+                        is_archived=isinstance(exc, BusinessRuleError)
+                        and "Archived" in exc.message,
+                    )
+                )
+
+        ok = not errors and bool(resolved)
+        discount = Decimal("0")
+        total = Decimal("0")
+        paid = request.paid
+        change = Decimal("0")
+        debt = Decimal("0")
+        if ok:
+            try:
+                totals = self._compute_totals(
+                    resolved,
+                    request.invoice_discount,
+                    request.payment_method,
+                    request.paid,
+                    request.customer_id,
+                )
+                discount = totals["invoice_discount"]
+                total = totals["total"]
+                paid = totals["paid"]
+                change = totals["change"]
+                debt = totals["debt"]
+            except (ValidationError, BusinessRuleError) as exc:
+                ok = False
+                errors.append(exc.message)
+
+        return CartValidateResponse(
+            ok=ok,
+            lines=lines_out,
+            subtotal=_money(subtotal),
+            discount=_money(discount),
+            total=_money(total),
+            paid=_money(paid),
+            change=_money(change),
+            debt=_money(debt),
+            errors=errors,
+        )
+
+    # ------------------------------------------------------------------
+    # Holds (snapshots only — no stock reservation)
+    # ------------------------------------------------------------------
+
+    def create_hold(
+        self,
+        request: HoldCreateRequest,
+        *,
+        user: User | None = None,
+    ) -> HoldResponse:
+        user_id = user.id if user is not None else None
+        snapshot = {
+            "items": [i.model_dump(mode="json") for i in request.items],
+        }
+        hold = PosHold(
+            user_id=user_id,
+            device_id=request.device_id,
+            customer_id=request.customer_id,
+            cart_snapshot=snapshot,
+            invoice_discount=float(_money(request.invoice_discount)),
+            note=request.note,
+        )
+        with self.transaction() as tx:
+            tx.add(hold)
+            tx.flush()
+            hold_id = hold.id
+        hold = self.holds.get_by_id(hold_id)
+        assert hold is not None
+        return self._to_hold_response(hold)
+
+    def list_holds(
+        self,
+        *,
+        user: User | None = None,
+        device_id: str | None = None,
+    ) -> HoldListResponse:
+        items = self.holds.list_for_user(
+            user_id=user.id if user else None,
+            device_id=device_id,
+        )
+        return HoldListResponse(
+            items=[self._to_hold_response(h) for h in items],
+            total=len(items),
+        )
+
+    def get_hold(self, hold_id: uuid.UUID) -> HoldResponse:
+        hold = self.holds.get_by_id(hold_id)
+        if hold is None:
+            raise NotFoundError(
+                message="Hold not found",
+                details={"hold_id": str(hold_id)},
+            )
+        return self._to_hold_response(hold)
+
+    def delete_hold(self, hold_id: uuid.UUID) -> None:
+        hold = self.holds.get_by_id(hold_id)
+        if hold is None:
+            raise NotFoundError(
+                message="Hold not found",
+                details={"hold_id": str(hold_id)},
+            )
+        with self.transaction() as tx:
+            tx.delete(hold)
+
+    def restore_hold(self, hold_id: uuid.UUID) -> HoldRestoreResponse:
+        """Return snapshot + revalidate current stock/prices. Does NOT reserve stock."""
+        hold = self.holds.get_by_id(hold_id)
+        if hold is None:
+            raise NotFoundError(
+                message="Hold not found",
+                details={"hold_id": str(hold_id)},
+            )
+        hold_resp = self._to_hold_response(hold)
+        from app.schemas.sale import SaleLineRequest
+
+        lines_out: list[CartLineValidation] = []
+        errors: list[str] = []
+        for idx, raw in enumerate(hold_resp.items):
+            item = SaleLineRequest.model_validate(raw.model_dump())
+            try:
+                ln = self._resolve_line(item, idx, validate_stock=True)
+                lines_out.append(
+                    CartLineValidation(
+                        line_index=idx,
+                        product_id=ln.product.id if ln.product else item.product_id,
+                        variant_id=ln.variant.id if ln.variant else None,
+                        ok=True,
+                        available_stock=ln.stock_quantity,
+                        required_quantity=ln.quantity_base,
+                        unit_price=ln.unit_price,
+                    )
+                )
+            except (NotFoundError, BusinessRuleError, ValidationError) as exc:
+                errors.append(f"line {idx}: {exc.message}")
+                lines_out.append(
+                    CartLineValidation(
+                        line_index=idx,
+                        product_id=item.product_id,
+                        variant_id=item.variant_id,
+                        ok=False,
+                        message=exc.message,
+                    )
+                )
+        # FIX #5: successful restore removes the hold (atomic from user view).
+        # Validation errors keep the hold so the client can retry.
+        if not errors:
+            with self.transaction() as tx:
+                tx.delete(hold)
+        return HoldRestoreResponse(
+            hold=hold_resp,
+            lines=lines_out,
+            ok=not errors,
+            errors=errors,
+        )
+
+    def _to_hold_response(self, hold: PosHold) -> HoldResponse:
+        raw_items = (hold.cart_snapshot or {}).get("items", [])
+        items = [HoldCartItem.model_validate(i) for i in raw_items]
+        return HoldResponse(
+            id=hold.id,
+            user_id=hold.user_id,
+            device_id=hold.device_id,
+            customer_id=hold.customer_id,
+            items=items,
+            invoice_discount=to_decimal(hold.invoice_discount),
+            note=hold.note,
+            created_at=hold.created_at,
+        )
+
+    # ------------------------------------------------------------------
+    # Favorites (minimal manual pins)
+    # ------------------------------------------------------------------
+
+    def list_favorites(self, *, user: User | None = None) -> FavoriteListResponse:
+        rows = self.favorites.list_for_user(user_id=user.id if user else None)
+        items: list[FavoriteResponse] = []
+        for row in rows:
+            product = self.products.get_by_id(row.product_id)
+            if product is None:
+                continue
+            items.append(
+                FavoriteResponse(
+                    id=row.id,
+                    product_id=product.id,
+                    product_name=product.name,
+                    barcode=product.barcode,
+                    price=to_decimal(product.price),
+                    quantity=to_decimal(product.quantity),
+                    is_archived=product.archived_at is not None,
+                    created_at=row.created_at,
+                )
+            )
+        return FavoriteListResponse(items=items, total=len(items))
+
+    def add_favorite(
+        self, product_id: uuid.UUID, *, user: User | None = None
+    ) -> FavoriteToggleResponse:
+        product = self.products.get_by_id(product_id)
+        if product is None:
+            raise NotFoundError(
+                message="Product not found",
+                details={"product_id": str(product_id)},
+            )
+        user_id = user.id if user else None
+        existing = self.favorites.find(product_id=product_id, user_id=user_id)
+        if existing is None:
+            with self.transaction() as tx:
+                tx.add(ProductFavorite(product_id=product_id, user_id=user_id))
+        return FavoriteToggleResponse(favorited=True, product_id=product_id)
+
+    def remove_favorite(
+        self, product_id: uuid.UUID, *, user: User | None = None
+    ) -> FavoriteToggleResponse:
+        user_id = user.id if user else None
+        existing = self.favorites.find(product_id=product_id, user_id=user_id)
+        if existing is None:
+            # Idempotent delete — already not favorited
+            return FavoriteToggleResponse(favorited=False, product_id=product_id)
+        with self.transaction() as tx:
+            tx.delete(existing)
+        return FavoriteToggleResponse(favorited=False, product_id=product_id)

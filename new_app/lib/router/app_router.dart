@@ -9,6 +9,7 @@ import '../features/auth/setup_screen.dart';
 import '../l10n/locale_provider.dart';
 import '../features/dashboard/dashboard_screen.dart';
 import '../features/clients/clients_screen.dart';
+import '../features/pos/pos_screen.dart';
 import '../features/products/products_screen.dart';
 import '../features/stock/stock_screen.dart';
 import '../features/sales/sales_screen.dart';
@@ -79,8 +80,7 @@ final routerProvider = Provider<GoRouter>((ref) {
           GoRoute(
             path: '/pos',
             name: 'pos',
-            builder: (context, state) =>
-                const Placeholder(title: 'Point of Sale'),
+            builder: (context, state) => const PosScreen(),
           ),
           GoRoute(
             path: '/clients',
@@ -151,6 +151,9 @@ class ScaffoldWithNav extends ConsumerWidget {
   /// Scope required to see the Stock / Inventory destination (Phase 7).
   static const String inventoryViewScope = 'inventory_view';
 
+  /// Scope required to see the POS destination (Phase 8).
+  static const String posSaleScope = 'pos_sale';
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
@@ -159,6 +162,7 @@ class ScaffoldWithNav extends ConsumerWidget {
     final canManageUsers = ref.watch(hasPermissionProvider(userManageScope));
     final canViewProducts = ref.watch(hasPermissionProvider(productViewScope));
     final canViewInventory = ref.watch(hasPermissionProvider(inventoryViewScope));
+    final canSell = ref.watch(hasPermissionProvider(posSaleScope));
 
     final destinations = <NavigationRailDestination>[
       NavigationRailDestination(
@@ -166,6 +170,12 @@ class ScaffoldWithNav extends ConsumerWidget {
         selectedIcon: const Icon(Icons.dashboard),
         label: Text(AppStrings.t('dashboard', loc)),
       ),
+      if (canSell)
+        NavigationRailDestination(
+          icon: const Icon(Icons.point_of_sale_outlined),
+          selectedIcon: const Icon(Icons.point_of_sale),
+          label: Text(AppStrings.t('pos', loc)),
+        ),
       if (canViewProducts)
         NavigationRailDestination(
           icon: const Icon(Icons.inventory_2_outlined),
@@ -196,6 +206,10 @@ class ScaffoldWithNav extends ConsumerWidget {
     if (location == '/') {
       selectedIndex = index;
     }
+    if (canSell) {
+      index += 1;
+      if (location == '/pos') selectedIndex = index;
+    }
     if (canViewProducts) {
       index += 1;
       if (location == '/products') selectedIndex = index;
@@ -215,6 +229,10 @@ class ScaffoldWithNav extends ConsumerWidget {
       var i = 0;
       if (i++ == target) {
         context.go('/');
+        return;
+      }
+      if (canSell && i++ == target) {
+        context.go('/pos');
         return;
       }
       if (canViewProducts && i++ == target) {

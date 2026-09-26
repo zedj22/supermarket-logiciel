@@ -11,7 +11,7 @@ Design principles:
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, String, Text, func
+from sqlalchemy import DateTime, ForeignKey, Numeric, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, DocumentModel, TimestampMixin, UUIDMixin, numeric_money, numeric_quantity
@@ -46,6 +46,11 @@ class Sale(DocumentModel):
     payment_method: Mapped[str] = mapped_column(
         String(20), nullable=False, default=PaymentMethod.CASH.value,
         server_default=PaymentMethod.CASH.value,
+    )
+    # Phase 8 idempotency: client-supplied key; unique when present.
+    # Repeated checkout with the same key returns the original sale.
+    client_request_id: Mapped[str | None] = mapped_column(
+        String(100), unique=True, index=True, nullable=True,
     )
     note: Mapped[str | None] = mapped_column(Text)
     device_id: Mapped[str | None] = mapped_column(String(100))
@@ -108,6 +113,15 @@ class SaleLine(Base, UUIDMixin, TimestampMixin):
     product_sku: Mapped[str | None] = mapped_column(String(50))
     product_barcode: Mapped[str | None] = mapped_column(String(50))
     product_unit: Mapped[str] = mapped_column(String(20), nullable=False)
+    # Phase 8 UX FIX #11 — historical display snapshots for variant /
+    # selling unit. Nullable (base-unit sales have neither) and never
+    # FK-linked: the values must survive renames, multiplier changes and
+    # catalog archives. product_unit above stays the base-unit snapshot.
+    variant_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    selling_unit_name: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    selling_unit_multiplier: Mapped[float | None] = mapped_column(
+        Numeric(18, 3), nullable=True
+    )
     unit_price: Mapped[float] = numeric_money()
     unit_cost: Mapped[float] = numeric_money()
     quantity: Mapped[float] = numeric_quantity()

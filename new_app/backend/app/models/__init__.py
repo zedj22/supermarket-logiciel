@@ -51,6 +51,9 @@ from app.models.party import Customer, Supplier  # noqa: F401
 # Sales
 from app.models.sale import Sale, SaleLine, SalePayment  # noqa: F401
 
+# POS (Phase 8): holds + favorites
+from app.models.pos import PosHold, ProductFavorite  # noqa: F401
+
 # Purchases
 from app.models.purchase import Purchase, PurchaseLine  # noqa: F401
 
@@ -107,6 +110,8 @@ __all__ = [
     "Sale",
     "SaleLine",
     "SalePayment",
+    "PosHold",
+    "ProductFavorite",
     # Purchases
     "Purchase",
     "PurchaseLine",

@@ -9,6 +9,8 @@ Verifies:
 
 import uuid
 
+import pytest
+
 from app.db.base import BaseModel
 from app.core.exceptions import AppError, ConflictError, DatabaseError, NotFoundError
 from app.services.base import BaseService
@@ -53,18 +55,19 @@ def test_successful_transaction_commits(db_session):
 
 
 def test_failed_transaction_rolls_back(db_session):
-    """An exception in a transaction should roll back all changes."""
+    """An exception in a transaction should roll back all changes.
+
+    Non-SQLAlchemy exceptions (e.g. RuntimeError) are re-raised as-is
+    (not mislabeled as DATABASE_ERROR); rollback still happens.
+    """
     service = BaseService(db_session)
 
-    try:
+    with pytest.raises(RuntimeError, match="Intentional failure"):
         with service.transaction():
             item = SvcTestItem(name="Will Be Rolled Back")
             db_session.add(item)
             db_session.flush()
             raise RuntimeError("Intentional failure")
-    except DatabaseError:
-        # RuntimeError is translated to DatabaseError by translate_db_error
-        pass
 
     # Data should not exist
     from sqlalchemy import select

@@ -139,6 +139,31 @@ void main() {
       expect(AppStrings.unitLabel('weird', 'ar'), 'weird');
     });
 
+    test('unitLabel matches historical selling-unit names case-insensitively',
+        () {
+      // A sale captured with a unit named `Box` must localize in every
+      // locale (Phase 8 FIX #3): Box / Boîte / علبة.
+      expect(AppStrings.unitLabel('Box', 'en'), AppStrings.unitLabel('box', 'en'));
+      expect(AppStrings.unitLabel('Box', 'fr'), AppStrings.unitLabel('box', 'fr'));
+      expect(AppStrings.unitLabel('Box', 'ar'), AppStrings.unitLabel('box', 'ar'));
+      expect(AppStrings.unitLabel('Box', 'ar'), isNot('Box'));
+      expect(AppStrings.unitLabel('BOX', 'ar'), AppStrings.unitLabel('box', 'ar'));
+      expect(
+          AppStrings.unitLabel('PIECE', 'ar'), AppStrings.unitLabel('piece', 'ar'));
+    });
+
+    test('unitLabel ignores diacritics in historical unit names', () {
+      final folded = 'Bo\u00EEte'; // Boîte without relying on file encoding
+      expect(
+          AppStrings.unitLabel(folded, 'fr'), AppStrings.unitLabel('boite', 'fr'));
+      expect(
+          AppStrings.unitLabel(folded, 'ar'), AppStrings.unitLabel('boite', 'ar'));
+      expect(
+          AppStrings.unitLabel(folded, 'en'), AppStrings.unitLabel('boite', 'en'));
+      // The English dictionary maps the French spelling to `Box`.
+      expect(AppStrings.unitLabel(folded, 'en'), 'Box');
+    });
+
     test('Arabic and English unit labels differ', () {
       var differs = 0;
       for (final code in unitCodes) {
