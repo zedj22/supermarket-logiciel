@@ -154,6 +154,9 @@ class ScaffoldWithNav extends ConsumerWidget {
   /// Scope required to see the POS destination (Phase 8).
   static const String posSaleScope = 'pos_sale';
 
+  /// Scope required to see the Clients destination (Phase 9).
+  static const String customerViewScope = 'customer_view';
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
@@ -163,6 +166,7 @@ class ScaffoldWithNav extends ConsumerWidget {
     final canViewProducts = ref.watch(hasPermissionProvider(productViewScope));
     final canViewInventory = ref.watch(hasPermissionProvider(inventoryViewScope));
     final canSell = ref.watch(hasPermissionProvider(posSaleScope));
+    final canViewCustomers = ref.watch(hasPermissionProvider(customerViewScope));
 
     final destinations = <NavigationRailDestination>[
       NavigationRailDestination(
@@ -188,6 +192,18 @@ class ScaffoldWithNav extends ConsumerWidget {
           selectedIcon: const Icon(Icons.warehouse),
           label: Text(AppStrings.t('stock', loc)),
         ),
+      if (canViewCustomers) ...[
+        NavigationRailDestination(
+          icon: const Icon(Icons.contact_phone_outlined),
+          selectedIcon: const Icon(Icons.contact_phone),
+          label: Text(AppStrings.t('clients', loc)),
+        ),
+        NavigationRailDestination(
+          icon: const Icon(Icons.receipt_long_outlined),
+          selectedIcon: const Icon(Icons.receipt_long),
+          label: Text(AppStrings.t('debts', loc)),
+        ),
+      ],
       if (canManageUsers)
         NavigationRailDestination(
           icon: const Icon(Icons.people_outline),
@@ -218,6 +234,12 @@ class ScaffoldWithNav extends ConsumerWidget {
       index += 1;
       if (location == '/stock') selectedIndex = index;
     }
+    if (canViewCustomers) {
+      index += 1;
+      if (location == '/clients') selectedIndex = index;
+      index += 1;
+      if (location == '/debts') selectedIndex = index;
+    }
     if (canManageUsers) {
       index += 1;
       if (location == '/users') selectedIndex = index;
@@ -241,6 +263,14 @@ class ScaffoldWithNav extends ConsumerWidget {
       }
       if (canViewInventory && i++ == target) {
         context.go('/stock');
+        return;
+      }
+      if (canViewCustomers && i++ == target) {
+        context.go('/clients');
+        return;
+      }
+      if (canViewCustomers && i++ == target) {
+        context.go('/debts');
         return;
       }
       if (canManageUsers && i++ == target) {

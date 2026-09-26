@@ -86,6 +86,26 @@ String? backendErrorMessage(DioException e) {
   return null;
 }
 
+/// Extracts the structured envelope `error.code` from an error response.
+///
+/// Supports the standard envelope `{"error": {"code": "..."}}`. The code
+/// is mapped FIRST (before the HTTP status) so business rules keep their
+/// identity across the UI — e.g. `DEBT_CEILING_EXCEEDED` (422) must not
+/// collapse into the generic `validation_error` headline.
+///
+/// Returns null when there is no response or no usable code field.
+String? backendErrorCode(DioException e) {
+  final data = e.response?.data;
+  if (data is Map) {
+    final error = data['error'];
+    if (error is Map) {
+      final code = error['code'];
+      if (code is String && code.isNotEmpty) return code;
+    }
+  }
+  return null;
+}
+
 class ApiClient {
   late final Dio _dio;
   OnUnauthorized? _onUnauthorized;

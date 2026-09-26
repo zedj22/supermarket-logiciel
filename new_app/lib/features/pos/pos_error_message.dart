@@ -39,6 +39,14 @@ PosApiError posApiError(
     return PosApiError(AppStrings.t('network_error_retry', loc));
   }
   final detail = backendErrorMessage(error);
+
+  // Business rules are mapped by their envelope code FIRST so they keep
+  // their identity regardless of HTTP status.
+  final errorCode = backendErrorCode(error);
+  if (errorCode == 'DEBT_CEILING_EXCEEDED') {
+    return PosApiError(_debtCeilingMessage(error, loc), detail);
+  }
+
   final code = error.response?.statusCode;
   final String key;
   if (code == 401) {
@@ -54,6 +62,38 @@ PosApiError posApiError(
     key = fallbackKey;
   }
   return PosApiError(AppStrings.t(key, loc), detail);
+}
+
+/// DEBT_CEILING_EXCEEDED → localized headline + localized amounts block.
+///
+/// The checkout error surface is ONE string (`cart.lastError`: the payment
+/// dialog's `payment-error` line and the toast), so the four amounts from
+/// the envelope `details` are folded into the message as a second line —
+/// dropping them would leave the cashier unable to judge how far over the
+/// ceiling the sale is. Backend totals are already localized-formatted
+/// decimal strings ("600.000"), so only the labels need translation.
+String _debtCeilingMessage(DioException error, String loc) {
+  final headline = AppStrings.t('debt_ceiling_exceeded', loc);
+  final details = _envelopeDetails(error);
+  final numbers = AppStrings.t('debt_ceiling_detail', loc)
+      .replaceAll('{current}', '${details['current_balance'] ?? '?'}')
+      .replaceAll('{new_debt}', '${details['new_debt'] ?? '?'}')
+      .replaceAll('{ceiling}', '${details['debt_ceiling'] ?? '?'}')
+      .replaceAll('{projected}', '${details['projected_balance'] ?? '?'}');
+  return '$headline\n$numbers';
+}
+
+/// `error.details` map from the standard error envelope (empty if absent).
+Map<String, dynamic> _envelopeDetails(DioException error) {
+  final data = error.response?.data;
+  if (data is Map) {
+    final err = data['error'];
+    if (err is Map) {
+      final details = err['details'];
+      if (details is Map) return details.cast<String, dynamic>();
+    }
+  }
+  return const <String, dynamic>{};
 }
 
 /// Localized-only view of [posApiError] (toast headline, dialog error line).

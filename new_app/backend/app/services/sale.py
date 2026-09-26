@@ -214,6 +214,41 @@ class SaleService(BaseService):
             )
         return customer
 
+    def _enforce_debt_ceiling(
+        self, customer: Customer, new_debt: Decimal
+    ) -> None:
+        """Authoritative debt-ceiling gate (PHASE 9 BUG FIX).
+
+        Re-reads the customer row under a FOR UPDATE row lock inside the
+        sale transaction, so two concurrent credit sales cannot both read
+        a stale balance and slip past the ceiling together.
+
+        Semantics (existing app-wide): ``debt_ceiling == 0`` means NO
+        ceiling (unlimited) — matches Flutter clients_screen over-limit
+        logic and report §2.1. A ceiling is enforced only when > 0.
+
+        Raises BusinessRuleError(code=DEBT_CEILING_EXCEEDED, 422) BEFORE
+        any mutation; the transaction rolls back and nothing is written.
+        """
+        self.db.refresh(customer, with_for_update=True)
+        ceiling = _money(to_decimal(customer.debt_ceiling))
+        if ceiling <= 0:
+            return
+        current = _money(to_decimal(customer.balance))
+        projected = _money(current + new_debt)
+        if projected > ceiling:
+            raise BusinessRuleError(
+                message="Customer debt ceiling exceeded",
+                code="DEBT_CEILING_EXCEEDED",
+                details={
+                    "customer_id": str(customer.id),
+                    "current_balance": str(current),
+                    "new_debt": str(new_debt),
+                    "projected_balance": str(projected),
+                    "debt_ceiling": str(ceiling),
+                },
+            )
+
     def _resolve_line(self, item, index: int, *, validate_stock: bool = True) -> _ResolvedLine:
         """Load product/variant/selling unit, resolve price, convert quantity."""
         line = _ResolvedLine()
@@ -540,6 +575,13 @@ class SaleService(BaseService):
         # --- ONE transaction: everything or nothing ---
         try:
             with self.transaction() as tx:
+                # PHASE 9 BUG FIX: debt-ceiling gate FIRST — authoritative
+                # FOR UPDATE re-read of the customer row; raises before any
+                # stock/sale mutation so a rejected checkout leaves zero
+                # residue.
+                if totals["debt"] > 0 and customer is not None:
+                    self._enforce_debt_ceiling(customer, totals["debt"])
+
                 # Guarded stock decrements first (rowcount = concurrency safety)
                 for ln in lines:
                     self._decrement_stock(ln)

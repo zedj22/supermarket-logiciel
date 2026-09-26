@@ -37,6 +37,11 @@ class DebtLedgerEntry(Base, UUIDMixin, TimestampMixin):
         index=True,
     )
     note: Mapped[str | None] = mapped_column(Text)
+    # Phase 9 idempotency: client-supplied key for payment commands;
+    # unique when present (sale entries leave it NULL).
+    client_request_id: Mapped[str | None] = mapped_column(
+        String(100), unique=True, index=True, nullable=True,
+    )
     user_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,

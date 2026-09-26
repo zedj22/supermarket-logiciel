@@ -284,6 +284,8 @@ void _mockDio(
   bool sellingUnitsNetworkError = false,
   Map<String, dynamic>? saleListBody,
   Map<String, dynamic>? saleDetailBody,
+  int? saleErrorStatus,
+  Map<String, dynamic>? saleErrorBody,
   Map<String, dynamic>? holdsBody,
   Map<String, dynamic>? restoreBody,
   bool restoreNetworkError = false,
@@ -421,6 +423,20 @@ void _mockDio(
       return _ok(path, <String, dynamic>{'id': 'hold-created'});
     }
     if (path == _salesPath) {
+      if (saleErrorStatus != null) {
+        throw DioException(
+          requestOptions: RequestOptions(path: path),
+          type: DioExceptionType.badResponse,
+          response: Response<dynamic>(
+            requestOptions: RequestOptions(path: path),
+            statusCode: saleErrorStatus,
+            data: saleErrorBody ??
+                {
+                  'error': {'code': 'ERROR', 'message': 'sale failed'},
+                },
+          ),
+        );
+      }
       final data = invocation.namedArguments[#data];
       final requestId = data is Map ? '${data['client_request_id']}' : '';
       return _ok(path, _saleBody(withOverride: saleWithOverride, clientRequestId: requestId));
@@ -7511,6 +7527,112 @@ void main() {
       expect(find.byKey(const Key('pos-toast-close')), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
+  });
+
+  // ── PHASE 9 BUG FIX — debt-ceiling rejection at checkout ─────────────────
+  group('Phase 9 debt ceiling rejection at checkout', () {
+    const ceilingEnvelope = <String, dynamic>{
+      'error': {
+        'code': 'DEBT_CEILING_EXCEEDED',
+        'message_key': 'errors.businessRule',
+        'message': 'Customer debt ceiling exceeded',
+        'details': {
+          'customer_id': '11111111-1111-1111-1111-111111111111',
+          'current_balance': '0.000',
+          'new_debt': '600.000',
+          'projected_balance': '600.000',
+          'debt_ceiling': '500.000',
+        },
+        'request_id': 'req-ceiling-1',
+      },
+    };
+
+    Future<ProviderContainer> pumpRejectedCheckout(
+      WidgetTester tester, {
+      required AppLocale locale,
+    }) async {
+      final mock = MockDio();
+      _mockDio(
+        mock,
+        saleErrorStatus: 422,
+        saleErrorBody: ceilingEnvelope,
+      );
+      await _pumpApp(tester, dio: mock, locale: locale);
+      await tester.pump(const Duration(milliseconds: 500));
+
+      final container = ProviderScope.containerOf(
+        tester.element(find.byKey(const Key('pos-screen'))),
+        listen: false,
+      );
+      container.read(posCartProvider.notifier).addLine(
+            const CartLine(
+              productId: _productId,
+              name: 'Bread',
+              quantity: '1',
+              unitPrice: '9',
+            ),
+          );
+      await tester.pump();
+
+      await tester.tap(find.byKey(const Key('pos-pay-button')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('payment-dialog')), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('payment-submit')));
+      await tester.pumpAndSettle(const Duration(seconds: 1));
+      return container;
+    }
+
+    String dialogError(WidgetTester tester) =>
+        tester
+            .widget<Text>(find.byKey(const Key('payment-error')))
+            .data ??
+        '';
+
+    for (final locale in [AppLocale.ar, AppLocale.fr, AppLocale.en]) {
+      testWidgets(
+          '$locale rejection shows localized headline + amounts, '
+          'cart preserved, no success UI', (tester) async {
+        final container = await pumpRejectedCheckout(tester, locale: locale);
+        final loc = locale.name;
+
+        // Localized headline + the four amounts on the single error line.
+        final error = dialogError(tester);
+        expect(error, startsWith(AppStrings.t('debt_ceiling_exceeded', loc)));
+        expect(error, contains('600.000'));
+        expect(error, contains('500.000'));
+        // Never the generic 422 headline, never the raw English message.
+        expect(
+          error,
+          isNot(startsWith(AppStrings.t('validation_error', loc))),
+        );
+        expect(error, isNot('Customer debt ceiling exceeded'));
+        if (loc != 'en') {
+          expect(
+            error,
+            isNot(startsWith(AppStrings.t('debt_ceiling_exceeded', 'en'))),
+            reason: '$loc fell back to the English headline',
+          );
+        }
+
+        // Dialog stays open and usable (adjust payment / cancel).
+        expect(find.byKey(const Key('payment-dialog')), findsOneWidget);
+        final submit = tester.widget<ElevatedButton>(
+          find.byKey(const Key('payment-submit')),
+        );
+        expect(submit.onPressed, isNotNull,
+            reason: 'dialog must remain interactive after rejection');
+
+        // Cart + idempotency key preserved for the retry; no success state.
+        final cart = container.read(posCartProvider);
+        expect(cart.isEmpty, isFalse);
+        expect(cart.pendingClientRequestId, isNotNull,
+            reason: 'client_request_id must survive the rejection');
+        expect(cart.lastResult, isNull);
+        expect(find.text(AppStrings.t('sale_completed', loc)), findsNothing);
+        expect(tester.takeException(), isNull);
+      });
+    }
   });
 
   // ── PHASE 8 FIX #1 — add focuses the new/merged line + global `+` ─────
