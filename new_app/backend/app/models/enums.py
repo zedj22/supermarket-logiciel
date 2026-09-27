@@ -101,6 +101,22 @@ class ReturnReason(str, enum.Enum):
     OTHER = "other"
 
 
+# ── Purchases (Phase 11) ────────────────────────────────────────────────
+
+
+class PurchaseStatus(str, enum.Enum):
+    """Purchase document lifecycle (GATE 2 — minimal state machine).
+
+    draft     — no stock / PMP / payable effects; editable and deletable.
+    received  — posted atomically (stock + PMP + movements + payable).
+    cancelled — terminal reversal of a received document (append-only).
+    """
+
+    DRAFT = "draft"
+    RECEIVED = "received"
+    CANCELLED = "cancelled"
+
+
 # ── Inventory ──────────────────────────────────────────────────────────
 
 
@@ -154,3 +170,5 @@ class AuditAction(str, enum.Enum):
     ADJUSTMENT = "adjustment"
     BACKUP = "backup"
     RESTORE = "restore"
+    # Phase 11: purchase receipt (draft -> received posting). Additive only.
+    RECEIVE = "receive"

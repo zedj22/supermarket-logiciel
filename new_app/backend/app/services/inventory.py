@@ -12,12 +12,15 @@ from __future__ import annotations
 import math
 import uuid
 from decimal import Decimal
+from typing import Any
 
 import structlog
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import (
     BusinessRuleError,
+    ConflictError,
     NotFoundError,
     ValidationError,
 )
@@ -45,6 +48,7 @@ from app.models.catalog import (
 )
 from app.models.enums import StockMovementType
 from app.models.inventory import InventoryMovement
+from app.models.purchase import Purchase, PurchaseLine
 from app.models.user import User
 from app.repositories.catalog import (
     ProductRepository,
@@ -891,3 +895,467 @@ class InventoryService(BaseService):
                 user_id=user.id if user else None,
             )
             self.db.flush()
+
+    # ------------------------------------------------------------------
+    # Phase 11: purchase receipt / reversal (CALLER OWNS THE TRANSACTION)
+    # ------------------------------------------------------------------
+    #
+    # BaseService.transaction() is NOT nestable (an inner commit would
+    # break atomicity), so PurchaseService wraps these helpers, the
+    # supplier payable and the status flip in ONE transaction.
+    # Concurrency: every affected product row is locked FOR UPDATE in
+    # ascending product_id order first (deadlock-safe), then variant
+    # rows — PMP read-modify-write serializes per product across
+    # concurrent receipts.
+
+    def receive_purchase(
+        self,
+        purchase: Purchase,
+        *,
+        user_id: uuid.UUID | None = None,
+        device_id: str | None = None,
+    ) -> list[dict[str, object]]:
+        """Apply receipt effects: stock increase + PMP + movements.
+
+        Product lines: base qty into ``product.quantity``; PMP recomputed
+        with :func:`weighted_average_cost` (document discount is NOT
+        allocated — GATE 11); ``product.cost`` := latest base unit cost
+        (Phase 10 revalidation-fix invariant, GATE 9).
+        Variant lines: ``variant.quantity`` += base, ``variant.cost`` :=
+        base unit cost; product avg untouched (Phase 7 deferral).
+        Package lines: whole packages only; packaging state updated via
+        :func:`receive_packages`.
+
+        Returns per-line summaries for the audit trail.
+        """
+        products, variants = self._lock_purchase_targets(purchase)
+        plans = self._prepare_purchase_lines(purchase, products, variants)
+        summaries: list[dict[str, object]] = []
+
+        for plan in plans:
+            line: PurchaseLine = plan["line"]
+            product: Product = plan["product"]
+            qty_doc: Decimal = plan["qty_doc"]
+            base_qty: Decimal = plan["base_qty"]
+            unit_cost: Decimal = plan["unit_cost"]
+            base_unit_cost: Decimal = plan["base_unit_cost"]
+
+            if line.variant_id is not None:
+                variant = variants[line.variant_id]
+                before = to_decimal(variant.quantity)
+                after = (before + base_qty).quantize(QTY_QUANTUM)
+                variant.quantity = float(after)
+                variant.cost = quantize_money(base_unit_cost)
+                # PMP: product avg_cost untouched for variant receipts.
+                avg_after = quantize_money(to_decimal(product.avg_cost))
+                self._record_movement(
+                    product_id=product.id,
+                    variant_id=variant.id,
+                    movement_type=StockMovementType.PURCHASE,
+                    quantity_change=base_qty,
+                    quantity_before=before,
+                    quantity_after=after,
+                    document_quantity=qty_doc,
+                    document_unit=line.purchase_unit_name or line.product_unit,
+                    purchase_unit_id=line.purchase_unit_id,
+                    unit_cost=unit_cost,
+                    avg_cost_after=avg_after,
+                    reason=f"Purchase {purchase.invoice_number}",
+                    user_id=user_id,
+                    device_id=device_id,
+                    source_document_type="purchase",
+                    source_document_id=purchase.id,
+                )
+                self.db.flush()
+                summaries.append(
+                    self._line_summary(
+                        plan, before=before, after=after, avg_after=avg_after
+                    )
+                )
+                continue
+
+            before = to_decimal(product.quantity)
+            old_avg = to_decimal(product.avg_cost)
+            try:
+                new_avg = weighted_average_cost(
+                    before, old_avg, base_qty, base_unit_cost
+                )
+            except ValuationError as exc:
+                raise ValidationError(str(exc)) from exc
+
+            if line.purchase_unit_id is not None:
+                state = self._load_packaging_state(product)
+                unit_def = PurchaseUnitDef(
+                    id=str(line.purchase_unit_id),
+                    name=line.purchase_unit_name or "",
+                    multiplier=line.unit_multiplier or Decimal("1"),
+                )
+                try:
+                    state = receive_packages(state, unit_def, qty_doc)
+                except PackagingError as exc:
+                    raise BusinessRuleError(
+                        message=str(exc),
+                        code="PURCHASE_LINE_INVALID",
+                        details={
+                            "line_id": str(line.id),
+                            "product_id": str(product.id),
+                        },
+                    ) from exc
+                after = state.total_base
+                self._save_packaging_state(
+                    product, state, total_base=state.total_base
+                )
+            else:
+                after = (before + base_qty).quantize(QTY_QUANTUM)
+                product.quantity = float(after)
+
+            product.avg_cost = float(quantize_money(new_avg))
+            product.cost = float(quantize_money(base_unit_cost))
+            self._record_movement(
+                product_id=product.id,
+                movement_type=StockMovementType.PURCHASE,
+                quantity_change=base_qty,
+                quantity_before=before,
+                quantity_after=after,
+                document_quantity=qty_doc,
+                document_unit=line.purchase_unit_name or line.product_unit,
+                purchase_unit_id=line.purchase_unit_id,
+                packages_change=qty_doc if line.purchase_unit_id else None,
+                unit_cost=unit_cost,
+                avg_cost_after=quantize_money(new_avg),
+                reason=f"Purchase {purchase.invoice_number}",
+                user_id=user_id,
+                device_id=device_id,
+                source_document_type="purchase",
+                source_document_id=purchase.id,
+            )
+            self.db.flush()
+            summaries.append(
+                self._line_summary(
+                    plan, before=before, after=after, avg_after=new_avg
+                )
+            )
+
+        logger.info(
+            "purchase_received_inventory",
+            purchase_id=str(purchase.id),
+            invoice_number=purchase.invoice_number,
+            lines=len(summaries),
+        )
+        return summaries
+
+    def reverse_purchase(
+        self,
+        purchase: Purchase,
+        *,
+        user_id: uuid.UUID | None = None,
+        device_id: str | None = None,
+    ) -> list[dict[str, object]]:
+        """Reverse receipt effects for a cancelled purchase.
+
+        Stock decreases by the stored base quantities; PMP and nominal
+        cost are NEVER recomputed (Phase 7: decreases never change
+        avg_cost — GATE 12). Package lines release whole packages of the
+        line's unit first; if sealed packages of other units exceed the
+        remaining stock the reversal is rejected (CONFLICT) rather than
+        silently corrupting packaging state.
+
+        Returns per-line summaries for the audit trail.
+        """
+        products, variants = self._lock_purchase_targets(purchase)
+        plans = self._prepare_purchase_lines(purchase, products, variants)
+        summaries: list[dict[str, object]] = []
+
+        for plan in plans:
+            line: PurchaseLine = plan["line"]
+            product: Product = plan["product"]
+            qty_doc: Decimal = plan["qty_doc"]
+            base_qty: Decimal = plan["base_qty"]
+            unit_cost: Decimal = plan["unit_cost"]
+
+            if line.variant_id is not None:
+                variant = variants[line.variant_id]
+                before = to_decimal(variant.quantity)
+                after = (before - base_qty).quantize(QTY_QUANTUM)
+                if after < 0 and not product.allow_negative_stock:
+                    raise ConflictError(
+                        message="Purchase cancellation would make stock negative",
+                        details={
+                            "product_id": str(product.id),
+                            "variant_id": str(variant.id),
+                            "before": str(before),
+                            "base_qty": str(base_qty),
+                            "after": str(after),
+                        },
+                    )
+                variant.quantity = float(after)
+                avg_after = quantize_money(to_decimal(product.avg_cost))
+                self._record_movement(
+                    product_id=product.id,
+                    variant_id=variant.id,
+                    movement_type=StockMovementType.PURCHASE_DELETE,
+                    quantity_change=-base_qty,
+                    quantity_before=before,
+                    quantity_after=after,
+                    document_quantity=qty_doc,
+                    document_unit=line.purchase_unit_name or line.product_unit,
+                    purchase_unit_id=line.purchase_unit_id,
+                    unit_cost=unit_cost,
+                    avg_cost_after=avg_after,
+                    reason=f"Purchase cancelled {purchase.invoice_number}",
+                    user_id=user_id,
+                    device_id=device_id,
+                    source_document_type="purchase",
+                    source_document_id=purchase.id,
+                )
+                self.db.flush()
+                summaries.append(
+                    self._line_summary(
+                        plan, before=before, after=after, avg_after=avg_after
+                    )
+                )
+                continue
+
+            before = to_decimal(product.quantity)
+            after = (before - base_qty).quantize(QTY_QUANTUM)
+            if after < 0 and not product.allow_negative_stock:
+                raise ConflictError(
+                    message="Purchase cancellation would make stock negative",
+                    details={
+                        "product_id": str(product.id),
+                        "before": str(before),
+                        "base_qty": str(base_qty),
+                        "after": str(after),
+                    },
+                )
+
+            if line.purchase_unit_id is not None:
+                state = self._load_packaging_state(product)
+                uid = str(line.purchase_unit_id)
+                available = state.full(uid)
+                consume = min(qty_doc, available)
+                if consume > 0:
+                    left = available - consume
+                    if left > 0:
+                        state.full_packages[uid] = left
+                    else:
+                        state.full_packages.pop(uid, None)
+                state.total_base = after
+                try:
+                    state.sync_loose()
+                except PackagingError as exc:
+                    raise ConflictError(
+                        message=(
+                            "Purchase cancellation conflicts with sealed "
+                            "packages in stock — break packages first"
+                        ),
+                        details={
+                            "product_id": str(product.id),
+                            "line_id": str(line.id),
+                            "after": str(after),
+                            "packed_base": str(state.packed_base()),
+                        },
+                    ) from exc
+                self._save_packaging_state(
+                    product, state, total_base=state.total_base
+                )
+            else:
+                product.quantity = float(after)
+
+            # PMP untouched: use current avg as the movement snapshot.
+            avg_after = quantize_money(to_decimal(product.avg_cost))
+            self._record_movement(
+                product_id=product.id,
+                movement_type=StockMovementType.PURCHASE_DELETE,
+                quantity_change=-base_qty,
+                quantity_before=before,
+                quantity_after=after,
+                document_quantity=qty_doc,
+                document_unit=line.purchase_unit_name or line.product_unit,
+                purchase_unit_id=line.purchase_unit_id,
+                packages_change=qty_doc if line.purchase_unit_id else None,
+                unit_cost=unit_cost,
+                avg_cost_after=avg_after,
+                reason=f"Purchase cancelled {purchase.invoice_number}",
+                user_id=user_id,
+                device_id=device_id,
+                source_document_type="purchase",
+                source_document_id=purchase.id,
+            )
+            self.db.flush()
+            summaries.append(
+                self._line_summary(
+                    plan, before=before, after=after, avg_after=avg_after
+                )
+            )
+
+        logger.info(
+            "purchase_reversed_inventory",
+            purchase_id=str(purchase.id),
+            invoice_number=purchase.invoice_number,
+            lines=len(summaries),
+        )
+        return summaries
+
+    def _lock_purchase_targets(
+        self, purchase: Purchase
+    ) -> tuple[dict[uuid.UUID, Product], dict[uuid.UUID, ProductVariant]]:
+        """Lock every affected product/variant row FOR UPDATE, ascending id."""
+        product_ids = sorted({ln.product_id for ln in purchase.lines})
+        variant_ids = sorted(
+            {ln.variant_id for ln in purchase.lines if ln.variant_id is not None}
+        )
+        products: dict[uuid.UUID, Product] = {}
+        if product_ids:
+            rows = self.db.execute(
+                select(Product)
+                .where(Product.id.in_(product_ids))
+                .order_by(Product.id)
+                .with_for_update()
+            ).scalars()
+            products = {p.id: p for p in rows}
+        variants: dict[uuid.UUID, ProductVariant] = {}
+        if variant_ids:
+            rows = self.db.execute(
+                select(ProductVariant)
+                .where(ProductVariant.id.in_(variant_ids))
+                .order_by(ProductVariant.id)
+                .with_for_update()
+            ).scalars()
+            variants = {v.id: v for v in rows}
+        return products, variants
+
+    def _prepare_purchase_lines(
+        self,
+        purchase: Purchase,
+        products: dict[uuid.UUID, Product],
+        variants: dict[uuid.UUID, ProductVariant],
+    ) -> list[dict[str, Any]]:
+        """Validate purchase lines and compute document→base conversions.
+
+        Raises BusinessRuleError(PURCHASE_LINE_INVALID) for archived or
+        missing products/variants, broken unit metadata, or non-positive
+        quantities. Shared by receive and cancel so both validate
+        identically.
+        """
+        plans: list[dict[str, Any]] = []
+        unit_defs_cache: dict[uuid.UUID, dict[str, PurchaseUnitDef]] = {}
+
+        for line in purchase.lines:
+            product = products.get(line.product_id)
+            if product is None or product.archived_at is not None:
+                raise BusinessRuleError(
+                    message="Purchase line references an archived product",
+                    code="PURCHASE_LINE_INVALID",
+                    details={
+                        "line_id": str(line.id),
+                        "product_id": str(line.product_id),
+                    },
+                )
+            if line.variant_id is not None:
+                variant = variants.get(line.variant_id)
+                if (
+                    variant is None
+                    or variant.product_id != line.product_id
+                    or variant.archived_at is not None
+                ):
+                    raise BusinessRuleError(
+                        message="Purchase line references an invalid variant",
+                        code="PURCHASE_LINE_INVALID",
+                        details={
+                            "line_id": str(line.id),
+                            "variant_id": str(line.variant_id),
+                        },
+                    )
+
+            qty_doc = to_decimal(line.quantity)
+            unit_cost = to_decimal(line.unit_cost)
+            if qty_doc <= 0 or unit_cost < 0:
+                raise BusinessRuleError(
+                    message="Purchase line quantity must be > 0 and cost >= 0",
+                    code="PURCHASE_LINE_INVALID",
+                    details={
+                        "line_id": str(line.id),
+                        "quantity": str(qty_doc),
+                        "unit_cost": str(unit_cost),
+                    },
+                )
+
+            if line.purchase_unit_id is not None:
+                if line.unit_multiplier is None or to_decimal(
+                    line.unit_multiplier
+                ) <= 0:
+                    raise BusinessRuleError(
+                        message="Purchase line has invalid unit multiplier",
+                        code="PURCHASE_LINE_INVALID",
+                        details={
+                            "line_id": str(line.id),
+                            "unit_multiplier": str(line.unit_multiplier),
+                        },
+                    )
+                multiplier = to_decimal(line.unit_multiplier)
+                if product.id not in unit_defs_cache:
+                    unit_defs_cache[product.id] = self._unit_defs(product.id)
+                if str(line.purchase_unit_id) not in unit_defs_cache[product.id]:
+                    raise BusinessRuleError(
+                        message="Purchase line unit does not belong to product",
+                        code="PURCHASE_LINE_INVALID",
+                        details={
+                            "line_id": str(line.id),
+                            "purchase_unit_id": str(line.purchase_unit_id),
+                        },
+                    )
+                base_qty = (qty_doc * multiplier).quantize(QTY_QUANTUM)
+                try:
+                    base_unit_cost = base_unit_cost_from_package(
+                        unit_cost, multiplier
+                    )
+                except ValuationError as exc:
+                    raise BusinessRuleError(
+                        message=str(exc),
+                        code="PURCHASE_LINE_INVALID",
+                        details={"line_id": str(line.id)},
+                    ) from exc
+            else:
+                multiplier = Decimal("1")
+                base_qty = qty_doc.quantize(QTY_QUANTUM)
+                base_unit_cost = unit_cost
+
+            plans.append(
+                {
+                    "line": line,
+                    "product": product,
+                    "qty_doc": qty_doc,
+                    "multiplier": multiplier,
+                    "base_qty": base_qty,
+                    "unit_cost": unit_cost,
+                    "base_unit_cost": base_unit_cost,
+                }
+            )
+        return plans
+
+    @staticmethod
+    def _line_summary(
+        plan: dict[str, Any],
+        *,
+        before: Decimal,
+        after: Decimal,
+        avg_after: Decimal,
+    ) -> dict[str, object]:
+        line: PurchaseLine = plan["line"]
+        product: Product = plan["product"]
+        return {
+            "product_id": str(product.id),
+            "variant_id": str(line.variant_id) if line.variant_id else None,
+            "product_name": line.product_name,
+            "base_qty": str(plan["base_qty"]),
+            "qty_before": str(before),
+            "qty_after": str(after),
+            "avg_cost_after": str(avg_after),
+            "unit_cost": str(plan["unit_cost"]),
+            "base_unit_cost": str(plan["base_unit_cost"]),
+            "document_quantity": str(plan["qty_doc"]),
+            "purchase_unit_id": (
+                str(line.purchase_unit_id) if line.purchase_unit_id else None
+            ),
+        }

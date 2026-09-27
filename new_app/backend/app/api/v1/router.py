@@ -15,6 +15,8 @@ from app.api.v1.inventory import router as inventory_router
 from app.api.v1.packs import router as packs_router
 from app.api.v1.pos import pos_router, sales_router
 from app.api.v1.products import router as products_router
+from app.api.v1.purchases import router as purchases_router
+from app.api.v1.suppliers import router as suppliers_router
 from app.api.v1.system import router as system_router
 from app.api.v1.users import router as users_router
 
@@ -28,7 +30,9 @@ api_router.include_router(products_router, prefix="/products", tags=["products"]
 api_router.include_router(packs_router, prefix="/packs", tags=["packs"])
 api_router.include_router(categories_router, prefix="/categories", tags=["categories"])
 api_router.include_router(customers_router, prefix="/customers", tags=["customers"])
+api_router.include_router(suppliers_router, prefix="/suppliers", tags=["suppliers"])
 api_router.include_router(debts_router, prefix="/debts", tags=["debts"])
 api_router.include_router(inventory_router, prefix="/inventory", tags=["inventory"])
 api_router.include_router(sales_router, prefix="/sales", tags=["sales"])
+api_router.include_router(purchases_router, prefix="/purchases", tags=["purchases"])
 api_router.include_router(pos_router, prefix="/pos", tags=["pos"])

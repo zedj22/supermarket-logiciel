@@ -15,6 +15,8 @@ import '../features/products/products_screen.dart';
 import '../features/stock/stock_screen.dart';
 import '../features/sales/sales_screen.dart';
 import '../features/debts/debts_screen.dart';
+import '../features/suppliers/suppliers_screen.dart';
+import '../features/purchases/purchases_screen.dart';
 import '../features/reports/reports_screen.dart';
 import '../features/settings/settings_screen.dart';
 import '../features/users/users_screen.dart';
@@ -114,6 +116,16 @@ final routerProvider = Provider<GoRouter>((ref) {
             builder: (context, state) => const DebtsScreen(),
           ),
           GoRoute(
+            path: '/suppliers',
+            name: 'suppliers',
+            builder: (context, state) => const SuppliersScreen(),
+          ),
+          GoRoute(
+            path: '/purchases',
+            name: 'purchases',
+            builder: (context, state) => const PurchasesScreen(),
+          ),
+          GoRoute(
             path: '/reports',
             name: 'reports',
             builder: (context, state) => const ReportsScreen(),
@@ -163,6 +175,12 @@ class ScaffoldWithNav extends ConsumerWidget {
   /// Scope required to see the Clients destination (Phase 9).
   static const String customerViewScope = 'customer_view';
 
+  /// Scope required to see the Suppliers destination (Phase 11).
+  static const String supplierViewScope = 'supplier_view';
+
+  /// Scope required to see the Purchases destination (Phase 11).
+  static const String purchaseViewScope = 'purchase_view';
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
@@ -173,6 +191,8 @@ class ScaffoldWithNav extends ConsumerWidget {
     final canViewInventory = ref.watch(hasPermissionProvider(inventoryViewScope));
     final canSell = ref.watch(hasPermissionProvider(posSaleScope));
     final canViewCustomers = ref.watch(hasPermissionProvider(customerViewScope));
+    final canViewSuppliers = ref.watch(hasPermissionProvider(supplierViewScope));
+    final canViewPurchases = ref.watch(hasPermissionProvider(purchaseViewScope));
 
     final destinations = <NavigationRailDestination>[
       NavigationRailDestination(
@@ -216,6 +236,18 @@ class ScaffoldWithNav extends ConsumerWidget {
           label: Text(AppStrings.t('debts', loc)),
         ),
       ],
+      if (canViewSuppliers)
+        NavigationRailDestination(
+          icon: const Icon(Icons.factory_outlined),
+          selectedIcon: const Icon(Icons.factory),
+          label: Text(AppStrings.t('suppliers', loc)),
+        ),
+      if (canViewPurchases)
+        NavigationRailDestination(
+          icon: const Icon(Icons.shopping_cart_outlined),
+          selectedIcon: const Icon(Icons.shopping_cart),
+          label: Text(AppStrings.t('purchases', loc)),
+        ),
       if (canManageUsers)
         NavigationRailDestination(
           icon: const Icon(Icons.people_outline),
@@ -254,6 +286,14 @@ class ScaffoldWithNav extends ConsumerWidget {
       index += 1;
       if (location == '/debts') selectedIndex = index;
     }
+    if (canViewSuppliers) {
+      index += 1;
+      if (location == '/suppliers') selectedIndex = index;
+    }
+    if (canViewPurchases) {
+      index += 1;
+      if (location == '/purchases') selectedIndex = index;
+    }
     if (canManageUsers) {
       index += 1;
       if (location == '/users') selectedIndex = index;
@@ -289,6 +329,14 @@ class ScaffoldWithNav extends ConsumerWidget {
       }
       if (canViewCustomers && i++ == target) {
         context.go('/debts');
+        return;
+      }
+      if (canViewSuppliers && i++ == target) {
+        context.go('/suppliers');
+        return;
+      }
+      if (canViewPurchases && i++ == target) {
+        context.go('/purchases');
         return;
       }
       if (canManageUsers && i++ == target) {
@@ -345,6 +393,13 @@ class ScaffoldWithNav extends ConsumerWidget {
         children: [
           if (destinations.isNotEmpty) ...[
             NavigationRail(
+              // QA fix round (Bug 2): with all destinations + labels the
+              // rail's internal destination Column overflows on short
+              // windows. `scrollable: true` wraps it in the framework's
+              // own scroll view — no destination is hidden or removed,
+              // tall-window layout is unchanged (content still sizes to
+              // its intrinsic height and is aligned as before).
+              scrollable: true,
               selectedIndex: selectedIndex,
               labelType: NavigationRailLabelType.all,
               onDestinationSelected: onDestinationSelected,

@@ -1,9 +1,12 @@
-"""Customer persistence (Phase 9).
+"""Customer + supplier persistence (Phase 9 customers, Phase 11 suppliers).
 
 Reuses the read surface Phase 8 shipped (search/list ordering stays
 identical so the POS picker contract does not regress) and adds the
 write-side helpers needed by customer management: row-locked fetch for
 concurrent balance updates and the AR summary aggregate.
+
+SupplierRepository mirrors CustomerRepository (Phase 11): name/phone
+search, row-locked fetch for payables serialization.
 """
 
 from __future__ import annotations
@@ -15,7 +18,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.domain.unit_conversions import to_decimal
-from app.models.party import Customer
+from app.models.party import Customer, Supplier
 from app.repositories.base import BaseRepository
 
 
@@ -101,3 +104,61 @@ class CustomerRepository(BaseRepository[Customer]):
             select(func.count()).where(Customer.balance > 0)
         ) or 0
         return to_decimal(total), int(count)
+
+
+class SupplierRepository(BaseRepository[Supplier]):
+    """Supplier master persistence (Phase 11).
+
+    Mirrors CustomerRepository: name/phone ``q`` search, deterministic
+    ordering (name ASC, id tie-break), and a row-locked fetch used to
+    serialize concurrent balance updates (receive / payment / cancel).
+    """
+
+    model = Supplier
+
+    @staticmethod
+    def _base_stmt(q: str | None, include_archived: bool):
+        stmt = select(Supplier)
+        if not include_archived:
+            stmt = stmt.where(Supplier.archived_at.is_(None))
+        if q:
+            pattern = f"%{q.strip()}%"
+            stmt = stmt.where(
+                or_(
+                    Supplier.name.ilike(pattern),
+                    Supplier.phone.ilike(pattern),
+                )
+            )
+        return stmt
+
+    def search(
+        self,
+        *,
+        q: str | None = None,
+        include_archived: bool = False,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> tuple[list[Supplier], int]:
+        stmt = self._base_stmt(q, include_archived)
+        total = self.db.scalar(
+            select(func.count()).select_from(stmt.subquery())
+        ) or 0
+        rows = (
+            self.db.execute(
+                stmt.order_by(Supplier.name, Supplier.id)
+                .offset((page - 1) * page_size)
+                .limit(page_size)
+            )
+            .scalars()
+            .all()
+        )
+        return list(rows), total
+
+    def get_for_update(self, supplier_id: uuid.UUID) -> Supplier | None:
+        """Fetch a supplier with a row-level lock (payables serialization)."""
+        stmt = (
+            select(Supplier)
+            .where(Supplier.id == supplier_id)
+            .with_for_update()
+        )
+        return self.db.execute(stmt).scalar_one_or_none()

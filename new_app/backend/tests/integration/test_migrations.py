@@ -236,7 +236,7 @@ class TestPhase6SellingUnitsMigration:
     """Migration 0005/0006 — product_selling_units + purchase packaging tables."""
 
     SELLING_UNITS_REV = "c3d4e5f6a7b8"
-    HEAD_REV = "c9d0e1f2a3b4"  # 0014 phase10 avg_cost backfill
+    HEAD_REV = "d3e4f5a6b7c8"  # 0015 phase11 purchases/suppliers head
 
     @pytest.fixture(autouse=True)
     def _setup_db(self):
@@ -394,7 +394,7 @@ class TestPhase6SellingUnitsMigration:
 class TestPhase6PurchasePackagingMigration:
     """Migration 0006 (d4e5f6a7b8c9) — purchase packaging / stock-breaking."""
 
-    HEAD_REV = "c9d0e1f2a3b4"  # linear chain head after 0014
+    HEAD_REV = "d3e4f5a6b7c8"  # linear chain head after 0015
 
     @pytest.fixture(autouse=True)
     def _setup_db(self):
@@ -584,7 +584,7 @@ class TestPhase6PurchasePackagingMigration:
 class TestPhase7InventoryPMPMigration:
     """Migration 0008 (f1a2b3c4d5e6) — products.avg_cost + movement cost cols."""
 
-    HEAD_REV = "c9d0e1f2a3b4"
+    HEAD_REV = "d3e4f5a6b7c8"
 
     @pytest.fixture(autouse=True)
     def _setup_db(self):
@@ -726,7 +726,7 @@ class TestPhase10AvgCostBackfillMigration:
     exactly 100%.
     """
 
-    HEAD_REV = "c9d0e1f2a3b4"
+    HEAD_REV = "d3e4f5a6b7c8"
     PREV_REV = "b7c8d9e0f1a2"
 
     @pytest.fixture(autouse=True)

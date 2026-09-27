@@ -4,8 +4,10 @@ Tables: purchases, purchase_lines
 
 Design principles:
 - Lines snapshot product name/SKU/unit/cost at time of purchase.
-- Supplier balance increases by unpaid net.
-- Deletion must reverse stock and supplier balance (service layer).
+- Supplier balance increases by unpaid net (append-only supplier ledger).
+- Lifecycle: draft -> received -> cancelled. Drafts are hard-deletable
+  (audited); received documents are never deleted, only cancelled with a
+  stock + payable reversal (Phase 0 rule 4: append-only documents).
 """
 
 import uuid
@@ -14,7 +16,15 @@ from datetime import datetime
 from sqlalchemy import DateTime, ForeignKey, Numeric, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.db.base import Base, DocumentModel, TimestampMixin, UUIDMixin, numeric_money, numeric_quantity
+from app.db.base import (
+    Base,
+    DocumentModel,
+    TimestampMixin,
+    UUIDMixin,
+    numeric_money,
+    numeric_quantity,
+)
+from app.models.enums import PurchaseStatus
 
 
 class Purchase(DocumentModel):
@@ -23,6 +33,18 @@ class Purchase(DocumentModel):
     __tablename__ = "purchases"
 
     invoice_number: Mapped[str] = mapped_column(String(50), nullable=False, unique=True, index=True)
+    status: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default=PurchaseStatus.DRAFT.value,
+        server_default=PurchaseStatus.DRAFT.value,
+        index=True,
+    )
+    client_request_id: Mapped[str | None] = mapped_column(
+        String(100), unique=True, index=True, nullable=True,
+    )
+    received_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     supplier_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("suppliers.id", ondelete="RESTRICT"),
         nullable=False,
@@ -39,7 +61,7 @@ class Purchase(DocumentModel):
     note: Mapped[str | None] = mapped_column(Text)
     device_id: Mapped[str | None] = mapped_column(String(100))
     purchase_date: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False,
+        DateTime(timezone=True), nullable=False, index=True,
         server_default=func.now(),
     )
 
