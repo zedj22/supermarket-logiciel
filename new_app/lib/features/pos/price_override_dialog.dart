@@ -48,7 +48,7 @@ class PriceOverrideDialog extends StatelessWidget {
               const SizedBox(height: 8),
               for (final o in overrides) ...[
                 Card(
-                  key: Key('price-override-row-${o.productId}'),
+                  key: Key('price-override-row-${o.identity}'),
                   margin: const EdgeInsets.only(bottom: 8),
                   child: Padding(
                     padding: const EdgeInsets.all(12),
@@ -56,21 +56,21 @@ class PriceOverrideDialog extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          o.productName ?? o.productId,
-                          key: Key('price-override-name-${o.productId}'),
+                          o.productName ?? o.identity,
+                          key: Key('price-override-name-${o.identity}'),
                           style: theme.textTheme.titleSmall,
                         ),
                         const SizedBox(height: 6),
                         _PriceRow(
                           label: AppStrings.t('price_override_client_price', loc),
                           value: o.requestedUnitPrice,
-                          keyPrefix: 'price-override-client-${o.productId}',
+                          keyPrefix: 'price-override-client-${o.identity}',
                           color: theme.colorScheme.outline,
                         ),
                         _PriceRow(
                           label: AppStrings.t('price_override_server_price', loc),
                           value: o.appliedUnitPrice,
-                          keyPrefix: 'price-override-server-${o.productId}',
+                          keyPrefix: 'price-override-server-${o.identity}',
                           color: AppColors.success,
                           emphasize: true,
                         ),

@@ -9,6 +9,7 @@ import '../features/auth/setup_screen.dart';
 import '../l10n/locale_provider.dart';
 import '../features/dashboard/dashboard_screen.dart';
 import '../features/clients/clients_screen.dart';
+import '../features/packs/packs_screen.dart';
 import '../features/pos/pos_screen.dart';
 import '../features/products/products_screen.dart';
 import '../features/stock/stock_screen.dart';
@@ -91,6 +92,11 @@ final routerProvider = Provider<GoRouter>((ref) {
             path: '/products',
             name: 'products',
             builder: (context, state) => const ProductsScreen(),
+          ),
+          GoRoute(
+            path: '/packs',
+            name: 'packs',
+            builder: (context, state) => const PacksScreen(),
           ),
           GoRoute(
             path: '/stock',
@@ -180,12 +186,18 @@ class ScaffoldWithNav extends ConsumerWidget {
           selectedIcon: const Icon(Icons.point_of_sale),
           label: Text(AppStrings.t('pos', loc)),
         ),
-      if (canViewProducts)
+      if (canViewProducts) ...[
         NavigationRailDestination(
           icon: const Icon(Icons.inventory_2_outlined),
           selectedIcon: const Icon(Icons.inventory_2),
           label: Text(AppStrings.t('products', loc)),
         ),
+        NavigationRailDestination(
+          icon: const Icon(Icons.local_offer_outlined),
+          selectedIcon: const Icon(Icons.local_offer),
+          label: Text(AppStrings.t('packs', loc)),
+        ),
+      ],
       if (canViewInventory)
         NavigationRailDestination(
           icon: const Icon(Icons.warehouse_outlined),
@@ -229,6 +241,8 @@ class ScaffoldWithNav extends ConsumerWidget {
     if (canViewProducts) {
       index += 1;
       if (location == '/products') selectedIndex = index;
+      index += 1;
+      if (location == '/packs') selectedIndex = index;
     }
     if (canViewInventory) {
       index += 1;
@@ -259,6 +273,10 @@ class ScaffoldWithNav extends ConsumerWidget {
       }
       if (canViewProducts && i++ == target) {
         context.go('/products');
+        return;
+      }
+      if (canViewProducts && i++ == target) {
+        context.go('/packs');
         return;
       }
       if (canViewInventory && i++ == target) {

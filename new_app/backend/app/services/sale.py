@@ -31,9 +31,14 @@ from app.core.exceptions import (
 )
 from app.domain.unit_conversions import QTY_QUANTUM, effective_unit_price, selling_to_base, to_decimal
 from app.domain.valuation import quantize_money
-from app.models.catalog import Product, ProductSellingUnit, ProductVariant
+from app.models.catalog import Pack, Product, ProductSellingUnit, ProductVariant
 from app.models.debt import DebtLedgerEntry
-from app.models.enums import PaymentMethod, PermissionScope, StockMovementType
+from app.models.enums import (
+    PaymentMethod,
+    PermissionScope,
+    ProductUnit,
+    StockMovementType,
+)
 from app.models.inventory import InventoryMovement
 from app.models.party import Customer
 from app.models.pos import PosHold, ProductFavorite
@@ -44,6 +49,7 @@ from app.repositories.catalog import (
     ProductVariantRepository,
     SellingUnitRepository,
 )
+from app.repositories.pack import PackRepository
 from app.repositories.sale import (
     PosHoldRepository,
     ProductFavoriteRepository,
@@ -109,6 +115,10 @@ def unit_summary_from_lines(lines: list[dict[str, Any]]) -> str | None:
     order: list[str] = []
     totals: dict[str, Decimal] = {}
     for line in lines:
+        # Phase 10 (GATE 6): pack component rows are not charged — they would
+        # otherwise double-report the sale ("1 pack" AND "6 piece").
+        if line.get("pack_id") is not None and line.get("product_id") is not None:
+            continue
         label = str(
             line.get("selling_unit_name") or line.get("product_unit") or ""
         ).strip()
@@ -130,7 +140,16 @@ def unit_summary_from_lines(lines: list[dict[str, Any]]) -> str | None:
 
 
 class _ResolvedLine:
-    """Internal: one validated cart line ready for persistence."""
+    """Internal: one validated cart line ready for persistence.
+
+    Phase 10 (GATE 6) line shapes:
+      * product line  — ``product`` set, ``pack`` None,     ``charged=True``
+      * pack summary  — ``product`` None, ``pack`` set,     ``charged=True``
+      * pack component— ``product`` set, ``pack`` set,      ``charged=False``
+    Component lines never contribute to money totals; their ``line_gross`` /
+    ``line_discount`` / ``line_total`` are all 0 while ``unit_price`` keeps a
+    catalog snapshot and ``unit_cost`` carries the COGS snapshot.
+    """
 
     __slots__ = (
         "index",
@@ -149,6 +168,9 @@ class _ResolvedLine:
         "stock_before",
         "stock_after",
         "decrement_variant",
+        "pack",
+        "pack_summary",
+        "charged",
     )
 
     def __init__(self) -> None:
@@ -168,6 +190,9 @@ class _ResolvedLine:
         self.stock_before: Decimal | None = None
         self.stock_after: Decimal | None = None
         self.decrement_variant: bool = False
+        self.pack: Pack | None = None
+        self.pack_summary: bool = False
+        self.charged: bool = True
 
 
 class SaleService(BaseService):
@@ -253,6 +278,14 @@ class SaleService(BaseService):
         """Load product/variant/selling unit, resolve price, convert quantity."""
         line = _ResolvedLine()
         line.index = index
+
+        if item.product_id is None:  # pragma: no cover — schema guarantees
+            # SaleLineRequest requires exactly one of product_id/pack_id, so
+            # a None here can only come from a caller bypassing the schema.
+            raise ValidationError(
+                message="product_id is required for a product line",
+                details={"line_index": index},
+            )
 
         product = self._get_product(item.product_id)
         line.product = product
@@ -372,6 +405,11 @@ class SaleService(BaseService):
                     )
 
         line.line_gross = _money(line.unit_price * line.quantity_line)
+        self._apply_line_discount(line, item, index)
+        return line
+
+    def _apply_line_discount(self, line: _ResolvedLine, item, index: int) -> None:
+        """Validate and store the line discount (shared by product + pack)."""
         line_discount = _money(item.line_discount)
         if line_discount < 0:
             raise ValidationError(
@@ -389,7 +427,212 @@ class SaleService(BaseService):
             )
         line.line_discount = line_discount
         line.line_total = _money(line.line_gross - line_discount)
-        return line
+
+    # ------------------------------------------------------------------
+    # Pack lines (Phase 10)
+    # ------------------------------------------------------------------
+
+    def _get_pack(self, pack_id: uuid.UUID) -> Pack:
+        """Load a pack for sale and enforce the saleable gate (GATE 8)."""
+        pack = PackRepository(self.db).get_with_components(pack_id)
+        if pack is None:
+            raise NotFoundError(
+                message="Pack not found",
+                details={"pack_id": str(pack_id)},
+            )
+        if not pack.is_active or pack.archived_at is not None:
+            raise BusinessRuleError(
+                message="Pack is not active and cannot be sold",
+                code="PACK_INACTIVE",
+                details={
+                    "pack_id": str(pack.id),
+                    "pack_name": pack.name,
+                    "is_active": bool(pack.is_active),
+                    "is_archived": pack.archived_at is not None,
+                },
+            )
+        return pack
+
+    def _resolve_item(
+        self,
+        item,
+        index: int,
+        *,
+        validate_stock: bool = True,
+        demand: dict[tuple[uuid.UUID, uuid.UUID | None], Decimal] | None = None,
+    ) -> list[_ResolvedLine]:
+        """Resolve one request line into the persisted line set.
+
+        A product line yields exactly one resolved line; a pack line yields
+        the pack summary line first, followed by one line per component.
+        ``demand`` accumulates component requirements across pack lines in
+        this request (GATE 4 — "aggregate component quantities").
+        """
+        if item.pack_id is not None:
+            return self._resolve_pack_line(
+                item,
+                index,
+                validate_stock=validate_stock,
+                demand=demand if demand is not None else {},
+            )
+        return [
+            self._resolve_line(item, index, validate_stock=validate_stock)
+        ]
+
+    def _resolve_pack_line(
+        self,
+        item,
+        index: int,
+        *,
+        validate_stock: bool = True,
+        demand: dict[tuple[uuid.UUID, uuid.UUID | None], Decimal],
+    ) -> list[_ResolvedLine]:
+        """Resolve a pack cart line into [pack summary, component...].
+
+        Raises BusinessRuleError(code="PACK_INACTIVE") for a non-saleable
+        pack and BusinessRuleError(code="PACK_STOCK_INSUFFICIENT") listing
+        EVERY shortage when aggregate component stock cannot cover demand.
+        """
+        pack = self._get_pack(item.pack_id)
+
+        qty = to_decimal(item.quantity)
+        if qty <= 0:
+            raise ValidationError(
+                message="quantity must be > 0",
+                details={"line_index": index, "quantity": str(qty)},
+            )
+
+        components = PackRepository.component_rows(pack)
+        if not components:
+            raise BusinessRuleError(
+                message="Pack has no components and cannot be sold",
+                details={"pack_id": str(pack.id), "pack_name": pack.name},
+            )
+
+        # --- pack summary line (charged) -----------------------------------
+        summary = _ResolvedLine()
+        summary.index = index
+        summary.pack = pack
+        summary.pack_summary = True
+        summary.charged = True
+        summary.quantity_line = qty
+        summary.quantity_base = qty.quantize(QTY_QUANTUM)
+        summary.unit_cost = Decimal("0")  # GATE 9 — no pack-level COGS
+        summary.stock_quantity = Decimal("999999")
+
+        server_price = _money(to_decimal(pack.price))
+        requested = to_decimal(item.unit_price)
+        summary.unit_price = server_price
+        if requested != server_price:
+            summary.price_override = PriceOverride(
+                line_index=index,
+                product_id=None,
+                pack_id=pack.id,
+                requested_unit_price=_money(requested),
+                applied_unit_price=server_price,
+            )
+
+        # --- component lines (not charged) + aggregate stock check ---------
+        shortages: list[dict[str, Any]] = []
+        component_lines: list[_ResolvedLine] = []
+        max_packs: Decimal | None = None
+
+        for component in components:
+            product = component.component_product
+            if product is None:
+                product = self.db.get(Product, component.product_id)
+            if product is None:
+                raise NotFoundError(
+                    message="Component product not found",
+                    details={
+                        "pack_id": str(pack.id),
+                        "product_id": str(component.product_id),
+                    },
+                )
+            if product.archived_at is not None:
+                raise BusinessRuleError(
+                    message="Pack component product is archived",
+                    details={
+                        "pack_id": str(pack.id),
+                        "product_id": str(product.id),
+                        "product_name": product.name,
+                    },
+                )
+
+            per_pack = to_decimal(component.quantity)
+            if per_pack <= 0:
+                raise ValidationError(
+                    message="Pack component quantity must be > 0",
+                    details={
+                        "pack_id": str(pack.id),
+                        "product_id": str(product.id),
+                        "quantity": str(per_pack),
+                    },
+                )
+
+            key = (product.id, None)
+            already = demand.get(key, Decimal("0"))
+            need = _money(per_pack * qty)
+            total_need = _money(already + need)
+            stock = to_decimal(product.quantity)
+
+            if validate_stock and not product.allow_negative_stock:
+                if total_need > stock:
+                    shortages.append(
+                        {
+                            "product_id": str(product.id),
+                            "product_name": product.name,
+                            "required": str(need),
+                            "already_requested": str(_money(already)),
+                            "available": str(stock),
+                        }
+                    )
+                fits = int((stock - already) // per_pack) if per_pack > 0 else 0
+                fits_dec = Decimal(max(0, fits))
+                max_packs = (
+                    fits_dec if max_packs is None else min(max_packs, fits_dec)
+                )
+            demand[key] = total_need
+
+            line = _ResolvedLine()
+            line.index = index
+            line.pack = pack
+            line.pack_summary = False
+            line.charged = False  # GATE 6 — components are not charged
+            line.product = product
+            line.quantity_line = need
+            line.quantity_base = need.quantize(QTY_QUANTUM)
+            # Informational catalog snapshots: never feed totals or PMP.
+            line.unit_price = _money(to_decimal(product.price))
+            line.unit_cost = _money(to_decimal(product.avg_cost))
+            line.stock_quantity = stock
+            line.decrement_variant = False
+            line.line_gross = Decimal("0")
+            line.line_discount = Decimal("0")
+            line.line_total = Decimal("0")
+            component_lines.append(line)
+
+        if shortages:
+            raise BusinessRuleError(
+                message="Insufficient stock for pack components",
+                code="PACK_STOCK_INSUFFICIENT",
+                details={
+                    "line_index": index,
+                    "pack_id": str(pack.id),
+                    "pack_name": pack.name,
+                    "requested_packs": str(qty),
+                    "shortages": shortages,
+                },
+            )
+
+        if max_packs is not None:
+            summary.stock_quantity = max_packs
+
+        # The summary is the only charged line: its gross is the pack price
+        # times the number of packs (GATE 6 / GATE 10).
+        summary.line_gross = _money(summary.unit_price * summary.quantity_line)
+        self._apply_line_discount(summary, item, index)
+        return [summary, *component_lines]
 
     # ------------------------------------------------------------------
     # Totals / payment validation
@@ -407,8 +650,14 @@ class SaleService(BaseService):
         if invoice_discount < 0:
             raise ValidationError(message="invoice_discount must be >= 0")
 
-        subtotal = _money(sum((ln.line_gross for ln in lines), Decimal("0")))
-        line_discounts = _money(sum((ln.line_discount for ln in lines), Decimal("0")))
+        # Phase 10 (GATE 6): pack component lines are not charged — their
+        # gross/discount are already 0, and filtering keeps the invariant
+        # explicit rather than incidental.
+        charged = [ln for ln in lines if ln.charged]
+        subtotal = _money(sum((ln.line_gross for ln in charged), Decimal("0")))
+        line_discounts = _money(
+            sum((ln.line_discount for ln in charged), Decimal("0"))
+        )
         if invoice_discount > subtotal:
             raise ValidationError(
                 message="invoice_discount cannot exceed subtotal",
@@ -532,9 +781,14 @@ class SaleService(BaseService):
             raise ValidationError(message="items must not be empty")
 
         # --- Resolve + validate all lines (read-only; raises before tx) ---
+        # Demand map aggregates component requirements across pack lines in
+        # this request only (GATE 4); plain product lines are unchanged.
         lines: list[_ResolvedLine] = []
+        demand: dict[tuple[uuid.UUID, uuid.UUID | None], Decimal] = {}
         for idx, item in enumerate(request.items):
-            lines.append(self._resolve_line(item, idx, validate_stock=True))
+            lines.extend(
+                self._resolve_item(item, idx, validate_stock=True, demand=demand)
+            )
 
         customer: Customer | None = None
         if request.customer_id is not None:
@@ -582,8 +836,12 @@ class SaleService(BaseService):
                 if totals["debt"] > 0 and customer is not None:
                     self._enforce_debt_ceiling(customer, totals["debt"])
 
-                # Guarded stock decrements first (rowcount = concurrency safety)
+                # Guarded stock decrements first (rowcount = concurrency safety).
+                # Pack summary lines own no stock (product is None) and are
+                # skipped; their component lines are decremented here.
                 for ln in lines:
+                    if ln.product is None:
+                        continue
                     self._decrement_stock(ln)
 
                 sale = Sale(
@@ -604,40 +862,15 @@ class SaleService(BaseService):
                 tx.flush()  # assign sale.id for FKs
 
                 for ln in lines:
-                    assert ln.product is not None
-                    sale_line = SaleLine(
-                        sale_id=sale.id,
-                        product_id=ln.product.id,
-                        variant_id=ln.variant.id if ln.variant else None,
-                        product_name=ln.product.name,
-                        product_sku=ln.product.sku,
-                        product_barcode=(
-                            ln.variant.barcode
-                            if ln.variant and ln.variant.barcode
-                            else ln.product.barcode
-                        ),
-                        product_unit=ln.product.unit,
-                        # UX FIX #11: historical display snapshots resolved
-                        # from the authoritative catalog inside this same
-                        # transaction (client never sends names).
-                        variant_name=ln.variant.name if ln.variant else None,
-                        selling_unit_name=(
-                            ln.selling_unit.name if ln.selling_unit else None
-                        ),
-                        selling_unit_multiplier=(
-                            float(ln.selling_unit.multiplier)
-                            if ln.selling_unit
-                            else None
-                        ),
-                        unit_price=float(ln.unit_price),
-                        unit_cost=float(ln.unit_cost),
-                        quantity=float(ln.quantity_line),
-                        line_discount=float(ln.line_discount),
-                        line_total=float(ln.line_total),
-                    )
-                    tx.add(sale_line)
+                    tx.add(self._build_sale_line(sale_id=sale.id, line=ln))
 
-                    # Inventory movement (sale) — atomic with the sale
+                    if ln.product is None:
+                        # Pack summary row: it charges the sale but owns no
+                        # stock, so it writes no inventory movement.
+                        continue
+
+                    # Inventory movement (sale / pack_component) — atomic
+                    # with the sale.
                     self._record_sale_movement(
                         tx,
                         line=ln,
@@ -717,6 +950,88 @@ class SaleService(BaseService):
                 message="Sale could not be saved due to a conflict",
                 details={"client_request_id": request.client_request_id},
             ) from exc
+
+    def _build_sale_line(self, *, sale_id: uuid.UUID, line: _ResolvedLine) -> SaleLine:
+        """Map a resolved line onto its persisted SaleLine row (GATE 6).
+
+        * product line  — product_id set, pack_id null, money charged
+        * pack summary  — product_id NULL, pack_id set, money charged,
+                          ``product_unit`` snapshotted as ``pack``
+        * pack component— product_id set, pack_id set, line_total 0
+        """
+        if line.pack_summary:
+            pack = line.pack
+            assert pack is not None
+            return SaleLine(
+                sale_id=sale_id,
+                product_id=None,
+                pack_id=pack.id,
+                product_name=pack.name,
+                product_sku=None,
+                product_barcode=pack.barcode,
+                product_unit=ProductUnit.PACK.value,
+                variant_name=None,
+                selling_unit_name=None,
+                selling_unit_multiplier=None,
+                unit_price=float(line.unit_price),
+                unit_cost=float(line.unit_cost),
+                quantity=float(line.quantity_line),
+                line_discount=float(line.line_discount),
+                line_total=float(line.line_total),
+            )
+
+        product = line.product
+        assert product is not None
+        if line.pack is not None:
+            # Component row: base product only (GATE 1) — no variant and no
+            # selling unit can ever appear on a pack component line.
+            return SaleLine(
+                sale_id=sale_id,
+                product_id=product.id,
+                pack_id=line.pack.id,
+                product_name=product.name,
+                product_sku=product.sku,
+                product_barcode=product.barcode,
+                product_unit=product.unit,
+                variant_name=None,
+                selling_unit_name=None,
+                selling_unit_multiplier=None,
+                unit_price=float(line.unit_price),
+                unit_cost=float(line.unit_cost),
+                quantity=float(line.quantity_line),
+                line_discount=0.0,
+                line_total=0.0,
+            )
+
+        return SaleLine(
+            sale_id=sale_id,
+            product_id=product.id,
+            pack_id=None,
+            variant_id=line.variant.id if line.variant else None,
+            product_name=product.name,
+            product_sku=product.sku,
+            product_barcode=(
+                line.variant.barcode
+                if line.variant and line.variant.barcode
+                else product.barcode
+            ),
+            product_unit=product.unit,
+            # UX FIX #11: historical display snapshots resolved
+            # from the authoritative catalog inside this same
+            # transaction (client never sends names).
+            variant_name=line.variant.name if line.variant else None,
+            selling_unit_name=(
+                line.selling_unit.name if line.selling_unit else None
+            ),
+            selling_unit_multiplier=(
+                float(line.selling_unit.multiplier) if line.selling_unit else None
+            ),
+            unit_price=float(line.unit_price),
+            unit_cost=float(line.unit_cost),
+            quantity=float(line.quantity_line),
+            line_discount=float(line.line_discount),
+            line_total=float(line.line_total),
+        )
 
     def _decrement_stock(self, ln: _ResolvedLine) -> None:
         """Guarded stock decrement inside the open transaction.
@@ -812,16 +1127,27 @@ class SaleService(BaseService):
         # PMP snapshot: avg_cost is authoritative and MUST remain unchanged.
         avg_after = quantize_money(to_decimal(product.avg_cost))
 
+        # GATE 5: component deductions are typed PACK_COMPONENT so pack-driven
+        # stock drops stay distinguishable from plain sales in reports.
+        is_component = line.pack is not None
         movement = InventoryMovement(
             product_id=product.id,
             variant_id=variant.id if variant else None,
-            movement_type=StockMovementType.SALE.value,
+            movement_type=(
+                StockMovementType.PACK_COMPONENT.value
+                if is_component
+                else StockMovementType.SALE.value
+            ),
             quantity_change=float(-line.quantity_base),
             quantity_before=float(before),
             quantity_after=float(after),
             unit_cost=float(line.unit_cost),
             avg_cost_after=float(avg_after),
-            reason=f"Sale {invoice_number}",
+            reason=(
+                f"Pack sale {invoice_number}"
+                if is_component
+                else f"Sale {invoice_number}"
+            ),
             user_id=user_id,
             device_id=device_id,
             source_document_type="sale",
@@ -858,6 +1184,7 @@ class SaleService(BaseService):
             SaleLineResponse(
                 id=ln.id,
                 product_id=ln.product_id,
+                pack_id=ln.pack_id,
                 variant_id=ln.variant_id,
                 product_name=ln.product_name,
                 product_sku=ln.product_sku,
@@ -970,22 +1297,34 @@ class SaleService(BaseService):
         resolved: list[_ResolvedLine] = []
         subtotal = Decimal("0")
         line_discounts = Decimal("0")
+        demand: dict[tuple[uuid.UUID, uuid.UUID | None], Decimal] = {}
 
         for idx, item in enumerate(request.items):
             try:
-                ln = self._resolve_line(item, idx, validate_stock=True)
-                resolved.append(ln)
-                subtotal += ln.line_gross
-                line_discounts += ln.line_discount
+                resolved_lines = self._resolve_item(
+                    item, idx, validate_stock=True, demand=demand
+                )
+                resolved.extend(resolved_lines)
+                for ln in resolved_lines:
+                    if not ln.charged:
+                        continue  # pack component rows never feed totals
+                    subtotal += ln.line_gross
+                    line_discounts += ln.line_discount
+                # The first resolved line is always the charged one: the pack
+                # summary for a pack line, the product line otherwise.
+                primary = resolved_lines[0]
                 lines_out.append(
                     CartLineValidation(
                         line_index=idx,
-                        product_id=ln.product.id if ln.product else item.product_id,
-                        variant_id=ln.variant.id if ln.variant else None,
+                        product_id=(
+                            primary.product.id if primary.product else None
+                        ),
+                        pack_id=primary.pack.id if primary.pack else None,
+                        variant_id=primary.variant.id if primary.variant else None,
                         ok=True,
-                        available_stock=ln.stock_quantity,
-                        required_quantity=ln.quantity_base,
-                        unit_price=ln.unit_price,
+                        available_stock=primary.stock_quantity,
+                        required_quantity=primary.quantity_base,
+                        unit_price=primary.unit_price,
                         is_archived=False,
                     )
                 )
@@ -995,6 +1334,7 @@ class SaleService(BaseService):
                     CartLineValidation(
                         line_index=idx,
                         product_id=item.product_id,
+                        pack_id=item.pack_id,
                         variant_id=item.variant_id,
                         ok=False,
                         message=exc.message,
@@ -1116,19 +1456,28 @@ class SaleService(BaseService):
 
         lines_out: list[CartLineValidation] = []
         errors: list[str] = []
+        demand: dict[tuple[uuid.UUID, uuid.UUID | None], Decimal] = {}
         for idx, raw in enumerate(hold_resp.items):
             item = SaleLineRequest.model_validate(raw.model_dump())
             try:
-                ln = self._resolve_line(item, idx, validate_stock=True)
+                resolved_lines = self._resolve_item(
+                    item, idx, validate_stock=True, demand=demand
+                )
+                primary = resolved_lines[0]
                 lines_out.append(
                     CartLineValidation(
                         line_index=idx,
-                        product_id=ln.product.id if ln.product else item.product_id,
-                        variant_id=ln.variant.id if ln.variant else None,
+                        product_id=(
+                            primary.product.id if primary.product else None
+                        ),
+                        pack_id=primary.pack.id if primary.pack else None,
+                        variant_id=(
+                            primary.variant.id if primary.variant else None
+                        ),
                         ok=True,
-                        available_stock=ln.stock_quantity,
-                        required_quantity=ln.quantity_base,
-                        unit_price=ln.unit_price,
+                        available_stock=primary.stock_quantity,
+                        required_quantity=primary.quantity_base,
+                        unit_price=primary.unit_price,
                     )
                 )
             except (NotFoundError, BusinessRuleError, ValidationError) as exc:
@@ -1137,6 +1486,7 @@ class SaleService(BaseService):
                     CartLineValidation(
                         line_index=idx,
                         product_id=item.product_id,
+                        pack_id=item.pack_id,
                         variant_id=item.variant_id,
                         ok=False,
                         message=exc.message,

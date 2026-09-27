@@ -93,9 +93,15 @@ class SaleLine(Base, UUIDMixin, TimestampMixin):
         nullable=False,
         index=True,
     )
-    product_id: Mapped[uuid.UUID] = mapped_column(
+    # Phase 10: nullable product_id is NOT an ordinary product line's state.
+    # Exactly one target applies per line:
+    #   product line  -> product_id set,  pack_id NULL   (charged)
+    #   pack summary  -> product_id NULL, pack_id set    (charged)
+    #   pack component-> product_id set,  pack_id set    (NOT charged)
+    # The API never accepts both (or neither) on one request line.
+    product_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("products.id", ondelete="RESTRICT"),
-        nullable=False,
+        nullable=True,
         index=True,
     )
     variant_id: Mapped[uuid.UUID | None] = mapped_column(
@@ -106,6 +112,7 @@ class SaleLine(Base, UUIDMixin, TimestampMixin):
     pack_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("packs.id", ondelete="RESTRICT"),
         nullable=True,
+        index=True,
     )
 
     # Snapshot fields (preserved even if product changes)
@@ -134,7 +141,7 @@ class SaleLine(Base, UUIDMixin, TimestampMixin):
         back_populates="lines",
         lazy="selectin",
     )
-    product: Mapped["Product"] = relationship(  # noqa: F821
+    product: Mapped["Product | None"] = relationship(  # noqa: F821
         "Product",
         lazy="selectin",
     )

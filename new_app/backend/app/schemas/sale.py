@@ -22,11 +22,19 @@ PaymentMethodLiteral = Literal["cash", "card", "partial", "credit"]
 class SaleLineRequest(StrictBaseModel):
     """One cart line as sent by the POS client.
 
+    Exactly one target per line (Phase 10 / GATE 6):
+      product line -> ``product_id`` set, ``pack_id`` omitted
+      pack line    -> ``pack_id`` set,    ``product_id`` omitted
+    Both or neither is a 422 — the same contract the API had before packs
+    existed (``product_id`` was simply required then).
+
     unit_price is a client hint only — server resolves authoritative price.
-    quantity is in selling units when selling_unit_id is set, otherwise base units.
+    quantity is in selling units when selling_unit_id is set, otherwise base
+    units (packs, for a pack line).
     """
 
-    product_id: UUID
+    product_id: UUID | None = None
+    pack_id: UUID | None = None
     variant_id: UUID | None = None
     selling_unit_id: UUID | None = None
     quantity: Decimal = Field(..., gt=0, le=Decimal("999999"))
@@ -40,6 +48,23 @@ class SaleLineRequest(StrictBaseModel):
         if v < 0:
             raise ValueError("line_discount must be >= 0")
         return v
+
+    @model_validator(mode="after")
+    def _exactly_one_target(self) -> SaleLineRequest:
+        if self.product_id is None and self.pack_id is None:
+            raise ValueError("product_id or pack_id is required")
+        if self.product_id is not None and self.pack_id is not None:
+            raise ValueError("product_id and pack_id are mutually exclusive")
+        if self.pack_id is not None:
+            if self.variant_id is not None:
+                raise ValueError(
+                    "variant_id is not supported on a pack line"
+                )
+            if self.selling_unit_id is not None:
+                raise ValueError(
+                    "selling_unit_id is not supported on a pack line"
+                )
+        return self
 
 
 class CreateSaleRequest(StrictBaseModel):
@@ -78,10 +103,16 @@ class SaleLineResponse(StrictBaseModel):
     Every field is historical: values captured at checkout, never
     re-read from the catalog (UX FIX #11). The three nullable display
     fields are null for base-unit sales and for pre-Phase-8 rows.
+
+    Phase 10 line shapes (GATE 6):
+      product line  -> product_id set,  pack_id null
+      pack summary  -> product_id null, pack_id set  (charged)
+      pack component-> product_id set,  pack_id set  (line_total 0)
     """
 
     id: UUID
-    product_id: UUID
+    product_id: UUID | None = None
+    pack_id: UUID | None = None
     variant_id: UUID | None = None
     product_name: str
     product_sku: str | None = None
@@ -134,10 +165,15 @@ class SaleResponse(StrictBaseModel):
 
 
 class PriceOverride(StrictBaseModel):
-    """Server corrected a client unit_price (documented price-change policy)."""
+    """Server corrected a client unit_price (documented price-change policy).
+
+    ``product_id`` is null on a pack line and ``pack_id`` is null on a
+    product line — exactly one of them identifies the corrected line.
+    """
 
     line_index: int
-    product_id: UUID
+    product_id: UUID | None = None
+    pack_id: UUID | None = None
     requested_unit_price: Decimal
     applied_unit_price: Decimal
 
@@ -160,7 +196,8 @@ class SaleListResponse(StrictBaseModel):
 
 class CartLineValidation(StrictBaseModel):
     line_index: int
-    product_id: UUID
+    product_id: UUID | None = None
+    pack_id: UUID | None = None
     variant_id: UUID | None = None
     ok: bool
     message: str | None = None
@@ -196,7 +233,9 @@ class CartValidateResponse(StrictBaseModel):
 
 
 class HoldCartItem(StrictBaseModel):
-    product_id: UUID
+    # Exactly one of product_id / pack_id (same contract as SaleLineRequest).
+    product_id: UUID | None = None
+    pack_id: UUID | None = None
     variant_id: UUID | None = None
     selling_unit_id: UUID | None = None
     quantity: Decimal = Field(..., gt=0)
@@ -213,6 +252,14 @@ class HoldCartItem(StrictBaseModel):
     base_unit_price: str | None = None
     unit_multiplier: str | None = None
     available_stock: str | None = None
+
+    @model_validator(mode="after")
+    def _exactly_one_target(self) -> HoldCartItem:
+        if self.product_id is None and self.pack_id is None:
+            raise ValueError("product_id or pack_id is required")
+        if self.product_id is not None and self.pack_id is not None:
+            raise ValueError("product_id and pack_id are mutually exclusive")
+        return self
 
 
 class HoldCreateRequest(StrictBaseModel):

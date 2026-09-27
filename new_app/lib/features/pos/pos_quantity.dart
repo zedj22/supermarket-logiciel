@@ -54,10 +54,20 @@ double posRequestedBaseQuantity(CartLine line, double quantity) {
   return (scaled ?? 0) / kPosQtyScale;
 }
 
-/// True when both lines draw from the same stock bucket: same product and
-/// same variant (selling-unit lines of one product share the bucket).
-bool posSameStockBucket(CartLine a, CartLine b) =>
-    a.productId == b.productId && (a.variantId ?? '') == (b.variantId ?? '');
+/// True when both lines draw from the same stock bucket.
+///
+/// Product lines: same product and same variant (selling-unit lines of one
+/// product share the bucket). Pack lines (Phase 10): only another line of
+/// the SAME pack — a pack's stock comes from its component products, so it
+/// must never be summed against a product line or a different pack.
+bool posSameStockBucket(CartLine a, CartLine b) {
+  if (a.isPack || b.isPack) {
+    return a.isPack && b.isPack && a.packId == b.packId;
+  }
+  final productId = a.productId;
+  if (productId == null || productId != b.productId) return false;
+  return (a.variantId ?? '') == (b.variantId ?? '');
+}
 
 /// Core stock guard: can [cart] hold [quantity] for the line described by
 /// [prototype] when the line identified by [existingKey] is changed?

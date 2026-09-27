@@ -46,6 +46,13 @@ PosApiError posApiError(
   if (errorCode == 'DEBT_CEILING_EXCEEDED') {
     return PosApiError(_debtCeilingMessage(error, loc), detail);
   }
+  // Phase 10 pack rules — mapped by envelope code before HTTP status.
+  if (errorCode == 'PACK_INACTIVE') {
+    return PosApiError(AppStrings.t('pack_inactive', loc), detail);
+  }
+  if (errorCode == 'PACK_STOCK_INSUFFICIENT') {
+    return PosApiError(_packStockMessage(error, loc), detail);
+  }
 
   final code = error.response?.statusCode;
   final String key;
@@ -81,6 +88,29 @@ String _debtCeilingMessage(DioException error, String loc) {
       .replaceAll('{ceiling}', '${details['debt_ceiling'] ?? '?'}')
       .replaceAll('{projected}', '${details['projected_balance'] ?? '?'}');
   return '$headline\n$numbers';
+}
+
+/// PACK_STOCK_INSUFFICIENT → localized headline + one line per shortage
+/// (`name — required X, available Y`). The pack name and requested pack
+/// count come from the envelope `details`.
+String _packStockMessage(DioException error, String loc) {
+  final headline = AppStrings.t('pack_stock_insufficient', loc);
+  final details = _envelopeDetails(error);
+  final packName = '${details['pack_name'] ?? ''}';
+  final requested = '${details['requested_packs'] ?? ''}';
+  final rows = details['shortages'];
+  final lines = <String>[
+    if (packName.isNotEmpty) '$packName × $requested',
+    if (rows is List)
+      for (final raw in rows)
+        if (raw is Map)
+          AppStrings.t('pack_shortage_detail', loc)
+              .replaceAll('{product}', '${raw['product_name'] ?? ''}')
+              .replaceAll('{required}', '${raw['required'] ?? ''}')
+              .replaceAll('{available}', '${raw['available'] ?? ''}'),
+  ];
+  if (lines.isEmpty) return headline;
+  return '$headline\n${lines.join('\n')}';
 }
 
 /// `error.details` map from the standard error envelope (empty if absent).

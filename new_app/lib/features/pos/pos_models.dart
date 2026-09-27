@@ -18,10 +18,15 @@ enum PaymentMethod {
 }
 
 /// One cart line (client-side). ids are UUID strings from the API.
+///
+/// Phase 10: a line is EITHER a product line (`productId` set, `packId`
+/// null) OR a pack line (`packId` set, `productId` null) — the same
+/// mutual exclusion the sale API enforces on `items[]`.
 class CartLine {
-  final String productId;
+  final String? productId;
   final String? variantId;
   final String? sellingUnitId;
+  final String? packId;
   final String name;
   final String? variantName;
   final String? unitName;
@@ -31,6 +36,10 @@ class CartLine {
   final String? barcode;
   final String? availableStock;
   final String productUnit;
+
+  /// Snapshot of the pack's component list at add-to-cart time —
+  /// display only (what the cashier is bundling), never sent to checkout.
+  final String? componentsSummary;
 
   /// Snapshot of the base-unit catalog price at add-to-cart time
   /// (product or variant configured price). Informational only —
@@ -43,9 +52,10 @@ class CartLine {
   final String? unitMultiplier;
 
   const CartLine({
-    required this.productId,
+    this.productId,
     this.variantId,
     this.sellingUnitId,
+    this.packId,
     required this.name,
     this.variantName,
     this.unitName,
@@ -55,15 +65,22 @@ class CartLine {
     this.barcode,
     this.availableStock,
     this.productUnit = 'piece',
+    this.componentsSummary,
     this.baseUnitPrice,
     this.unitMultiplier,
   });
 
-  String get key => [
-        productId,
-        variantId ?? '',
-        sellingUnitId ?? '',
-      ].join('|');
+  /// Pack lines never share a key with product lines (Phase 10): a pack
+  /// and its component product stay two independent cart lines.
+  bool get isPack => packId != null;
+
+  String get key => isPack
+      ? 'pack:$packId'
+      : [
+          productId ?? '',
+          variantId ?? '',
+          sellingUnitId ?? '',
+        ].join('|');
 
   double get qty => double.tryParse(quantity) ?? 0;
   double get price => double.tryParse(unitPrice) ?? 0;
@@ -83,6 +100,7 @@ class CartLine {
       productId: productId,
       variantId: variantId,
       sellingUnitId: sellingUnitId,
+      packId: packId,
       name: name ?? this.name,
       variantName: variantName,
       unitName: unitName,
@@ -92,6 +110,7 @@ class CartLine {
       barcode: barcode,
       availableStock: availableStock ?? this.availableStock,
       productUnit: productUnit,
+      componentsSummary: componentsSummary,
       baseUnitPrice: baseUnitPrice,
       unitMultiplier: unitMultiplier,
     );
@@ -105,6 +124,7 @@ class CartLine {
         'product_id': productId,
         'variant_id': variantId,
         'selling_unit_id': sellingUnitId,
+        'pack_id': packId,
         'product_name': name,
         'variant_name': variantName,
         'unit_name': unitName,
@@ -112,6 +132,7 @@ class CartLine {
         'quantity': quantity,
         'unit_price': unitPrice,
         'line_discount': lineDiscount,
+        'components_summary': componentsSummary,
         'base_unit_price': baseUnitPrice,
         'unit_multiplier': unitMultiplier,
         'available_stock': availableStock,
@@ -120,10 +141,11 @@ class CartLine {
 
   /// Checkout payload for `POST /api/v1/sales` — fixed API contract.
   /// Display fields (product_name, unit_name, base_unit_price,
-  /// unit_multiplier, …) are intentionally NOT part of the sale payload;
-  /// they only live in the hold snapshot [toJson].
+  /// unit_multiplier, components_summary, …) are intentionally NOT part of
+  /// the sale payload; they only live in the hold snapshot [toJson].
   Map<String, dynamic> toSaleJson() => {
-        'product_id': productId,
+        if (productId != null) 'product_id': productId,
+        if (packId != null) 'pack_id': packId,
         if (variantId != null) 'variant_id': variantId,
         if (sellingUnitId != null) 'selling_unit_id': sellingUnitId,
         'quantity': quantity,
@@ -134,9 +156,10 @@ class CartLine {
 
   factory CartLine.fromJson(Map<String, dynamic> json) {
     return CartLine(
-      productId: json['product_id'] as String,
+      productId: json['product_id'] as String?,
       variantId: json['variant_id'] as String?,
       sellingUnitId: json['selling_unit_id'] as String?,
+      packId: json['pack_id'] as String?,
       name: (json['product_name'] as String?) ??
           (json['name'] as String?) ??
           '',
@@ -148,6 +171,7 @@ class CartLine {
       barcode: json['barcode'] as String?,
       availableStock: json['available_stock']?.toString(),
       productUnit: json['product_unit'] as String? ?? 'piece',
+      componentsSummary: json['components_summary'] as String?,
       baseUnitPrice: json['base_unit_price']?.toString(),
       unitMultiplier: json['unit_multiplier']?.toString(),
     );
@@ -248,27 +272,37 @@ class FavoriteModel {
 }
 
 /// Server-side unit price correction reported after checkout.
+///
+/// Exactly one of `product_id` / `pack_id` is set (Phase 10 GATE 6), and
+/// `lineIndex` addresses the request `items[]` position. [identity] keys
+/// the override rows regardless of which kind of line was corrected;
 /// `productName` is filled client-side from the cart line before clear
-/// (backend sends product_id only).
+/// (backend sends ids only).
 class PriceOverrideModel {
   final int lineIndex;
-  final String productId;
+  final String? productId;
+  final String? packId;
   final String requestedUnitPrice;
   final String appliedUnitPrice;
   final String? productName;
 
   const PriceOverrideModel({
     required this.lineIndex,
-    required this.productId,
+    this.productId,
+    this.packId,
     required this.requestedUnitPrice,
     required this.appliedUnitPrice,
     this.productName,
   });
 
+  /// Stable identity for widget keys and cart-name lookup.
+  String get identity => packId != null ? 'pack:$packId' : productId ?? '';
+
   factory PriceOverrideModel.fromJson(Map<String, dynamic> json) {
     return PriceOverrideModel(
       lineIndex: json['line_index'] as int? ?? 0,
-      productId: '${json['product_id']}',
+      productId: json['product_id'] as String?,
+      packId: json['pack_id'] as String?,
       requestedUnitPrice: '${json['requested_unit_price'] ?? 0}',
       appliedUnitPrice: '${json['applied_unit_price'] ?? 0}',
       productName: json['product_name'] as String?,
@@ -278,6 +312,7 @@ class PriceOverrideModel {
   PriceOverrideModel withProductName(String name) => PriceOverrideModel(
         lineIndex: lineIndex,
         productId: productId,
+        packId: packId,
         requestedUnitPrice: requestedUnitPrice,
         appliedUnitPrice: appliedUnitPrice,
         productName: name,

@@ -451,9 +451,19 @@ class ProductService(BaseService):
         if "category_id" in updates and updates["category_id"] != product.category_id:
             self._ensure_category_usable(updates["category_id"])
 
+        # Phase 7 PMP: while the average still MIRRORS the nominal cost no
+        # receipt has ever priced this stock, so editing `cost` reseeds it —
+        # the same rule `create` applies. Once receipts own the average a
+        # cost edit never rewrites it (that would invent a new PMP).
+        pmp_still_nominal = to_decimal(product.avg_cost) == to_decimal(
+            product.cost
+        )
+
         with self.transaction():
             for key, value in updates.items():
                 setattr(product, key, value)
+            if "cost" in updates and pmp_still_nominal:
+                product.avg_cost = float(to_decimal(product.cost))
         logger.info("product_updated", product_id=str(product.id))
         return product
 

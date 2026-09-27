@@ -318,7 +318,24 @@ class Pack(MasterModel):
 
 
 class PackItem(Base, UUIDMixin, TimestampMixin):
-    """Component line of a pack."""
+    """Component line of a pack.
+
+    ``quantity`` always means BASE units consumed by one pack (GATE 2) —
+    the column semantics are unchanged from the original Phase 10 schema so
+    every pre-existing row keeps its meaning and every stock query keeps
+    working without a data migration.
+
+    Selling-unit support (Phase 10 UX/domain fix round) is additive:
+    - ``selling_unit_id``  identity of the unit the user picked (NULL =
+      product base unit — legacy rows and base-unit components),
+    - ``selling_unit_name`` / ``selling_unit_multiplier`` snapshots taken
+      when the pack was defined, so later renames or multiplier changes on
+      the product's selling units can never silently rewrite how an
+      existing pack reads (``2 Box`` keeps meaning ``48 Piece``).
+
+    ``quantity`` itself is also pinned at definition time, so the base
+    stock a pack consumes is stable regardless of catalog edits.
+    """
 
     __tablename__ = "pack_items"
 
@@ -337,6 +354,18 @@ class PackItem(Base, UUIDMixin, TimestampMixin):
         nullable=True,
     )
     quantity: Mapped[float] = numeric_quantity(default=1, server_default="1")
+    # Phase 10 fix round — selected selling unit (nullable, additive).
+    selling_unit_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("product_selling_units.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    selling_unit_name: Mapped[str | None] = mapped_column(
+        String(50), nullable=True, default=None, server_default=None,
+    )
+    selling_unit_multiplier: Mapped[Decimal | None] = mapped_column(
+        Numeric(18, 3), nullable=True, default=None, server_default=None,
+    )
 
     # Relationships
     pack: Mapped["Pack"] = relationship(
@@ -351,6 +380,12 @@ class PackItem(Base, UUIDMixin, TimestampMixin):
     )
     component_variant: Mapped["ProductVariant | None"] = relationship(
         "ProductVariant",
+        lazy="selectin",
+    )
+    # Snapshot columns stay authoritative for display; this link is only
+    # for referential integrity / future catalog navigation.
+    component_selling_unit: Mapped["ProductSellingUnit | None"] = relationship(
+        "ProductSellingUnit",
         lazy="selectin",
     )
 

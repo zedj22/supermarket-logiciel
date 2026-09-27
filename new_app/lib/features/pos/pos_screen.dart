@@ -44,12 +44,14 @@ import '../../core/strings.dart';
 import '../../l10n/locale_provider.dart';
 import '../auth/auth_provider.dart';
 import '../auth/permission_helpers.dart';
+import '../packs/pack_models.dart';
 import '../products/models.dart';
 import '../products/selling_unit_picker.dart';
 import '../products/variant_picker.dart';
 import 'customer_picker_dialog.dart';
 import 'holds_dialog.dart';
 import 'invoice_discount_dialog.dart';
+import 'pack_picker_dialog.dart';
 import 'payment_dialog.dart';
 import 'pos_error_message.dart';
 import 'pos_layout.dart';
@@ -511,6 +513,30 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     );
   }
 
+  /// Pack flow (Phase 10): pick an active pack, pre-flight its component
+  /// stock, then place ONE charged pack line in the cart. The component
+  /// explosion and the inventory deduction happen on the backend at
+  /// checkout — the cart only ever holds the pack itself.
+  Future<void> _addPack() async {
+    final PackPickResult? pick = await showPackPickerDialog(context);
+    if (pick == null || !mounted) return;
+    // Restore barcode/search focus after the dialog (keyboard-first).
+    _searchFocusNode.requestFocus();
+    _addCartLine(
+      packId: pick.packId,
+      name: pick.name,
+      quantity: pick.quantity,
+      unitPrice: pick.price,
+      barcode: pick.barcode,
+      productUnit: 'pack',
+      unitName: 'pack',
+      // Client-side guard: a pack can never be sold more often than its
+      // components currently allow (backend re-checks at checkout).
+      availableStock: pick.maxPackQuantity,
+      componentsSummary: pick.componentsSummary,
+    );
+  }
+
   /// Product stays out of the cart until the required lookup succeeds.
   /// Localized headline + backend detail (UX FIX #12 — FIX #5).
   void _showLookupError(ProductModel product, Object error) {
@@ -573,7 +599,8 @@ class _PosScreenState extends ConsumerState<PosScreen> {
   }
 
   void _addCartLine({
-    required String productId,
+    String? productId,
+    String? packId,
     String? variantId,
     String? sellingUnitId,
     required String name,
@@ -586,6 +613,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     String? availableStock,
     String? baseUnitPrice,
     String? unitMultiplier,
+    String? componentsSummary,
   }) {
     final loc = ref.read(localeProvider).flutterLocale.languageCode;
     // Merge + stock guard in one place (UX FIX #12 — FIX #6): adding a
@@ -594,6 +622,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     // line the quantity was merged into.
     final line = CartLine(
       productId: productId,
+      packId: packId,
       variantId: variantId,
       sellingUnitId: sellingUnitId,
       name: name,
@@ -604,6 +633,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       barcode: barcode,
       productUnit: productUnit,
       availableStock: availableStock,
+      componentsSummary: componentsSummary,
       baseUnitPrice: baseUnitPrice,
       unitMultiplier: unitMultiplier,
     );
@@ -859,6 +889,29 @@ class _PosScreenState extends ConsumerState<PosScreen> {
                 child: ConstrainedBox(
                   constraints: const BoxConstraints(minWidth: 180),
                   child: searchField,
+                ),
+              ),
+              const SizedBox(width: 8),
+              // Phase 10 — packs / bundles picker (own dialog, own search).
+              OutlinedButton.icon(
+                key: const Key('pos-packs-button'),
+                onPressed: _addPack,
+                icon: const Icon(Icons.local_offer_outlined, size: 18),
+                label: Text(
+                  AppStrings.t('packs', loc),
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  minimumSize: const Size(0, 38),
+                  visualDensity: VisualDensity.compact,
+                  side: BorderSide(
+                    color: theme.colorScheme.outline.withValues(alpha: 0.5),
+                  ),
                 ),
               ),
               const SizedBox(width: 8),
@@ -2438,15 +2491,47 @@ class _CartLineTileState extends State<_CartLineTile> {
                     child: GestureDetector(
                       behavior: HitTestBehavior.opaque,
                       onTap: widget.onActivate,
-                      child: Text(
-                        line.name,
-                        key: Key('cart-line-name-${line.key}'),
-                        style: theme.textTheme.titleMedium?.copyWith(
-                          fontSize: short ? 17.0 : 18.0,
-                          fontWeight: FontWeight.w700,
-                        ),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
+                      child: Row(
+                        children: [
+                          if (line.isPack) ...[
+                            Container(
+                              key: Key('cart-line-pack-badge-${line.key}'),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 2,
+                              ),
+                              decoration: BoxDecoration(
+                                color: theme.colorScheme.primary
+                                    .withValues(alpha: 0.15),
+                                borderRadius: BorderRadius.circular(6),
+                                border: Border.all(
+                                  color: theme.colorScheme.primary
+                                      .withValues(alpha: 0.5),
+                                ),
+                              ),
+                              child: Text(
+                                AppStrings.t('pack_badge', loc),
+                                style: theme.textTheme.labelSmall?.copyWith(
+                                  color: theme.colorScheme.primary,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                          ],
+                          Expanded(
+                            child: Text(
+                              line.name,
+                              key: Key('cart-line-name-${line.key}'),
+                              style: theme.textTheme.titleMedium?.copyWith(
+                                fontSize: short ? 17.0 : 18.0,
+                                fontWeight: FontWeight.w700,
+                              ),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ),
@@ -2551,6 +2636,20 @@ class _CartLineTileState extends State<_CartLineTile> {
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                         ),
+                        if (line.isPack &&
+                            (line.componentsSummary ?? '').isNotEmpty) ...[
+                          // Phase 10 — what the pack bundles (display only).
+                          Text(
+                            line.componentsSummary!,
+                            key: Key('cart-line-pack-components-${line.key}'),
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              fontSize: 12,
+                              color: theme.colorScheme.outline,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
                         if (showBaseInfo) ...[
                           // Secondary: base-quantity equivalence (multiplier).
                           Text(

@@ -304,18 +304,34 @@ class PosCartNotifier extends StateNotifier<PosCartState> {
       final parsed = CheckoutResult.fromJson(
         response.data as Map<String, dynamic>,
       );
-      // Attach product names from cart lines before clear (for override dialog).
-      final namesByProduct = <String, String>{
-        for (final line in state.lines) line.productId: line.name,
+      // Attach line names from cart lines before clear (for override dialog).
+      // `line_index` is the position in the request `items[]` array, which is
+      // exactly the cart order — pack and product lines resolve the same way.
+      final namesByLine = <String, String>{
+        for (var i = 0; i < state.lines.length; i++)
+          '$i': state.lines[i].name,
       };
+      final namesById = <String, String>{
+        for (final line in state.lines) line.key: line.name,
+      };
+      String? nameFor(PriceOverrideModel o) {
+        final identity =
+            o.packId != null ? 'pack:${o.packId}' : o.productId;
+        if (identity != null) {
+          final byId = namesById[identity];
+          if (byId != null) return byId;
+        }
+        return namesByLine['${o.lineIndex}'];
+      }
+
+      final namedOverrides = <PriceOverrideModel>[];
+      for (final o in parsed.priceOverrides) {
+        final name = nameFor(o);
+        namedOverrides.add(name == null ? o : o.withProductName(name));
+      }
       final result = parsed.priceOverrides.isEmpty
           ? parsed
-          : parsed.withPriceOverrides([
-              for (final o in parsed.priceOverrides)
-                namesByProduct[o.productId] == null
-                    ? o
-                    : o.withProductName(namesByProduct[o.productId]!),
-            ]);
+          : parsed.withPriceOverrides(namedOverrides);
       // Success → clear cart + request id (not because of overrides —
       // because the sale committed). Keep result for override/receipt UI.
       state = PosCartState(lastResult: result);

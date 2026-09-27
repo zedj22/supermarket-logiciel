@@ -231,6 +231,82 @@ class TestProductCreateSeedsStock:
         assert len(movements) == 0
 
 
+# ── PMP stays in sync with the nominal cost until receipts own it ──────
+
+
+class TestPMPFollowsNominalCost:
+    """Bugfix: a `cost` edit must not leave a zero/stale PMP behind.
+
+    The pack profitability preview reads `products.avg_cost` only. While
+    the average still mirrors the nominal cost no receipt has priced this
+    stock, so saving a new `cost` reseeds it - the same rule `create`
+    applies. Once a receipt with an explicit unit cost owns the average, a
+    cost edit never rewrites it.
+    """
+
+    def test_cost_edit_reseeds_pmp_while_it_mirrors_nominal_cost(
+        self, client, admin_headers
+    ):
+        product = _create_product(
+            client, admin_headers, barcode="PMPSYNC001",
+            quantity="10.000", cost="60.000",
+        )
+        assert Decimal(product["avg_cost"]) == Decimal("60.000")
+
+        resp = client.put(
+            f"/api/v1/products/{product['id']}",
+            json={"cost": "240.000"},
+            headers=admin_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        assert Decimal(resp.json()["cost"]) == Decimal("240.000")
+        assert Decimal(resp.json()["avg_cost"]) == Decimal("240.000")
+
+    def test_cost_filled_in_after_create_seeds_the_pmp(
+        self, client, admin_headers
+    ):
+        product = _create_product(
+            client, admin_headers, barcode="PMPSYNC002",
+            quantity="0.000", cost="0",
+        )
+        assert Decimal(product["avg_cost"]) == Decimal("0.000")
+
+        resp = client.put(
+            f"/api/v1/products/{product['id']}",
+            json={"cost": "240.000"},
+            headers=admin_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        assert Decimal(resp.json()["avg_cost"]) == Decimal("240.000")
+
+    def test_cost_edit_never_rewrites_a_receipt_owned_pmp(
+        self, client, admin_headers
+    ):
+        product = _create_product(
+            client, admin_headers, barcode="PMPSYNC003",
+            quantity="1.000", cost="100.000",
+        )
+        # 1 x 100 + 3 x 200 -> PMP 175 (acceptance example A)
+        result = _adjust(
+            client,
+            admin_headers,
+            product_id=product["id"],
+            quantity="3.000",
+            unit_cost="200.000",
+        )
+        assert result["status"] == 200, result["body"]
+        assert Decimal(result["body"]["avg_cost"]) == Decimal("175.000")
+
+        resp = client.put(
+            f"/api/v1/products/{product['id']}",
+            json={"cost": "50.000"},
+            headers=admin_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        assert Decimal(resp.json()["cost"]) == Decimal("50.000")
+        assert Decimal(resp.json()["avg_cost"]) == Decimal("175.000")
+
+
 # ── ProductUpdateRequest no longer accepts quantity ────────────────────
 
 

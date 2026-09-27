@@ -236,7 +236,7 @@ class TestPhase6SellingUnitsMigration:
     """Migration 0005/0006 — product_selling_units + purchase packaging tables."""
 
     SELLING_UNITS_REV = "c3d4e5f6a7b8"
-    HEAD_REV = "c8d4e5f6a1b2"  # 0011 phase9 debt payment idempotency
+    HEAD_REV = "c9d0e1f2a3b4"  # 0014 phase10 avg_cost backfill
 
     @pytest.fixture(autouse=True)
     def _setup_db(self):
@@ -394,7 +394,7 @@ class TestPhase6SellingUnitsMigration:
 class TestPhase6PurchasePackagingMigration:
     """Migration 0006 (d4e5f6a7b8c9) — purchase packaging / stock-breaking."""
 
-    HEAD_REV = "c8d4e5f6a1b2"  # linear chain head after 0011
+    HEAD_REV = "c9d0e1f2a3b4"  # linear chain head after 0014
 
     @pytest.fixture(autouse=True)
     def _setup_db(self):
@@ -584,7 +584,7 @@ class TestPhase6PurchasePackagingMigration:
 class TestPhase7InventoryPMPMigration:
     """Migration 0008 (f1a2b3c4d5e6) — products.avg_cost + movement cost cols."""
 
-    HEAD_REV = "c8d4e5f6a1b2"
+    HEAD_REV = "c9d0e1f2a3b4"
 
     @pytest.fixture(autouse=True)
     def _setup_db(self):
@@ -709,3 +709,151 @@ class TestPhase7InventoryPMPMigration:
             assert cur.fetchone()[0] == 1, f"table {table} missing"
         cur.close()
         conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Phase 10 bugfix: products.avg_cost backfill (0014)
+# ---------------------------------------------------------------------------
+
+
+class TestPhase10AvgCostBackfillMigration:
+    """Migration 0014 (c9d0e1f2a3b4) - seeds a PMP that was never priced.
+
+    0008 added products.avg_cost with DEFAULT 0 and no backfill, so every
+    product row created before Phase 7 reported a PMP of 0 while
+    products.cost held a real value. The pack profitability preview
+    (SUM(base_quantity * avg_cost)) then computed cost 0 and a margin of
+    exactly 100%.
+    """
+
+    HEAD_REV = "c9d0e1f2a3b4"
+    PREV_REV = "b7c8d9e0f1a2"
+
+    @pytest.fixture(autouse=True)
+    def _setup_db(self):
+        result = _run_alembic("upgrade head")
+        assert result.returncode == 0, f"Setup upgrade failed: {result.stderr}"
+
+    def _rewind(self):
+        """Rewind one revision so 0014 runs again over our canary rows."""
+        result = _run_alembic(f"downgrade {self.PREV_REV}")
+        assert result.returncode == 0, f"Downgrade failed: {result.stderr}"
+
+    def _upgrade(self):
+        result = _run_alembic("upgrade head")
+        assert result.returncode == 0, f"Upgrade failed: {result.stderr}"
+
+    def _insert_product(self, cost, avg_cost, name):
+        conn = _get_test_conn()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO products (name, price, cost, quantity, unit, avg_cost)
+            VALUES (%s, %s, %s, %s, 'piece', %s)
+            RETURNING id
+            """,
+            (name, cost, cost, 5, avg_cost),
+        )
+        product_id = cur.fetchone()[0]
+        conn.commit()
+        cur.close()
+        conn.close()
+        return product_id
+
+    def _insert_movement(self, product_id, movement_type, unit_cost, change):
+        conn = _get_test_conn()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO inventory_movements (
+                id, product_id, movement_type, quantity_change,
+                quantity_before, quantity_after, unit_cost, movement_date
+            )
+            VALUES (gen_random_uuid(), %s, %s, %s, %s, %s, %s, now())
+            """,
+            (product_id, movement_type, change, 0, change, unit_cost),
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+
+    def _avg_cost(self, product_id):
+        conn = _get_test_conn()
+        cur = conn.cursor()
+        cur.execute("SELECT avg_cost FROM products WHERE id = %s", (product_id,))
+        value = float(cur.fetchone()[0])
+        cur.close()
+        conn.close()
+        return value
+
+    def _cleanup(self, product_id):
+        conn = _get_test_conn()
+        cur = conn.cursor()
+        cur.execute(
+            "DELETE FROM inventory_movements WHERE product_id = %s",
+            (product_id,),
+        )
+        cur.execute("DELETE FROM products WHERE id = %s", (product_id,))
+        conn.commit()
+        cur.close()
+        conn.close()
+
+    def test_current_is_backfill_head(self):
+        result = _run_alembic("current")
+        assert result.returncode == 0, result.stderr
+        assert self.HEAD_REV in result.stdout, result.stdout
+        heads = _run_alembic("heads")
+        assert heads.returncode == 0
+        assert self.HEAD_REV in heads.stdout
+
+    def test_legacy_zero_avg_cost_seeded_from_nominal_cost(self):
+        """A pre-Phase-7 row with a real cost must stop reporting PMP 0."""
+        self._rewind()
+        product_id = self._insert_product(
+            cost="240.000", avg_cost="0", name="legacy_backfill_canary"
+        )
+        # sales never price the PMP - they must not block the seed
+        self._insert_movement(
+            product_id, movement_type="sale", unit_cost=None, change=-1
+        )
+        assert self._avg_cost(product_id) == 0.0
+
+        self._upgrade()
+        assert self._avg_cost(product_id) == 240.0
+
+        # idempotent: running the head again changes nothing
+        self._upgrade()
+        assert self._avg_cost(product_id) == 240.0
+
+        self._cleanup(product_id)
+
+    def test_receipt_priced_pmp_is_never_rewritten(self):
+        """A PMP already owned by an explicit receipt stays untouched."""
+        self._rewind()
+        product_id = self._insert_product(
+            cost="240.000", avg_cost="0", name="priced_backfill_canary"
+        )
+        # a priced receipt owns the average (even at 0)
+        self._insert_movement(
+            product_id,
+            movement_type="adjustment",
+            unit_cost="0.000",
+            change=10,
+        )
+
+        self._upgrade()
+        assert self._avg_cost(product_id) == 0.0
+
+        self._cleanup(product_id)
+
+    def test_priced_rows_and_zero_cost_rows_are_left_alone(self):
+        """cost = 0 stays 0 - there is nothing to seed from."""
+        self._rewind()
+        product_id = self._insert_product(
+            cost="0", avg_cost="0", name="free_backfill_canary"
+        )
+
+        self._upgrade()
+        assert self._avg_cost(product_id) == 0.0
+
+        self._cleanup(product_id)
