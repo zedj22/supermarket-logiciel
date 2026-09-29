@@ -1243,6 +1243,10 @@ class SaleService(BaseService):
         # Computed, additive: history rows can show what was sold without
         # opening Sale Detail (UX FIX #12 — FIX #1).
         payload["unit_summary"] = unit_summary_from_lines(payload.get("lines") or [])
+        # Phase 12: void attribution on the frozen snapshot (GATE 9).
+        payload["voided_at"] = sale.voided_at
+        payload["voided_by"] = sale.voided_by
+        payload["void_reason"] = sale.void_reason
         return SaleResponse.model_validate(payload)
 
     # ------------------------------------------------------------------

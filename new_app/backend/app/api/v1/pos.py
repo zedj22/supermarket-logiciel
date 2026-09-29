@@ -6,6 +6,10 @@ Core:
 - GET    /api/v1/sales/{sale_id}               — Sale detail / reprint
 - GET    /api/v1/sales/by-invoice/{invoice}    — Reprint by invoice number
 
+Phase 12:
+- POST   /api/v1/sales/{sale_id}/void          — Void a completed sale
+                                                 (one-way, restores stock)
+
 POS helpers:
 - POST   /api/v1/pos/cart/validate             — Stateless cart revalidation
 - POST   /api/v1/pos/holds                     — Save hold snapshot
@@ -18,7 +22,8 @@ POS helpers:
 - DELETE /api/v1/pos/favorites/{product_id}    — Unpin favorite
 
 Permissions: pos_sale (checkout + history), pos_credit_sale (debt),
-pos_discount (discounts), product_view (favorites).
+pos_discount (discounts), product_view (favorites), pos_void (voiding).
+Returns live in app/api/v1/returns.py under pos_return.
 """
 
 from __future__ import annotations
@@ -32,6 +37,7 @@ from app.api.dependencies import require_permission
 from app.db.session import get_db
 from app.models.enums import PermissionScope
 from app.models.user import User
+from app.schemas.returns import VoidRequest, VoidResponse
 from app.schemas.sale import (
     CartValidateRequest,
     CartValidateResponse,
@@ -40,13 +46,14 @@ from app.schemas.sale import (
     FavoriteToggleResponse,
     HoldCreateRequest,
     HoldListResponse,
-    HoldRestoreResponse,
     HoldResponse,
+    HoldRestoreResponse,
     SaleCreateResponse,
     SaleListResponse,
     SaleResponse,
 )
 from app.services.sale import SaleService
+from app.services.void import VoidService
 
 sales_router = APIRouter()
 pos_router = APIRouter()
@@ -54,6 +61,10 @@ pos_router = APIRouter()
 
 def _get_service(db: Session = Depends(get_db)) -> SaleService:
     return SaleService(db)
+
+
+def _get_void_service(db: Session = Depends(get_db)) -> VoidService:
+    return VoidService(db)
 
 
 # ---------------------------------------------------------------------------
@@ -132,6 +143,30 @@ def get_sale(
     service: SaleService = Depends(_get_service),
 ) -> SaleResponse:
     return service.get_sale(sale_id)
+
+
+@sales_router.post(
+    "/{sale_id}/void",
+    response_model=VoidResponse,
+    summary="Void a completed sale (one-way)",
+    tags=["sales"],
+)
+def void_sale(
+    sale_id: uuid.UUID,
+    request: VoidRequest,
+    user: User = Depends(require_permission(PermissionScope.POS_VOID)),
+    service: VoidService = Depends(_get_void_service),
+    x_device_id: str | None = Header(default=None, alias="X-Device-ID"),
+) -> VoidResponse:
+    """``completed → void``: restores stock, writes sale_void movements,
+    reverses the debt this sale created and keeps the snapshot intact.
+
+    One-way (GATE 1): a second call is 409 SALE_ALREADY_VOID and restores
+    nothing twice; a sale that already has returns is 409 SALE_HAS_RETURNS.
+    Reason is mandatory (422 when blank). Cash/card refund execution is
+    recorded as ``cash_pending`` but not performed (§18).
+    """
+    return service.void_sale(sale_id, request, user=user, device_id=x_device_id)
 
 
 # ---------------------------------------------------------------------------

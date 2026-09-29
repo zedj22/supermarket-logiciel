@@ -69,6 +69,11 @@ class DebtLedgerEntryRepository(BaseRepository[DebtLedgerEntry]):
         contributes zero. Computed here (not stored) so the append-only
         ledger model and schema stay untouched; each step is quantized
         to NUMERIC(18,3) so values match customers.balance exactly.
+
+        Phase 12 read-model extension (decision record §17, precedented
+        by Phase 11's ``purchase_cancel``): the compensating entry types
+        ``sale_void`` and ``sale_refund`` subtract, exactly like a
+        payment — a void/refund gives credit back to the customer.
         """
         rows = self.db.execute(
             select(
@@ -85,13 +90,13 @@ class DebtLedgerEntryRepository(BaseRepository[DebtLedgerEntry]):
             value = to_decimal(amount)
             if entry_type == "sale":
                 running += value
-            elif entry_type == "payment":
+            elif entry_type in ("payment", "sale_void", "sale_refund"):
                 running -= value
             result[entry_id] = quantize_money(running)
         return result
 
     def ledger_sum_for_customer(self, customer_id: uuid.UUID) -> Decimal:
-        """Authoritative debt from entries: sales - payments.
+        """Authoritative debt from entries: sales - payments - voids - refunds.
 
         Used to reconcile customers.balance (the cached projection)
         against the append-only ledger in tests and diagnostics.
@@ -105,6 +110,9 @@ class DebtLedgerEntryRepository(BaseRepository[DebtLedgerEntry]):
             .group_by(self.model.entry_type)
         ).all()
         totals = {entry_type: to_decimal(amount) for entry_type, amount in rows}
-        return totals.get("sale", Decimal("0")) - totals.get(
-            "payment", Decimal("0")
+        return (
+            totals.get("sale", Decimal("0"))
+            - totals.get("payment", Decimal("0"))
+            - totals.get("sale_void", Decimal("0"))
+            - totals.get("sale_refund", Decimal("0"))
         )

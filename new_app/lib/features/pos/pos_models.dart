@@ -502,6 +502,11 @@ class SaleHistoryLine {
 class SaleDetailLine {
   final String id;
   final String productId;
+
+  /// Phase 10 line shapes: product line (null), charged pack summary
+  /// (pack id, product id empty), pack component (both set). Returns may
+  /// only target the first two — a pack is returned whole (GATE 11).
+  final String? packId;
   final String? variantId;
   final String productName;
   final String? productSku;
@@ -519,6 +524,7 @@ class SaleDetailLine {
   const SaleDetailLine({
     required this.id,
     required this.productId,
+    this.packId,
     this.variantId,
     required this.productName,
     this.productSku,
@@ -538,6 +544,7 @@ class SaleDetailLine {
     return SaleDetailLine(
       id: '${json['id'] ?? ''}',
       productId: '${json['product_id'] ?? ''}',
+      packId: json['pack_id'] as String?,
       variantId: json['variant_id'] as String?,
       productName: '${json['product_name'] ?? ''}',
       productSku: json['product_sku'] as String?,
@@ -602,6 +609,12 @@ class SaleDetail {
   final String? deviceId;
   final String? note;
   final DateTime saleDate;
+
+  /// Phase 12 void attribution (GATE 9): the totals above are NEVER
+  /// rewritten — these three fields are the only trace of a void.
+  final DateTime? voidedAt;
+  final String? voidedBy;
+  final String? voidReason;
   final List<SaleDetailLine> lines;
   final List<SalePayment> payments;
 
@@ -620,9 +633,16 @@ class SaleDetail {
     this.deviceId,
     this.note,
     required this.saleDate,
+    this.voidedAt,
+    this.voidedBy,
+    this.voidReason,
     this.lines = const [],
     this.payments = const [],
   });
+
+  /// Terminal void state (GATE 1): a voided sale can never be voided or
+  /// sold again, and it may no longer receive linked returns.
+  bool get isVoided => voidedAt != null || status == 'void';
 
   factory SaleDetail.fromJson(Map<String, dynamic> json) {
     return SaleDetail(
@@ -640,6 +660,9 @@ class SaleDetail {
       deviceId: json['device_id'] as String?,
       note: json['note'] as String?,
       saleDate: DateTime.tryParse('${json['sale_date']}') ?? DateTime.now(),
+      voidedAt: DateTime.tryParse('${json['voided_at']}'),
+      voidedBy: json['voided_by'] as String?,
+      voidReason: json['void_reason'] as String?,
       lines: (json['lines'] as List<dynamic>? ?? const [])
           .map((e) => SaleDetailLine.fromJson(e as Map<String, dynamic>))
           .toList(),

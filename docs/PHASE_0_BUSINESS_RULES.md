@@ -20,6 +20,7 @@
 ## Rules to correct / explicitly decide
 
 1. A return linked to a sale cannot exceed the unvoided sold quantity less prior returns. Current independent returns are permitted but must carry a reason and authorization.
+   *Resolved by Phase 12 fix round 1 (`PHASE_12_RETURNS_VOIDS_ANALYSIS.md` §10, §26): the return reason is **optional** (omitted / null / blank ⇒ NULL); authorization = the actor's `POS_RETURN` scope plus the audit row. Void reasons remain mandatory.*
 2. Customer balance and debt ledger are one logical ledger transaction. A balance is a cached projection, rebuilt/reconciled from entries; never update one without the other.
 3. Void reverses the *outstanding debt attributable to the sale*, not its `paid_amount`; preserve original financial snapshot and issue a compensating ledger entry.
 4. Sales, returns, purchases, voids and stock adjustments are append-only business documents. Corrections use reversals; physical delete is reserved for unposted drafts and requires audit.

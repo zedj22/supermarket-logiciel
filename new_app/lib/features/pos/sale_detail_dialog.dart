@@ -21,8 +21,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/strings.dart';
 import '../../l10n/locale_provider.dart';
 import '../auth/auth_provider.dart';
+import '../auth/permission_helpers.dart';
+import '../returns/return_create_dialog.dart';
+import '../returns/return_providers.dart';
+import '../returns/return_void_dialog.dart';
 import 'pos_error_message.dart';
 import 'pos_models.dart';
+import 'pos_providers.dart';
 import 'pos_toast.dart';
 import 'print_service.dart';
 
@@ -177,6 +182,70 @@ class _SaleDetailDialogState extends ConsumerState<SaleDetailDialog> {
     );
   }
 
+  /// Phase 12 VOID (GATE 1 + GATE 9): terminal, reason mandatory, the
+  /// sale snapshot keeps its totals and only gains the void attribution.
+  Future<void> _void() async {
+    final sale = _sale;
+    if (sale == null || sale.isVoided) return;
+    final loc = ref.read(localeProvider).flutterLocale.languageCode;
+    final reason = await showVoidReasonDialog(
+      context,
+      invoiceNumber: sale.invoiceNumber,
+    );
+    if (reason == null || !mounted) return;
+
+    final deviceId = await ref.read(posDeviceIdProvider.future);
+    final (result, error) = await ref.read(returnsApiProvider).voidSale(
+          saleId: sale.id,
+          reason: reason,
+          deviceId: deviceId,
+        );
+    if (!mounted) return;
+    if (error != null) {
+      showPosToast(
+        context,
+        message: error.message,
+        detail: error.detail,
+        kind: PosToastKind.error,
+        key: const Key('sale-void-error-toast'),
+      );
+      return;
+    }
+    final cashDetail = result == null || result.cashPending == '0'
+        ? null
+        : '${AppStrings.t('return_cash_pending', loc)}: '
+            '${result.cashPending}';
+    showPosToast(
+      context,
+      message: AppStrings.t('void_success', loc),
+      detail: cashDetail,
+      kind: PosToastKind.success,
+      key: const Key('sale-void-success-toast'),
+    );
+    await _load();
+  }
+
+  /// Phase 12 linked return: the dialog prices every line server-side and
+  /// the invoice detail is refreshed from the API afterwards.
+  Future<void> _returnItems() async {
+    final sale = _sale;
+    if (sale == null || sale.isVoided) return;
+    final loc = ref.read(localeProvider).flutterLocale.languageCode;
+    final result = await showReturnCreateDialog(context, sale: sale);
+    if (result == null || !mounted) return;
+    showPosToast(
+      context,
+      message: result.idempotentReplay
+          ? AppStrings.t('return_replay', loc)
+          : AppStrings.t('return_success', loc),
+      detail: '${AppStrings.t('return_refund_total', loc)}: '
+          '${result.refundTotal}',
+      kind: PosToastKind.success,
+      key: const Key('sale-return-success-toast'),
+    );
+    await _load();
+  }
+
   Future<void> _showPrintPreview() async {
     final sale = _sale;
     if (sale == null || _printBusy) return;
@@ -254,6 +323,8 @@ class _SaleDetailDialogState extends ConsumerState<SaleDetailDialog> {
     final loc = ref.watch(localeProvider).flutterLocale.languageCode;
     final theme = Theme.of(context);
     final sale = _sale;
+    final canVoid = ref.watch(hasPermissionProvider('pos_void'));
+    final canReturn = ref.watch(hasPermissionProvider('pos_return'));
 
     return AlertDialog(
       key: const Key('sale-detail-dialog'),
@@ -338,6 +409,18 @@ class _SaleDetailDialogState extends ConsumerState<SaleDetailDialog> {
           onPressed: sale == null ? null : _copyInvoice,
           child: Text(AppStrings.t('copy_invoice', loc)),
         ),
+        if (canReturn)
+          TextButton(
+            key: const Key('sale-return'),
+            onPressed: sale == null || sale.isVoided ? null : _returnItems,
+            child: Text(AppStrings.t('return_create', loc)),
+          ),
+        if (canVoid)
+          TextButton(
+            key: const Key('sale-void'),
+            onPressed: sale == null || sale.isVoided ? null : _void,
+            child: Text(AppStrings.t('void_invoice', loc)),
+          ),
         TextButton(
           key: const Key('sale-detail-refresh'),
           onPressed: _loading ? null : _load,
@@ -382,6 +465,23 @@ class _SaleDetailDialogState extends ConsumerState<SaleDetailDialog> {
           key: const Key('sale-detail-date'),
           style: theme.textTheme.bodySmall,
         ),
+        if (sale.isVoided) ...[
+          const SizedBox(height: 4),
+          // GATE 9: totals stay untouched, only this attribution is shown.
+          Text(
+            [
+              AppStrings.t('status_void', loc),
+              if (sale.voidReason != null && sale.voidReason!.isNotEmpty)
+                sale.voidReason!,
+              if (sale.voidedAt != null)
+                sale.voidedAt!.toLocal().toString().substring(0, 16),
+            ].join(' · '),
+            key: const Key('sale-detail-voided'),
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.error,
+            ),
+          ),
+        ],
       ],
     );
   }

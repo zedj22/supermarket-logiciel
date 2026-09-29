@@ -12,6 +12,7 @@ import '../features/clients/clients_screen.dart';
 import '../features/packs/packs_screen.dart';
 import '../features/pos/pos_screen.dart';
 import '../features/products/products_screen.dart';
+import '../features/returns/returns_screen.dart';
 import '../features/stock/stock_screen.dart';
 import '../features/sales/sales_screen.dart';
 import '../features/debts/debts_screen.dart';
@@ -84,6 +85,11 @@ final routerProvider = Provider<GoRouter>((ref) {
             path: '/pos',
             name: 'pos',
             builder: (context, state) => const PosScreen(),
+          ),
+          GoRoute(
+            path: '/returns',
+            name: 'returns',
+            builder: (context, state) => const ReturnsScreen(),
           ),
           GoRoute(
             path: '/clients',
@@ -181,6 +187,9 @@ class ScaffoldWithNav extends ConsumerWidget {
   /// Scope required to see the Purchases destination (Phase 11).
   static const String purchaseViewScope = 'purchase_view';
 
+  /// Scope required to see the Returns destination (Phase 12).
+  static const String returnViewScope = 'pos_return';
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
@@ -193,6 +202,7 @@ class ScaffoldWithNav extends ConsumerWidget {
     final canViewCustomers = ref.watch(hasPermissionProvider(customerViewScope));
     final canViewSuppliers = ref.watch(hasPermissionProvider(supplierViewScope));
     final canViewPurchases = ref.watch(hasPermissionProvider(purchaseViewScope));
+    final canViewReturns = ref.watch(hasPermissionProvider(returnViewScope));
 
     final destinations = <NavigationRailDestination>[
       NavigationRailDestination(
@@ -205,6 +215,12 @@ class ScaffoldWithNav extends ConsumerWidget {
           icon: const Icon(Icons.point_of_sale_outlined),
           selectedIcon: const Icon(Icons.point_of_sale),
           label: Text(AppStrings.t('pos', loc)),
+        ),
+      if (canViewReturns)
+        NavigationRailDestination(
+          icon: const Icon(Icons.undo_outlined),
+          selectedIcon: const Icon(Icons.undo),
+          label: Text(AppStrings.t('returns_history', loc)),
         ),
       if (canViewProducts) ...[
         NavigationRailDestination(
@@ -270,6 +286,10 @@ class ScaffoldWithNav extends ConsumerWidget {
       index += 1;
       if (location == '/pos') selectedIndex = index;
     }
+    if (canViewReturns) {
+      index += 1;
+      if (location == '/returns') selectedIndex = index;
+    }
     if (canViewProducts) {
       index += 1;
       if (location == '/products') selectedIndex = index;
@@ -309,6 +329,10 @@ class ScaffoldWithNav extends ConsumerWidget {
       }
       if (canSell && i++ == target) {
         context.go('/pos');
+        return;
+      }
+      if (canViewReturns && i++ == target) {
+        context.go('/returns');
         return;
       }
       if (canViewProducts && i++ == target) {

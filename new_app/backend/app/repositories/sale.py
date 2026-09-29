@@ -29,6 +29,18 @@ class SaleRepository(BaseRepository[Sale]):
         stmt = select(Sale).where(Sale.invoice_number == invoice_number)
         return self.db.scalar(stmt)
 
+    def get_for_update(self, sale_id: uuid.UUID) -> Sale | None:
+        """Fetch a sale with a row-level lock (Phase 12 GATE 17).
+
+        Void and return serialize on the sale row first, so the status
+        transition, the cumulative source-line cap (§11) and the
+        void/return mutual exclusion (§16) cannot race. PostgreSQL takes
+        the lock; SQLite (unit tests) ignores FOR UPDATE but still runs
+        inside a single writer transaction.
+        """
+        stmt = select(Sale).where(Sale.id == sale_id).with_for_update()
+        return self.db.execute(stmt).scalar_one_or_none()
+
     def list_recent(
         self, *, limit: int = 50, offset: int = 0, user_id: uuid.UUID | None = None
     ) -> Sequence[Sale]:

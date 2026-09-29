@@ -236,7 +236,7 @@ class TestPhase6SellingUnitsMigration:
     """Migration 0005/0006 — product_selling_units + purchase packaging tables."""
 
     SELLING_UNITS_REV = "c3d4e5f6a7b8"
-    HEAD_REV = "d3e4f5a6b7c8"  # 0015 phase11 purchases/suppliers head
+    HEAD_REV = "f5a6b7c8d9e0"  # 0017 return reason optional head
 
     @pytest.fixture(autouse=True)
     def _setup_db(self):
@@ -394,7 +394,7 @@ class TestPhase6SellingUnitsMigration:
 class TestPhase6PurchasePackagingMigration:
     """Migration 0006 (d4e5f6a7b8c9) — purchase packaging / stock-breaking."""
 
-    HEAD_REV = "d3e4f5a6b7c8"  # linear chain head after 0015
+    HEAD_REV = "f5a6b7c8d9e0"  # linear chain head after 0017
 
     @pytest.fixture(autouse=True)
     def _setup_db(self):
@@ -584,7 +584,7 @@ class TestPhase6PurchasePackagingMigration:
 class TestPhase7InventoryPMPMigration:
     """Migration 0008 (f1a2b3c4d5e6) — products.avg_cost + movement cost cols."""
 
-    HEAD_REV = "d3e4f5a6b7c8"
+    HEAD_REV = "f5a6b7c8d9e0"
 
     @pytest.fixture(autouse=True)
     def _setup_db(self):
@@ -726,7 +726,7 @@ class TestPhase10AvgCostBackfillMigration:
     exactly 100%.
     """
 
-    HEAD_REV = "d3e4f5a6b7c8"
+    HEAD_REV = "f5a6b7c8d9e0"
     PREV_REV = "b7c8d9e0f1a2"
 
     @pytest.fixture(autouse=True)
@@ -857,3 +857,338 @@ class TestPhase10AvgCostBackfillMigration:
         assert self._avg_cost(product_id) == 0.0
 
         self._cleanup(product_id)
+
+
+class TestPhase12ReturnsVoidsMigration:
+    """0016_phase12_returns_voids — void columns + return snapshot columns."""
+
+    HEAD_REV = "f5a6b7c8d9e0"
+    PREVIOUS_REV = "d3e4f5a6b7c8"
+
+    @pytest.fixture(autouse=True)
+    def _setup_db(self):
+        """Ensure database is at head before each test."""
+        result = _run_alembic("upgrade head")
+        assert result.returncode == 0, f"Setup upgrade failed: {result.stderr}"
+
+    @staticmethod
+    def _columns(table: str) -> dict:
+        conn = _get_test_conn()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT column_name, data_type, is_nullable,
+                   numeric_precision, numeric_scale, column_default
+            FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = %s
+            """,
+            (table,),
+        )
+        columns = {row[0]: row for row in cur.fetchall()}
+        cur.close()
+        conn.close()
+        return columns
+
+    @staticmethod
+    def _indexes(table: str) -> set:
+        conn = _get_test_conn()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT indexname FROM pg_indexes "
+            "WHERE schemaname = 'public' AND tablename = %s",
+            (table,),
+        )
+        names = {row[0] for row in cur.fetchall()}
+        cur.close()
+        conn.close()
+        return names
+
+    @staticmethod
+    def _foreign_keys(table: str) -> dict:
+        conn = _get_test_conn()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT kcu.column_name, ccu.table_name, rc.delete_rule
+            FROM information_schema.table_constraints tc
+            JOIN information_schema.key_column_usage kcu
+                ON tc.constraint_name = kcu.constraint_name
+            JOIN information_schema.constraint_column_usage ccu
+                ON ccu.constraint_name = tc.constraint_name
+            JOIN information_schema.referential_constraints rc
+                ON rc.constraint_name = tc.constraint_name
+            WHERE tc.table_schema = 'public'
+              AND tc.table_name = %s
+              AND tc.constraint_type = 'FOREIGN KEY'
+            """,
+            (table,),
+        )
+        fks = {row[0]: (row[1], row[2]) for row in cur.fetchall()}
+        cur.close()
+        conn.close()
+        return fks
+
+    def test_current_is_phase12_head(self):
+        result = _run_alembic("current")
+        assert result.returncode == 0, result.stderr
+        assert self.HEAD_REV in result.stdout, result.stdout
+        heads = _run_alembic("heads")
+        assert heads.returncode == 0
+        assert self.HEAD_REV in heads.stdout
+
+    def test_sales_void_columns_exist_and_are_nullable(self):
+        """GATE 9: void metadata columns exist, all nullable (never forced)."""
+        columns = self._columns("sales")
+        for name in ("voided_at", "voided_by", "void_reason"):
+            assert name in columns, f"sales.{name} missing"
+            assert columns[name][2] == "YES", f"sales.{name} must be nullable"
+
+    @staticmethod
+    def _money_shape(names) -> dict:
+        conn = _get_test_conn()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT attname, atttypid::regtype::text, attnotnull,
+                   COALESCE(pg_get_expr(adbin, adrelid), '')
+            FROM pg_attribute att
+            JOIN pg_class c ON c.oid = att.attrelid
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            LEFT JOIN pg_attrdef d ON d.adrelid = att.attrelid
+                 AND d.adnum = att.attnum
+            WHERE n.nspname = 'public'
+              AND c.relname = 'sales'
+              AND att.attnum > 0
+              AND NOT att.attisdropped
+              AND att.attname = ANY(%s)
+            """,
+            (list(names),),
+        )
+        shape = {row[0]: row[1:] for row in cur.fetchall()}
+        cur.close()
+        conn.close()
+        return shape
+
+    def test_phase12_does_not_touch_sales_money_columns_downgrade(self):
+        """The money shape is identical on both sides of the migration."""
+        money = ("subtotal", "discount", "total", "paid", "change")
+
+        result = _run_alembic("upgrade head")
+        assert result.returncode == 0, result.stderr
+        at_head = self._money_shape(money)
+
+        result = _run_alembic(f"downgrade {self.PREVIOUS_REV}")
+        assert result.returncode == 0, result.stderr
+        try:
+            at_previous = self._money_shape(money)
+        finally:
+            result = _run_alembic("upgrade head")
+            assert result.returncode == 0, result.stderr
+
+        assert at_head == at_previous, (
+            f"sales money columns changed across 0016: {at_head} != {at_previous}"
+        )
+
+    def test_sales_voided_by_foreign_key(self):
+        fks = self._foreign_keys("sales")
+        assert "voided_by" in fks, "Missing FK: sales.voided_by -> users"
+        assert fks["voided_by"][0] == "users"
+
+    def test_returns_phase12_columns(self):
+        columns = self._columns("returns")
+        assert columns["client_request_id"][1] == "character varying"
+        assert columns["client_request_id"][2] == "YES"
+        for name in ("subtotal", "discount"):
+            assert name in columns, f"returns.{name} missing"
+            assert columns[name][1] == "numeric"
+            assert columns[name][3] == 18 and columns[name][4] == 3
+            assert columns[name][2] == "NO"
+
+    def test_returns_unique_client_request_id_index(self):
+        """GATE 16: the idempotency key is unique, not merely indexed."""
+        assert "ix_returns_client_request_id" in self._indexes("returns")
+
+        conn = _get_test_conn()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT indisunique
+            FROM pg_index i
+            JOIN pg_class c ON c.oid = i.indexrelid
+            WHERE c.relname = 'ix_returns_client_request_id'
+            """
+        )
+        row = cur.fetchone()
+        assert row is not None, "ix_returns_client_request_id not found"
+        assert row[0] is True, "client_request_id index must be UNIQUE"
+        cur.close()
+        conn.close()
+
+    def test_returns_return_date_index(self):
+        assert "ix_returns_return_date" in self._indexes("returns")
+
+    def test_return_lines_product_id_is_nullable(self):
+        """A charged pack summary line carries pack_id, not product_id."""
+        columns = self._columns("return_lines")
+        assert columns["product_id"][2] == "YES", "product_id must be nullable"
+
+    def test_return_lines_snapshot_columns(self):
+        columns = self._columns("return_lines")
+        expected = {
+            "pack_id": "uuid",
+            "variant_name": "character varying",
+            "selling_unit_name": "character varying",
+            "selling_unit_multiplier": "numeric",
+            "quantity_base": "numeric",
+            "unit_cost": "numeric",
+            "line_discount": "numeric",
+        }
+        for name, data_type in expected.items():
+            assert name in columns, f"return_lines.{name} missing"
+            assert columns[name][1] == data_type, (
+                f"return_lines.{name} is {columns[name][1]}, expected {data_type}"
+            )
+
+    def test_return_lines_pack_id_foreign_key_and_index(self):
+        fks = self._foreign_keys("return_lines")
+        assert "pack_id" in fks, "Missing FK: return_lines.pack_id -> packs"
+        assert fks["pack_id"][0] == "packs"
+        assert fks["pack_id"][1] == "RESTRICT"
+        assert "ix_return_lines_pack_id" in self._indexes("return_lines")
+
+    def test_downgrade_and_reupgrade_removes_phase12_columns(self):
+        result = _run_alembic(f"downgrade {self.PREVIOUS_REV}")
+        assert result.returncode == 0, result.stderr
+
+        try:
+            sales = self._columns("sales")
+            assert "voided_at" not in sales, "voided_at survived the downgrade"
+            returns = self._columns("returns")
+            assert "client_request_id" not in returns
+            return_lines = self._columns("return_lines")
+            assert "pack_id" not in return_lines
+            assert return_lines["product_id"][2] == "NO", (
+                "product_id must go back to NOT NULL"
+            )
+        finally:
+            result = _run_alembic("upgrade head")
+            assert result.returncode == 0, result.stderr
+
+
+class TestPhase17ReturnReasonOptionalMigration:
+    """0017_return_reason_optional — fix round 1 (product-owner decision).
+
+    ``returns.reason`` becomes nullable and loses its ``'other'`` server
+    default, so an omitted / ``null`` / blank API reason persists as NULL.
+    Nothing else changes: a *supplied* reason is still vocabulary-validated
+    by ``ReturnCreateRequest`` (unit tests), and the void reason rule is
+    untouched (``sales.void_reason`` stays exactly as 0016 left it; its
+    mandatory non-blank rule is API-level, asserted in
+    ``tests/unit/test_void.py::test_reason_is_mandatory``).
+    """
+
+    HEAD_REV = "f5a6b7c8d9e0"
+    PREVIOUS_REV = "e4f5a6b7c8d9"
+    TEST_RETURN_NUMBER = "RET-TEST-0017-NO-REASON"
+
+    @pytest.fixture(autouse=True)
+    def _setup_db(self):
+        """Ensure head before, and a clean database after, every test."""
+        result = _run_alembic("upgrade head")
+        assert result.returncode == 0, f"Setup upgrade failed: {result.stderr}"
+        yield
+        self._delete_test_return()
+        result = _run_alembic("upgrade head")
+        assert result.returncode == 0, f"Restore upgrade failed: {result.stderr}"
+
+    @staticmethod
+    def _column(table: str, name: str):
+        conn = _get_test_conn()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT data_type, is_nullable, column_default
+            FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = %s AND column_name = %s
+            """,
+            (table, name),
+        )
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+        return row
+
+    @classmethod
+    def _delete_test_return(cls) -> None:
+        conn = _get_test_conn()
+        cur = conn.cursor()
+        cur.execute(
+            "DELETE FROM returns WHERE return_number = %s",
+            (cls.TEST_RETURN_NUMBER,),
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+
+    def test_reason_is_nullable_without_server_default(self):
+        row = self._column("returns", "reason")
+        assert row is not None, "returns.reason missing"
+        data_type, is_nullable, column_default = row
+        assert data_type == "character varying"
+        assert is_nullable == "YES", "returns.reason must be nullable (fix round 1)"
+        assert column_default is None, (
+            f"returns.reason must have no server default, got {column_default!r}"
+        )
+
+    def test_void_reason_column_is_untouched(self):
+        """Fix round 1 must not touch void columns (void reason stays API-mandatory)."""
+        row = self._column("sales", "void_reason")
+        assert row is not None, "sales.void_reason missing"
+        assert row[1] == "YES", "sales.void_reason stays nullable at the DB"
+
+    def test_null_reason_row_is_persistable_and_blocks_downgrade(self):
+        """A return with no reason persists, and 0017 refuses to go back."""
+        conn = _get_test_conn()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO returns
+                (return_number, reason, subtotal, discount, total)
+            VALUES (%s, NULL, 0, 0, 0)
+            """,
+            (self.TEST_RETURN_NUMBER,),
+        )
+        conn.commit()
+        cur.execute(
+            "SELECT reason FROM returns WHERE return_number = %s",
+            (self.TEST_RETURN_NUMBER,),
+        )
+        assert cur.fetchone()[0] is None, "reason must persist as NULL"
+        cur.close()
+        conn.close()
+
+        try:
+            result = _run_alembic(f"downgrade {self.PREVIOUS_REV}")
+            assert result.returncode != 0, (
+                "downgrade must refuse while a return has reason IS NULL"
+            )
+            output = (result.stdout or "") + (result.stderr or "")
+            assert "reason IS NULL" in output, output
+            current = _run_alembic("current")
+            assert self.HEAD_REV in current.stdout, (
+                "a failed downgrade must not move alembic_version"
+            )
+        finally:
+            self._delete_test_return()
+
+        result = _run_alembic(f"downgrade {self.PREVIOUS_REV}")
+        assert result.returncode == 0, result.stderr
+        try:
+            columns = TestPhase12ReturnsVoidsMigration._columns("returns")
+            assert columns["reason"][2] == "NO", "NOT NULL must come back"
+            assert "other" in (columns["reason"][5] or ""), (
+                f"'other' server default must come back, got {columns['reason'][5]!r}"
+            )
+        finally:
+            result = _run_alembic("upgrade head")
+            assert result.returncode == 0, result.stderr

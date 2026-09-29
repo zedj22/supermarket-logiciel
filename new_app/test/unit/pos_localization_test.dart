@@ -172,4 +172,48 @@ void main() {
       expect(AppStrings.t('credit', 'en'), isNotEmpty);
     });
   });
+
+  // Phase 12 — the void / return actions exposed from the sale detail
+  // dialog. Full coverage lives in returns_localization_test.dart; this
+  // group pins the POS-facing subset to the same three-locale contract.
+  group('Phase 12 POS keys (sale detail void + return)', () {
+    const phase12PosKeys = [
+      'void_invoice',
+      'void_confirm',
+      'void_confirm_question',
+      'void_reason_label',
+      'void_reason_required',
+      'void_success',
+      'status_void',
+      'return_create',
+      'return_mode_linked',
+      'return_success',
+      'return_replay',
+      'return_refund_total',
+      'return_credit_reversed',
+      'return_cash_pending',
+      'return_reason_label',
+      'return_reason_required',
+      'return_qty_exceeds_sold',
+      'error_sale_already_void',
+      'error_sale_has_returns',
+      'entry_type_sale_void',
+      'entry_type_sale_refund',
+      'movement_sale_void',
+    ];
+
+    for (final locale in ['ar', 'fr', 'en']) {
+      test('every Phase 12 POS key exists in "$locale"', () {
+        for (final key in phase12PosKeys) {
+          final value = AppStrings.t(key, locale);
+          expect(value, isNotEmpty, reason: 'missing/empty: $key@$locale');
+          expect(
+            value,
+            isNot(key),
+            reason: 'untranslated fallback for $key@$locale',
+          );
+        }
+      });
+    }
+  });
 }

@@ -58,6 +58,17 @@ class Sale(DocumentModel):
         DateTime(timezone=True), nullable=False,
         server_default=func.now(),
     )
+    # Phase 12 void attribution (GATE 9). Totals/paid/discount/change are
+    # NEVER rewritten by a void — only these three columns record it.
+    # void_reason is enforced blank -> 422 at the API layer.
+    voided_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+    )
+    voided_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    void_reason: Mapped[str | None] = mapped_column(Text)
 
     # Relationships
     customer: Mapped["Customer | None"] = relationship(  # noqa: F821
@@ -67,6 +78,14 @@ class Sale(DocumentModel):
     )
     user: Mapped["User | None"] = relationship(  # noqa: F821
         "User",
+        # Phase 12 added a second FK to users (voided_by): the original
+        # cashier relationship must keep pointing at it explicitly.
+        foreign_keys="Sale.user_id",
+        lazy="selectin",
+    )
+    voided_by_user: Mapped["User | None"] = relationship(  # noqa: F821
+        "User",
+        foreign_keys="Sale.voided_by",
         lazy="selectin",
     )
     lines: Mapped[list["SaleLine"]] = relationship(

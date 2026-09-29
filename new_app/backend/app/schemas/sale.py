@@ -152,6 +152,11 @@ class SaleResponse(StrictBaseModel):
     device_id: str | None = None
     note: str | None = None
     sale_date: datetime
+    # Phase 12 (§8): void attribution. Totals above are NEVER rewritten by
+    # a void — these three columns are the only trace on the sale row.
+    voided_at: datetime | None = None
+    voided_by: UUID | None = None
+    void_reason: str | None = None
     lines: list[SaleLineResponse] = Field(default_factory=list)
     payments: list[SalePaymentResponse] = Field(default_factory=list)
     idempotent_replay: bool = False
