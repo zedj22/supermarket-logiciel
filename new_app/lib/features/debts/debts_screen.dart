@@ -51,6 +51,22 @@ class _DebtsScreenState extends ConsumerState<DebtsScreen> {
     );
     ref.read(debtorsProvider.notifier).refresh();
     ref.read(debtSummaryProvider.notifier).refresh();
+    // Fix Round 2 (debt balance bug): a payment moves the AGGREGATE
+    // customer balance, so every cached view of that customer must be
+    // re-read too — otherwise the clients detail card and its ledger keep
+    // the pre-payment snapshot. Only providers that are already alive are
+    // touched, so nothing is fetched for a screen that never opened it.
+    if (ref.exists(customersProvider)) {
+      ref.read(customersProvider.notifier).refresh();
+    }
+    if (ref.exists(customerDetailProvider(result.customerId))) {
+      ref
+          .read(customerDetailProvider(result.customerId).notifier)
+          .load(silent: true);
+    }
+    if (ref.exists(debtHistoryProvider(result.customerId))) {
+      ref.read(debtHistoryProvider(result.customerId).notifier).refresh();
+    }
   }
 
   @override

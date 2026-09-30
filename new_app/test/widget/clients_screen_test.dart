@@ -173,6 +173,43 @@ Map<String, dynamic> _historyBody() => {
       'pages': 1,
     };
 
+/// Two credit sales for the same customer (newest first): 1500 + 500.
+/// The card must show their SUM (2000), never one entry's amount.
+Map<String, dynamic> _historyBodyForSales() => {
+      'items': [
+        {
+          'id': 'e2',
+          'customer_id': 'c1',
+          'entry_type': 'sale',
+          'amount': '500.000',
+          'note': 'credit sale 2',
+          'reference_sale_id': 's2',
+          'invoice_number': 'INV-0002',
+          'user_id': 'u1',
+          'user_name': 'Admin',
+          'entry_date': '2026-02-02T10:00:00Z',
+          'balance_after': '2000.000',
+        },
+        {
+          'id': 'e1',
+          'customer_id': 'c1',
+          'entry_type': 'sale',
+          'amount': '1500.000',
+          'note': 'credit sale',
+          'reference_sale_id': 's1',
+          'invoice_number': 'INV-0001',
+          'user_id': 'u1',
+          'user_name': 'Admin',
+          'entry_date': '2026-02-01T10:00:00Z',
+          'balance_after': '1500.000',
+        },
+      ],
+      'total': 2,
+      'page': 1,
+      'page_size': 20,
+      'pages': 1,
+    };
+
 /// Full debt lifecycle (newest first): Pay All -> partial payment ->
 /// credit sale, each with the computed running balance.
 Map<String, dynamic> _lifecycleHistoryBody({int pages = 1}) => {
@@ -991,6 +1028,201 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(queryLog.last['include_archived'], true);
+    });
+  });
+
+  // Fix Round 2 — the reported bug: "the customer detail balance does not
+  // go up when a new debt is added" / "a payment clears one debt and then
+  // moves to the next one". Backend audit proved customers.balance ==
+  // ledger sum; the stale value lived in these NON-autoDispose family
+  // providers that only ever loaded once per customer id.
+  group('Fix Round 2 — customer balance is the ledger aggregate', () {
+    testWidgets('list row and detail card show the same aggregate balance',
+        (tester) async {
+      final dio = MockDio();
+      stubRequests(dio);
+
+      final container = await pumpApp(
+        tester,
+        dio,
+        userName: 'Admin',
+        pin: '1234',
+        navLabel: AppStrings.t('clients', 'ar'),
+      );
+      await openAlice(tester);
+
+      // ONE number for the whole customer (1500 in the list == 1500 on the
+      // card), not a single debt entry and not the "next" debt.
+      expect(
+        find.byKey(const Key('client-balance-0')),
+        findsOneWidget,
+      );
+      expect(find.text('1500'), findsWidgets);
+      expect(
+        find.byKey(const Key('client-detail-balance')),
+        findsOneWidget,
+      );
+      expect(
+        find.text(
+          '${AppStrings.t('balance', 'ar')}: 1500',
+        ),
+        findsOneWidget,
+      );
+      expect(
+        container.read(customerDetailProvider('c1')).value?.balance,
+        '1500.000',
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'a silent reload after a new debt replaces the stale balance '
+        'without a loading flash', (tester) async {
+      final dio = MockDio();
+      final detail = _alice();
+      stubRequests(dio, detailBody: detail);
+
+      final container = await pumpApp(
+        tester,
+        dio,
+        userName: 'Admin',
+        pin: '1234',
+        navLabel: AppStrings.t('clients', 'ar'),
+      );
+      await openAlice(tester);
+      expect(
+        find.text('${AppStrings.t('balance', 'ar')}: 1500'),
+        findsOneWidget,
+      );
+
+      // A credit sale of 534 was recorded since the first open — the pane
+      // re-reads silently (the exact call the POS/debts refreshes make).
+      detail['balance'] = '2034.000';
+      container
+          .read(customerDetailProvider('c1').notifier)
+          .load(silent: true);
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const Key('client-detail-loading')),
+        findsNothing,
+        reason: 'silent refresh must not flash a spinner',
+      );
+      expect(
+        find.text('${AppStrings.t('balance', 'ar')}: 2034'),
+        findsOneWidget,
+      );
+      expect(
+        container.read(customerDetailProvider('c1')).value?.balance,
+        '2034.000',
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'a payment recorded on the Debts screen re-reads the open '
+        'detail card', (tester) async {
+      final dio = MockDio();
+      final detail = _alice();
+      stubRequests(dio, detailBody: detail);
+
+      final container = await pumpApp(
+        tester,
+        dio,
+        userName: 'Admin',
+        pin: '1234',
+        navLabel: AppStrings.t('clients', 'ar'),
+      );
+      await openAlice(tester);
+      expect(
+        find.text('${AppStrings.t('balance', 'ar')}: 1500'),
+        findsOneWidget,
+      );
+
+      // Record a payment from the Debts screen while the detail provider
+      // is still alive (the family never auto-disposes).
+      container.read(routerProvider).go('/debts');
+      await tester.pumpAndSettle();
+      detail['balance'] = '1400.000';
+
+      await tester.tap(find.byKey(const Key('debtor-pay-button-0')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const Key('debt-amount-field')),
+        '100',
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('debt-pay-submit')));
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const Key('debts-payment-success-toast')),
+        findsOneWidget,
+      );
+
+      // The payment refresh must have re-READ the cached detail provider.
+      expect(
+        container.read(customerDetailProvider('c1')).value?.balance,
+        '1400.000',
+      );
+
+      // Going back shows the fresh number, not the pre-payment snapshot.
+      container.read(routerProvider).go('/clients');
+      await tester.pumpAndSettle();
+      if (find.byKey(const Key('clients-detail-empty')).evaluate().isNotEmpty) {
+        await openAlice(tester);
+      }
+      expect(
+        find.text('${AppStrings.t('balance', 'ar')}: 1400'),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'two debts are summed into one balance — paying never switches '
+        'to the other debt or drops a history row', (tester) async {
+      final dio = MockDio();
+      final detail = _customerJson(
+        id: 'c1',
+        name: 'Alice Market',
+        balance: '2000.000',
+        ceiling: '5000.000',
+      );
+      final history = _historyBodyForSales();
+      stubRequests(dio, detailBody: detail, historyBody: history);
+
+      final container = await pumpApp(
+        tester,
+        dio,
+        userName: 'Admin',
+        pin: '1234',
+        navLabel: AppStrings.t('clients', 'ar'),
+      );
+      await openAlice(tester);
+
+      // Aggregate = 1500 + 500 (two credit sales) = 2000.
+      expect(
+        find.text('${AppStrings.t('balance', 'ar')}: 2000'),
+        findsOneWidget,
+      );
+      expect(find.byKey(const Key('client-hist-amount-0')), findsOneWidget);
+      expect(find.byKey(const Key('client-hist-amount-1')), findsOneWidget);
+
+      // Payment of 500 -> the AGGREGATE drops; both debt rows stay.
+      detail['balance'] = '1500.000';
+      container
+          .read(customerDetailProvider('c1').notifier)
+          .load(silent: true);
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text('${AppStrings.t('balance', 'ar')}: 1500'),
+        findsOneWidget,
+      );
+      // No debt row disappeared and no row was re-labelled as "paid".
+      expect(find.byKey(const Key('client-hist-amount-0')), findsOneWidget);
+      expect(find.byKey(const Key('client-hist-amount-1')), findsOneWidget);
+      expect(tester.takeException(), isNull);
     });
   });
 }

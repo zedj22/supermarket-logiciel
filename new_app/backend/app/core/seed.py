@@ -9,6 +9,12 @@ This creates:
 - Admin gets all permissions
 - Manager gets operational permissions
 - Cashier gets basic POS permissions
+- Every role (admin/manager/cashier) gets expense_view, expense_create
+  and expense_cancel — Phase 13 GATE 7/8/9 product-owner decision.
+
+NOT executed at application startup: run ``python -m app.core.seed``
+after deploying a revision that adds permission scopes (decision record
+D15).
 """
 
 from __future__ import annotations
@@ -55,6 +61,10 @@ ROLE_PERMISSIONS: dict[str, list[PermissionScope]] = {
         PermissionScope.PURCHASE_VIEW,
         PermissionScope.PURCHASE_CREATE,
         PermissionScope.PURCHASE_DELETE,
+        # Expenses (Phase 13, GATE 8/9) — same three scopes for every role
+        PermissionScope.EXPENSE_VIEW,
+        PermissionScope.EXPENSE_CREATE,
+        PermissionScope.EXPENSE_CANCEL,
         # Financial
         PermissionScope.REPORT_FINANCIAL,
         PermissionScope.EXPORT_DATA,
@@ -72,6 +82,10 @@ ROLE_PERMISSIONS: dict[str, list[PermissionScope]] = {
         # Customers (view + limited manage for debt)
         PermissionScope.CUSTOMER_VIEW,
         PermissionScope.CUSTOMER_MANAGE,
+        # Expenses (Phase 13, GATE 8) — identical for all three roles
+        PermissionScope.EXPENSE_VIEW,
+        PermissionScope.EXPENSE_CREATE,
+        PermissionScope.EXPENSE_CANCEL,
     ],
 }
 

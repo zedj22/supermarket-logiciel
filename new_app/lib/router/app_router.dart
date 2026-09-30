@@ -17,6 +17,7 @@ import '../features/stock/stock_screen.dart';
 import '../features/sales/sales_screen.dart';
 import '../features/debts/debts_screen.dart';
 import '../features/suppliers/suppliers_screen.dart';
+import '../features/expenses/expenses_screen.dart';
 import '../features/purchases/purchases_screen.dart';
 import '../features/reports/reports_screen.dart';
 import '../features/settings/settings_screen.dart';
@@ -90,6 +91,11 @@ final routerProvider = Provider<GoRouter>((ref) {
             path: '/returns',
             name: 'returns',
             builder: (context, state) => const ReturnsScreen(),
+          ),
+          GoRoute(
+            path: '/expenses',
+            name: 'expenses',
+            builder: (context, state) => const ExpensesScreen(),
           ),
           GoRoute(
             path: '/clients',
@@ -190,6 +196,9 @@ class ScaffoldWithNav extends ConsumerWidget {
   /// Scope required to see the Returns destination (Phase 12).
   static const String returnViewScope = 'pos_return';
 
+  /// Scope required to see the Expenses destination (Phase 13).
+  static const String expenseViewScope = 'expense_view';
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
@@ -203,6 +212,7 @@ class ScaffoldWithNav extends ConsumerWidget {
     final canViewSuppliers = ref.watch(hasPermissionProvider(supplierViewScope));
     final canViewPurchases = ref.watch(hasPermissionProvider(purchaseViewScope));
     final canViewReturns = ref.watch(hasPermissionProvider(returnViewScope));
+    final canViewExpenses = ref.watch(hasPermissionProvider(expenseViewScope));
 
     final destinations = <NavigationRailDestination>[
       NavigationRailDestination(
@@ -221,6 +231,12 @@ class ScaffoldWithNav extends ConsumerWidget {
           icon: const Icon(Icons.undo_outlined),
           selectedIcon: const Icon(Icons.undo),
           label: Text(AppStrings.t('returns_history', loc)),
+        ),
+      if (canViewExpenses)
+        NavigationRailDestination(
+          icon: const Icon(Icons.payments_outlined),
+          selectedIcon: const Icon(Icons.payments),
+          label: Text(AppStrings.t('expenses', loc)),
         ),
       if (canViewProducts) ...[
         NavigationRailDestination(
@@ -290,6 +306,10 @@ class ScaffoldWithNav extends ConsumerWidget {
       index += 1;
       if (location == '/returns') selectedIndex = index;
     }
+    if (canViewExpenses) {
+      index += 1;
+      if (location == '/expenses') selectedIndex = index;
+    }
     if (canViewProducts) {
       index += 1;
       if (location == '/products') selectedIndex = index;
@@ -333,6 +353,10 @@ class ScaffoldWithNav extends ConsumerWidget {
       }
       if (canViewReturns && i++ == target) {
         context.go('/returns');
+        return;
+      }
+      if (canViewExpenses && i++ == target) {
+        context.go('/expenses');
         return;
       }
       if (canViewProducts && i++ == target) {

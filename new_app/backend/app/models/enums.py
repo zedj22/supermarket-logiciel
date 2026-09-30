@@ -50,6 +50,12 @@ class PermissionScope(str, enum.Enum):
     PURCHASE_CREATE = "purchase_create"
     PURCHASE_DELETE = "purchase_delete"
 
+    # Expenses (Phase 13) — GATE 7/8/9: admin, manager and cashier all
+    # receive all three scopes (product-owner decision, §11 role matrix).
+    EXPENSE_VIEW = "expense_view"
+    EXPENSE_CREATE = "expense_create"
+    EXPENSE_CANCEL = "expense_cancel"
+
     # Financial
     REPORT_FINANCIAL = "report_financial"
     EXPORT_DATA = "export_data"
@@ -144,6 +150,19 @@ class ExpenseCategory(str, enum.Enum):
     SUPPLIES = "supplies"
     TRANSPORT = "transport"
     OTHER = "other"
+
+
+class ExpenseStatus(str, enum.Enum):
+    """Expense lifecycle (GATE 1 — minimal state machine).
+
+    posted     — recorded money-out; immutable, counted in summaries.
+    cancelled  — terminal correction (row retained, audit carries the
+                 reason; excluded from the default list/summary).
+    """
+
+    POSTED = "posted"
+    CANCELLED = "cancelled"
+
 
 
 # ── Devices ────────────────────────────────────────────────────────────

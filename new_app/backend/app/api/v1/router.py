@@ -10,6 +10,7 @@ from app.api.v1.auth import router as auth_router
 from app.api.v1.categories import router as categories_router
 from app.api.v1.customers import router as customers_router
 from app.api.v1.debts import router as debts_router
+from app.api.v1.expenses import router as expenses_router
 from app.api.v1.health import router as health_router
 from app.api.v1.inventory import router as inventory_router
 from app.api.v1.packs import router as packs_router
@@ -33,6 +34,9 @@ api_router.include_router(categories_router, prefix="/categories", tags=["catego
 api_router.include_router(customers_router, prefix="/customers", tags=["customers"])
 api_router.include_router(suppliers_router, prefix="/suppliers", tags=["suppliers"])
 api_router.include_router(debts_router, prefix="/debts", tags=["debts"])
+api_router.include_router(
+    expenses_router, prefix="/expenses", tags=["expenses"]
+)
 api_router.include_router(inventory_router, prefix="/inventory", tags=["inventory"])
 api_router.include_router(sales_router, prefix="/sales", tags=["sales"])
 api_router.include_router(purchases_router, prefix="/purchases", tags=["purchases"])

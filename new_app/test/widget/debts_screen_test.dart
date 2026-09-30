@@ -154,6 +154,8 @@ void main() {
     List<Map<String, dynamic>>? listQueryLog,
     List<Object?>? payPayloads,
     List<int>? summaryCounter,
+    Map<String, dynamic>? listBody,
+    Object? payResult,
   }) {
     when(() => dio.interceptors).thenReturn(Interceptors());
     when(() => dio.options).thenReturn(BaseOptions());
@@ -169,6 +171,13 @@ void main() {
         if (path.endsWith('/pay')) {
           if (payPayloads != null) payPayloads.add(data);
           if (payError != null) throw payError;
+          if (payResult != null) {
+            return Response<dynamic>(
+              requestOptions: RequestOptions(path: path),
+              data: payResult,
+              statusCode: 200,
+            );
+          }
           return okResponse(path, {
             'id': 'p1',
             'customer_id': 'c1',
@@ -195,9 +204,9 @@ void main() {
       );
       if (path == _customersPath) {
         listQueryLog?.add(params);
-        return okResponse(path, _debtorsBody());
+        return okResponse(path, listBody ?? _debtorsBody());
       }
-      return okResponse(path, _debtorsBody());
+      return okResponse(path, listBody ?? _debtorsBody());
     });
     when(() => dio.get(any())).thenAnswer((invocation) async {
       final path = invocation.positionalArguments.first as String;
@@ -359,6 +368,65 @@ void main() {
       // Summary + debtors list were refreshed after the payment.
       expect(summaryCounter.length, greaterThan(summaryLoadsBefore));
       expect(queryLog.length, greaterThan(listLoadsBefore));
+    });
+
+    // Fix Round 2 (debt balance bug): the payment must re-read the debtor
+    // row so it shows the SERVER's post-payment aggregate, and it must not
+    // create a customer-detail provider that was never opened (the refresh
+    // is guarded with ref.exists so no unstubbed request is ever fired).
+    testWidgets(
+        'payment re-reads the debtor row (new aggregate) and never '
+        'creates an unopened customer-detail provider', (tester) async {
+      final dio = MockDio();
+      final debtors = _debtorsBody();
+      final queryLog = <Map<String, dynamic>>[];
+      final payloads = <Object?>[];
+      final summaryCounter = <int>[];
+      stubRequests(
+        dio,
+        listQueryLog: queryLog,
+        payPayloads: payloads,
+        summaryCounter: summaryCounter,
+        listBody: debtors,
+      );
+
+      final container = await pumpApp(
+        tester,
+        dio,
+        userName: 'Admin',
+        pin: '1234',
+        navLabel: AppStrings.t('debts', 'ar'),
+      );
+      // formatMoney('1500.000') → '1500' (stale pre-payment value).
+      expect(find.byKey(const Key('debtor-balance-0')), findsOneWidget);
+      expect(find.text('1500'), findsOneWidget);
+      final listLoadsBefore = queryLog.length;
+
+      await tester.tap(find.byKey(const Key('debtor-pay-button-0')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const Key('debt-amount-field')),
+        '100',
+      );
+      await tester.pump();
+      // The server now reports 1500 - 100 = 1400 for the same customer.
+      ((debtors['items'] as List).first as Map<String, dynamic>)['balance'] =
+          '1400.000';
+      await tester.tap(find.byKey(const Key('debt-pay-submit')));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const Key('debts-payment-success-toast')),
+        findsOneWidget,
+      );
+      expect(queryLog.length, greaterThan(listLoadsBefore));
+      // The refreshed row shows the AGGREGATE after the payment.
+      expect(find.text('1400'), findsOneWidget);
+      expect(find.text('1500'), findsNothing);
+
+      // Guard: no detail provider was created for a screen never opened.
+      expect(container.exists(customerDetailProvider('c1')), isFalse);
+      expect(tester.takeException(), isNull);
     });
 
     testWidgets(

@@ -305,6 +305,43 @@ class _CustomerDetailPane extends ConsumerStatefulWidget {
 }
 
 class _CustomerDetailPaneState extends ConsumerState<_CustomerDetailPane> {
+  @override
+  void initState() {
+    super.initState();
+    // Fix Round 2 (debt balance bug): the detail + debt-history providers
+    // are NON-autoDispose families that load exactly once per customer id,
+    // so a (re)opened pane must re-read the server — otherwise a credit
+    // sale or payment recorded since the first open keeps showing the
+    // stale snapshot instead of the aggregate outstanding balance.
+    Future.microtask(_refreshFromServer);
+  }
+
+  @override
+  void didUpdateWidget(covariant _CustomerDetailPane oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.customerId != widget.customerId) {
+      // Reused State for a different customer — re-read that id too.
+      Future.microtask(_refreshFromServer);
+    }
+  }
+
+  /// Silent refresh of detail + history. Skipped while a first-ever load
+  /// is in flight to avoid a duplicate GET on the initial open. The
+  /// master list keeps its own refresh in the screen's initState.
+  Future<void> _refreshFromServer() async {
+    if (!mounted) return;
+    final detail = ref.read(customerDetailProvider(widget.customerId));
+    if (!detail.isLoading) {
+      ref
+          .read(customerDetailProvider(widget.customerId).notifier)
+          .load(silent: true);
+    }
+    final history = ref.read(debtHistoryProvider(widget.customerId));
+    if (!history.loading) {
+      ref.read(debtHistoryProvider(widget.customerId).notifier).refresh();
+    }
+  }
+
   Future<void> _reloadAll() async {
     ref.read(customerDetailProvider(widget.customerId).notifier).load();
     ref.read(debtHistoryProvider(widget.customerId).notifier).refresh();

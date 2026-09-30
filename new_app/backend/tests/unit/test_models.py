@@ -312,10 +312,25 @@ class TestModelInstantiation:
         assert perm.id is not None
 
     def test_create_expense(self, db_session):
-        expense = Expense(title="Rent", category="rent", amount=Decimal("50000.000"))
+        expense = Expense(
+            title="Rent",
+            category="rent",
+            amount=Decimal("50000.000"),
+            client_request_id="req-expense-model-1",
+        )
         db_session.add(expense)
         db_session.commit()
         assert expense.id is not None
+
+        # Phase 13 defaults (GATE 1 lifecycle, GATE 5 flag, GATE 10 key)
+        db_session.refresh(expense)
+        assert expense.status == "posted"
+        assert expense.paid_from_drawer is True
+        assert expense.client_request_id == "req-expense-model-1"
+        assert expense.expense_date is not None
+        assert expense.cancelled_at is None
+        assert expense.cancelled_by is None
+        assert expense.cancel_reason is None
 
     def test_create_audit_log(self, db_session):
         audit = AuditLog(action="create", entity_type="product")

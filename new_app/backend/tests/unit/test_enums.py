@@ -8,6 +8,7 @@ from app.models.enums import (
     AuditAction,
     DeviceStatus,
     ExpenseCategory,
+    ExpenseStatus,
     PaymentMethod,
     PermissionScope,
     ProductUnit,
@@ -42,7 +43,12 @@ class TestPermissionScope:
         assert PermissionScope.AUDIT_VIEW.value == "audit_view"
 
     def test_member_count(self):
-        assert len(PermissionScope) == 27
+        assert len(PermissionScope) == 30
+
+    def test_expense_scopes_exist(self):
+        assert PermissionScope.EXPENSE_VIEW.value == "expense_view"
+        assert PermissionScope.EXPENSE_CREATE.value == "expense_create"
+        assert PermissionScope.EXPENSE_CANCEL.value == "expense_cancel"
 
 
 class TestProductUnit:
@@ -95,6 +101,17 @@ class TestExpenseCategory:
         assert ExpenseCategory.RENT.value == "rent"
         assert ExpenseCategory.UTILITIES.value == "utilities"
         assert ExpenseCategory.SALARY.value == "salary"
+
+
+class TestExpenseStatus:
+    """Phase 13 GATE 1 — the only two expense states."""
+
+    def test_values(self):
+        assert ExpenseStatus.POSTED.value == "posted"
+        assert ExpenseStatus.CANCELLED.value == "cancelled"
+
+    def test_member_count(self):
+        assert len(ExpenseStatus) == 2
 
 
 class TestDeviceStatus:

@@ -1,4 +1,4 @@
-"""Integration tests for Phase 2 Alembic migrations — PostgreSQL only.
+﻿"""Integration tests for Phase 2 Alembic migrations â€” PostgreSQL only.
 
 These tests run against the dedicated supermarket_pro_test database.
 The production database is NEVER touched.
@@ -233,10 +233,10 @@ class TestMigrationTableStructure:
 
 
 class TestPhase6SellingUnitsMigration:
-    """Migration 0005/0006 — product_selling_units + purchase packaging tables."""
+    """Migration 0005/0006 â€” product_selling_units + purchase packaging tables."""
 
     SELLING_UNITS_REV = "c3d4e5f6a7b8"
-    HEAD_REV = "f5a6b7c8d9e0"  # 0017 return reason optional head
+    HEAD_REV = "2f6b9c4d8a31"  # 0019 expense title optional head
 
     @pytest.fixture(autouse=True)
     def _setup_db(self):
@@ -375,7 +375,7 @@ class TestPhase6SellingUnitsMigration:
         conn.close()
 
     def test_no_destructive_rewrite_of_phase5_auth(self):
-        """0005 only adds product_selling_units — does not drop Phase 4 tables."""
+        """0005 only adds product_selling_units â€” does not drop Phase 4 tables."""
         conn = _get_test_conn()
         cur = conn.cursor()
         for table in ("users", "roles", "permissions", "auth_sessions", "products"):
@@ -392,9 +392,9 @@ class TestPhase6SellingUnitsMigration:
 
 
 class TestPhase6PurchasePackagingMigration:
-    """Migration 0006 (d4e5f6a7b8c9) — purchase packaging / stock-breaking."""
+    """Migration 0006 (d4e5f6a7b8c9) â€” purchase packaging / stock-breaking."""
 
-    HEAD_REV = "f5a6b7c8d9e0"  # linear chain head after 0017
+    HEAD_REV = "2f6b9c4d8a31"  # linear chain head after 0019
 
     @pytest.fixture(autouse=True)
     def _setup_db(self):
@@ -546,7 +546,7 @@ class TestPhase6PurchasePackagingMigration:
         conn.close()
 
     def test_selling_units_preserved_after_0006(self):
-        """0006 must not rewrite product_selling_units (Piece ×1, Box ×24)."""
+        """0006 must not rewrite product_selling_units (Piece Ã—1, Box Ã—24)."""
         conn = _get_test_conn()
         cur = conn.cursor()
         cur.execute(
@@ -582,9 +582,9 @@ class TestPhase6PurchasePackagingMigration:
 
 
 class TestPhase7InventoryPMPMigration:
-    """Migration 0008 (f1a2b3c4d5e6) — products.avg_cost + movement cost cols."""
+    """Migration 0008 (f1a2b3c4d5e6) â€” products.avg_cost + movement cost cols."""
 
-    HEAD_REV = "f5a6b7c8d9e0"
+    HEAD_REV = "2f6b9c4d8a31"
 
     @pytest.fixture(autouse=True)
     def _setup_db(self):
@@ -687,7 +687,7 @@ class TestPhase7InventoryPMPMigration:
         conn.close()
 
     def test_no_destructive_rewrite(self):
-        """0008 only adds columns — does not drop prior tables/columns."""
+        """0008 only adds columns â€” does not drop prior tables/columns."""
         conn = _get_test_conn()
         cur = conn.cursor()
         for table in (
@@ -726,7 +726,7 @@ class TestPhase10AvgCostBackfillMigration:
     exactly 100%.
     """
 
-    HEAD_REV = "f5a6b7c8d9e0"
+    HEAD_REV = "2f6b9c4d8a31"
     PREV_REV = "b7c8d9e0f1a2"
 
     @pytest.fixture(autouse=True)
@@ -860,9 +860,9 @@ class TestPhase10AvgCostBackfillMigration:
 
 
 class TestPhase12ReturnsVoidsMigration:
-    """0016_phase12_returns_voids — void columns + return snapshot columns."""
+    """0016_phase12_returns_voids â€” void columns + return snapshot columns."""
 
-    HEAD_REV = "f5a6b7c8d9e0"
+    HEAD_REV = "2f6b9c4d8a31"
     PREVIOUS_REV = "d3e4f5a6b7c8"
 
     @pytest.fixture(autouse=True)
@@ -1076,7 +1076,7 @@ class TestPhase12ReturnsVoidsMigration:
 
 
 class TestPhase17ReturnReasonOptionalMigration:
-    """0017_return_reason_optional — fix round 1 (product-owner decision).
+    """0017_return_reason_optional â€” fix round 1 (product-owner decision).
 
     ``returns.reason`` becomes nullable and loses its ``'other'`` server
     default, so an omitted / ``null`` / blank API reason persists as NULL.
@@ -1087,7 +1087,7 @@ class TestPhase17ReturnReasonOptionalMigration:
     ``tests/unit/test_void.py::test_reason_is_mandatory``).
     """
 
-    HEAD_REV = "f5a6b7c8d9e0"
+    HEAD_REV = "2f6b9c4d8a31"
     PREVIOUS_REV = "e4f5a6b7c8d9"
     TEST_RETURN_NUMBER = "RET-TEST-0017-NO-REASON"
 
@@ -1192,3 +1192,348 @@ class TestPhase17ReturnReasonOptionalMigration:
         finally:
             result = _run_alembic("upgrade head")
             assert result.returncode == 0, result.stderr
+
+
+class TestPhase13ExpensesMigration:
+    """0018_phase13_expenses - lifecycle, cancellation, idempotency, query path.
+
+    The revision is additive: it only adds columns/indexes to ``expenses``
+    and never rewrites an existing value (decision record section 5).
+    """
+
+    HEAD_REV = "2f6b9c4d8a31"
+    PREVIOUS_REV = "f5a6b7c8d9e0"
+    TEST_TITLE = "PHASE13-MIGRATION-TEST"
+
+    @pytest.fixture(autouse=True)
+    def _setup_db(self):
+        """Ensure head before, and a clean database after, every test."""
+        result = _run_alembic("upgrade head")
+        assert result.returncode == 0, f"Setup upgrade failed: {result.stderr}"
+        yield
+        self._delete_test_rows()
+        result = _run_alembic("upgrade head")
+        assert result.returncode == 0, f"Restore upgrade failed: {result.stderr}"
+
+    # â”€â”€ helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+    @staticmethod
+    def _columns(table: str) -> dict:
+        return TestPhase12ReturnsVoidsMigration._columns(table)
+
+    @staticmethod
+    def _indexes(table: str) -> set:
+        return TestPhase12ReturnsVoidsMigration._indexes(table)
+
+    @staticmethod
+    def _index_definition(index_name: str) -> str:
+        conn = _get_test_conn()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT indexdef FROM pg_indexes "
+            "WHERE schemaname = 'public' AND indexname = %s",
+            (index_name,),
+        )
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+        return row[0] if row else ""
+
+    @staticmethod
+    def _foreign_key_rules(table: str) -> dict:
+        conn = _get_test_conn()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT kcu.column_name, ccu.table_name, rc.delete_rule
+            FROM information_schema.table_constraints tc
+            JOIN information_schema.key_column_usage kcu
+                ON tc.constraint_name = kcu.constraint_name
+            JOIN information_schema.constraint_column_usage ccu
+                ON ccu.constraint_name = tc.constraint_name
+            JOIN information_schema.referential_constraints rc
+                ON rc.constraint_name = tc.constraint_name
+            WHERE tc.table_schema = 'public'
+              AND tc.table_name = %s
+              AND tc.constraint_type = 'FOREIGN KEY'
+            """,
+            (table,),
+        )
+        rules = {row[0]: (row[1], row[2]) for row in cur.fetchall()}
+        cur.close()
+        conn.close()
+        return rules
+
+    @classmethod
+    def _delete_test_rows(cls) -> None:
+        conn = _get_test_conn()
+        cur = conn.cursor()
+        cur.execute("DELETE FROM expenses WHERE title = %s", (cls.TEST_TITLE,))
+        conn.commit()
+        cur.close()
+        conn.close()
+
+    @classmethod
+    def _insert(cls, *, client_request_id=None) -> None:
+        conn = _get_test_conn()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO expenses (title, category, amount, client_request_id)
+            VALUES (%s, 'rent', 10.000, %s)
+            """,
+            (cls.TEST_TITLE, client_request_id),
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+
+    @classmethod
+    def _rows(cls) -> list:
+        """title / amount â€” always present, survives a downgrade."""
+        conn = _get_test_conn()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT title, amount::text FROM expenses WHERE title = %s",
+            (cls.TEST_TITLE,),
+        )
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+        return rows
+
+    @classmethod
+    def _keys(cls) -> list:
+        """client_request_id values (only valid while the column exists)."""
+        conn = _get_test_conn()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT client_request_id FROM expenses WHERE title = %s",
+            (cls.TEST_TITLE,),
+        )
+        keys = [row[0] for row in cur.fetchall()]
+        cur.close()
+        conn.close()
+        return keys
+
+    # â”€â”€ tests â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+    def test_current_is_phase13_head(self):
+        result = _run_alembic("current")
+        assert result.returncode == 0, result.stderr
+        assert self.HEAD_REV in result.stdout, result.stdout
+
+        heads = _run_alembic("heads")
+        assert heads.returncode == 0, heads.stderr
+        assert self.HEAD_REV in heads.stdout, heads.stdout
+
+    def test_lifecycle_and_payment_columns(self):
+        columns = self._columns("expenses")
+
+        status = columns.get("status")
+        assert status is not None, "expenses.status missing"
+        assert status[1] == "character varying", status[1]
+        assert status[2] == "NO", "status must be NOT NULL"
+        assert "'posted'" in (status[5] or ""), f"got {status[5]!r}"
+
+        drawer = columns.get("paid_from_drawer")
+        assert drawer is not None, "expenses.paid_from_drawer missing"
+        assert drawer[1] == "boolean", drawer[1]
+        assert drawer[2] == "NO", "paid_from_drawer must be NOT NULL"
+        assert "true" in (drawer[5] or "").lower(), f"got {drawer[5]!r}"
+
+    def test_cancellation_columns_and_set_null_fk(self):
+        columns = self._columns("expenses")
+        for name in ("cancelled_at", "cancelled_by", "cancel_reason"):
+            assert name in columns, f"expenses.{name} missing"
+            assert columns[name][2] == "YES", f"{name} must stay nullable"
+        assert columns["cancel_reason"][1] == "character varying"
+        assert columns["cancelled_at"][1] == "timestamp with time zone"
+
+        rules = self._foreign_key_rules("expenses")
+        assert rules["cancelled_by"] == ("users", "SET NULL"), rules
+        assert rules["user_id"] == ("users", "SET NULL"), rules
+
+    def test_idempotency_and_query_indexes(self):
+        indexes = self._indexes("expenses")
+        for name in (
+            "ux_expenses_client_request_id",
+            "ix_expenses_expense_date",
+            "ix_expenses_user_id",
+        ):
+            assert name in indexes, f"{name} missing from expenses"
+
+        definition = self._index_definition("ux_expenses_client_request_id")
+        assert "UNIQUE" in definition, definition
+        assert "client_request_id IS NOT NULL" in definition, definition
+
+    def test_null_keys_never_collide_but_duplicates_do(self):
+        import psycopg2
+
+        # NULL (pre-Phase-13 rows) must never collide
+        self._insert(client_request_id=None)
+        self._insert(client_request_id=None)
+        assert len(self._rows()) == 2
+
+        self._insert(client_request_id="phase13-dup-key")
+        conn = _get_test_conn()
+        cur = conn.cursor()
+        try:
+            with pytest.raises(psycopg2.errors.UniqueViolation):
+                cur.execute(
+                    "INSERT INTO expenses "
+                    "(title, category, amount, client_request_id) "
+                    "VALUES (%s, 'rent', 10.000, %s)",
+                    (self.TEST_TITLE, "phase13-dup-key"),
+                )
+                conn.commit()
+        finally:
+            conn.rollback()
+            cur.close()
+            conn.close()
+
+    def test_downgrade_drops_only_what_0018_added(self):
+        self._insert(client_request_id="phase13-downgrade-key")
+        result = _run_alembic(f"downgrade {self.PREVIOUS_REV}")
+        assert result.returncode == 0, result.stderr
+        try:
+            columns = self._columns("expenses")
+            for name in (
+                "status",
+                "paid_from_drawer",
+                "cancelled_at",
+                "cancelled_by",
+                "cancel_reason",
+                "client_request_id",
+            ):
+                assert name not in columns, f"{name} must be dropped"
+            for name in ("title", "category", "amount", "expense_date", "note"):
+                assert name in columns, f"{name} must survive the downgrade"
+
+            indexes = self._indexes("expenses")
+            for name in (
+                "ux_expenses_client_request_id",
+                "ix_expenses_expense_date",
+                "ix_expenses_user_id",
+            ):
+                assert name not in indexes, f"{name} must be dropped"
+
+            rows = self._rows()
+            assert len(rows) == 1, "the expense row itself is never deleted"
+            assert rows[0][0] == self.TEST_TITLE
+            assert rows[0][1] == "10.000"
+        finally:
+            result = _run_alembic("upgrade head")
+            assert result.returncode == 0, result.stderr
+
+        columns = self._columns("expenses")
+        assert "'posted'" in (columns["status"][5] or "")
+        assert "true" in (columns["paid_from_drawer"][5] or "").lower()
+        assert self._keys() == [None], "the key column comes back empty"
+
+
+class TestPhase13TitleOptionalMigration:
+    """0019_expense_title_optional - Fix Round 2: ``expenses.title`` NULL.
+
+    0018 is never modified; this single follow-up revision only drops the
+    NOT NULL constraint that 0002 introduced, so an omitted / blank
+    expense title can be stored as NULL (decision record B1).
+    """
+
+    HEAD_REV = "2f6b9c4d8a31"
+    PREVIOUS_REV = "1a2b3c4d5e6f"
+    NULL_ROW_MARKER = "PHASE19-TITLE-NULL-TEST"
+
+    @pytest.fixture(autouse=True)
+    def _setup_db(self):
+        """Ensure head before, and a clean database after, every test."""
+        result = _run_alembic("upgrade head")
+        assert result.returncode == 0, f"Setup upgrade failed: {result.stderr}"
+        yield
+        self._delete_test_rows()
+        result = _run_alembic("upgrade head")
+        assert result.returncode == 0, f"Restore upgrade failed: {result.stderr}"
+
+    @staticmethod
+    def _columns(table: str) -> dict:
+        return TestPhase13ExpensesMigration._columns(table)
+
+    @classmethod
+    def _insert_title(cls, title) -> None:
+        conn = _get_test_conn()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO expenses (title, category, amount, note)
+            VALUES (%s, 'rent', 5.000, %s)
+            """,
+            (title, cls.NULL_ROW_MARKER),
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+
+    @classmethod
+    def _delete_test_rows(cls) -> None:
+        conn = _get_test_conn()
+        cur = conn.cursor()
+        cur.execute("DELETE FROM expenses WHERE note = %s", (cls.NULL_ROW_MARKER,))
+        conn.commit()
+        cur.close()
+        conn.close()
+
+    def test_single_head_is_0019(self):
+        current = _run_alembic("current")
+        assert current.returncode == 0, current.stderr
+        assert self.HEAD_REV in current.stdout, current.stdout
+
+        heads = _run_alembic("heads")
+        assert heads.returncode == 0, heads.stderr
+        assert self.HEAD_REV in heads.stdout, heads.stdout
+        assert self.HEAD_REV not in self.PREVIOUS_REV
+        # exactly one head
+        assert heads.stdout.count("(head)") == 1, heads.stdout
+
+    def test_title_is_nullable_at_head(self):
+        title = self._columns("expenses")["title"]
+        assert title[1] == "character varying", title[1]
+        assert title[2] == "YES", "Fix Round 2: expenses.title must be nullable"
+
+    def test_null_title_row_round_trips(self):
+        self._insert_title(None)
+        conn = _get_test_conn()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT title FROM expenses WHERE note = %s", (self.NULL_ROW_MARKER,)
+        )
+        assert cur.fetchone()[0] is None
+        cur.close()
+        conn.close()
+
+    def test_upgrade_downgrade_upgrade(self):
+        result = _run_alembic(f"downgrade {self.PREVIOUS_REV}")
+        assert result.returncode == 0, result.stderr
+        try:
+            title = self._columns("expenses")["title"]
+            assert title[2] == "NO", "downgrade must restore NOT NULL"
+
+            import psycopg2
+
+            conn = _get_test_conn()
+            cur = conn.cursor()
+            try:
+                with pytest.raises(psycopg2.errors.NotNullViolation):
+                    cur.execute(
+                        "INSERT INTO expenses (title, category, amount) "
+                        "VALUES (NULL, 'rent', 5.000)"
+                    )
+                    conn.commit()
+            finally:
+                conn.rollback()
+                cur.close()
+                conn.close()
+        finally:
+            result = _run_alembic("upgrade head")
+            assert result.returncode == 0, result.stderr
+
+        assert self._columns("expenses")["title"][2] == "YES"

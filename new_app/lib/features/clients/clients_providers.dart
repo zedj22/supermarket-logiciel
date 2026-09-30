@@ -258,8 +258,17 @@ class CustomerDetailNotifier extends StateNotifier<AsyncValue<CustomerModel?>> {
     load();
   }
 
-  Future<void> load() async {
-    state = const AsyncValue.loading();
+  /// GET /api/v1/customers/{id}.
+  ///
+  /// `silent: true` refreshes in the background WITHOUT clearing the
+  /// current snapshot to `loading` — used when the detail pane (re)opens,
+  /// so a debt or payment recorded since the last visit replaces the
+  /// cached value without a spinner flash (Fix Round 2, mirrors the
+  /// Phase 11 supplier-detail fix).
+  Future<void> load({bool silent = false}) async {
+    if (!silent) {
+      state = const AsyncValue.loading();
+    }
     try {
       final response = await _dio.get('$kCustomersPath/$_id');
       state = AsyncValue.data(

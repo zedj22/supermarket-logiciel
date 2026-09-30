@@ -44,6 +44,8 @@ import '../../core/strings.dart';
 import '../../l10n/locale_provider.dart';
 import '../auth/auth_provider.dart';
 import '../auth/permission_helpers.dart';
+import '../clients/clients_providers.dart';
+import '../clients/customer_models.dart';
 import '../packs/pack_models.dart';
 import '../products/models.dart';
 import '../products/selling_unit_picker.dart';
@@ -697,6 +699,27 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     ref.read(posSearchProvider.notifier).clear();
     ref.read(posSearchProvider.notifier).load();
     ref.read(favoritesProvider.notifier).load();
+    _refreshArViewsIfIndebt(result);
+  }
+
+  /// Fix Round 2 (debt balance bug): a credit sale raises the customer's
+  /// aggregate outstanding balance (Phase 9: ledger entry +
+  /// `customers.balance` move in the same transaction). Re-read every
+  /// accounts-receivable view that is already alive so the list, the
+  /// debtors list and the AR summary show it immediately instead of the
+  /// pre-checkout snapshot. Nothing is fetched for screens never opened.
+  void _refreshArViewsIfIndebt(CheckoutResult result) {
+    final debtMilli = moneyToMilli(result.debt);
+    if (debtMilli == null || debtMilli <= 0) return;
+    if (ref.exists(customersProvider)) {
+      ref.read(customersProvider.notifier).refresh();
+    }
+    if (ref.exists(debtorsProvider)) {
+      ref.read(debtorsProvider.notifier).refresh();
+    }
+    if (ref.exists(debtSummaryProvider)) {
+      ref.read(debtSummaryProvider.notifier).refresh();
+    }
   }
 
   Future<void> _holdSale() async {
