@@ -7,6 +7,7 @@ import 'package:supermarket_pos/core/strings.dart';
 import 'package:supermarket_pos/features/auth/auth_provider.dart';
 import 'package:supermarket_pos/features/auth/credential_storage.dart';
 import 'package:supermarket_pos/features/auth/login_screen.dart';
+import 'package:supermarket_pos/features/dashboard/dashboard_screen.dart';
 import 'package:supermarket_pos/features/users/users_screen.dart';
 import 'package:supermarket_pos/main.dart';
 import 'package:supermarket_pos/network/api_client.dart';
@@ -270,7 +271,7 @@ void main() {
 
   group('Authenticated shell', () {
     testWidgets(
-        'renders app title, current user name and roles, logout, and dashboard placeholder',
+        'renders app title, current user name and roles, logout, and dashboard screen',
         (tester) async {
       useDesktopViewport(tester);
       final dio = MockDio();
@@ -293,7 +294,7 @@ void main() {
       );
       expect(find.byKey(const Key('logout-button')), findsOneWidget);
       expect(find.byType(NavigationRail), findsOneWidget);
-      expect(find.text('Dashboard - Phase 2'), findsOneWidget);
+      expect(find.byType(DashboardScreen), findsOneWidget);
       expect(container.read(currentUserProvider)?.fullName, 'Admin');
       expect(tester.takeException(), isNull);
     });
@@ -333,7 +334,7 @@ void main() {
 
       expect(find.byType(LoginScreen), findsOneWidget);
       expect(find.text(AppStrings.t('select_user', 'ar')), findsOneWidget);
-      expect(find.text('Dashboard - Phase 2'), findsNothing);
+      expect(find.byType(DashboardScreen), findsNothing);
       expect(tester.takeException(), isNull);
     });
 
@@ -446,7 +447,7 @@ void main() {
         'Cashier',
       );
       expect(find.byKey(const Key('logout-button')), findsOneWidget);
-      expect(find.text('Dashboard - Phase 2'), findsOneWidget);
+      expect(find.byType(DashboardScreen), findsOneWidget);
 
       // …but Users navigation is hidden.
       expect(find.text(AppStrings.t('user_list', 'ar')), findsNothing);

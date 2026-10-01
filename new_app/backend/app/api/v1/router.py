@@ -9,6 +9,7 @@ from fastapi import APIRouter
 from app.api.v1.auth import router as auth_router
 from app.api.v1.categories import router as categories_router
 from app.api.v1.customers import router as customers_router
+from app.api.v1.dashboard import dashboard_router
 from app.api.v1.debts import router as debts_router
 from app.api.v1.expenses import router as expenses_router
 from app.api.v1.health import router as health_router
@@ -17,6 +18,7 @@ from app.api.v1.packs import router as packs_router
 from app.api.v1.pos import pos_router, sales_router
 from app.api.v1.products import router as products_router
 from app.api.v1.purchases import router as purchases_router
+from app.api.v1.reports import reports_router
 from app.api.v1.returns import router as returns_router
 from app.api.v1.suppliers import router as suppliers_router
 from app.api.v1.system import router as system_router
@@ -41,4 +43,6 @@ api_router.include_router(inventory_router, prefix="/inventory", tags=["inventor
 api_router.include_router(sales_router, prefix="/sales", tags=["sales"])
 api_router.include_router(purchases_router, prefix="/purchases", tags=["purchases"])
 api_router.include_router(returns_router, prefix="/returns", tags=["returns"])
+api_router.include_router(reports_router, prefix="/reports", tags=["reports"])
+api_router.include_router(dashboard_router, prefix="/dashboard", tags=["dashboard"])
 api_router.include_router(pos_router, prefix="/pos", tags=["pos"])

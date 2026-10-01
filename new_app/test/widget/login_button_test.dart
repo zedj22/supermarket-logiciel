@@ -10,6 +10,7 @@ import 'package:supermarket_pos/core/strings.dart';
 import 'package:supermarket_pos/features/auth/auth_provider.dart';
 import 'package:supermarket_pos/features/auth/credential_storage.dart';
 import 'package:supermarket_pos/features/auth/login_screen.dart';
+import 'package:supermarket_pos/features/dashboard/dashboard_screen.dart';
 import 'package:supermarket_pos/l10n/locale_provider.dart';
 import 'package:supermarket_pos/main.dart';
 import 'package:supermarket_pos/network/api_client.dart';
@@ -304,7 +305,7 @@ void main() {
       await tester.tap(submitButton());
       await tester.pumpAndSettle();
 
-      expect(find.text('Dashboard - Phase 2'), findsOneWidget);
+      expect(find.byType(DashboardScreen), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
   });

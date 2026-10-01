@@ -11,7 +11,7 @@ Design principles:
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, String, Text, func
+from sqlalchemy import DateTime, ForeignKey, Index, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, TimestampMixin, UUIDMixin, numeric_money
@@ -64,4 +64,12 @@ class DebtLedgerEntry(Base, UUIDMixin, TimestampMixin):
     user: Mapped["User | None"] = relationship(  # noqa: F821
         "User",
         lazy="selectin",
+    )
+
+    __table_args__ = (
+        # Phase 14 §5.5 — debt_collected = SUM(amount) for a date window.
+        Index(
+            "ix_debt_ledger_entries_entry_date",
+            "entry_date",
+        ),
     )

@@ -1,0 +1,1235 @@
+{
+  "generated_at": "2026-09-30T14:35:40.687428+00:00",
+  "dataset": {
+    "sales": 200000,
+    "sale_lines": 399725,
+    "returns": 8000,
+    "return_lines": 8000,
+    "expenses": 5000,
+    "debt_ledger_entries": 40000,
+    "supplier_ledger_entries": 6000,
+    "products": 200
+  },
+  "endpoints": [
+    {
+      "endpoint": "financial",
+      "params": {
+        "date_from": "2025-08-27",
+        "date_to": "2026-09-30"
+      },
+      "p50_ms": 222.4,
+      "p95_ms": 293.6,
+      "max_ms": 302.2,
+      "payload_bytes": 1109,
+      "budget_ms": 300
+    },
+    {
+      "endpoint": "sales",
+      "params": {
+        "date_from": "2025-08-27",
+        "date_to": "2026-09-30",
+        "status": "all"
+      },
+      "p50_ms": 190.2,
+      "p95_ms": 331.2,
+      "max_ms": 357.7,
+      "payload_bytes": 34504,
+      "budget_ms": null
+    },
+    {
+      "endpoint": "products",
+      "params": {
+        "date_from": "2025-08-27",
+        "date_to": "2026-09-30"
+      },
+      "p50_ms": 368.6,
+      "p95_ms": 454.8,
+      "max_ms": 458.8,
+      "payload_bytes": 45468,
+      "budget_ms": 500
+    },
+    {
+      "endpoint": "categories",
+      "params": {
+        "date_from": "2025-08-27",
+        "date_to": "2026-09-30"
+      },
+      "p50_ms": 337.5,
+      "p95_ms": 386.6,
+      "max_ms": 443.4,
+      "payload_bytes": 3720,
+      "budget_ms": 500
+    },
+    {
+      "endpoint": "daily",
+      "params": {
+        "date_from": "2025-08-27",
+        "date_to": "2026-09-30"
+      },
+      "p50_ms": 299.7,
+      "p95_ms": 376.6,
+      "max_ms": 453.9,
+      "payload_bytes": 87802,
+      "budget_ms": 300
+    },
+    {
+      "endpoint": "hourly",
+      "params": {
+        "date_from": "2026-08-31",
+        "date_to": "2026-09-30"
+      },
+      "p50_ms": 138.2,
+      "p95_ms": 160.3,
+      "max_ms": 240.1,
+      "payload_bytes": 94189,
+      "budget_ms": 300
+    },
+    {
+      "endpoint": "peak-hours",
+      "params": {
+        "lookback_days": 90
+      },
+      "p50_ms": 211.2,
+      "p95_ms": 237.7,
+      "max_ms": 289.2,
+      "payload_bytes": 2459,
+      "budget_ms": 300
+    },
+    {
+      "endpoint": "slow-moving",
+      "params": {
+        "days": 365,
+        "threshold": 0
+      },
+      "p50_ms": 413.6,
+      "p95_ms": 451.7,
+      "max_ms": 453.3,
+      "payload_bytes": 6356,
+      "budget_ms": null
+    },
+    {
+      "endpoint": "voided",
+      "params": {
+        "date_from": "2025-08-27",
+        "date_to": "2026-09-30"
+      },
+      "p50_ms": 57.1,
+      "p95_ms": 142.9,
+      "max_ms": 163.4,
+      "payload_bytes": 31616,
+      "budget_ms": null
+    },
+    {
+      "endpoint": "suppliers",
+      "params": {
+        "date_from": "2025-08-27",
+        "date_to": "2026-09-30"
+      },
+      "p50_ms": 20.5,
+      "p95_ms": 24.4,
+      "max_ms": 123.3,
+      "payload_bytes": 165,
+      "budget_ms": null
+    },
+    {
+      "endpoint": "dashboard",
+      "params": {},
+      "p50_ms": 45.5,
+      "p95_ms": 81.5,
+      "max_ms": 136.7,
+      "payload_bytes": 2068,
+      "budget_ms": 400
+    }
+  ],
+  "plans": {
+    "financial": [
+      {
+        "sql": "SELECT coalesce(sum(CASE WHEN (sale_lines.product_id IS NULL OR sale_lines.pack_id IS NULL) THEN sale_lines.quantity ELSE %(param_1)s END), %(coalesce_2)s) AS c",
+        "execution_ms": 124.49,
+        "plan_top": "Finalize Aggregate  (cost=18144.53..18144.54 rows=1 width=64) (actual time=119.056..124.448 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT sales.device_id, coalesce(sum(sales.subtotal), %(coalesce_2)s) AS coalesce_1, coalesce(sum(sales.total), %(coalesce_4)s) AS coalesce_3, count(sales.id) A",
+        "execution_ms": 84.62,
+        "plan_top": "WindowAgg  (cost=10434.96..10435.46 rows=2 width=686) (actual time=79.298..84.288 rows=2.00 loops=1)"
+      },
+      {
+        "sql": "SELECT (SELECT coalesce(sum(return_lines.unit_cost * coalesce(return_lines.quantity_base, return_lines.quantity * coalesce(return_lines.selling_unit_multiplier,",
+        "execution_ms": 11.24,
+        "plan_top": "Result  (cost=1841.37..1841.38 rows=1 width=64) (actual time=11.123..11.126 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT anon_1.device_id, anon_1.invoice_count, anon_1.returns_total, sum(anon_1.invoice_count) OVER () AS anon_2, sum(anon_1.returns_total) OVER () AS anon_3 \nF",
+        "execution_ms": 2.49,
+        "plan_top": "WindowAgg  (cost=317.92..317.94 rows=1 width=110) (actual time=2.455..2.456 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT count(expenses.id) AS count_1, coalesce(sum(expenses.amount), %(coalesce_2)s) AS coalesce_1, coalesce(sum(CASE WHEN (expenses.paid_from_drawer IS true) T",
+        "execution_ms": 1.39,
+        "plan_top": "Aggregate  (cost=201.97..201.98 rows=1 width=72) (actual time=1.368..1.368 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT auth_sessions.user_id AS auth_sessions_user_id, auth_sessions.token_hash AS auth_sessions_token_hash, auth_sessions.device_name AS auth_sessions_device_n",
+        "execution_ms": 0.08,
+        "plan_top": "Seq Scan on auth_sessions  (cost=0.00..1.11 rows=1 width=653) (actual time=0.017..0.018 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT coalesce(sum(customers.balance), %(coalesce_2)s) AS coalesce_1 \nFROM customers \nWHERE customers.balance > %(balance_1)s",
+        "execution_ms": 0.06,
+        "plan_top": "Aggregate  (cost=3.88..3.89 rows=1 width=32) (actual time=0.043..0.043 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT users.id AS users_id, users.full_name AS users_full_name, users.pin_hash AS users_pin_hash, users.is_active AS users_is_active, users.failed_login_attemp",
+        "execution_ms": 0.05,
+        "plan_top": "Seq Scan on users  (cost=0.00..1.10 rows=1 width=895) (actual time=0.027..0.028 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT roles.id AS roles_id, roles.name AS roles_name, roles.description AS roles_description, roles.created_at AS roles_created_at, roles.updated_at AS roles_u",
+        "execution_ms": 0.04,
+        "plan_top": "Seq Scan on roles  (cost=0.00..1.14 rows=1 width=666) (actual time=0.024..0.025 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT user_roles.user_id AS user_roles_user_id, user_roles.role_id AS user_roles_role_id, user_roles.id AS user_roles_id, user_roles.created_at AS user_roles_c",
+        "execution_ms": 0.03,
+        "plan_top": "Seq Scan on user_roles  (cost=0.00..2.10 rows=1 width=64) (actual time=0.017..0.018 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT permissions.id AS permissions_id, permissions.scope AS permissions_scope, permissions.description AS permissions_description, permissions.created_at AS p",
+        "execution_ms": 0.03,
+        "plan_top": "Seq Scan on permissions  (cost=0.07..1.24 rows=10 width=666) (actual time=0.015..0.019 rows=30.00 loops=1)"
+      },
+      {
+        "sql": "SELECT count(*) AS count_1 \nFROM customers \nWHERE customers.balance > %(balance_1)s",
+        "execution_ms": 0.03,
+        "plan_top": "Aggregate  (cost=3.88..3.89 rows=1 width=8) (actual time=0.021..0.021 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT role_permissions.role_id AS role_permissions_role_id, role_permissions.permission_id AS role_permissions_permission_id, role_permissions.id AS role_permi",
+        "execution_ms": 0.02,
+        "plan_top": "Seq Scan on role_permissions  (cost=0.00..1.83 rows=30 width=64) (actual time=0.013..0.015 rows=30.00 loops=1)"
+      },
+      {
+        "sql": "SELECT permissions.id AS permissions_id, permissions.scope AS permissions_scope, permissions.description AS permissions_description, permissions.created_at AS p",
+        "execution_ms": 0.02,
+        "plan_top": "Seq Scan on permissions  (cost=0.07..1.24 rows=10 width=666) (actual time=0.007..0.012 rows=30.00 loops=1)"
+      },
+      {
+        "sql": "SELECT users.full_name AS users_full_name, users.pin_hash AS users_pin_hash, users.is_active AS users_is_active, users.failed_login_attempts AS users_failed_log",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on users  (cost=0.00..1.10 rows=1 width=895) (actual time=0.006..0.007 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT auth_sessions.user_id AS auth_sessions_user_id, auth_sessions.token_hash AS auth_sessions_token_hash, auth_sessions.device_name AS auth_sessions_device_n",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on auth_sessions  (cost=0.00..1.11 rows=9 width=653) (actual time=0.007..0.009 rows=9.00 loops=1)"
+      },
+      {
+        "sql": "SELECT user_roles.user_id AS user_roles_user_id, user_roles.role_id AS user_roles_role_id, user_roles.id AS user_roles_id, user_roles.created_at AS user_roles_c",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on user_roles  (cost=0.00..2.10 rows=1 width=64) (actual time=0.007..0.007 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT roles.id AS roles_id, roles.name AS roles_name, roles.description AS roles_description, roles.created_at AS roles_created_at, roles.updated_at AS roles_u",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on roles  (cost=0.00..1.14 rows=1 width=666) (actual time=0.006..0.007 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT role_permissions.role_id AS role_permissions_role_id, role_permissions.permission_id AS role_permissions_permission_id, role_permissions.id AS role_permi",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on role_permissions  (cost=0.00..1.83 rows=30 width=64) (actual time=0.006..0.009 rows=30.00 loops=1)"
+      }
+    ],
+    "sales": [
+      {
+        "sql": "SELECT sales.invoice_number, sales.customer_id, sales.user_id, sales.status, sales.subtotal, sales.discount, sales.total, sales.paid, sales.change, sales.paymen",
+        "execution_ms": 130.95,
+        "plan_top": "Limit  (cost=9486.15..9497.80 rows=100 width=753) (actual time=127.063..130.847 rows=100.00 loops=1)"
+      },
+      {
+        "sql": "SELECT count(sales.id) AS count_1, coalesce(sum(sales.subtotal), %(coalesce_2)s) AS coalesce_1, coalesce(sum(sales.subtotal - sales.total), %(coalesce_4)s) AS c",
+        "execution_ms": 49.55,
+        "plan_top": "Finalize Aggregate  (cost=7317.83..7317.84 rows=1 width=168) (actual time=44.523..49.502 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT sale_lines.sale_id AS sale_lines_sale_id, sale_lines.product_id AS sale_lines_product_id, sale_lines.variant_id AS sale_lines_variant_id, sale_lines.pack",
+        "execution_ms": 0.7,
+        "plan_top": "Bitmap Heap Scan on sale_lines  (cost=432.06..1214.50 rows=227 width=716) (actual time=0.453..0.684 rows=204.00 loops=1)"
+      },
+      {
+        "sql": "SELECT products.id AS products_id, products.name AS products_name, products.barcode AS products_barcode, products.sku AS products_sku, products.description AS p",
+        "execution_ms": 0.07,
+        "plan_top": "Seq Scan on products  (cost=0.29..7.29 rows=116 width=781) (actual time=0.019..0.056 rows=116.00 loops=1)"
+      },
+      {
+        "sql": "SELECT customers.id AS customers_id, customers.name AS customers_name, customers.phone AS customers_phone, customers.address AS customers_address, customers.bal",
+        "execution_ms": 0.03,
+        "plan_top": "Seq Scan on customers  (cost=0.02..4.27 rows=9 width=170) (actual time=0.012..0.024 rows=9.00 loops=1)"
+      },
+      {
+        "sql": "SELECT auth_sessions.user_id AS auth_sessions_user_id, auth_sessions.token_hash AS auth_sessions_token_hash, auth_sessions.device_name AS auth_sessions_device_n",
+        "execution_ms": 0.02,
+        "plan_top": "Seq Scan on auth_sessions  (cost=0.00..1.11 rows=1 width=653) (actual time=0.011..0.012 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT permissions.id AS permissions_id, permissions.scope AS permissions_scope, permissions.description AS permissions_description, permissions.created_at AS p",
+        "execution_ms": 0.02,
+        "plan_top": "Seq Scan on permissions  (cost=0.07..1.24 rows=10 width=666) (actual time=0.009..0.013 rows=30.00 loops=1)"
+      },
+      {
+        "sql": "SELECT permissions.id AS permissions_id, permissions.scope AS permissions_scope, permissions.description AS permissions_description, permissions.created_at AS p",
+        "execution_ms": 0.02,
+        "plan_top": "Seq Scan on permissions  (cost=0.07..1.24 rows=10 width=666) (actual time=0.006..0.010 rows=30.00 loops=1)"
+      },
+      {
+        "sql": "SELECT categories.id AS categories_id, categories.name AS categories_name, categories.parent_id AS categories_parent_id, categories.sort_order AS categories_sor",
+        "execution_ms": 0.02,
+        "plan_top": "Seq Scan on categories  (cost=0.00..1.16 rows=8 width=71) (actual time=0.011..0.013 rows=8.00 loops=1)"
+      },
+      {
+        "sql": "SELECT users.id AS users_id, users.full_name AS users_full_name, users.pin_hash AS users_pin_hash, users.is_active AS users_is_active, users.failed_login_attemp",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on users  (cost=0.00..1.10 rows=1 width=895) (actual time=0.007..0.007 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT user_roles.user_id AS user_roles_user_id, user_roles.role_id AS user_roles_role_id, user_roles.id AS user_roles_id, user_roles.created_at AS user_roles_c",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on user_roles  (cost=0.00..2.10 rows=1 width=64) (actual time=0.006..0.006 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT roles.id AS roles_id, roles.name AS roles_name, roles.description AS roles_description, roles.created_at AS roles_created_at, roles.updated_at AS roles_u",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on roles  (cost=0.00..1.14 rows=1 width=666) (actual time=0.006..0.007 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT role_permissions.role_id AS role_permissions_role_id, role_permissions.permission_id AS role_permissions_permission_id, role_permissions.id AS role_permi",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on role_permissions  (cost=0.00..1.83 rows=30 width=64) (actual time=0.006..0.009 rows=30.00 loops=1)"
+      },
+      {
+        "sql": "SELECT users.full_name AS users_full_name, users.pin_hash AS users_pin_hash, users.is_active AS users_is_active, users.failed_login_attempts AS users_failed_log",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on users  (cost=0.00..1.10 rows=1 width=895) (actual time=0.005..0.006 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT auth_sessions.user_id AS auth_sessions_user_id, auth_sessions.token_hash AS auth_sessions_token_hash, auth_sessions.device_name AS auth_sessions_device_n",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on auth_sessions  (cost=0.00..1.11 rows=9 width=653) (actual time=0.006..0.008 rows=9.00 loops=1)"
+      },
+      {
+        "sql": "SELECT user_roles.user_id AS user_roles_user_id, user_roles.role_id AS user_roles_role_id, user_roles.id AS user_roles_id, user_roles.created_at AS user_roles_c",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on user_roles  (cost=0.00..2.10 rows=1 width=64) (actual time=0.005..0.005 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT roles.id AS roles_id, roles.name AS roles_name, roles.description AS roles_description, roles.created_at AS roles_created_at, roles.updated_at AS roles_u",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on roles  (cost=0.00..1.14 rows=1 width=666) (actual time=0.005..0.005 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT role_permissions.role_id AS role_permissions_role_id, role_permissions.permission_id AS role_permissions_permission_id, role_permissions.id AS role_permi",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on role_permissions  (cost=0.00..1.83 rows=30 width=64) (actual time=0.005..0.008 rows=30.00 loops=1)"
+      },
+      {
+        "sql": "SELECT sale_payments.sale_id AS sale_payments_sale_id, sale_payments.method AS sale_payments_method, sale_payments.amount AS sale_payments_amount, sale_payments",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on sale_payments  (cost=0.25..0.25 rows=1 width=352) (actual time=0.007..0.007 rows=0.00 loops=1)"
+      }
+    ],
+    "products": [
+      {
+        "sql": "SELECT product_agg.item_id, product_agg.kind, product_agg.name, product_agg.sku, product_agg.category_id, product_agg.category, sum(product_agg.qty_sold) AS sum",
+        "execution_ms": 232.59,
+        "plan_top": "Limit  (cost=26270.66..26271.91 rows=500 width=784) (actual time=229.665..231.989 rows=170.00 loops=1)"
+      },
+      {
+        "sql": "SELECT coalesce(sum(sales.subtotal), %(coalesce_2)s) AS coalesce_1, coalesce(sum(sales.total), %(coalesce_4)s) AS coalesce_3, count(sales.id) AS count_1, coales",
+        "execution_ms": 67.59,
+        "plan_top": "Finalize Aggregate  (cost=10236.31..10236.32 rows=1 width=328) (actual time=62.926..67.537 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT (SELECT coalesce(sum(return_lines.unit_cost * coalesce(return_lines.quantity_base, return_lines.quantity * coalesce(return_lines.selling_unit_multiplier,",
+        "execution_ms": 9.49,
+        "plan_top": "Result  (cost=1841.37..1841.38 rows=1 width=64) (actual time=9.395..9.398 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT anon_1.device_id, anon_1.invoice_count, anon_1.returns_total, sum(anon_1.invoice_count) OVER () AS anon_2, sum(anon_1.returns_total) OVER () AS anon_3 \nF",
+        "execution_ms": 2.23,
+        "plan_top": "WindowAgg  (cost=317.92..317.94 rows=1 width=110) (actual time=2.199..2.200 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT count(expenses.id) AS count_1, coalesce(sum(expenses.amount), %(coalesce_2)s) AS coalesce_1, coalesce(sum(CASE WHEN (expenses.paid_from_drawer IS true) T",
+        "execution_ms": 1.27,
+        "plan_top": "Aggregate  (cost=201.97..201.98 rows=1 width=72) (actual time=1.252..1.253 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT coalesce(sum(customers.balance), %(coalesce_2)s) AS coalesce_1 \nFROM customers \nWHERE customers.balance > %(balance_1)s",
+        "execution_ms": 0.03,
+        "plan_top": "Aggregate  (cost=3.88..3.89 rows=1 width=32) (actual time=0.018..0.019 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT auth_sessions.user_id AS auth_sessions_user_id, auth_sessions.token_hash AS auth_sessions_token_hash, auth_sessions.device_name AS auth_sessions_device_n",
+        "execution_ms": 0.02,
+        "plan_top": "Seq Scan on auth_sessions  (cost=0.00..1.11 rows=1 width=653) (actual time=0.009..0.010 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT permissions.id AS permissions_id, permissions.scope AS permissions_scope, permissions.description AS permissions_description, permissions.created_at AS p",
+        "execution_ms": 0.02,
+        "plan_top": "Seq Scan on permissions  (cost=0.07..1.24 rows=10 width=666) (actual time=0.009..0.014 rows=30.00 loops=1)"
+      },
+      {
+        "sql": "SELECT permissions.id AS permissions_id, permissions.scope AS permissions_scope, permissions.description AS permissions_description, permissions.created_at AS p",
+        "execution_ms": 0.02,
+        "plan_top": "Seq Scan on permissions  (cost=0.07..1.24 rows=10 width=666) (actual time=0.007..0.011 rows=30.00 loops=1)"
+      },
+      {
+        "sql": "SELECT count(*) AS count_1 \nFROM customers \nWHERE customers.balance > %(balance_1)s",
+        "execution_ms": 0.02,
+        "plan_top": "Aggregate  (cost=3.88..3.89 rows=1 width=8) (actual time=0.016..0.016 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT users.id AS users_id, users.full_name AS users_full_name, users.pin_hash AS users_pin_hash, users.is_active AS users_is_active, users.failed_login_attemp",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on users  (cost=0.00..1.10 rows=1 width=895) (actual time=0.007..0.007 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT user_roles.user_id AS user_roles_user_id, user_roles.role_id AS user_roles_role_id, user_roles.id AS user_roles_id, user_roles.created_at AS user_roles_c",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on user_roles  (cost=0.00..2.10 rows=1 width=64) (actual time=0.006..0.007 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT roles.id AS roles_id, roles.name AS roles_name, roles.description AS roles_description, roles.created_at AS roles_created_at, roles.updated_at AS roles_u",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on roles  (cost=0.00..1.14 rows=1 width=666) (actual time=0.006..0.007 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT role_permissions.role_id AS role_permissions_role_id, role_permissions.permission_id AS role_permissions_permission_id, role_permissions.id AS role_permi",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on role_permissions  (cost=0.00..1.83 rows=30 width=64) (actual time=0.006..0.009 rows=30.00 loops=1)"
+      },
+      {
+        "sql": "SELECT users.full_name AS users_full_name, users.pin_hash AS users_pin_hash, users.is_active AS users_is_active, users.failed_login_attempts AS users_failed_log",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on users  (cost=0.00..1.10 rows=1 width=895) (actual time=0.006..0.006 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT auth_sessions.user_id AS auth_sessions_user_id, auth_sessions.token_hash AS auth_sessions_token_hash, auth_sessions.device_name AS auth_sessions_device_n",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on auth_sessions  (cost=0.00..1.11 rows=9 width=653) (actual time=0.006..0.007 rows=9.00 loops=1)"
+      },
+      {
+        "sql": "SELECT user_roles.user_id AS user_roles_user_id, user_roles.role_id AS user_roles_role_id, user_roles.id AS user_roles_id, user_roles.created_at AS user_roles_c",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on user_roles  (cost=0.00..2.10 rows=1 width=64) (actual time=0.005..0.005 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT roles.id AS roles_id, roles.name AS roles_name, roles.description AS roles_description, roles.created_at AS roles_created_at, roles.updated_at AS roles_u",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on roles  (cost=0.00..1.14 rows=1 width=666) (actual time=0.005..0.006 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT role_permissions.role_id AS role_permissions_role_id, role_permissions.permission_id AS role_permissions_permission_id, role_permissions.id AS role_permi",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on role_permissions  (cost=0.00..1.83 rows=30 width=64) (actual time=0.005..0.008 rows=30.00 loops=1)"
+      }
+    ],
+    "categories": [
+      {
+        "sql": "SELECT category_src.category_id, category_src.category, sum(category_src.qty_sold) AS sum_1, sum(category_src.gross) AS sum_2, sum(category_src.line_discounts) ",
+        "execution_ms": 257.7,
+        "plan_top": "Limit  (cost=26329.81..26331.06 rows=500 width=586) (actual time=255.899..257.340 rows=9.00 loops=1)"
+      },
+      {
+        "sql": "SELECT coalesce(sum(sales.subtotal), %(coalesce_2)s) AS coalesce_1, coalesce(sum(sales.total), %(coalesce_4)s) AS coalesce_3, count(sales.id) AS count_1, coales",
+        "execution_ms": 128.41,
+        "plan_top": "Finalize Aggregate  (cost=10236.31..10236.32 rows=1 width=328) (actual time=125.029..128.364 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT (SELECT coalesce(sum(return_lines.unit_cost * coalesce(return_lines.quantity_base, return_lines.quantity * coalesce(return_lines.selling_unit_multiplier,",
+        "execution_ms": 9.87,
+        "plan_top": "Result  (cost=1841.37..1841.38 rows=1 width=64) (actual time=9.775..9.778 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT anon_1.device_id, anon_1.invoice_count, anon_1.returns_total, sum(anon_1.invoice_count) OVER () AS anon_2, sum(anon_1.returns_total) OVER () AS anon_3 \nF",
+        "execution_ms": 2.21,
+        "plan_top": "WindowAgg  (cost=317.92..317.94 rows=1 width=110) (actual time=2.181..2.181 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT count(expenses.id) AS count_1, coalesce(sum(expenses.amount), %(coalesce_2)s) AS coalesce_1, coalesce(sum(CASE WHEN (expenses.paid_from_drawer IS true) T",
+        "execution_ms": 1.26,
+        "plan_top": "Aggregate  (cost=201.97..201.98 rows=1 width=72) (actual time=1.246..1.246 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT coalesce(sum(customers.balance), %(coalesce_2)s) AS coalesce_1 \nFROM customers \nWHERE customers.balance > %(balance_1)s",
+        "execution_ms": 0.03,
+        "plan_top": "Aggregate  (cost=3.88..3.89 rows=1 width=32) (actual time=0.019..0.020 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT auth_sessions.user_id AS auth_sessions_user_id, auth_sessions.token_hash AS auth_sessions_token_hash, auth_sessions.device_name AS auth_sessions_device_n",
+        "execution_ms": 0.02,
+        "plan_top": "Seq Scan on auth_sessions  (cost=0.00..1.11 rows=1 width=653) (actual time=0.010..0.011 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT role_permissions.role_id AS role_permissions_role_id, role_permissions.permission_id AS role_permissions_permission_id, role_permissions.id AS role_permi",
+        "execution_ms": 0.02,
+        "plan_top": "Seq Scan on role_permissions  (cost=0.00..1.83 rows=30 width=64) (actual time=0.008..0.011 rows=30.00 loops=1)"
+      },
+      {
+        "sql": "SELECT permissions.id AS permissions_id, permissions.scope AS permissions_scope, permissions.description AS permissions_description, permissions.created_at AS p",
+        "execution_ms": 0.02,
+        "plan_top": "Seq Scan on permissions  (cost=0.07..1.24 rows=10 width=666) (actual time=0.009..0.015 rows=30.00 loops=1)"
+      },
+      {
+        "sql": "SELECT permissions.id AS permissions_id, permissions.scope AS permissions_scope, permissions.description AS permissions_description, permissions.created_at AS p",
+        "execution_ms": 0.02,
+        "plan_top": "Seq Scan on permissions  (cost=0.07..1.24 rows=10 width=666) (actual time=0.006..0.011 rows=30.00 loops=1)"
+      },
+      {
+        "sql": "SELECT count(*) AS count_1 \nFROM customers \nWHERE customers.balance > %(balance_1)s",
+        "execution_ms": 0.02,
+        "plan_top": "Aggregate  (cost=3.88..3.89 rows=1 width=8) (actual time=0.017..0.017 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT users.id AS users_id, users.full_name AS users_full_name, users.pin_hash AS users_pin_hash, users.is_active AS users_is_active, users.failed_login_attemp",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on users  (cost=0.00..1.10 rows=1 width=895) (actual time=0.008..0.008 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT user_roles.user_id AS user_roles_user_id, user_roles.role_id AS user_roles_role_id, user_roles.id AS user_roles_id, user_roles.created_at AS user_roles_c",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on user_roles  (cost=0.00..2.10 rows=1 width=64) (actual time=0.006..0.007 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT roles.id AS roles_id, roles.name AS roles_name, roles.description AS roles_description, roles.created_at AS roles_created_at, roles.updated_at AS roles_u",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on roles  (cost=0.00..1.14 rows=1 width=666) (actual time=0.007..0.007 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT users.full_name AS users_full_name, users.pin_hash AS users_pin_hash, users.is_active AS users_is_active, users.failed_login_attempts AS users_failed_log",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on users  (cost=0.00..1.10 rows=1 width=895) (actual time=0.005..0.006 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT auth_sessions.user_id AS auth_sessions_user_id, auth_sessions.token_hash AS auth_sessions_token_hash, auth_sessions.device_name AS auth_sessions_device_n",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on auth_sessions  (cost=0.00..1.11 rows=9 width=653) (actual time=0.006..0.007 rows=9.00 loops=1)"
+      },
+      {
+        "sql": "SELECT user_roles.user_id AS user_roles_user_id, user_roles.role_id AS user_roles_role_id, user_roles.id AS user_roles_id, user_roles.created_at AS user_roles_c",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on user_roles  (cost=0.00..2.10 rows=1 width=64) (actual time=0.005..0.005 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT roles.id AS roles_id, roles.name AS roles_name, roles.description AS roles_description, roles.created_at AS roles_created_at, roles.updated_at AS roles_u",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on roles  (cost=0.00..1.14 rows=1 width=666) (actual time=0.005..0.005 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT role_permissions.role_id AS role_permissions_role_id, role_permissions.permission_id AS role_permissions_permission_id, role_permissions.id AS role_permi",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on role_permissions  (cost=0.00..1.83 rows=30 width=64) (actual time=0.005..0.008 rows=30.00 loops=1)"
+      }
+    ],
+    "daily": [
+      {
+        "sql": "SELECT EXTRACT(year FROM day_agg.bucket) AS anon_1, EXTRACT(month FROM day_agg.bucket) AS anon_2, EXTRACT(day FROM day_agg.bucket) AS anon_3, sum(day_agg.net_sa",
+        "execution_ms": 283.79,
+        "plan_top": "WindowAgg  (cost=35607.69..35609.30 rows=200 width=768) (actual time=281.416..282.972 rows=400.00 loops=1)"
+      },
+      {
+        "sql": "SELECT (SELECT coalesce(sum(return_lines.unit_cost * coalesce(return_lines.quantity_base, return_lines.quantity * coalesce(return_lines.selling_unit_multiplier,",
+        "execution_ms": 9.64,
+        "plan_top": "Result  (cost=1841.37..1841.38 rows=1 width=64) (actual time=9.517..9.519 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT anon_1.device_id, anon_1.invoice_count, anon_1.returns_total, sum(anon_1.invoice_count) OVER () AS anon_2, sum(anon_1.returns_total) OVER () AS anon_3 \nF",
+        "execution_ms": 2.29,
+        "plan_top": "WindowAgg  (cost=317.92..317.94 rows=1 width=110) (actual time=2.268..2.268 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT count(expenses.id) AS count_1, coalesce(sum(expenses.amount), %(coalesce_2)s) AS coalesce_1, coalesce(sum(CASE WHEN (expenses.paid_from_drawer IS true) T",
+        "execution_ms": 1.24,
+        "plan_top": "Aggregate  (cost=201.97..201.98 rows=1 width=72) (actual time=1.224..1.224 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT auth_sessions.user_id AS auth_sessions_user_id, auth_sessions.token_hash AS auth_sessions_token_hash, auth_sessions.device_name AS auth_sessions_device_n",
+        "execution_ms": 0.03,
+        "plan_top": "Seq Scan on auth_sessions  (cost=0.00..1.11 rows=1 width=653) (actual time=0.015..0.016 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT coalesce(sum(customers.balance), %(coalesce_2)s) AS coalesce_1 \nFROM customers \nWHERE customers.balance > %(balance_1)s",
+        "execution_ms": 0.03,
+        "plan_top": "Aggregate  (cost=3.88..3.89 rows=1 width=32) (actual time=0.020..0.020 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT permissions.id AS permissions_id, permissions.scope AS permissions_scope, permissions.description AS permissions_description, permissions.created_at AS p",
+        "execution_ms": 0.02,
+        "plan_top": "Seq Scan on permissions  (cost=0.07..1.24 rows=10 width=666) (actual time=0.008..0.012 rows=30.00 loops=1)"
+      },
+      {
+        "sql": "SELECT permissions.id AS permissions_id, permissions.scope AS permissions_scope, permissions.description AS permissions_description, permissions.created_at AS p",
+        "execution_ms": 0.02,
+        "plan_top": "Seq Scan on permissions  (cost=0.07..1.24 rows=10 width=666) (actual time=0.006..0.010 rows=30.00 loops=1)"
+      },
+      {
+        "sql": "SELECT count(*) AS count_1 \nFROM customers \nWHERE customers.balance > %(balance_1)s",
+        "execution_ms": 0.02,
+        "plan_top": "Aggregate  (cost=3.88..3.89 rows=1 width=8) (actual time=0.017..0.017 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT users.id AS users_id, users.full_name AS users_full_name, users.pin_hash AS users_pin_hash, users.is_active AS users_is_active, users.failed_login_attemp",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on users  (cost=0.00..1.10 rows=1 width=895) (actual time=0.008..0.008 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT user_roles.user_id AS user_roles_user_id, user_roles.role_id AS user_roles_role_id, user_roles.id AS user_roles_id, user_roles.created_at AS user_roles_c",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on user_roles  (cost=0.00..2.10 rows=1 width=64) (actual time=0.006..0.006 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT roles.id AS roles_id, roles.name AS roles_name, roles.description AS roles_description, roles.created_at AS roles_created_at, roles.updated_at AS roles_u",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on roles  (cost=0.00..1.14 rows=1 width=666) (actual time=0.008..0.009 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT role_permissions.role_id AS role_permissions_role_id, role_permissions.permission_id AS role_permissions_permission_id, role_permissions.id AS role_permi",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on role_permissions  (cost=0.00..1.83 rows=30 width=64) (actual time=0.006..0.009 rows=30.00 loops=1)"
+      },
+      {
+        "sql": "SELECT users.full_name AS users_full_name, users.pin_hash AS users_pin_hash, users.is_active AS users_is_active, users.failed_login_attempts AS users_failed_log",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on users  (cost=0.00..1.10 rows=1 width=895) (actual time=0.006..0.007 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT auth_sessions.user_id AS auth_sessions_user_id, auth_sessions.token_hash AS auth_sessions_token_hash, auth_sessions.device_name AS auth_sessions_device_n",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on auth_sessions  (cost=0.00..1.11 rows=9 width=653) (actual time=0.006..0.008 rows=9.00 loops=1)"
+      },
+      {
+        "sql": "SELECT user_roles.user_id AS user_roles_user_id, user_roles.role_id AS user_roles_role_id, user_roles.id AS user_roles_id, user_roles.created_at AS user_roles_c",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on user_roles  (cost=0.00..2.10 rows=1 width=64) (actual time=0.005..0.005 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT roles.id AS roles_id, roles.name AS roles_name, roles.description AS roles_description, roles.created_at AS roles_created_at, roles.updated_at AS roles_u",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on roles  (cost=0.00..1.14 rows=1 width=666) (actual time=0.005..0.006 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT role_permissions.role_id AS role_permissions_role_id, role_permissions.permission_id AS role_permissions_permission_id, role_permissions.id AS role_permi",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on role_permissions  (cost=0.00..1.83 rows=30 width=64) (actual time=0.005..0.008 rows=30.00 loops=1)"
+      }
+    ],
+    "hourly": [
+      {
+        "sql": "SELECT EXTRACT(year FROM hour_agg.bucket) AS anon_1, EXTRACT(month FROM hour_agg.bucket) AS anon_2, EXTRACT(day FROM hour_agg.bucket) AS anon_3, EXTRACT(hour FR",
+        "execution_ms": 128.5,
+        "plan_top": "WindowAgg  (cost=27972.77..27974.87 rows=200 width=704) (actual time=127.491..127.688 rows=732.00 loops=1)"
+      },
+      {
+        "sql": "SELECT (SELECT coalesce(sum(return_lines.unit_cost * coalesce(return_lines.quantity_base, return_lines.quantity * coalesce(return_lines.selling_unit_multiplier,",
+        "execution_ms": 3.27,
+        "plan_top": "Result  (cost=1141.76..1141.77 rows=1 width=64) (actual time=3.244..3.246 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT anon_1.device_id, anon_1.invoice_count, anon_1.returns_total, sum(anon_1.invoice_count) OVER () AS anon_2, sum(anon_1.returns_total) OVER () AS anon_3 \nF",
+        "execution_ms": 0.34,
+        "plan_top": "WindowAgg  (cost=169.28..169.30 rows=1 width=110) (actual time=0.323..0.323 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT count(expenses.id) AS count_1, coalesce(sum(expenses.amount), %(coalesce_2)s) AS coalesce_1, coalesce(sum(CASE WHEN (expenses.paid_from_drawer IS true) T",
+        "execution_ms": 0.22,
+        "plan_top": "Aggregate  (cost=99.88..99.89 rows=1 width=72) (actual time=0.211..0.212 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT coalesce(sum(customers.balance), %(coalesce_2)s) AS coalesce_1 \nFROM customers \nWHERE customers.balance > %(balance_1)s",
+        "execution_ms": 0.03,
+        "plan_top": "Aggregate  (cost=3.88..3.89 rows=1 width=32) (actual time=0.018..0.018 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT auth_sessions.user_id AS auth_sessions_user_id, auth_sessions.token_hash AS auth_sessions_token_hash, auth_sessions.device_name AS auth_sessions_device_n",
+        "execution_ms": 0.02,
+        "plan_top": "Seq Scan on auth_sessions  (cost=0.00..1.11 rows=1 width=653) (actual time=0.013..0.013 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT permissions.id AS permissions_id, permissions.scope AS permissions_scope, permissions.description AS permissions_description, permissions.created_at AS p",
+        "execution_ms": 0.02,
+        "plan_top": "Seq Scan on permissions  (cost=0.07..1.24 rows=10 width=666) (actual time=0.008..0.012 rows=30.00 loops=1)"
+      },
+      {
+        "sql": "SELECT permissions.id AS permissions_id, permissions.scope AS permissions_scope, permissions.description AS permissions_description, permissions.created_at AS p",
+        "execution_ms": 0.02,
+        "plan_top": "Seq Scan on permissions  (cost=0.07..1.24 rows=10 width=666) (actual time=0.006..0.011 rows=30.00 loops=1)"
+      },
+      {
+        "sql": "SELECT count(*) AS count_1 \nFROM customers \nWHERE customers.balance > %(balance_1)s",
+        "execution_ms": 0.02,
+        "plan_top": "Aggregate  (cost=3.88..3.89 rows=1 width=8) (actual time=0.016..0.016 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT users.id AS users_id, users.full_name AS users_full_name, users.pin_hash AS users_pin_hash, users.is_active AS users_is_active, users.failed_login_attemp",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on users  (cost=0.00..1.10 rows=1 width=895) (actual time=0.006..0.007 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT user_roles.user_id AS user_roles_user_id, user_roles.role_id AS user_roles_role_id, user_roles.id AS user_roles_id, user_roles.created_at AS user_roles_c",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on user_roles  (cost=0.00..2.10 rows=1 width=64) (actual time=0.006..0.006 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT roles.id AS roles_id, roles.name AS roles_name, roles.description AS roles_description, roles.created_at AS roles_created_at, roles.updated_at AS roles_u",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on roles  (cost=0.00..1.14 rows=1 width=666) (actual time=0.006..0.006 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT role_permissions.role_id AS role_permissions_role_id, role_permissions.permission_id AS role_permissions_permission_id, role_permissions.id AS role_permi",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on role_permissions  (cost=0.00..1.83 rows=30 width=64) (actual time=0.007..0.010 rows=30.00 loops=1)"
+      },
+      {
+        "sql": "SELECT users.full_name AS users_full_name, users.pin_hash AS users_pin_hash, users.is_active AS users_is_active, users.failed_login_attempts AS users_failed_log",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on users  (cost=0.00..1.10 rows=1 width=895) (actual time=0.005..0.006 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT auth_sessions.user_id AS auth_sessions_user_id, auth_sessions.token_hash AS auth_sessions_token_hash, auth_sessions.device_name AS auth_sessions_device_n",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on auth_sessions  (cost=0.00..1.11 rows=9 width=653) (actual time=0.006..0.008 rows=9.00 loops=1)"
+      },
+      {
+        "sql": "SELECT user_roles.user_id AS user_roles_user_id, user_roles.role_id AS user_roles_role_id, user_roles.id AS user_roles_id, user_roles.created_at AS user_roles_c",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on user_roles  (cost=0.00..2.10 rows=1 width=64) (actual time=0.005..0.005 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT roles.id AS roles_id, roles.name AS roles_name, roles.description AS roles_description, roles.created_at AS roles_created_at, roles.updated_at AS roles_u",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on roles  (cost=0.00..1.14 rows=1 width=666) (actual time=0.005..0.005 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT role_permissions.role_id AS role_permissions_role_id, role_permissions.permission_id AS role_permissions_permission_id, role_permissions.id AS role_permi",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on role_permissions  (cost=0.00..1.83 rows=30 width=64) (actual time=0.005..0.008 rows=30.00 loops=1)"
+      }
+    ],
+    "peak-hours": [
+      {
+        "sql": "SELECT EXTRACT(hour FROM peak_src.bucket) AS anon_1, sum(peak_src.sales_total) AS sum_1, sum(peak_src.invoice_count) AS sum_2, sum(peak_src.returns_total) AS su",
+        "execution_ms": 194.39,
+        "plan_top": "Sort  (cost=49908.30..49908.80 rows=200 width=608) (actual time=193.275..193.282 rows=24.00 loops=1)"
+      },
+      {
+        "sql": "SELECT (SELECT coalesce(sum(return_lines.unit_cost * coalesce(return_lines.quantity_base, return_lines.quantity * coalesce(return_lines.selling_unit_multiplier,",
+        "execution_ms": 5.83,
+        "plan_top": "Result  (cost=1463.85..1463.86 rows=1 width=64) (actual time=5.797..5.799 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT anon_1.device_id, anon_1.invoice_count, anon_1.returns_total, sum(anon_1.invoice_count) OVER () AS anon_2, sum(anon_1.returns_total) OVER () AS anon_3 \nF",
+        "execution_ms": 0.63,
+        "plan_top": "WindowAgg  (cost=229.27..229.29 rows=1 width=110) (actual time=0.603..0.604 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT count(expenses.id) AS count_1, coalesce(sum(expenses.amount), %(coalesce_2)s) AS coalesce_1, coalesce(sum(CASE WHEN (expenses.paid_from_drawer IS true) T",
+        "execution_ms": 0.52,
+        "plan_top": "Aggregate  (cost=137.47..137.48 rows=1 width=72) (actual time=0.499..0.500 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT coalesce(sum(customers.balance), %(coalesce_2)s) AS coalesce_1 \nFROM customers \nWHERE customers.balance > %(balance_1)s",
+        "execution_ms": 0.03,
+        "plan_top": "Aggregate  (cost=3.88..3.89 rows=1 width=32) (actual time=0.019..0.019 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT auth_sessions.user_id AS auth_sessions_user_id, auth_sessions.token_hash AS auth_sessions_token_hash, auth_sessions.device_name AS auth_sessions_device_n",
+        "execution_ms": 0.02,
+        "plan_top": "Seq Scan on auth_sessions  (cost=0.00..1.11 rows=1 width=653) (actual time=0.010..0.011 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT permissions.id AS permissions_id, permissions.scope AS permissions_scope, permissions.description AS permissions_description, permissions.created_at AS p",
+        "execution_ms": 0.02,
+        "plan_top": "Seq Scan on permissions  (cost=0.07..1.24 rows=10 width=666) (actual time=0.008..0.012 rows=30.00 loops=1)"
+      },
+      {
+        "sql": "SELECT auth_sessions.user_id AS auth_sessions_user_id, auth_sessions.token_hash AS auth_sessions_token_hash, auth_sessions.device_name AS auth_sessions_device_n",
+        "execution_ms": 0.02,
+        "plan_top": "Seq Scan on auth_sessions  (cost=0.00..1.11 rows=9 width=653) (actual time=0.008..0.010 rows=9.00 loops=1)"
+      },
+      {
+        "sql": "SELECT permissions.id AS permissions_id, permissions.scope AS permissions_scope, permissions.description AS permissions_description, permissions.created_at AS p",
+        "execution_ms": 0.02,
+        "plan_top": "Seq Scan on permissions  (cost=0.07..1.24 rows=10 width=666) (actual time=0.006..0.011 rows=30.00 loops=1)"
+      },
+      {
+        "sql": "SELECT count(*) AS count_1 \nFROM customers \nWHERE customers.balance > %(balance_1)s",
+        "execution_ms": 0.02,
+        "plan_top": "Aggregate  (cost=3.88..3.89 rows=1 width=8) (actual time=0.016..0.016 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT users.id AS users_id, users.full_name AS users_full_name, users.pin_hash AS users_pin_hash, users.is_active AS users_is_active, users.failed_login_attemp",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on users  (cost=0.00..1.10 rows=1 width=895) (actual time=0.008..0.009 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT user_roles.user_id AS user_roles_user_id, user_roles.role_id AS user_roles_role_id, user_roles.id AS user_roles_id, user_roles.created_at AS user_roles_c",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on user_roles  (cost=0.00..2.10 rows=1 width=64) (actual time=0.007..0.008 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT roles.id AS roles_id, roles.name AS roles_name, roles.description AS roles_description, roles.created_at AS roles_created_at, roles.updated_at AS roles_u",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on roles  (cost=0.00..1.14 rows=1 width=666) (actual time=0.007..0.008 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT role_permissions.role_id AS role_permissions_role_id, role_permissions.permission_id AS role_permissions_permission_id, role_permissions.id AS role_permi",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on role_permissions  (cost=0.00..1.83 rows=30 width=64) (actual time=0.006..0.009 rows=30.00 loops=1)"
+      },
+      {
+        "sql": "SELECT users.full_name AS users_full_name, users.pin_hash AS users_pin_hash, users.is_active AS users_is_active, users.failed_login_attempts AS users_failed_log",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on users  (cost=0.00..1.10 rows=1 width=895) (actual time=0.006..0.006 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT user_roles.user_id AS user_roles_user_id, user_roles.role_id AS user_roles_role_id, user_roles.id AS user_roles_id, user_roles.created_at AS user_roles_c",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on user_roles  (cost=0.00..2.10 rows=1 width=64) (actual time=0.005..0.006 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT roles.id AS roles_id, roles.name AS roles_name, roles.description AS roles_description, roles.created_at AS roles_created_at, roles.updated_at AS roles_u",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on roles  (cost=0.00..1.14 rows=1 width=666) (actual time=0.005..0.006 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT role_permissions.role_id AS role_permissions_role_id, role_permissions.permission_id AS role_permissions_permission_id, role_permissions.id AS role_permi",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on role_permissions  (cost=0.00..1.83 rows=30 width=64) (actual time=0.006..0.009 rows=30.00 loops=1)"
+      }
+    ],
+    "slow-moving": [
+      {
+        "sql": "SELECT products.name, products.barcode, products.sku, products.description, products.unit, products.price, products.cost, products.avg_cost, products.quantity, ",
+        "execution_ms": 255.56,
+        "plan_top": "Limit  (cost=382701.26..382701.33 rows=30 width=800) (actual time=254.603..254.610 rows=30.00 loops=1)"
+      },
+      {
+        "sql": "SELECT count(products.id) AS count_1 \nFROM products \nWHERE products.archived_at IS NULL AND products.quantity > %(quantity_1)s AND NOT (EXISTS (SELECT * \nFROM s",
+        "execution_ms": 223.42,
+        "plan_top": "Aggregate  (cost=32980.72..32980.73 rows=1 width=8) (actual time=222.946..222.950 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT categories.id AS categories_id, categories.name AS categories_name, categories.parent_id AS categories_parent_id, categories.sort_order AS categories_sor",
+        "execution_ms": 0.04,
+        "plan_top": "Seq Scan on categories  (cost=0.00..1.16 rows=8 width=71) (actual time=0.017..0.020 rows=8.00 loops=1)"
+      },
+      {
+        "sql": "SELECT auth_sessions.user_id AS auth_sessions_user_id, auth_sessions.token_hash AS auth_sessions_token_hash, auth_sessions.device_name AS auth_sessions_device_n",
+        "execution_ms": 0.03,
+        "plan_top": "Seq Scan on auth_sessions  (cost=0.00..1.11 rows=1 width=653) (actual time=0.011..0.012 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT users.id AS users_id, users.full_name AS users_full_name, users.pin_hash AS users_pin_hash, users.is_active AS users_is_active, users.failed_login_attemp",
+        "execution_ms": 0.02,
+        "plan_top": "Seq Scan on users  (cost=0.00..1.10 rows=1 width=895) (actual time=0.009..0.009 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT permissions.id AS permissions_id, permissions.scope AS permissions_scope, permissions.description AS permissions_description, permissions.created_at AS p",
+        "execution_ms": 0.02,
+        "plan_top": "Seq Scan on permissions  (cost=0.07..1.24 rows=10 width=666) (actual time=0.008..0.012 rows=30.00 loops=1)"
+      },
+      {
+        "sql": "SELECT user_roles.user_id AS user_roles_user_id, user_roles.role_id AS user_roles_role_id, user_roles.id AS user_roles_id, user_roles.created_at AS user_roles_c",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on user_roles  (cost=0.00..2.10 rows=1 width=64) (actual time=0.008..0.008 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT roles.id AS roles_id, roles.name AS roles_name, roles.description AS roles_description, roles.created_at AS roles_created_at, roles.updated_at AS roles_u",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on roles  (cost=0.00..1.14 rows=1 width=666) (actual time=0.007..0.008 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT role_permissions.role_id AS role_permissions_role_id, role_permissions.permission_id AS role_permissions_permission_id, role_permissions.id AS role_permi",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on role_permissions  (cost=0.00..1.83 rows=30 width=64) (actual time=0.006..0.009 rows=30.00 loops=1)"
+      },
+      {
+        "sql": "SELECT users.full_name AS users_full_name, users.pin_hash AS users_pin_hash, users.is_active AS users_is_active, users.failed_login_attempts AS users_failed_log",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on users  (cost=0.00..1.10 rows=1 width=895) (actual time=0.005..0.006 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT auth_sessions.user_id AS auth_sessions_user_id, auth_sessions.token_hash AS auth_sessions_token_hash, auth_sessions.device_name AS auth_sessions_device_n",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on auth_sessions  (cost=0.00..1.11 rows=9 width=653) (actual time=0.006..0.008 rows=9.00 loops=1)"
+      },
+      {
+        "sql": "SELECT user_roles.user_id AS user_roles_user_id, user_roles.role_id AS user_roles_role_id, user_roles.id AS user_roles_id, user_roles.created_at AS user_roles_c",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on user_roles  (cost=0.00..2.10 rows=1 width=64) (actual time=0.005..0.005 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT roles.id AS roles_id, roles.name AS roles_name, roles.description AS roles_description, roles.created_at AS roles_created_at, roles.updated_at AS roles_u",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on roles  (cost=0.00..1.14 rows=1 width=666) (actual time=0.005..0.005 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT role_permissions.role_id AS role_permissions_role_id, role_permissions.permission_id AS role_permissions_permission_id, role_permissions.id AS role_permi",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on role_permissions  (cost=0.00..1.83 rows=30 width=64) (actual time=0.005..0.008 rows=30.00 loops=1)"
+      },
+      {
+        "sql": "SELECT permissions.id AS permissions_id, permissions.scope AS permissions_scope, permissions.description AS permissions_description, permissions.created_at AS p",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on permissions  (cost=0.07..1.24 rows=10 width=666) (actual time=0.006..0.010 rows=30.00 loops=1)"
+      }
+    ],
+    "voided": [
+      {
+        "sql": "SELECT sales.invoice_number, sales.customer_id, sales.user_id, sales.status, sales.subtotal, sales.discount, sales.total, sales.paid, sales.change, sales.paymen",
+        "execution_ms": 10.81,
+        "plan_top": "Limit  (cost=4075.68..4325.38 rows=20 width=749) (actual time=10.102..10.707 rows=100.00 loops=1)"
+      },
+      {
+        "sql": "SELECT count(sales.id) AS count_1 \nFROM sales \nWHERE sales.status = %(status_1)s AND sales.voided_at IS NOT NULL AND sales.voided_at >= %(voided_at_1)s AND sale",
+        "execution_ms": 7.16,
+        "plan_top": "Aggregate  (cost=4071.80..4071.81 rows=1 width=8) (actual time=7.144..7.144 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT sale_lines.sale_id AS sale_lines_sale_id, sale_lines.product_id AS sale_lines_product_id, sale_lines.variant_id AS sale_lines_variant_id, sale_lines.pack",
+        "execution_ms": 0.37,
+        "plan_top": "Bitmap Heap Scan on sale_lines  (cost=432.06..1214.50 rows=227 width=716) (actual time=0.243..0.351 rows=196.00 loops=1)"
+      },
+      {
+        "sql": "SELECT products.id AS products_id, products.name AS products_name, products.barcode AS products_barcode, products.sku AS products_sku, products.description AS p",
+        "execution_ms": 0.05,
+        "plan_top": "Seq Scan on products  (cost=0.29..7.29 rows=117 width=781) (actual time=0.014..0.043 rows=117.00 loops=1)"
+      },
+      {
+        "sql": "SELECT customers.id AS customers_id, customers.name AS customers_name, customers.phone AS customers_phone, customers.address AS customers_address, customers.bal",
+        "execution_ms": 0.03,
+        "plan_top": "Seq Scan on customers  (cost=0.05..4.30 rows=19 width=170) (actual time=0.012..0.024 rows=19.00 loops=1)"
+      },
+      {
+        "sql": "SELECT auth_sessions.user_id AS auth_sessions_user_id, auth_sessions.token_hash AS auth_sessions_token_hash, auth_sessions.device_name AS auth_sessions_device_n",
+        "execution_ms": 0.02,
+        "plan_top": "Seq Scan on auth_sessions  (cost=0.00..1.11 rows=1 width=653) (actual time=0.011..0.011 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT role_permissions.role_id AS role_permissions_role_id, role_permissions.permission_id AS role_permissions_permission_id, role_permissions.id AS role_permi",
+        "execution_ms": 0.02,
+        "plan_top": "Seq Scan on role_permissions  (cost=0.00..1.83 rows=30 width=64) (actual time=0.007..0.011 rows=30.00 loops=1)"
+      },
+      {
+        "sql": "SELECT permissions.id AS permissions_id, permissions.scope AS permissions_scope, permissions.description AS permissions_description, permissions.created_at AS p",
+        "execution_ms": 0.02,
+        "plan_top": "Seq Scan on permissions  (cost=0.07..1.24 rows=10 width=666) (actual time=0.009..0.015 rows=30.00 loops=1)"
+      },
+      {
+        "sql": "SELECT auth_sessions.user_id AS auth_sessions_user_id, auth_sessions.token_hash AS auth_sessions_token_hash, auth_sessions.device_name AS auth_sessions_device_n",
+        "execution_ms": 0.02,
+        "plan_top": "Seq Scan on auth_sessions  (cost=0.00..1.11 rows=9 width=653) (actual time=0.009..0.011 rows=9.00 loops=1)"
+      },
+      {
+        "sql": "SELECT role_permissions.role_id AS role_permissions_role_id, role_permissions.permission_id AS role_permissions_permission_id, role_permissions.id AS role_permi",
+        "execution_ms": 0.02,
+        "plan_top": "Seq Scan on role_permissions  (cost=0.00..1.83 rows=30 width=64) (actual time=0.009..0.014 rows=30.00 loops=1)"
+      },
+      {
+        "sql": "SELECT permissions.id AS permissions_id, permissions.scope AS permissions_scope, permissions.description AS permissions_description, permissions.created_at AS p",
+        "execution_ms": 0.02,
+        "plan_top": "Seq Scan on permissions  (cost=0.07..1.24 rows=10 width=666) (actual time=0.014..0.019 rows=30.00 loops=1)"
+      },
+      {
+        "sql": "SELECT users.id AS users_id, users.full_name AS users_full_name, users.pin_hash AS users_pin_hash, users.is_active AS users_is_active, users.failed_login_attemp",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on users  (cost=0.00..1.10 rows=1 width=895) (actual time=0.008..0.008 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT user_roles.user_id AS user_roles_user_id, user_roles.role_id AS user_roles_role_id, user_roles.id AS user_roles_id, user_roles.created_at AS user_roles_c",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on user_roles  (cost=0.00..2.10 rows=1 width=64) (actual time=0.007..0.007 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT roles.id AS roles_id, roles.name AS roles_name, roles.description AS roles_description, roles.created_at AS roles_created_at, roles.updated_at AS roles_u",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on roles  (cost=0.00..1.14 rows=1 width=666) (actual time=0.007..0.008 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT users.full_name AS users_full_name, users.pin_hash AS users_pin_hash, users.is_active AS users_is_active, users.failed_login_attempts AS users_failed_log",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on users  (cost=0.00..1.10 rows=1 width=895) (actual time=0.007..0.008 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT user_roles.user_id AS user_roles_user_id, user_roles.role_id AS user_roles_role_id, user_roles.id AS user_roles_id, user_roles.created_at AS user_roles_c",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on user_roles  (cost=0.00..2.10 rows=1 width=64) (actual time=0.006..0.006 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT roles.id AS roles_id, roles.name AS roles_name, roles.description AS roles_description, roles.created_at AS roles_created_at, roles.updated_at AS roles_u",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on roles  (cost=0.00..1.14 rows=1 width=666) (actual time=0.008..0.009 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT sale_payments.sale_id AS sale_payments_sale_id, sale_payments.method AS sale_payments_method, sale_payments.amount AS sale_payments_amount, sale_payments",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on sale_payments  (cost=0.25..0.25 rows=1 width=352) (actual time=0.004..0.004 rows=0.00 loops=1)"
+      },
+      {
+        "sql": "SELECT categories.id AS categories_id, categories.name AS categories_name, categories.parent_id AS categories_parent_id, categories.sort_order AS categories_sor",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on categories  (cost=0.00..1.16 rows=8 width=71) (actual time=0.006..0.008 rows=8.00 loops=1)"
+      }
+    ],
+    "suppliers": [
+      {
+        "sql": "SELECT coalesce(sum(CASE WHEN (supplier_ledger_entries.entry_type = %(entry_type_1)s) THEN supplier_ledger_entries.amount WHEN (supplier_ledger_entries.entry_ty",
+        "execution_ms": 1.01,
+        "plan_top": "Aggregate  (cost=236.00..236.01 rows=1 width=32) (actual time=0.999..0.999 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT coalesce(sum(supplier_ledger_entries.amount), %(coalesce_2)s) AS coalesce_1 \nFROM supplier_ledger_entries \nWHERE supplier_ledger_entries.entry_type = %(e",
+        "execution_ms": 0.49,
+        "plan_top": "Aggregate  (cost=165.60..165.61 rows=1 width=32) (actual time=0.477..0.478 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT auth_sessions.user_id AS auth_sessions_user_id, auth_sessions.token_hash AS auth_sessions_token_hash, auth_sessions.device_name AS auth_sessions_device_n",
+        "execution_ms": 0.02,
+        "plan_top": "Seq Scan on auth_sessions  (cost=0.00..1.11 rows=1 width=653) (actual time=0.010..0.010 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT permissions.id AS permissions_id, permissions.scope AS permissions_scope, permissions.description AS permissions_description, permissions.created_at AS p",
+        "execution_ms": 0.02,
+        "plan_top": "Seq Scan on permissions  (cost=0.07..1.24 rows=10 width=666) (actual time=0.008..0.013 rows=30.00 loops=1)"
+      },
+      {
+        "sql": "SELECT roles.id AS roles_id, roles.name AS roles_name, roles.description AS roles_description, roles.created_at AS roles_created_at, roles.updated_at AS roles_u",
+        "execution_ms": 0.02,
+        "plan_top": "Seq Scan on roles  (cost=0.00..1.14 rows=1 width=666) (actual time=0.008..0.009 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT permissions.id AS permissions_id, permissions.scope AS permissions_scope, permissions.description AS permissions_description, permissions.created_at AS p",
+        "execution_ms": 0.02,
+        "plan_top": "Seq Scan on permissions  (cost=0.07..1.24 rows=10 width=666) (actual time=0.006..0.011 rows=30.00 loops=1)"
+      },
+      {
+        "sql": "SELECT count(suppliers.id) AS count_1 \nFROM suppliers \nWHERE suppliers.balance != %(balance_1)s",
+        "execution_ms": 0.02,
+        "plan_top": "Aggregate  (cost=1.13..1.14 rows=1 width=8) (actual time=0.012..0.013 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT users.id AS users_id, users.full_name AS users_full_name, users.pin_hash AS users_pin_hash, users.is_active AS users_is_active, users.failed_login_attemp",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on users  (cost=0.00..1.10 rows=1 width=895) (actual time=0.008..0.009 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT user_roles.user_id AS user_roles_user_id, user_roles.role_id AS user_roles_role_id, user_roles.id AS user_roles_id, user_roles.created_at AS user_roles_c",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on user_roles  (cost=0.00..2.10 rows=1 width=64) (actual time=0.007..0.007 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT roles.id AS roles_id, roles.name AS roles_name, roles.description AS roles_description, roles.created_at AS roles_created_at, roles.updated_at AS roles_u",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on roles  (cost=0.00..1.14 rows=1 width=666) (actual time=0.006..0.007 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT role_permissions.role_id AS role_permissions_role_id, role_permissions.permission_id AS role_permissions_permission_id, role_permissions.id AS role_permi",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on role_permissions  (cost=0.00..1.83 rows=30 width=64) (actual time=0.006..0.009 rows=30.00 loops=1)"
+      },
+      {
+        "sql": "SELECT users.full_name AS users_full_name, users.pin_hash AS users_pin_hash, users.is_active AS users_is_active, users.failed_login_attempts AS users_failed_log",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on users  (cost=0.00..1.10 rows=1 width=895) (actual time=0.006..0.006 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT auth_sessions.user_id AS auth_sessions_user_id, auth_sessions.token_hash AS auth_sessions_token_hash, auth_sessions.device_name AS auth_sessions_device_n",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on auth_sessions  (cost=0.00..1.11 rows=9 width=653) (actual time=0.006..0.008 rows=9.00 loops=1)"
+      },
+      {
+        "sql": "SELECT user_roles.user_id AS user_roles_user_id, user_roles.role_id AS user_roles_role_id, user_roles.id AS user_roles_id, user_roles.created_at AS user_roles_c",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on user_roles  (cost=0.00..2.10 rows=1 width=64) (actual time=0.005..0.006 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT role_permissions.role_id AS role_permissions_role_id, role_permissions.permission_id AS role_permissions_permission_id, role_permissions.id AS role_permi",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on role_permissions  (cost=0.00..1.83 rows=30 width=64) (actual time=0.006..0.009 rows=30.00 loops=1)"
+      },
+      {
+        "sql": "SELECT coalesce(sum(purchases.total), %(coalesce_2)s) AS coalesce_1 \nFROM purchases \nWHERE purchases.status = %(status_1)s AND purchases.purchase_date >= %(purc",
+        "execution_ms": 0.01,
+        "plan_top": "Aggregate  (cost=0.01..0.01 rows=1 width=32) (actual time=0.007..0.007 rows=1.00 loops=1)"
+      }
+    ],
+    "dashboard": [
+      {
+        "sql": "SELECT product_agg.item_id, product_agg.kind, product_agg.name, product_agg.sku, product_agg.category_id, product_agg.category, sum(product_agg.qty_sold) AS sum",
+        "execution_ms": 2.46,
+        "plan_top": "Limit  (cost=3425.32..3425.77 rows=181 width=784) (actual time=2.246..2.259 rows=157.00 loops=1)"
+      },
+      {
+        "sql": "SELECT coalesce(sum(CASE WHEN (sale_lines.product_id IS NULL OR sale_lines.pack_id IS NULL) THEN sale_lines.quantity ELSE %(param_1)s END), %(coalesce_2)s) AS c",
+        "execution_ms": 1.27,
+        "plan_top": "Aggregate  (cost=3208.94..3208.95 rows=1 width=64) (actual time=1.257..1.258 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT coalesce(sum(sales.subtotal), %(coalesce_2)s) AS coalesce_1, coalesce(sum(sales.total), %(coalesce_4)s) AS coalesce_3, count(sales.id) AS count_1, coales",
+        "execution_ms": 0.38,
+        "plan_top": "Aggregate  (cost=499.96..499.97 rows=1 width=328) (actual time=0.357..0.357 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT sales.invoice_number, sales.customer_id, sales.user_id, sales.status, sales.subtotal, sales.discount, sales.total, sales.paid, sales.change, sales.paymen",
+        "execution_ms": 0.24,
+        "plan_top": "Limit  (cost=497.76..497.77 rows=5 width=435) (actual time=0.223..0.224 rows=5.00 loops=1)"
+      },
+      {
+        "sql": "SELECT (SELECT coalesce(sum(return_lines.unit_cost * coalesce(return_lines.quantity_base, return_lines.quantity * coalesce(return_lines.selling_unit_multiplier,",
+        "execution_ms": 0.16,
+        "plan_top": "Result  (cost=277.27..277.28 rows=1 width=64) (actual time=0.137..0.137 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT anon_1.device_id, anon_1.invoice_count, anon_1.returns_total, sum(anon_1.invoice_count) OVER () AS anon_2, sum(anon_1.returns_total) OVER () AS anon_3 \nF",
+        "execution_ms": 0.06,
+        "plan_top": "WindowAgg  (cost=39.43..39.57 rows=1 width=110) (actual time=0.041..0.041 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT coalesce(sum(products.quantity * products.avg_cost), %(coalesce_2)s) AS coalesce_1 \nFROM products \nWHERE products.archived_at IS NULL",
+        "execution_ms": 0.06,
+        "plan_top": "Aggregate  (cost=7.00..7.01 rows=1 width=32) (actual time=0.056..0.056 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT count(products.id) AS count_1 \nFROM products \nWHERE products.archived_at IS NULL",
+        "execution_ms": 0.05,
+        "plan_top": "Aggregate  (cost=6.50..6.51 rows=1 width=8) (actual time=0.040..0.040 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT count(expenses.id) AS count_1, coalesce(sum(expenses.amount), %(coalesce_2)s) AS coalesce_1, coalesce(sum(CASE WHEN (expenses.paid_from_drawer IS true) T",
+        "execution_ms": 0.04,
+        "plan_top": "Aggregate  (cost=26.20..26.21 rows=1 width=72) (actual time=0.025..0.025 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT count(products.id) AS count_1 \nFROM products \nWHERE products.archived_at IS NULL AND products.quantity <= products.low_stock_threshold",
+        "execution_ms": 0.04,
+        "plan_top": "Aggregate  (cost=6.67..6.68 rows=1 width=8) (actual time=0.030..0.030 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT coalesce(sum(customers.balance), %(coalesce_2)s) AS coalesce_1 \nFROM customers \nWHERE customers.balance > %(balance_1)s",
+        "execution_ms": 0.03,
+        "plan_top": "Aggregate  (cost=3.88..3.89 rows=1 width=32) (actual time=0.018..0.019 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT count(customers.id) AS count_1 \nFROM customers",
+        "execution_ms": 0.03,
+        "plan_top": "Aggregate  (cost=3.88..3.88 rows=1 width=8) (actual time=0.019..0.019 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT count(*) AS count_1 \nFROM customers \nWHERE customers.balance > %(balance_1)s",
+        "execution_ms": 0.03,
+        "plan_top": "Aggregate  (cost=3.88..3.89 rows=1 width=8) (actual time=0.018..0.018 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT sale_lines.sale_id AS sale_lines_sale_id, sale_lines.product_id AS sale_lines_product_id, sale_lines.variant_id AS sale_lines_variant_id, sale_lines.pack",
+        "execution_ms": 0.03,
+        "plan_top": "Bitmap Heap Scan on sale_lines  (cost=22.19..65.10 rows=11 width=716) (actual time=0.022..0.026 rows=11.00 loops=1)"
+      },
+      {
+        "sql": "SELECT products.id AS products_id, products.name AS products_name, products.barcode AS products_barcode, products.sku AS products_sku, products.description AS p",
+        "execution_ms": 0.03,
+        "plan_top": "Seq Scan on products  (cost=0.03..7.03 rows=11 width=781) (actual time=0.014..0.026 rows=11.00 loops=1)"
+      },
+      {
+        "sql": "SELECT auth_sessions.user_id AS auth_sessions_user_id, auth_sessions.token_hash AS auth_sessions_token_hash, auth_sessions.device_name AS auth_sessions_device_n",
+        "execution_ms": 0.02,
+        "plan_top": "Seq Scan on auth_sessions  (cost=0.00..1.11 rows=1 width=653) (actual time=0.013..0.014 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT permissions.id AS permissions_id, permissions.scope AS permissions_scope, permissions.description AS permissions_description, permissions.created_at AS p",
+        "execution_ms": 0.02,
+        "plan_top": "Seq Scan on permissions  (cost=0.07..1.24 rows=10 width=666) (actual time=0.008..0.012 rows=30.00 loops=1)"
+      },
+      {
+        "sql": "SELECT count(*) AS count_1 \nFROM customers \nWHERE customers.balance > %(balance_1)s",
+        "execution_ms": 0.02,
+        "plan_top": "Aggregate  (cost=3.88..3.89 rows=1 width=8) (actual time=0.015..0.015 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT coalesce(sum(customers.balance), %(coalesce_2)s) AS coalesce_1 \nFROM customers \nWHERE customers.balance > %(balance_1)s",
+        "execution_ms": 0.02,
+        "plan_top": "Aggregate  (cost=3.88..3.89 rows=1 width=32) (actual time=0.015..0.015 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT customers.id AS customers_id, customers.name AS customers_name, customers.phone AS customers_phone, customers.address AS customers_address, customers.bal",
+        "execution_ms": 0.02,
+        "plan_top": "Seq Scan on customers  (cost=0.00..3.88 rows=1 width=170) (actual time=0.012..0.013 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT users.id AS users_id, users.full_name AS users_full_name, users.pin_hash AS users_pin_hash, users.is_active AS users_is_active, users.failed_login_attemp",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on users  (cost=0.00..1.10 rows=1 width=895) (actual time=0.007..0.007 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT user_roles.user_id AS user_roles_user_id, user_roles.role_id AS user_roles_role_id, user_roles.id AS user_roles_id, user_roles.created_at AS user_roles_c",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on user_roles  (cost=0.00..2.10 rows=1 width=64) (actual time=0.005..0.006 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT roles.id AS roles_id, roles.name AS roles_name, roles.description AS roles_description, roles.created_at AS roles_created_at, roles.updated_at AS roles_u",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on roles  (cost=0.00..1.14 rows=1 width=666) (actual time=0.006..0.006 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT role_permissions.role_id AS role_permissions_role_id, role_permissions.permission_id AS role_permissions_permission_id, role_permissions.id AS role_permi",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on role_permissions  (cost=0.00..1.83 rows=30 width=64) (actual time=0.006..0.009 rows=30.00 loops=1)"
+      },
+      {
+        "sql": "SELECT users.full_name AS users_full_name, users.pin_hash AS users_pin_hash, users.is_active AS users_is_active, users.failed_login_attempts AS users_failed_log",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on users  (cost=0.00..1.10 rows=1 width=895) (actual time=0.005..0.006 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT auth_sessions.user_id AS auth_sessions_user_id, auth_sessions.token_hash AS auth_sessions_token_hash, auth_sessions.device_name AS auth_sessions_device_n",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on auth_sessions  (cost=0.00..1.11 rows=9 width=653) (actual time=0.006..0.008 rows=9.00 loops=1)"
+      },
+      {
+        "sql": "SELECT user_roles.user_id AS user_roles_user_id, user_roles.role_id AS user_roles_role_id, user_roles.id AS user_roles_id, user_roles.created_at AS user_roles_c",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on user_roles  (cost=0.00..2.10 rows=1 width=64) (actual time=0.005..0.005 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT roles.id AS roles_id, roles.name AS roles_name, roles.description AS roles_description, roles.created_at AS roles_created_at, roles.updated_at AS roles_u",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on roles  (cost=0.00..1.14 rows=1 width=666) (actual time=0.005..0.006 rows=1.00 loops=1)"
+      },
+      {
+        "sql": "SELECT role_permissions.role_id AS role_permissions_role_id, role_permissions.permission_id AS role_permissions_permission_id, role_permissions.id AS role_permi",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on role_permissions  (cost=0.00..1.83 rows=30 width=64) (actual time=0.005..0.008 rows=30.00 loops=1)"
+      },
+      {
+        "sql": "SELECT permissions.id AS permissions_id, permissions.scope AS permissions_scope, permissions.description AS permissions_description, permissions.created_at AS p",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on permissions  (cost=0.07..1.24 rows=10 width=666) (actual time=0.006..0.011 rows=30.00 loops=1)"
+      },
+      {
+        "sql": "SELECT sale_payments.sale_id AS sale_payments_sale_id, sale_payments.method AS sale_payments_method, sale_payments.amount AS sale_payments_amount, sale_payments",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on sale_payments  (cost=0.00..0.00 rows=1 width=352) (actual time=0.003..0.003 rows=0.00 loops=1)"
+      },
+      {
+        "sql": "SELECT categories.id AS categories_id, categories.name AS categories_name, categories.parent_id AS categories_parent_id, categories.sort_order AS categories_sor",
+        "execution_ms": 0.01,
+        "plan_top": "Seq Scan on categories  (cost=0.00..1.14 rows=6 width=71) (actual time=0.006..0.007 rows=6.00 loops=1)"
+      }
+    ]
+  },
+  "budget_failures": [
+    {
+      "endpoint": "daily",
+      "p95_ms": 376.6,
+      "budget_ms": 300
+    }
+  ]
+}

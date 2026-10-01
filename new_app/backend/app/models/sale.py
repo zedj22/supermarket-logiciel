@@ -11,7 +11,7 @@ Design principles:
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Numeric, String, Text, func
+from sqlalchemy import DateTime, ForeignKey, Index, Numeric, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, DocumentModel, TimestampMixin, UUIDMixin, numeric_money, numeric_quantity
@@ -99,6 +99,20 @@ class Sale(DocumentModel):
         back_populates="sale",
         cascade="all, delete-orphan",
         lazy="selectin",
+    )
+
+    __table_args__ = (
+        # Phase 14 §5.1-§5.4 — report aggregates scan a sale_date window.
+        Index(
+            "ix_sales_sale_date",
+            "sale_date",
+        ),
+        # Same window, but every aggregate also filters completed invoices.
+        Index(
+            "ix_sales_status_sale_date",
+            "status",
+            "sale_date",
+        ),
     )
 
 

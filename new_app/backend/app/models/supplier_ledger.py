@@ -77,4 +77,10 @@ class SupplierLedgerEntry(Base, UUIDMixin, TimestampMixin):
             "supplier_id",
             "entry_date",
         ),
+        # Phase 14 §5.7 — supplier movement block over any date window,
+        # across every supplier at once.
+        Index(
+            "ix_supplier_ledger_entries_entry_date",
+            "entry_date",
+        ),
     )

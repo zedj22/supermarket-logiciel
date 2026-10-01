@@ -199,6 +199,11 @@ class ScaffoldWithNav extends ConsumerWidget {
   /// Scope required to see the Expenses destination (Phase 13).
   static const String expenseViewScope = 'expense_view';
 
+  /// Scope required to see the Reports destination and dashboard KPIs
+  /// (Phase 14 — `report_financial`; §10: the rail entry AND the
+  /// dashboard/reports content are gated on it).
+  static const String reportViewScope = 'report_financial';
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
@@ -213,6 +218,7 @@ class ScaffoldWithNav extends ConsumerWidget {
     final canViewPurchases = ref.watch(hasPermissionProvider(purchaseViewScope));
     final canViewReturns = ref.watch(hasPermissionProvider(returnViewScope));
     final canViewExpenses = ref.watch(hasPermissionProvider(expenseViewScope));
+    final canViewReports = ref.watch(hasPermissionProvider(reportViewScope));
 
     final destinations = <NavigationRailDestination>[
       NavigationRailDestination(
@@ -286,6 +292,12 @@ class ScaffoldWithNav extends ConsumerWidget {
           selectedIcon: const Icon(Icons.people),
           label: Text(AppStrings.t('user_list', loc)),
         ),
+      if (canViewReports)
+        NavigationRailDestination(
+          icon: const Icon(Icons.summarize_outlined),
+          selectedIcon: const Icon(Icons.summarize),
+          label: Text(AppStrings.t('reports', loc)),
+        ),
       NavigationRailDestination(
         icon: const Icon(Icons.settings_outlined),
         selectedIcon: const Icon(Icons.settings),
@@ -338,6 +350,10 @@ class ScaffoldWithNav extends ConsumerWidget {
       index += 1;
       if (location == '/users') selectedIndex = index;
     }
+    if (canViewReports) {
+      index += 1;
+      if (location == '/reports') selectedIndex = index;
+    }
     index += 1;
     if (location == '/settings') selectedIndex = index;
 
@@ -389,6 +405,10 @@ class ScaffoldWithNav extends ConsumerWidget {
       }
       if (canManageUsers && i++ == target) {
         context.go('/users');
+        return;
+      }
+      if (canViewReports && i++ == target) {
+        context.go('/reports');
         return;
       }
       if (i++ == target) {
