@@ -16,6 +16,12 @@ dependencies = [
     "python-multipart>=0.0.6",
     "httpx>=0.25.0",
     "structlog>=23.2.0",
+    # Phase 15 (G7 spike + approved architecture): PDF rendering, Arabic shaping, RTL bidi.
+    "reportlab>=4.0.0",
+    "arabic-reshaper>=3.0.0",
+    "python-bidi>=0.4.2",
+    # Phase 15 XLSX exports (approved after the G7 gate).
+    "openpyxl>=3.1.0",
 ]
 
 [project.optional-dependencies]

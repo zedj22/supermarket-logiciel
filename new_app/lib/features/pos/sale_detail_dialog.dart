@@ -29,6 +29,7 @@ import 'pos_error_message.dart';
 import 'pos_models.dart';
 import 'pos_providers.dart';
 import 'pos_toast.dart';
+import 'print_preview_dialog.dart';
 import 'print_service.dart';
 
 Future<void> showSaleDetailDialog(
@@ -52,7 +53,8 @@ String _fmtQty(double value) {
   return fixed.replaceFirst(RegExp(r'0+$'), '').replaceFirst(RegExp(r'\.$'), '');
 }
 
-/// Builds the plain-text receipt used by print preview and the printer.
+/// Builds the plain-text receipt (legacy-internal since Phase 15 — the
+/// PDF preview supersedes it for the print UI; kept for the text path).
 ///
 /// Line rows come exclusively from the sale line's historical snapshots
 /// (UX FIX #11): stored variant name, stored selling unit name and stored
@@ -246,53 +248,42 @@ class _SaleDetailDialogState extends ConsumerState<SaleDetailDialog> {
     await _load();
   }
 
+  /// Phase 15 §6.2 E: preview-first PDF flow — the backend renders the
+  /// document, the dialog rasterizes the SAME bytes that will be printed,
+  /// and Confirm hands them to `printPdf` (system dialog). Cancel is
+  /// neutral: no print, no toast (§16.2).
   Future<void> _showPrintPreview() async {
     final sale = _sale;
     if (sale == null || _printBusy) return;
-    final loc = ref.read(localeProvider).flutterLocale.languageCode;
-    final receipt = buildReceiptText(sale, loc);
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        key: const Key('print-preview-dialog'),
-        title: Text(AppStrings.t('print_preview', loc)),
-        content: SizedBox(
-          width: 420,
-          child: SingleChildScrollView(
-            child: Text(
-              receipt,
-              key: const Key('print-preview-body'),
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    fontFamily: 'monospace',
-                  ),
-            ),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: Text(AppStrings.t('cancel', loc)),
-          ),
-          ElevatedButton(
-            key: const Key('print-preview-confirm'),
-            onPressed: () => Navigator.pop(context, true),
-            child: Text(AppStrings.t('print', loc)),
-          ),
-        ],
-      ),
+    String? deviceId;
+    try {
+      deviceId = await ref.read(posDeviceIdProvider.future);
+    } catch (_) {
+      deviceId = null;
+    }
+    if (!mounted) return;
+    final result = await showPrintPreviewDialog(
+      context,
+      documentType: 'sale',
+      documentId: sale.id,
+      deviceId: deviceId,
     );
-    if (confirmed != true || !mounted) return;
-    await _print(receipt);
+    if (result == null || !mounted) return; // cancelled — neutral
+    await _print(result);
   }
 
-  Future<void> _print(String receipt) async {
+  Future<void> _print(PrintPreviewResult result) async {
     setState(() {
       _printBusy = true;
       _printError = null;
     });
     final loc = ref.read(localeProvider).flutterLocale.languageCode;
     try {
-      await ref.read(printServiceProvider).printText(receipt);
+      await ref.read(printServiceProvider).printPdf(
+            result.bytes,
+            paper: result.paper,
+            filename: result.filename,
+          );
       if (!mounted) return;
       setState(() => _printBusy = false);
     } on PrintServiceException catch (e) {
@@ -300,9 +291,12 @@ class _SaleDetailDialogState extends ConsumerState<SaleDetailDialog> {
       setState(() {
         _printBusy = false;
         // Never "success" on failure — localized error only.
-        _printError = e.message.isEmpty
-            ? AppStrings.t('print_failed', loc)
-            : '${AppStrings.t('print_failed', loc)}: ${e.message}';
+        final headline = (e.code != null)
+            ? AppStrings.t(e.code!, loc)
+            : AppStrings.t('print_failed', loc);
+        _printError = e.message.isEmpty || e.code != null
+            ? headline
+            : '$headline: ${e.message}';
       });
     } catch (_) {
       if (!mounted) return;

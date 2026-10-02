@@ -21,6 +21,9 @@ import 'reports_error.dart';
 
 const String kReportsPath = '/api/v1/reports';
 
+/// `POST /api/v1/exports` — server-side XLSX/PDF rendering (Phase 15 §12.1).
+const String kExportsPath = '/api/v1/exports';
+
 /// Page size used by the on-screen tables (server max is 100, §11).
 const int kReportPageSize = 100;
 

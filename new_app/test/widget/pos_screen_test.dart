@@ -26,6 +26,7 @@ import 'package:supermarket_pos/features/pos/pos_models.dart';
 import 'package:supermarket_pos/features/pos/pos_providers.dart';
 import 'package:supermarket_pos/features/pos/pos_screen.dart';
 import 'package:supermarket_pos/features/pos/pos_toast.dart';
+import 'package:supermarket_pos/features/pos/pdf_preview.dart';
 import 'package:supermarket_pos/features/pos/print_service.dart';
 import 'package:supermarket_pos/l10n/locale_provider.dart';
 import 'package:supermarket_pos/main.dart';
@@ -39,6 +40,21 @@ class _FakePrintService implements PrintService {
 
   final bool fail;
   final List<String> printed = <String>[];
+  final List<Uint8List> printedPdfs = <Uint8List>[];
+  final List<String> printedPapers = <String>[];
+
+  @override
+  Future<void> printPdf(
+    Uint8List bytes, {
+    required String paper,
+    String? filename,
+  }) async {
+    if (fail) {
+      throw const PrintServiceException('no printer');
+    }
+    printedPdfs.add(bytes);
+    printedPapers.add(paper);
+  }
 
   @override
   Future<void> printText(String text) async {
@@ -48,6 +64,31 @@ class _FakePrintService implements PrintService {
     printed.add(text);
   }
 }
+
+/// Phase 15 preview seam fake: records the bytes it received and shows a
+/// deterministic placeholder instead of rasterizing (§19.2 — no plugin).
+class _FakePdfPreview implements PdfPreviewBuilder {
+  final List<Uint8List> received = <Uint8List>[];
+  final List<String> papers = <String>[];
+
+  @override
+  Widget build(
+    Uint8List bytes, {
+    required String paper,
+    required String filename,
+  }) {
+    received.add(bytes);
+    papers.add(paper);
+    return Text('pdf:${bytes.length}:$paper:$filename');
+  }
+}
+
+/// Fresh instance replaced by every `_pumpApp` call.
+_FakePdfPreview _fakePreview = _FakePdfPreview();
+
+/// Bodies posted to `POST /api/v1/print` (reset per `_mockDio`).
+final List<Map<String, dynamic>> printRequestBodies =
+    <Map<String, dynamic>>[];
 
 class FakeCredentialStorage extends SecureCredentialStorage {
   String? _token;
@@ -293,6 +334,7 @@ void _mockDio(
   List<String>? recordPaths,
 }) {
   void record(String path) => recordPaths?.add(path);
+  printRequestBodies.clear();
 
   Never failPath(String path, {required bool network, int? status}) {
     if (network) {
@@ -397,6 +439,23 @@ void _mockDio(
   Response<dynamic> postAnswer(Invocation invocation) {
     final path = invocation.positionalArguments.first as String? ?? '';
     if (path == _loginPath) return _ok(path, _loginBody(scopes: scopes));
+    if (path == '/api/v1/print') {
+      // Phase 15 document render — bytes + sanitized filename header.
+      final data = invocation.namedArguments[#data];
+      if (data is Map) {
+        printRequestBodies.add(Map<String, dynamic>.from(data));
+      }
+      return Response<dynamic>(
+        requestOptions: RequestOptions(path: path),
+        statusCode: 200,
+        data: Uint8List.fromList(utf8.encode('%PDF-1.4 fake-phase15')),
+        headers: Headers.fromMap(<String, List<String>>{
+          'content-disposition': <String>[
+            'attachment; filename="sale_document.pdf"',
+          ],
+        }),
+      );
+    }
     if (path.endsWith('/restore')) {
       if (restoreNetworkError) {
         throw DioException.connectionError(
@@ -460,6 +519,31 @@ void _mockDio(
     ),
   ).thenAnswer((invocation) async => postAnswer(invocation));
 
+  // Phase 15 byte endpoints (`POST /print`) call `post<Uint8List>` —
+  // mocktail matches the generic type argument strictly, so they need
+  // their own registrations; the body/filename still come from postAnswer.
+  Future<Response<Uint8List>> postBytes(Invocation invocation) async {
+    final response = postAnswer(invocation);
+    return Response<Uint8List>(
+      requestOptions: response.requestOptions,
+      statusCode: response.statusCode,
+      data: response.data is Uint8List ? response.data as Uint8List : null,
+      headers: response.headers,
+      statusMessage: response.statusMessage,
+    );
+  }
+
+  when(() => dio.post<Uint8List>(any(), data: any(named: 'data')))
+      .thenAnswer(postBytes);
+
+  when(
+    () => dio.post<Uint8List>(
+      any(),
+      data: any(named: 'data'),
+      options: any(named: 'options'),
+    ),
+  ).thenAnswer(postBytes);
+
   when(() => dio.delete(any())).thenAnswer((invocation) async {
     final path = invocation.positionalArguments.first as String? ?? '';
     return Response<dynamic>(
@@ -517,6 +601,7 @@ Future<void> _pumpApp(
   SharedPreferences.setMockInitialValues(
     initialPrefs ?? <String, Object>{},
   );
+  _fakePreview = _FakePdfPreview();
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.reset);
@@ -532,6 +617,7 @@ Future<void> _pumpApp(
         ),
         localeProvider
             .overrideWith((ref) => LocaleNotifier()..setLocale(locale)),
+        pdfPreviewProvider.overrideWithValue(_fakePreview),
         if (printService != null)
           printServiceProvider.overrideWithValue(printService),
       ],
@@ -2210,47 +2296,65 @@ void main() {
       return printer;
     }
 
-    testWidgets('print preview shows receipt data (invoice/lines/totals)',
+    testWidgets('preview receives fetched PDF bytes; confirm prints them',
         (tester) async {
       final printer = await openPreview(tester);
-      final body = find.byKey(const Key('print-preview-body'));
-      expect(body, findsOneWidget);
-      final text = tester.widget<Text>(body).data ?? '';
-      expect(text, contains(invoice));
-      expect(text, contains('Rice Bag'));
-      expect(text, contains('550.00'));
+      expect(find.byKey(const Key('print-preview-dialog')), findsOneWidget);
+      expect(find.byKey(const Key('print-preview-body')), findsOneWidget);
+
+      // Preview seam received the backend bytes + server filename.
+      expect(_fakePreview.received, hasLength(1));
+      expect(_fakePreview.papers, <String>['80mm']);
+      expect(find.textContaining('sale_document.pdf'), findsOneWidget);
+
+      // Request body mirrors the sale (Phase 15 §12.2).
+      expect(printRequestBodies, hasLength(1));
+      expect(printRequestBodies.single['document_type'], 'sale');
+      expect(printRequestBodies.single['document_id'], saleId);
+      expect(printRequestBodies.single['paper'], '80mm');
+      expect(printRequestBodies.single['locale'], 'en');
 
       await tester.tap(find.byKey(const Key('print-preview-confirm')));
       await tester.pumpAndSettle();
-      expect(printer.printed, hasLength(1));
-      expect(printer.printed.single, contains(invoice));
-      expect(printer.printed.single, contains('Rice Bag'));
+      // Preview/print parity: printPdf gets EXACTLY the previewed bytes.
+      expect(printer.printedPdfs, hasLength(1));
+      expect(printer.printedPdfs.single, _fakePreview.received.single);
+      expect(printer.printedPapers, <String>['80mm']);
+      expect(printer.printed, isEmpty); // superseded text path never runs
+      expect(find.byKey(const Key('print-preview-dialog')), findsNothing);
     });
 
-    testWidgets('print preview includes product unit + unit price',
+    testWidgets('paper toggle refetches the document for A4',
         (tester) async {
-      await openPreview(tester);
-      final text =
-          tester.widget<Text>(find.byKey(const Key('print-preview-body')))
-                  .data ??
-              '';
-      expect(text, contains('piece'));
-      expect(text, contains('550.00'));
+      final printer = await openPreview(tester);
+      await tester.tap(find.text(AppStrings.t('paper_a4', 'en')));
+      await tester.pumpAndSettle();
+
+      expect(printRequestBodies, hasLength(2));
+      expect(printRequestBodies.last['paper'], 'A4');
+      expect(_fakePreview.papers, <String>['80mm', 'A4']);
+
+      await tester.tap(find.byKey(const Key('print-preview-confirm')));
+      await tester.pumpAndSettle();
+      expect(printer.printedPapers, <String>['A4']);
     });
 
-    testWidgets('base/unit info in receipt does not alter sale totals',
-        (tester) async {
-      await openPreview(tester);
-      final text =
-          tester.widget<Text>(find.byKey(const Key('print-preview-body')))
-                  .data ??
-              '';
-      // Totals come from the server sale snapshot — not recomputed.
-      expect(text, contains('550.00'));
-      expect(text, isNot(contains('1100.00')));
-      // Discount line still present as 0 from sale payload.
-      expect(text, contains(AppStrings.t('discount', 'en')));
-      expect(text, contains(AppStrings.t('total', 'en')));
+    testWidgets('cancel → no print and no toast (§16.2)', (tester) async {
+      final printer = await openPreview(tester);
+
+      await tester.tap(find.byKey(const Key('print-preview-cancel')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('print-preview-dialog')), findsNothing);
+      expect(printer.printedPdfs, isEmpty);
+      expect(printer.printed, isEmpty);
+      expect(find.byKey(const Key('print-save-pdf-toast')), findsNothing);
+      expect(
+        find.textContaining(AppStrings.t('print_failed', 'en')),
+        findsNothing,
+      );
+      // Sale detail stays intact behind the closed dialog.
+      expect(find.byKey(const Key('sale-detail-dialog')), findsOneWidget);
     });
   });
 

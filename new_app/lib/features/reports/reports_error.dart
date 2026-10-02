@@ -41,6 +41,26 @@ PosApiError reportsApiError(
     case 'REPORT_SORT_INVALID':
       key = 'report_sort_invalid';
       break;
+    // Phase 15 export/print envelope codes (§16.1) — mapped by code so a
+    // 500 `EXPORT_RENDER_FAILED` never degrades into the generic retry.
+    case 'EXPORT_FORMAT_UNSUPPORTED':
+      key = 'export_format_unsupported';
+      break;
+    case 'EXPORT_ROW_LIMIT':
+      key = 'export_row_limit';
+      break;
+    case 'EXPORT_TOO_LARGE':
+      key = 'export_too_large';
+      break;
+    case 'EXPORT_RENDER_FAILED':
+      key = 'export_render_failed';
+      break;
+    case 'PRINT_RENDER_FAILED':
+      key = 'print_render_failed';
+      break;
+    case 'MISSING_FONT':
+      key = 'missing_font';
+      break;
     case 'FORBIDDEN':
     case 'AUTHORIZATION_ERROR':
       key = 'permission_denied';

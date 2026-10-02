@@ -16,6 +16,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
 import '../../core/strings.dart';
+import '../../network/byte_download.dart';
 import '../pos/pos_toast.dart';
 import 'report_csv.dart';
 import 'report_models.dart';
@@ -268,4 +269,77 @@ void _fail(BuildContext context, String message) {
     kind: PosToastKind.error,
     key: const Key('reports-export-toast'),
   );
+}
+
+// ---------------------------------------------------------------------------
+// Server-side XLSX / PDF export (Phase 15 §12.1)
+// ---------------------------------------------------------------------------
+
+/// Full Phase 15 backend export flow for one report surface:
+/// `POST /api/v1/exports` renders the SAME payload the screen shows to
+/// XLSX/PDF bytes → the save dialog receives the server-generated
+/// filename (Content-Disposition, §10.1) → localized success toast.
+///
+/// [body] carries only `ExportRequest` fields besides `format`/`locale`
+/// (`report`, dates, filters). Returns `true` only when the file was
+/// handed to the picker; cancel is neutral (no toast, §16.2) and every
+/// failure shows ONE localized toast — never a partial file.
+Future<bool> exportReportFile({
+  required BuildContext context,
+  required Dio dio,
+  required String loc,
+  required String reportSlug,
+  required String format,
+  required Map<String, dynamic> body,
+  String? deviceId,
+}) async {
+  try {
+    final Uint8List bytes;
+    final String fileName;
+    try {
+      final response = await dio.post<Uint8List>(
+        kExportsPath,
+        data: <String, dynamic>{
+          ...body,
+          'report': reportSlug,
+          'format': format,
+          'locale': loc,
+        },
+        options: Options(
+          responseType: ResponseType.bytes,
+          headers: <String, dynamic>{
+            if (deviceId != null && deviceId.isNotEmpty)
+              'X-Device-ID': deviceId,
+          },
+        ),
+      );
+      bytes = bytesOfResponse(response.data);
+      fileName = filenameFromDisposition(
+        response.headers.value('content-disposition'),
+        '$reportSlug-$format.$format',
+      );
+    } on DioException catch (e) {
+      if (context.mounted) _fail(context, reportsApiMessage(e, loc));
+      return false;
+    }
+    final titleKey = format == 'pdf' ? 'export_pdf' : 'export_xlsx';
+    final path = await FilePicker.platform.saveFile(
+      dialogTitle: AppStrings.t(titleKey, loc),
+      fileName: fileName,
+      bytes: bytes,
+    );
+    if (path == null) return false; // user cancelled — no toast
+    if (!context.mounted) return true;
+    showPosToast(
+      context,
+      message: AppStrings.t('export_done', loc),
+      detail: fileName,
+      kind: PosToastKind.success,
+      key: const Key('reports-export-toast'),
+    );
+    return true;
+  } on Object catch (_) {
+    if (context.mounted) _fail(context, AppStrings.t('export_failed', loc));
+    return false;
+  }
 }

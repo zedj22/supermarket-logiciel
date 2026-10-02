@@ -191,3 +191,8 @@ class AuditAction(str, enum.Enum):
     RESTORE = "restore"
     # Phase 11: purchase receipt (draft -> received posting). Additive only.
     RECEIVE = "receive"
+    # Phase 15: exports (/api/v1/exports) and print renders
+    # (/api/v1/print). Additive only — every attempt (success or failure)
+    # appends exactly one row.
+    EXPORT = "export"
+    PRINT = "print"

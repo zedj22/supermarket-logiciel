@@ -1,31 +1,85 @@
-// Print service abstraction (UX FIX #4 Part B).
+// Print service abstraction (UX FIX #4 Part B, Phase 15 §6.2).
 //
 // Sale printing is never part of the sale transaction. The sale commits
 // first; print runs only from the sale-detail actions and may fail
 // independently. Failure shows a localized error — never "success".
 //
-// Default Windows implementation: write the text receipt to a temp file
-// and hand it to PowerShell `Out-Printer`. No extra pubspec packages.
+// Phase 15: the PRIMARY path is [PrintService.printPdf] — backend PDF
+// bytes handed to the Windows print dialog through the `printing` plugin
+// (`Printing.layoutPdf`, §6.2 D). `printText` stays as the legacy-internal
+// text path (`Out-Printer`); the PDF preview supersedes the text receipt
+// for the sale/reprint UI (§6.2 E).
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:pdf/pdf.dart';
+import 'package:printing/printing.dart';
 
 abstract class PrintService {
-  /// Sends [text] to the default system printer.
+  /// Sends the PDF [bytes] to the system print dialog (printer selection,
+  /// copies, paper size). [paper] is `80mm` or `A4`.
+  ///
+  /// Throws [PrintServiceException] on failure. A user-cancelled system
+  /// dialog is NOT a failure (cancellation is neutral, §16.2) — it simply
+  /// returns.
+  Future<void> printPdf(
+    Uint8List bytes, {
+    required String paper,
+    String? filename,
+  });
+
+  /// Sends [text] to the default system printer (legacy text path).
   /// Throws [PrintServiceException] on failure.
   Future<void> printText(String text);
 }
 
 class PrintServiceException implements Exception {
   final String message;
-  const PrintServiceException(this.message);
+
+  /// Optional localization key (`printer_unavailable`) — when set the UI
+  /// shows the key's translation instead of `print_failed: message`.
+  final String? code;
+
+  const PrintServiceException(this.message, {this.code});
 
   @override
   String toString() => message;
 }
 
-/// Windows text-receipt printer via PowerShell Out-Printer.
+/// Windows printer: PDF via the `printing` plugin system dialog, text via
+/// PowerShell `Out-Printer` (legacy fallback).
 class WindowsPrintService implements PrintService {
+  @override
+  Future<void> printPdf(
+    Uint8List bytes, {
+    required String paper,
+    String? filename,
+  }) async {
+    if (bytes.isEmpty) {
+      throw const PrintServiceException('empty pdf');
+    }
+    // `false` = the user cancelled the system dialog — neutral (§16.2).
+    try {
+      final info = await Printing.info();
+      if (!info.canPrint) {
+        throw const PrintServiceException(
+          'no printer available',
+          code: 'printer_unavailable',
+        );
+      }
+      await Printing.layoutPdf(
+        onLayout: (_) async => bytes,
+        name: filename ?? 'document',
+        format: paper == 'A4' ? PdfPageFormat.a4 : PdfPageFormat.roll80,
+      );
+    } on PrintServiceException {
+      rethrow;
+    } catch (e) {
+      throw PrintServiceException('$e');
+    }
+  }
+
   @override
   Future<void> printText(String text) async {
     if (text.isEmpty) {

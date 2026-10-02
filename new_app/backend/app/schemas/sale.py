@@ -134,6 +134,15 @@ class SalePaymentResponse(StrictBaseModel):
     amount: Decimal
 
 
+class StoreInfo(StrictBaseModel):
+    """Store identity carried on document headers (G19 — Phase 15).
+
+    Additive and detail-only: never populated on list responses.
+    """
+
+    name: str
+
+
 class SaleResponse(StrictBaseModel):
     """Checkout result — only returned after a successful commit."""
 
@@ -167,6 +176,11 @@ class SaleResponse(StrictBaseModel):
     capped at three groups (then ``+N``). Computed from the persisted line
     snapshots only: informational, never feeds totals or stock.
     """
+    # G19 (Phase 15): additive display names for the sale DETAIL path
+    # (print / detail screen). Lists never populate them — no N+1.
+    customer_name: str | None = None
+    cashier_name: str | None = None
+    store: StoreInfo | None = None
 
 
 class PriceOverride(StrictBaseModel):

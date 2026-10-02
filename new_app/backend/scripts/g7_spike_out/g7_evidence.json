@@ -1,0 +1,148 @@
+{
+  "font": {
+    "family": "IBM Plex Sans Arabic",
+    "license_url": "http://scripts.sil.org/OFL",
+    "license_text": "This Font Software is licensed under the SIL Open Font License, Version 1.1. This license is available with a FAQ at: http://scripts.sil.org/OFL",
+    "regular_sha256": "1118a402b5eabda347c416e49391bdc156836abfc0aca93ae9f1fbddfab2af28",
+    "bold_sha256": "863a038c6afe94ec626bc5bfb94ce37f26196c1f1d50289f4f7c88e339b0aa41",
+    "ofl_bundled": true,
+    "source": "SIL OFL 1.1 font downloaded with Google Fonts package (IBM Plex Sans Arabic)"
+  },
+  "spike_80mm": {
+    "file": "g7_spike_80mm.pdf",
+    "content_width_pt": 204.094,
+    "bytes": 38230,
+    "mediabox": [
+      [
+        0.0,
+        0.0,
+        226.7717,
+        1133.858
+      ]
+    ],
+    "width_ok": true,
+    "height_ok": true,
+    "basefonts": [
+      "AAAAAA+IBMPlexSansArabic-Regular",
+      "Helvetica"
+    ],
+    "fontfile2_count": 1,
+    "text_blocks": [
+      "G7 SPIKE",
+      "ﺚﻳﺪﺤﻟﺍ ﻦﻳﻮﻤﺘﻟﺍ ﺮﺠﺘﻣ ﻲﻓ ﻢﻜﺑ ﺎﺒﺣﺮﻣ",
+      "ﻥﻵﺍ ﺮﻓﻮﺘﻣ Product 123 ﺞﺘﻨﻣ",
+      "56.78 × 1234 :ﺔﺑﻮﻠﻄﻤﻟﺍ ﺔﻴﻤﻜﻟﺍ",
+      "DA 1250.50- :ﻢﺼﺨﻟﺍ",
+      "-1250.50 DA",
+      "%12.50 :ﺢﺑﺮﻟﺍ ﺶﻣﺎﻫ",
+      "INV-20261001-115500-a1b2 | 45.90 ﺓﺪﺣﻮﻟﺍ",
+      "ﺮﻌﺳ DA",
+      "ﺮﺘﻟ ﺪﺣﺍﻭ ﻲﻓﺎﺻ ﻥﺯﻭﻭ ﺔﻴﻓﺎﺿﺇ ﺕﺎﻨﻴﻣﺎﺘﻴﻓ ﻊﻣ ﺓﺪﻤﺘﻌﻤﻟﺍ",
+      "ﺔﻴﻠﺤﻤﻟﺍ ﺭﺎﻘﺑﻷﺍ ﺔﻋﺭﺰﻣ ﻦﻣ ﺝﺯﺎﻄﻟﺍ ﻢﺳﺪﻟﺍ ﻞﻣﺎﻛ ﺐﻴﻠﺣ",
+      "Café moulu arabica — 250 g, Yaourt nature,",
+      "Pâte fraîche 200 g, Jus d'orange 1 L",
+      "Thank you for your purchase! Cashier: John",
+      "Doe"
+    ],
+    "fonts_used_for_text": [
+      "AAAAAA+IBMPlexSansArabic-Regular"
+    ],
+    "all_fonts_embedded_subset": true,
+    "no_standard14_fallback": true,
+    "proprietary_font_absent": true,
+    "percentage_form": "%12.50",
+    "long_wrap_required": true,
+    "checks": {
+      "rendered:arabic_connected": true,
+      "rendered:mixed_ar_latin": true,
+      "rendered:arabic_western_digits": true,
+      "rendered:negative_money_arabic": true,
+      "rendered:negative_money_pure": true,
+      "rendered:percentage": true,
+      "rendered:invoice_line": true,
+      "rendered:long_arabic_name": true,
+      "rendered:french": true,
+      "rendered:english": true,
+      "digits_ordered": true,
+      "minus_unambiguous": true,
+      "percentage_intact": true,
+      "long_text_wrapped": true,
+      "fonts_embedded_no_fallback": true,
+      "no_proprietary_font": true
+    },
+    "passed": true
+  },
+  "spike_a4": {
+    "file": "g7_spike_a4.pdf",
+    "content_width_pt": 521.575,
+    "bytes": 38174,
+    "mediabox": [
+      [
+        0.0,
+        0.0,
+        595.2756,
+        841.8898
+      ]
+    ],
+    "width_ok": true,
+    "height_ok": true,
+    "basefonts": [
+      "AAAAAA+IBMPlexSansArabic-Regular",
+      "Helvetica"
+    ],
+    "fontfile2_count": 1,
+    "text_blocks": [
+      "G7 SPIKE",
+      "ﺚﻳﺪﺤﻟﺍ ﻦﻳﻮﻤﺘﻟﺍ ﺮﺠﺘﻣ ﻲﻓ ﻢﻜﺑ ﺎﺒﺣﺮﻣ",
+      "ﻥﻵﺍ ﺮﻓﻮﺘﻣ Product 123 ﺞﺘﻨﻣ",
+      "56.78 × 1234 :ﺔﺑﻮﻠﻄﻤﻟﺍ ﺔﻴﻤﻜﻟﺍ",
+      "DA 1250.50- :ﻢﺼﺨﻟﺍ",
+      "-1250.50 DA",
+      "%12.50 :ﺢﺑﺮﻟﺍ ﺶﻣﺎﻫ",
+      "INV-20261001-115500-a1b2 | 45.90 ﺓﺪﺣﻮﻟﺍ ﺮﻌﺳ DA",
+      "ﺮﺘﻟ ﺪﺣﺍﻭ ﻲﻓﺎﺻ ﻥﺯﻭﻭ ﺔﻴﻓﺎﺿﺇ ﺕﺎﻨﻴﻣﺎﺘﻴﻓ ﻊﻣ ﺓﺪﻤﺘﻌﻤﻟﺍ ﺔﻴﻠﺤﻤﻟﺍ ﺭﺎﻘﺑﻷﺍ ﺔﻋﺭﺰﻣ ﻦﻣ ﺝﺯﺎﻄﻟﺍ ﻢﺳﺪﻟﺍ ﻞﻣﺎﻛ ﺐﻴﻠﺣ",
+      "Café moulu arabica — 250 g, Yaourt nature, Pâte fraîche 200 g, Jus d'orange 1 L",
+      "Thank you for your purchase! Cashier: John Doe"
+    ],
+    "fonts_used_for_text": [
+      "AAAAAA+IBMPlexSansArabic-Regular"
+    ],
+    "all_fonts_embedded_subset": true,
+    "no_standard14_fallback": true,
+    "proprietary_font_absent": true,
+    "percentage_form": "%12.50",
+    "long_wrap_required": false,
+    "checks": {
+      "rendered:arabic_connected": true,
+      "rendered:mixed_ar_latin": true,
+      "rendered:arabic_western_digits": true,
+      "rendered:negative_money_arabic": true,
+      "rendered:negative_money_pure": true,
+      "rendered:percentage": true,
+      "rendered:invoice_line": true,
+      "rendered:long_arabic_name": true,
+      "rendered:french": true,
+      "rendered:english": true,
+      "digits_ordered": true,
+      "minus_unambiguous": true,
+      "percentage_intact": true,
+      "long_text_wrapped": true,
+      "fonts_embedded_no_fallback": true,
+      "no_proprietary_font": true
+    },
+    "passed": true
+  },
+  "cases": [
+    "arabic_connected",
+    "mixed_ar_latin",
+    "arabic_western_digits",
+    "negative_money_arabic",
+    "negative_money_pure",
+    "percentage",
+    "invoice_line",
+    "long_arabic_name",
+    "french",
+    "english"
+  ],
+  "g7_passed": true
+}

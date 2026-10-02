@@ -5,11 +5,15 @@
 // Harness: same full-app login flow as expenses_screen_test / nav_rail
 // overflow test (mocktail Dio + FakeCredentialStorage). Default locale
 // in tests is Arabic (matches the app default).
+import 'dart:typed_data';
+
 import 'package:dio/dio.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supermarket_pos/core/strings.dart';
 import 'package:supermarket_pos/features/auth/auth_provider.dart';
 import 'package:supermarket_pos/features/auth/credential_storage.dart';
@@ -65,6 +69,7 @@ class FakeCredentialStorage extends SecureCredentialStorage {
 const _loginPath = '/api/v1/auth/login';
 const _financialPath = '/api/v1/reports/financial';
 const _productsPath = '/api/v1/reports/products';
+const _exportsPath = '/api/v1/exports';
 
 const _viewerScopes = ['report_financial', 'export_data'];
 
@@ -173,6 +178,10 @@ void main() {
 
   setUpAll(() {
     registerFallbackValue(<String, dynamic>{});
+    // The export flow awaits posDeviceIdProvider (SharedPreferences) —
+    // without an in-memory store the future never resolves and the
+    // export spinner blocks pumpAndSettle.
+    SharedPreferences.setMockInitialValues(<String, Object>{});
   });
 
   Response<dynamic> okResponse(String path, Object? data) =>
@@ -181,6 +190,11 @@ void main() {
         data: data,
         statusCode: 200,
       );
+
+  // Phase 15 §12.1: bodies posted to `POST /exports` (cleared per stub),
+  // plus a per-test error override for the export endpoint.
+  final exportRequestBodies = <Map<String, dynamic>>[];
+  Object? exportPostError;
 
   void stubRequests(
     MockDio dio, {
@@ -191,17 +205,64 @@ void main() {
     when(() => dio.interceptors).thenReturn(Interceptors());
     when(() => dio.options).thenReturn(BaseOptions());
 
+    exportRequestBodies.clear();
+    exportPostError = null;
+
     var financialCalls = 0;
 
-    when(() => dio.post(any(), data: any(named: 'data'))).thenAnswer(
-      (invocation) async {
-        final path = invocation.positionalArguments.first as String;
-        if (path == _loginPath) {
-          return okResponse(_loginPath, _loginBody(scopes, roleName));
+    Response<dynamic> postAnswer(Invocation invocation) {
+      final path = invocation.positionalArguments.first as String;
+      if (path == _exportsPath) {
+        final data = invocation.namedArguments[#data];
+        if (data is Map) {
+          exportRequestBodies.add(Map<String, dynamic>.from(data));
         }
-        return okResponse(path, <String, dynamic>{'message': 'ok'});
-      },
-    );
+        final error = exportPostError;
+        if (error != null) throw error;
+        // Server-rendered XLSX bytes + sanitized filename (§10.1).
+        return Response<dynamic>(
+          requestOptions: RequestOptions(path: path),
+          statusCode: 200,
+          data: Uint8List.fromList(<int>[88, 76, 83, 88]),
+          headers: Headers.fromMap(<String, List<String>>{
+            'content-disposition': <String>[
+              'attachment; filename="financial_export.xlsx"',
+            ],
+          }),
+        );
+      }
+      if (path == _loginPath) {
+        return okResponse(_loginPath, _loginBody(scopes, roleName));
+      }
+      return okResponse(path, <String, dynamic>{'message': 'ok'});
+    }
+
+    when(() => dio.post(any(), data: any(named: 'data')))
+        .thenAnswer((invocation) async => postAnswer(invocation));
+
+    // Phase 15 byte endpoints call `post<Uint8List>` — mocktail matches
+    // the generic type argument strictly, so they need their own
+    // registrations (same pattern as pos_screen_test).
+    Future<Response<Uint8List>> postBytes(Invocation invocation) async {
+      final response = postAnswer(invocation);
+      return Response<Uint8List>(
+        requestOptions: response.requestOptions,
+        statusCode: response.statusCode,
+        data: response.data is Uint8List ? response.data as Uint8List : null,
+        headers: response.headers,
+        statusMessage: response.statusMessage,
+      );
+    }
+
+    when(() => dio.post<Uint8List>(any(), data: any(named: 'data')))
+        .thenAnswer(postBytes);
+    when(
+      () => dio.post<Uint8List>(
+        any(),
+        data: any(named: 'data'),
+        options: any(named: 'options'),
+      ),
+    ).thenAnswer(postBytes);
 
     when(
       () => dio.get(any(), queryParameters: any(named: 'queryParameters')),
@@ -510,6 +571,114 @@ void main() {
       expect(find.byKey(const Key('financial-content')), findsOneWidget);
     });
   });
+
+  group('Reports screen — unified export (Phase 15 §12.1/§19.2)', () {
+    testWidgets('export button opens the format dialog; cancel is neutral',
+        (tester) async {
+      final dio = MockDio();
+      stubRequests(dio);
+      await pumpLogin(tester, dio);
+      containerGoReports(tester);
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('reports-export')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('export-format-dialog')), findsOneWidget);
+      expect(find.byKey(const Key('export-format-csv')), findsOneWidget);
+      expect(find.byKey(const Key('export-format-xlsx')), findsOneWidget);
+      expect(find.byKey(const Key('export-format-pdf')), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byKey(const Key('export-format-dialog')),
+          matching: find.text(AppStrings.t('export_title', 'ar')),
+        ),
+        findsOneWidget,
+      );
+
+      await tester.tap(find.byKey(const Key('export-format-cancel')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('export-format-dialog')), findsNothing);
+      // Neutral cancel: no request, no toast, button re-enabled (§16.2).
+      expect(exportRequestBodies, isEmpty);
+      expect(find.byKey(const Key('reports-export-toast')), findsNothing);
+      final button = tester.widget<OutlinedButton>(
+        find.byKey(const Key('reports-export')),
+      );
+      expect(button.onPressed, isNotNull);
+    });
+
+    testWidgets('XLSX posts ExportRequest + prefills server filename + toast',
+        (tester) async {
+      final picker = _FakeFilePicker()..savedPath = 'C:/tmp/out.xlsx';
+      FilePicker.platform = picker;
+      addTearDown(() => FilePicker.platform = FilePickerIO());
+
+      final dio = MockDio();
+      stubRequests(dio);
+      await pumpLogin(tester, dio);
+      containerGoReports(tester);
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('reports-export')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('export-format-xlsx')));
+      await tester.pumpAndSettle();
+
+      expect(exportRequestBodies, hasLength(1));
+      final sent = exportRequestBodies.single;
+      expect(sent['report'], 'financial');
+      expect(sent['format'], 'xlsx');
+      expect(sent['locale'], 'ar');
+      expect(sent['date_from'], isNotEmpty);
+      expect(sent['date_to'], isNotEmpty);
+
+      // Server filename prefills the save dialog (§10.1).
+      expect(picker.lastFileName, 'financial_export.xlsx');
+      expect(picker.lastTitle, AppStrings.t('export_xlsx', 'ar'));
+
+      expect(find.byKey(const Key('reports-export-toast')), findsOneWidget);
+      expect(
+        find.textContaining(AppStrings.t('export_done', 'ar')),
+        findsOneWidget,
+      );
+      // The success toast travels with the sanitized filename as detail.
+      expect(find.textContaining('financial_export.xlsx'), findsOneWidget);
+    });
+
+    testWidgets('422 EXPORT_FORMAT_UNSUPPORTED → localized toast, no save',
+        (tester) async {
+      final picker = _FakeFilePicker()..savedPath = 'C:/tmp/out.xlsx';
+      FilePicker.platform = picker;
+      addTearDown(() => FilePicker.platform = FilePickerIO());
+
+      final dio = MockDio();
+      stubRequests(dio);
+      exportPostError = _envelope(422, 'EXPORT_FORMAT_UNSUPPORTED');
+      await pumpLogin(tester, dio);
+      containerGoReports(tester);
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('reports-export')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('export-format-xlsx')));
+      await tester.pumpAndSettle();
+
+      expect(exportRequestBodies, hasLength(1)); // request WAS sent
+      expect(picker.lastFileName, isNull); // save dialog never opened
+      expect(find.byKey(const Key('export-format-dialog')), findsNothing);
+      expect(find.byKey(const Key('reports-export-toast')), findsOneWidget);
+      expect(
+        find.text(AppStrings.t('export_format_unsupported', 'ar')),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining(AppStrings.t('export_done', 'ar')),
+        findsNothing,
+      );
+    });
+  });
 }
 
 /// Deep-links into `/reports` through the live router (rail-independent).
@@ -517,4 +686,28 @@ void containerGoReports(WidgetTester tester) {
   final container =
       ProviderScope.containerOf(tester.element(find.byType(MaterialApp)));
   container.read(routerProvider).go('/reports');
+}
+
+/// In-memory `saveFile` fake for the Phase 15 export/save dialogs.
+class _FakeFilePicker extends FilePicker {
+  String? savedPath;
+  String? lastTitle;
+  String? lastFileName;
+  Uint8List? lastBytes;
+
+  @override
+  Future<String?> saveFile({
+    String? dialogTitle,
+    String? fileName,
+    String? initialDirectory,
+    FileType type = FileType.any,
+    List<String>? allowedExtensions,
+    Uint8List? bytes,
+    bool lockParentWindow = false,
+  }) async {
+    lastTitle = dialogTitle;
+    lastFileName = fileName;
+    lastBytes = bytes;
+    return savedPath;
+  }
 }

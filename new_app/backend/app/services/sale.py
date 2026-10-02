@@ -22,6 +22,7 @@ from sqlalchemy import update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.exceptions import (
     AuthorizationError,
     BusinessRuleError,
@@ -1235,7 +1236,7 @@ class SaleService(BaseService):
             price_overrides=price_overrides,
         )
 
-    def _to_sale_response(self, sale: Sale) -> SaleResponse:
+    def _to_sale_response(self, sale: Sale, *, with_header: bool = False) -> SaleResponse:
         created = self._to_create_response(
             sale, idempotent_replay=False, price_overrides=[]
         )
@@ -1247,6 +1248,14 @@ class SaleService(BaseService):
         payload["voided_at"] = sale.voided_at
         payload["voided_by"] = sale.voided_by
         payload["void_reason"] = sale.void_reason
+        # G19 (Phase 15): display names only on the detail/print path —
+        # sale.customer / sale.user are selectin-loaded, so at most the
+        # eager join is touched, never an N+1 over list rows.
+        if with_header:
+            customer = sale.customer if sale.customer_id is not None else None
+            payload["customer_name"] = customer.name if customer is not None else None
+            payload["cashier_name"] = sale.user.full_name if sale.user is not None else None
+            payload["store"] = {"name": settings.STORE_NAME}
         return SaleResponse.model_validate(payload)
 
     # ------------------------------------------------------------------
@@ -1260,7 +1269,7 @@ class SaleService(BaseService):
                 message="Sale not found",
                 details={"sale_id": str(sale_id)},
             )
-        return self._to_sale_response(sale)
+        return self._to_sale_response(sale, with_header=True)
 
     def get_sale_by_invoice(self, invoice_number: str) -> SaleResponse:
         sale = self.sales.find_by_invoice_number(invoice_number)
@@ -1269,7 +1278,7 @@ class SaleService(BaseService):
                 message="Sale not found",
                 details={"invoice_number": invoice_number},
             )
-        return self._to_sale_response(sale)
+        return self._to_sale_response(sale, with_header=True)
 
     def list_sales(
         self, *, page: int = 1, page_size: int = 50, user_id: uuid.UUID | None = None

@@ -842,6 +842,20 @@ class AppStrings {
   'report_invalid_range': 'يجب أن يكون تاريخ النهاية بعد تاريخ البداية',
   'report_range_too_wide': 'النطاق المحدد كبير جدًا لهذا التقرير',
   'report_sort_invalid': 'خيار ترتيب غير صالح',
+  // Phase 15 printing & exports (§16)
+  'export_title': 'تصدير التقرير',
+  'export_format_unsupported': 'صيغة التصدير غير مدعومة',
+  'export_render_failed': 'تعذّر إنشاء ملف التصدير',
+  'export_too_large': 'ملف التصدير كبير جدًا',
+  'print_render_failed': 'تعذّر إنشاء مستند الطباعة',
+  'missing_font': 'خط المستند غير متوفر',
+  'print_preview_failed': 'تعذّر عرض معاينة الطباعة',
+  'printer_unavailable': 'الطابعة غير متاحة',
+  'print_dialog_title': 'طباعة المستند',
+  'paper_80mm': 'ورق 80 مم',
+  'paper_a4': 'ورق A4',
+  'save_pdf': 'حفظ PDF',
+  'pdf_saved': 'تم حفظ ملف PDF',
   };
 
   static const Map<String, String> _french = {
@@ -1642,6 +1656,20 @@ class AppStrings {
   'report_invalid_range': 'La date de fin doit être postérieure à la date de début',
   'report_range_too_wide': 'La période sélectionnée est trop longue pour ce rapport',
   'report_sort_invalid': 'Option de tri invalide',
+  // Phase 15 printing & exports (§16)
+  'export_title': 'Exporter le rapport',
+  'export_format_unsupported': "Format d'export non pris en charge",
+  'export_render_failed': 'Échec de la génération du fichier d’export',
+  'export_too_large': 'Fichier d’export trop volumineux',
+  'print_render_failed': 'Échec de la génération du document',
+  'missing_font': 'Police du document manquante',
+  'print_preview_failed': 'Échec de l’aperçu d’impression',
+  'printer_unavailable': 'Imprimante indisponible',
+  'print_dialog_title': 'Impression du document',
+  'paper_80mm': 'Papier 80 mm',
+  'paper_a4': 'Papier A4',
+  'save_pdf': 'Enregistrer en PDF',
+  'pdf_saved': 'Fichier PDF enregistré',
   };
 
   static const Map<String, String> _english = {
@@ -2439,5 +2467,19 @@ class AppStrings {
   'report_invalid_range': 'End date must be on or after start date',
   'report_range_too_wide': 'Selected range is too wide for this report',
   'report_sort_invalid': 'Invalid sort option',
+  // Phase 15 printing & exports (§16)
+  'export_title': 'Export report',
+  'export_format_unsupported': 'Unsupported export format',
+  'export_render_failed': 'Export file generation failed',
+  'export_too_large': 'Export file is too large',
+  'print_render_failed': 'Document rendering failed',
+  'missing_font': 'Document font is missing',
+  'print_preview_failed': 'Print preview failed',
+  'printer_unavailable': 'Printer unavailable',
+  'print_dialog_title': 'Print document',
+  'paper_80mm': '80 mm paper',
+  'paper_a4': 'A4 paper',
+  'save_pdf': 'Save PDF',
+  'pdf_saved': 'PDF file saved',
 };
 }

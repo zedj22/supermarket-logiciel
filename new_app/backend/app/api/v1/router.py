@@ -12,10 +12,12 @@ from app.api.v1.customers import router as customers_router
 from app.api.v1.dashboard import dashboard_router
 from app.api.v1.debts import router as debts_router
 from app.api.v1.expenses import router as expenses_router
+from app.api.v1.exports import router as exports_router
 from app.api.v1.health import router as health_router
 from app.api.v1.inventory import router as inventory_router
 from app.api.v1.packs import router as packs_router
 from app.api.v1.pos import pos_router, sales_router
+from app.api.v1.print import router as print_router
 from app.api.v1.products import router as products_router
 from app.api.v1.purchases import router as purchases_router
 from app.api.v1.reports import reports_router
@@ -44,5 +46,7 @@ api_router.include_router(sales_router, prefix="/sales", tags=["sales"])
 api_router.include_router(purchases_router, prefix="/purchases", tags=["purchases"])
 api_router.include_router(returns_router, prefix="/returns", tags=["returns"])
 api_router.include_router(reports_router, prefix="/reports", tags=["reports"])
+api_router.include_router(exports_router, prefix="/exports", tags=["exports"])
+api_router.include_router(print_router, prefix="/print", tags=["print"])
 api_router.include_router(dashboard_router, prefix="/dashboard", tags=["dashboard"])
 api_router.include_router(pos_router, prefix="/pos", tags=["pos"])
