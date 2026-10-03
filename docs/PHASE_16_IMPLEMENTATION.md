@@ -286,7 +286,72 @@ entirely the launch command, and the documented LAN command stays
 `uvicorn app.main:app --host 0.0.0.0 --port 8000`. No config was moved to
 127.0.0.1.
 
-### 5.6 Deviations / notes
+### 5.6 Real 2-PC restart bug — the client never repaired `paired_server_url`
+
+**Symptom (PC2, after PC1 moved 192.168.1.7 → 192.168.1.20).** Restarting the
+paired Flutter client showed the generic connection-failure screen with a Retry
+button. Retry produced **no request at all** in FastAPI's log, and UDP
+rediscovery never ran. Manual UDP discovery from PC2 and
+`GET /api/v1/health` on the new address both worked, and PC2 had paired
+successfully *before* the IP change.
+
+**Root cause — two independent Flutter defects.**
+
+1. *The reconnect machine was never started.* `lanConnectionProvider` — the only
+   thing that runs `bootstrap()` — was referenced from exactly three places:
+   `ScaffoldWithNav` (`router/app_router.dart:270`), `ConnectionStatusChip`
+   (`widgets/status_chip.dart:42`) and the first-run wizard
+   (`setup_wizard_screen.dart`). The first two mount only **after** a
+   successful login, and the wizard is only reachable while
+   `isNetworkConfigured()` is false — which it is not for a paired install. A
+   client whose remembered address had gone stale therefore could not
+   authenticate, never mounted the shell, and `bootstrap()` never ran: no
+   heartbeat, no probe, no sweep.
+
+2. *Rediscovery existed only for the first-run wizard.* `startDiscovery()` had a
+   single caller (`setup_wizard_screen.dart:77`). `bootstrap()` re-applied the
+   persisted link and ticked `_api.baseUrl`, and `retryNow()` did the same —
+   neither ever swept UDP. So even when the machine did run, "reconnect" meant
+   re-issuing `GET /api/v1/health` against `192.168.1.7` forever.
+
+**Why nothing appeared in FastAPI's log.** Every request the client made
+(`/auth/verify-token`, `/auth/setup/check`, `/auth/login-users`) was addressed
+to `http://192.168.1.7:8000`. That host no longer exists, so the TCP connect
+fails before a single packet reaches 192.168.1.20 — PC1 never sees them. The
+login screen's Retry only re-issued the same GET against the same
+`ApiClient.baseUrl`.
+
+**Why manual URL worked before the change.** `initialBaseUrl()` returns the
+persisted `paired_server_url`, which was correct while PC1 was
+`192.168.1.7`; auth, login and heartbeat all went to a live host.
+
+**Fix — 3 files, Flutter only (no backend, no pairing/security change).**
+
+| file | change |
+|---|---|
+| `lib/main.dart` | `ref.read(lanConnectionProvider)` on the first frame of `SupermarketPosApp`: the machine now starts before authentication (`read`, not `watch`, so the app is not rebuilt on every connection tick). |
+| `lib/features/devices/connection_provider.dart` | new `_recoverAddress()` — **cached address first** (a 2 s `/health` + `/system/info` probe, filtered by `paired_server_id`), **then UDP sweep → probe → adopt**. On success it rewrites `paired_server_url` (never the device token), repoints the shared `ApiClient`, and keeps the same `server_id`, so no re-pair is ever asked for. Hooked into `bootstrap()`, `retryNow()` and the new public `reacquireServer()`. Heartbeat connection failures now record `errorMessage: 'unreachable'` (the reconnect dialog's existing branch finally fires). `probeServer` became an injectable constructor seam — the production default is unchanged. |
+| `lib/features/auth/login_screen.dart` | the login screen's **Retry** awaits `reacquireServer()` before re-requesting `/auth/login-users`; previously it only re-issued the GET, which is the reported "no request at all" symptom. |
+
+Identity is still `server_id`, never the address: offers with a different
+`server_id` are filtered **before** they are even probed, the remembered
+address answering as another server still ends in
+`forgetServer('server_changed')`, and the device token is never rewritten.
+
+**Tests added (8):** `test/unit/lan_address_recovery_test.dart` (6 — healthy
+address does not sweep, dead address is replaced and persisted, foreign
+`server_id` is never adopted, `retryNow` rediscovers, `reacquireServer` is a
+no-op when unpaired, `reacquireServer` repairs the login Retry's link) and
+`test/widget/boot_reconnect_test.dart` (2 — the provider exists on the first
+frame while only `LoginScreen` is mounted; the login Retry sweeps, repoints
+`ApiClient` and reloads).
+
+**Residual behaviour.** If the sweep finds nothing, the client keeps the
+remembered address and stays on the existing heartbeat/backoff loop, so the
+boot reconnect dialog ("Try again now" / manual entry) remains the fallback
+for a server that is simply down.
+
+### 5.7 Deviations / notes
 
 - **Migration verified, not assumed:** `alembic revision --autogenerate`
   reports *no changes* against the model (`test_autogenerate_detects_no_changes`
@@ -304,7 +369,7 @@ entirely the launch command, and the documented LAN command stays
 - `PermissionScope` was **not** widened (`permissions == 30` is pinned by
   `test_auth.py`); `device_manage` already exists in the seed.
 
-### 5.7 Tooling notes (reusable)
+### 5.8 Tooling notes (reusable)
 
 - **Never prepend the venv to `PATH` when running backend tests.**
   `_run_alembic` in `tests/integration/test_migrations.py` shells out to
@@ -360,6 +425,12 @@ full backend **1109 passed** (1104 + 5 new Q6 tests), 517.87 s,
 was committed by the owner as `67d20a6`; bug fix #2 (this one) is
 uncommitted. The run used the `LAN_MODE=0 DISCOVERY_ENABLED=0` override
 because `.env` still enables both for real 2-PC QA.
+
+Re-verified after the §5.6 paired-client restart fix (Flutter only):
+`flutter analyze --no-pub` → **No issues found**, `flutter test` →
+**1267 passed** (1259 + 8 new, 2 min 23 s), `flutter build windows --debug`
+→ **OK (supermarket_pos.exe, 23.4 s)**. No backend file, no migration, no
+dependency and no pairing/security rule was touched.
 
 ---
 

@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'core/constants.dart';
 import 'features/auth/auth_provider.dart';
 import 'features/auth/credential_storage.dart';
+import 'features/devices/connection_provider.dart';
 import 'features/devices/device_identity.dart';
 import 'network/api_client.dart';
 import 'theme/app_theme.dart';
@@ -63,6 +64,16 @@ class SupermarketPosApp extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    // Phase 16 §23.3 — 2-PC QA bug: the reconnect / rediscovery machine must
+    // start on the FIRST frame. It used to be created only by the
+    // authenticated shell (the status chip and the boot-time modal), so a
+    // paired client that could not authenticate — exactly what a stale
+    // `paired_server_url` after a server IP change produces — never ran
+    // `bootstrap()`, never repaired the address and never rediscovered.
+    // `read` (not `watch`) starts it without rebuilding the whole app on
+    // every connection tick.
+    ref.read(lanConnectionProvider);
+
     final themeState = ref.watch(themeProvider);
     final localeState = ref.watch(localeProvider);
     final authState = ref.watch(authProvider);

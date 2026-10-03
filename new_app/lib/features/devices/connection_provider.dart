@@ -11,6 +11,10 @@
 //     immediate (§14);
 //   * `server_id` is identity, the IP is not — a changed `server_id` stops
 //     the loop and asks for a re-pair (§14 / §9.3);
+//   * reconnect = cached address first, then UDP rediscovery (§23.3): when
+//     `paired_server_url` stops answering, the paired server is searched
+//     again on the LAN and `paired_server_url` is rewritten — a DHCP/IP
+//     change must never force a re-pair;
 //   * NO offline writes: when not `connected`, mutations are disabled by
 //     the UI (§15). This layer never queues anything.
 import 'dart:async';
@@ -251,6 +255,11 @@ class LanConnectionNotifier extends StateNotifier<LanConnectionState> {
   final ApiClient _api;
   final DiscoveryService Function(int port) _discoveryFactory;
 
+  /// `/health` + `/system/info` validation (§11.2). Injectable so the
+  /// address-recovery path can be driven without sockets in tests; the
+  /// production default is the real [probeServer].
+  final Future<ServerProbe> Function(String url) _probe;
+
   Timer? _heartbeat;
   Timer? _retry;
   Timer? _pairingTicker;
@@ -264,11 +273,13 @@ class LanConnectionNotifier extends StateNotifier<LanConnectionState> {
   LanConnectionNotifier(
     this._api, {
     DiscoveryService Function(int port)? discoveryFactory,
+    Future<ServerProbe> Function(String url)? probe,
     Random? random,
     this.heartbeatInterval = AppConstants.heartbeatInterval,
     this.pairingPollInterval = const Duration(seconds: 2),
     this.pairingTimeout = const Duration(minutes: 5),
   })  : _discoveryFactory = discoveryFactory ?? ((port) => UdpDiscoveryService(port: port)),
+        _probe = probe ?? probeServer,
         _random = random ?? Random(),
         super(const LanConnectionState());
 
@@ -300,8 +311,118 @@ class LanConnectionNotifier extends StateNotifier<LanConnectionState> {
       serverName: state.serverName,
     );
     _startHeartbeat();
+
+    // §23.3 — "cached-address-first, then UDP rediscovery". The remembered
+    // address is validated with the same /health + /system/info probe the
+    // wizard uses (2 s budget), so a DHCP/IP change costs seconds instead
+    // of the 30 s API timeout, and the heartbeat below then starts against
+    // an address that actually answers.
+    await _recoverAddress(link);
+
     await _heartbeatTick(verifyIdentity: true);
     return state.phase;
+  }
+
+  // -- address recovery (§23.3: IP change without a re-pair) ---------------
+
+  /// True when [url] answers `/health` + `/system/info` as THIS paired
+  /// server. A dead host, an unrelated service or another store sitting
+  /// behind the old address all mean "the cached address is unusable".
+  Future<bool> _answersAsPairedServer(String url, String? pairedServerId) async {
+    try {
+      final probe = await _probe(url);
+      if (pairedServerId == null || pairedServerId.isEmpty) return true;
+      return probe.serverId == pairedServerId;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  bool _isOtherServer(String candidate, String? pairedServerId) =>
+      pairedServerId != null &&
+      pairedServerId.isNotEmpty &&
+      candidate != pairedServerId;
+
+  /// One UDP sweep of the discovery port, collecting every validated offer
+  /// until the budget elapses (§11.1). The socket is always disposed.
+  Future<List<ServerOffer>> _sweepOffers({
+    Duration budget = const Duration(seconds: 3),
+  }) async {
+    final service = _discoveryFactory(8000);
+    try {
+      return await service.discover(budget: budget).toList();
+    } finally {
+      await service.dispose();
+    }
+  }
+
+  /// Cached address first, then UDP rediscovery (§23.3 / §14).
+  ///
+  /// Returns true once a candidate for the SAME `server_id` has answered
+  /// `/health` + `/system/info`. The shared [ApiClient] is then pointed at
+  /// it and `paired_server_url` is rewritten so the next boot skips the
+  /// sweep — but the device token is deliberately NOT rewritten: a moved
+  /// server keeps its pairing, because identity is `server_id`, never the
+  /// address (§9.3). Offers belonging to any other server are ignored.
+  Future<bool> _recoverAddress(ServerLink link) async {
+    final url = link.url;
+    final token = link.deviceToken;
+    if (url == null || url.isEmpty || token == null || token.isEmpty) {
+      return false;
+    }
+    if (await _answersAsPairedServer(url, link.serverId)) return true;
+
+    debugPrint('[LAN] cached address $url is unusable → UDP rediscovery');
+
+    List<ServerOffer> offers;
+    try {
+      offers = await _sweepOffers();
+    } catch (_) {
+      return false;
+    }
+
+    for (final offer in offers) {
+      if (_isOtherServer(offer.serverId, link.serverId)) continue;
+      try {
+        final probe = await _probe(offer.baseUrl);
+        if (probe.serverId != offer.serverId ||
+            _isOtherServer(probe.serverId, link.serverId)) {
+          continue;
+        }
+      } catch (_) {
+        continue;
+      }
+      await writeServerLink(ServerLink(
+        url: offer.baseUrl,
+        serverId: offer.serverId,
+      ));
+      await _applyLink(offer.baseUrl, token);
+      state = state.copyWith(
+        baseUrl: offer.baseUrl,
+        serverId: offer.serverId,
+        serverName: offer.name,
+        clearError: true,
+      );
+      debugPrint('[LAN] rediscovered the paired server at ${offer.baseUrl}');
+      return true;
+    }
+    debugPrint(
+        '[LAN] rediscovery found no offer for server_id ${link.serverId}');
+    return false;
+  }
+
+  /// Re-runs the cached-address-first / UDP-rediscovery acquisition for the
+  /// persisted link. This is the entry point the login screen's Retry uses:
+  /// a client that cannot authenticate yet has no shell, so the login screen
+  /// is the only reconnect affordance it can reach.
+  Future<bool> reacquireServer() async {
+    try {
+      final link = await readServerLink();
+      if (!link.isPaired) return false;
+      return await _recoverAddress(link);
+    } catch (_) {
+      return false;
+    }
   }
 
   @override
@@ -356,7 +477,7 @@ class LanConnectionNotifier extends StateNotifier<LanConnectionState> {
   /// Probes a candidate (UDP offer or manually typed host) over HTTP.
   Future<bool> probe(String baseUrl) async {
     try {
-      final probe = await probeServer(baseUrl.trim());
+      final probe = await _probe(baseUrl.trim());
       state = state.copyWith(
         phase: LanPhase.serverFound,
         baseUrl: probe.baseUrl,
@@ -586,6 +707,14 @@ class LanConnectionNotifier extends StateNotifier<LanConnectionState> {
         lastHeartbeatAt: DateTime.now(),
         clearError: true,
       );
+    } on DioException catch (e) {
+      if (isConnectionError(e)) {
+        // No response at all: the ADDRESS did not answer (§23.3). Surfaced
+        // so the reconnect dialog can say "the server did not answer" and
+        // so tests can tell a dead address from a failing server.
+        state = state.copyWith(errorMessage: 'unreachable');
+      }
+      _onHeartbeatFailure();
     } catch (_) {
       _onHeartbeatFailure();
     }
@@ -615,7 +744,11 @@ class LanConnectionNotifier extends StateNotifier<LanConnectionState> {
   }
 
   /// User pressed "retry now" in the reconnect dialog.
-  void retryNow() {
+  ///
+  /// §23.3: a retry re-runs the cached-address-first / UDP-rediscovery
+  /// acquisition first — re-issuing the very same request against an
+  /// address that has gone stale is not a retry.
+  Future<void> retryNow() async {
     if (state.phase != LanPhase.reconnecting &&
         state.phase != LanPhase.disconnected &&
         state.phase != LanPhase.rejected) {
@@ -628,7 +761,13 @@ class LanConnectionNotifier extends StateNotifier<LanConnectionState> {
       clearError: true,
     );
     _startHeartbeat();
-    _heartbeatTick(verifyIdentity: true);
+    try {
+      final link = await readServerLink();
+      if (link.isPaired) await _recoverAddress(link);
+    } catch (_) {
+      // Keep the remembered address; the heartbeat below still reports it.
+    }
+    await _heartbeatTick(verifyIdentity: true);
   }
 
   // -- device guard reactions ---------------------------------------------

@@ -6,6 +6,7 @@ import '../../core/constants.dart';
 import '../../core/strings.dart';
 import '../../l10n/locale_provider.dart';
 import '../../network/api_client.dart';
+import '../devices/connection_provider.dart';
 import 'auth_provider.dart';
 import 'auth_models.dart';
 import 'pin_pad.dart';
@@ -62,6 +63,21 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         _usersError = _loadUsersErrorMessage(e);
       });
     }
+  }
+
+  /// Retry must do more than re-issue the same request against an address
+  /// that may be dead (§23.3): re-run the cached-address-first / UDP
+  /// rediscovery acquisition first, then load the list from whatever
+  /// address the connection layer is using now. A paired client that
+  /// cannot authenticate yet has no shell, so this is the only reconnect
+  /// affordance it can reach.
+  Future<void> _loadUsersAfterRecovery() async {
+    setState(() {
+      _loadingUsers = true;
+      _usersError = null;
+    });
+    await ref.read(lanConnectionProvider.notifier).reacquireServer();
+    await _loadUsers();
   }
 
   String _loadUsersErrorMessage(DioException e) {
@@ -213,7 +229,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     ),
                     const SizedBox(height: 16),
                     ElevatedButton(
-                      onPressed: _loadUsers,
+                      onPressed: _loadUsersAfterRecovery,
                       child: Text(AppStrings.t('retry', loc)),
                     ),
                   ] else if (_users.isEmpty) ...[
