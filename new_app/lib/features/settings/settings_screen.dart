@@ -1,12 +1,21 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+
 import '../../core/strings.dart';
 import '../../l10n/locale_provider.dart';
 import '../../theme/app_theme_mode.dart';
 import '../../theme/theme_provider.dart';
+import '../auth/permission_helpers.dart';
+import 'settings_models.dart';
+import 'settings_provider.dart';
 
-/// Language + theme only — Settings for Phase 6 localization/theme
-/// verification. Shell provides Scaffold/AppBar; this is content only.
+/// Language + theme (Phase 6) **and** the server-owned store settings
+/// (Phase 17, §17.1).
+///
+/// The store section is rendered only for `settings_manage` — matching the
+/// server, which rejects `PUT /api/v1/settings` for anyone else.  It is
+/// loaded lazily on first render, so a manager/cashier never issues a
+/// settings request at all.
 class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({super.key});
 
@@ -22,92 +31,447 @@ class SettingsScreen extends ConsumerWidget {
     final loc = ref.watch(localeProvider).flutterLocale.languageCode;
     final localeState = ref.watch(localeProvider);
     final themeState = ref.watch(themeProvider);
+    final canManage = ref.watch(hasPermissionProvider(settingsManageScope));
 
-    return Padding(
-      padding: const EdgeInsets.all(24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            AppStrings.t('settings', loc),
-            style: theme.textTheme.headlineSmall,
-          ),
-          const SizedBox(height: 24),
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    AppStrings.t('language', loc),
-                    style: theme.textTheme.titleMedium,
-                  ),
-                  const SizedBox(height: 12),
-                  DropdownButtonFormField<AppLocale>(
-                    key: const Key('settings-language-dropdown'),
-                    initialValue: localeState.locale,
-                    isExpanded: true,
-                    items: [
-                      for (final entry in languageNames.entries)
-                        DropdownMenuItem<AppLocale>(
-                          value: entry.key,
-                          child: Text(entry.value),
-                        ),
-                    ],
-                    onChanged: (value) {
-                      if (value != null) {
-                        ref.read(localeProvider.notifier).setLocale(value);
-                      }
-                    },
-                  ),
-                ],
-              ),
+    return SingleChildScrollView(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              AppStrings.t('settings', loc),
+              style: theme.textTheme.headlineSmall,
             ),
-          ),
-          const SizedBox(height: 16),
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    AppStrings.t('theme', loc),
-                    style: theme.textTheme.titleMedium,
-                  ),
-                  RadioGroup<AppThemeMode>(
-                    groupValue: themeState.mode,
-                    onChanged: (value) {
-                      if (value != null) {
-                        ref.read(themeProvider.notifier).setTheme(value);
-                      }
-                    },
-                    child: Column(
-                      children: [
-                        RadioListTile<AppThemeMode>(
-                          key: const Key('settings-theme-dark'),
-                          title: Text(AppStrings.t('dark_theme', loc)),
-                          value: AppThemeMode.dark,
-                        ),
-                        RadioListTile<AppThemeMode>(
-                          key: const Key('settings-theme-light'),
-                          title: Text(AppStrings.t('light_theme', loc)),
-                          value: AppThemeMode.light,
-                        ),
-                        RadioListTile<AppThemeMode>(
-                          key: const Key('settings-theme-grey'),
-                          title: Text(AppStrings.t('grey_theme', loc)),
-                          value: AppThemeMode.grey,
-                        ),
-                      ],
+            const SizedBox(height: 24),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      AppStrings.t('language', loc),
+                      style: theme.textTheme.titleMedium,
                     ),
-                  ),
-                ],
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<AppLocale>(
+                      key: const Key('settings-language-dropdown'),
+                      initialValue: localeState.locale,
+                      isExpanded: true,
+                      items: [
+                        for (final entry in languageNames.entries)
+                          DropdownMenuItem<AppLocale>(
+                            value: entry.key,
+                            child: Text(entry.value),
+                          ),
+                      ],
+                      onChanged: (value) {
+                        if (value != null) {
+                          ref.read(localeProvider.notifier).setLocale(value);
+                        }
+                      },
+                    ),
+                  ],
+                ),
               ),
             ),
+            const SizedBox(height: 16),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      AppStrings.t('theme', loc),
+                      style: theme.textTheme.titleMedium,
+                    ),
+                    RadioGroup<AppThemeMode>(
+                      groupValue: themeState.mode,
+                      onChanged: (value) {
+                        if (value != null) {
+                          ref.read(themeProvider.notifier).setTheme(value);
+                        }
+                      },
+                      child: Column(
+                        children: [
+                          RadioListTile<AppThemeMode>(
+                            key: const Key('settings-theme-dark'),
+                            title: Text(AppStrings.t('dark_theme', loc)),
+                            value: AppThemeMode.dark,
+                          ),
+                          RadioListTile<AppThemeMode>(
+                            key: const Key('settings-theme-light'),
+                            title: Text(AppStrings.t('light_theme', loc)),
+                            value: AppThemeMode.light,
+                          ),
+                          RadioListTile<AppThemeMode>(
+                            key: const Key('settings-theme-grey'),
+                            title: Text(AppStrings.t('grey_theme', loc)),
+                            value: AppThemeMode.grey,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            if (canManage) ...[
+              const SizedBox(height: 16),
+              const _StoreSettingsSection(),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Server-owned store / receipt / POS settings (`GET` + `PUT /settings`).
+///
+/// Lifecycle notes:
+/// * the `GET` is issued once, from `initState`, and never for a user
+///   without `settings_manage`;
+/// * the form is keyed on the loaded [StoreSettings] so a **successful**
+///   save re-seeds it from the server response, while a **failed** save
+///   leaves the operator's typing untouched;
+/// * `saved` is only ever reported from the `save()` future's `true`.
+class _StoreSettingsSection extends ConsumerStatefulWidget {
+  const _StoreSettingsSection();
+
+  @override
+  ConsumerState<_StoreSettingsSection> createState() =>
+      _StoreSettingsSectionState();
+}
+
+class _StoreSettingsSectionState extends ConsumerState<_StoreSettingsSection> {
+  late final TextEditingController _storeName;
+  late final TextEditingController _storePhone;
+  late final TextEditingController _storeAddress;
+  late final TextEditingController _invoiceFooter;
+  late final TextEditingController _lowStockThreshold;
+
+  bool _askBeforePrint = false;
+  bool _autoPrintInvoice = false;
+  bool _allowDebt = true;
+  String _defaultPaper = '80mm';
+  int _lowStock = 5;
+
+  @override
+  void initState() {
+    super.initState();
+    _storeName = TextEditingController();
+    _storePhone = TextEditingController();
+    _storeAddress = TextEditingController();
+    _invoiceFooter = TextEditingController();
+    _lowStockThreshold = TextEditingController();
+    final current = ref.read(settingsProvider).settings;
+    if (current != null) _seedFrom(current);
+    // Deferred out of initState: the provider must not be read while the
+    // widget tree is still building.
+    Future.microtask(_loadIfNeeded);
+  }
+
+  void _loadIfNeeded() {
+    if (!mounted) return;
+    final state = ref.read(settingsProvider);
+    if (state.settings == null &&
+        state.status != SettingsStatus.loading &&
+        state.status != SettingsStatus.saving) {
+      ref.read(settingsProvider.notifier).load();
+    }
+  }
+
+  @override
+  void dispose() {
+    _storeName.dispose();
+    _storePhone.dispose();
+    _storeAddress.dispose();
+    _invoiceFooter.dispose();
+    _lowStockThreshold.dispose();
+    super.dispose();
+  }
+
+  void _seedFrom(StoreSettings settings) {
+    _storeName.text = settings.storeName;
+    _storePhone.text = settings.storePhone;
+    _storeAddress.text = settings.storeAddress;
+    _invoiceFooter.text = settings.invoiceFooter;
+    _lowStock = settings.lowStockThreshold;
+    _lowStockThreshold.text = settings.lowStockThreshold.toString();
+    _askBeforePrint = settings.askBeforePrint;
+    _autoPrintInvoice = settings.autoPrintInvoice;
+    _allowDebt = settings.allowDebt;
+    _defaultPaper = settings.defaultPaper;
+  }
+
+  StoreSettings get _draft => StoreSettings(
+        storeName: _storeName.text,
+        storePhone: _storePhone.text,
+        storeAddress: _storeAddress.text,
+        invoiceFooter: _invoiceFooter.text,
+        defaultPaper: _defaultPaper,
+        askBeforePrint: _askBeforePrint,
+        autoPrintInvoice: _autoPrintInvoice,
+        allowDebt: _allowDebt,
+        lowStockThreshold: _lowStock,
+      );
+
+  Future<void> _save() async {
+    final ok = await ref.read(settingsProvider.notifier).save(_draft);
+    if (!ok || !mounted) return; // never report a failed save as saved
+    final loc = ref.read(localeProvider).flutterLocale.languageCode;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(AppStrings.t('settings_saved', loc))),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final loc = ref.watch(localeProvider).flutterLocale.languageCode;
+    final state = ref.watch(settingsProvider);
+
+    // A successful save (or a background reload) replaces the server
+    // snapshot — re-seed the form from it.  A *failed* save leaves
+    // `settings` untouched, so this never wipes what the operator typed.
+    ref.listen<SettingsState>(settingsProvider, (previous, next) {
+      final settings = next.settings;
+      if (settings != null && settings != previous?.settings) {
+        setState(() => _seedFrom(settings));
+      }
+    });
+
+    if (state.settings == null) {
+      if (state.hasError) {
+        return _loadError(theme, loc, state.errorMessage);
+      }
+      return Card(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Center(
+            key: const Key('settings-store-loading'),
+            child: const CircularProgressIndicator(),
+          ),
+        ),
+      );
+    }
+
+    final settings = state.settings!;
+    final hasChanges = _draft != settings;
+
+    return Card(
+      // Re-keys the whole subtree when the server snapshot changes, so a
+      // dropdown seeded with `initialValue` re-initialises from the freshly
+      // saved values instead of keeping stale field state.
+      key: ValueKey<StoreSettings?>(settings),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (state.hasError) _errorBanner(theme, loc, state),
+            _sectionTitle(theme, loc, 'settings_store'),
+            const SizedBox(height: 12),
+            _textField(
+              key: const Key('settings-store-name'),
+              controller: _storeName,
+              label: AppStrings.t('store_name', loc),
+              onChanged: (_) => setState(() {}),
+            ),
+            const SizedBox(height: 12),
+            _textField(
+              key: const Key('settings-store-phone'),
+              controller: _storePhone,
+              label: AppStrings.t('phone', loc),
+              onChanged: (_) => setState(() {}),
+            ),
+            const SizedBox(height: 12),
+            _textField(
+              key: const Key('settings-store-address'),
+              controller: _storeAddress,
+              label: AppStrings.t('address', loc),
+              onChanged: (_) => setState(() {}),
+            ),
+            const SizedBox(height: 24),
+            _sectionTitle(theme, loc, 'settings_receipt'),
+            const SizedBox(height: 12),
+            _textField(
+              key: const Key('settings-invoice-footer'),
+              controller: _invoiceFooter,
+              label: AppStrings.t('invoice_footer', loc),
+              maxLines: 2,
+              onChanged: (_) => setState(() {}),
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<String>(
+              key: const Key('settings-paper-dropdown'),
+              initialValue: _defaultPaper,
+              isExpanded: true,
+              decoration: InputDecoration(
+                labelText: AppStrings.t('default_paper', loc),
+              ),
+              items: [
+                for (final paper in StoreSettings.papers)
+                  DropdownMenuItem<String>(value: paper, child: Text(paper)),
+              ],
+              onChanged: (value) {
+                if (value == null) return;
+                setState(() => _defaultPaper = value);
+              },
+            ),
+            const SizedBox(height: 8),
+            SwitchListTile(
+              key: const Key('settings-ask-before-print'),
+              contentPadding: EdgeInsets.zero,
+              title: Text(AppStrings.t('ask_before_print', loc)),
+              value: _askBeforePrint,
+              onChanged: (value) => setState(() => _askBeforePrint = value),
+            ),
+            SwitchListTile(
+              key: const Key('settings-auto-print'),
+              contentPadding: EdgeInsets.zero,
+              title: Text(AppStrings.t('auto_print_invoice', loc)),
+              value: _autoPrintInvoice,
+              onChanged: (value) => setState(() => _autoPrintInvoice = value),
+            ),
+            const SizedBox(height: 16),
+            _sectionTitle(theme, loc, 'settings_pos'),
+            const SizedBox(height: 12),
+            SwitchListTile(
+              key: const Key('settings-allow-debt'),
+              contentPadding: EdgeInsets.zero,
+              title: Text(AppStrings.t('allow_debt', loc)),
+              value: _allowDebt,
+              onChanged: (value) => setState(() => _allowDebt = value),
+            ),
+            _textField(
+              key: const Key('settings-low-stock-threshold'),
+              controller: _lowStockThreshold,
+              label: AppStrings.t('low_stock_threshold', loc),
+              keyboardType: TextInputType.number,
+              errorText: _lowStock < 0
+                  ? AppStrings.t('validation_error', loc)
+                  : null,
+              onChanged: (value) {
+                setState(
+                  () => _lowStock = int.tryParse(value.trim()) ?? -1,
+                );
+              },
+            ),
+            const SizedBox(height: 20),
+            Row(
+              children: [
+                FilledButton(
+                  key: const Key('settings-save-button'),
+                  onPressed: state.isSaving || !hasChanges || _lowStock < 0
+                      ? null
+                      : _save,
+                  child: state.isSaving
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : Text(AppStrings.t('save', loc)),
+                ),
+                const SizedBox(width: 12),
+                OutlinedButton(
+                  key: const Key('settings-refresh-button'),
+                  onPressed: state.isSaving
+                      ? null
+                      : () => ref.read(settingsProvider.notifier).load(),
+                  child: Text(AppStrings.t('refresh', loc)),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _sectionTitle(ThemeData theme, String loc, String key) => Text(
+        AppStrings.t(key, loc),
+        style: theme.textTheme.titleMedium,
+      );
+
+  Widget _textField({
+    required Key key,
+    required TextEditingController controller,
+    required String label,
+    required ValueChanged<String> onChanged,
+    int maxLines = 1,
+    TextInputType? keyboardType,
+    String? errorText,
+  }) {
+    return TextFormField(
+      key: key,
+      controller: controller,
+      maxLines: maxLines,
+      keyboardType: keyboardType,
+      decoration: InputDecoration(
+        labelText: label,
+        errorText: errorText,
+        border: const OutlineInputBorder(),
+      ),
+      onChanged: onChanged,
+    );
+  }
+
+  Widget _errorBanner(ThemeData theme, String loc, SettingsState state) {
+    final headline = state.failedDuringSave
+        ? 'settings_save_failed'
+        : 'settings_load_failed';
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Row(
+        key: const Key('settings-error-banner'),
+        children: [
+          Icon(Icons.error_outline, color: theme.colorScheme.error),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              '${AppStrings.t(headline, loc)}'
+              '${state.errorMessage == null ? '' : ' — ${state.errorMessage}'}',
+              style: theme.textTheme.bodyMedium
+                  ?.copyWith(color: theme.colorScheme.error),
+            ),
+          ),
+          IconButton(
+            key: const Key('settings-error-dismiss'),
+            icon: const Icon(Icons.close),
+            onPressed: () => ref.read(settingsProvider.notifier).clearError(),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _loadError(ThemeData theme, String loc, String? detail) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          key: const Key('settings-load-error'),
+          children: [
+            Text(
+              AppStrings.t('settings_load_failed', loc),
+              style: theme.textTheme.titleMedium,
+            ),
+            if (detail != null) ...[
+              const SizedBox(height: 8),
+              Text(detail, style: theme.textTheme.bodyMedium),
+            ],
+            const SizedBox(height: 16),
+            FilledButton(
+              onPressed: () => ref.read(settingsProvider.notifier).load(),
+              child: Text(AppStrings.t('retry', loc)),
+            ),
+          ],
+        ),
       ),
     );
   }

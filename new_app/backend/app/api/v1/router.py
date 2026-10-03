@@ -29,6 +29,7 @@ from app.api.v1.products import router as products_router
 from app.api.v1.purchases import router as purchases_router
 from app.api.v1.reports import reports_router
 from app.api.v1.returns import router as returns_router
+from app.api.v1.settings import router as settings_router
 from app.api.v1.suppliers import router as suppliers_router
 from app.api.v1.system import router as system_router
 from app.api.v1.users import router as users_router
@@ -58,3 +59,4 @@ api_router.include_router(print_router, prefix="/print", tags=["print"])
 api_router.include_router(dashboard_router, prefix="/dashboard", tags=["dashboard"])
 api_router.include_router(pos_router, prefix="/pos", tags=["pos"])
 api_router.include_router(devices_router, prefix="/devices", tags=["devices"])
+api_router.include_router(settings_router, prefix="/settings", tags=["settings"])

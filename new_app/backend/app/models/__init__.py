@@ -79,6 +79,9 @@ from app.models.audit import AuditLog  # noqa: F401
 # Devices / pairing (Phase 16)
 from app.models.device import Device  # noqa: F401
 
+# Store/application settings (Phase 17)
+from app.models.settings import AppSetting  # noqa: F401
+
 # Base (re-export for convenience)
 from app.db.base import Base, BaseModel, DocumentModel, MasterModel  # noqa: F401
 
@@ -136,6 +139,8 @@ __all__ = [
     "InventoryMovement",
     # Audit
     "AuditLog",
+    # Store/application settings (Phase 17)
+    "AppSetting",
     # Base
     "Base",
     "BaseModel",

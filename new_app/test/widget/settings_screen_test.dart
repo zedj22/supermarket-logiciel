@@ -3,12 +3,18 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supermarket_pos/core/strings.dart';
+import 'package:supermarket_pos/features/auth/auth_models.dart';
+import 'package:supermarket_pos/features/auth/auth_provider.dart';
+import 'package:supermarket_pos/features/settings/settings_provider.dart';
 import 'package:supermarket_pos/features/settings/settings_screen.dart';
 import 'package:supermarket_pos/l10n/locale_provider.dart';
 import 'package:supermarket_pos/main.dart';
+import 'package:supermarket_pos/network/api_client.dart';
 import 'package:supermarket_pos/theme/app_theme.dart';
 import 'package:supermarket_pos/theme/app_theme_mode.dart';
 import 'package:supermarket_pos/theme/theme_provider.dart';
+
+import '../helpers/settings_fake_adapter.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -22,6 +28,8 @@ void main() {
     AppLocale locale = AppLocale.ar,
     AppThemeMode mode = AppThemeMode.dark,
     SharedPreferences? prefs,
+    AuthUser? user,
+    FakeJsonAdapter? adapter,
   }) async {
     await tester.pumpWidget(
       ProviderScope(
@@ -32,6 +40,12 @@ void main() {
           themeProvider.overrideWith(
             (ref) => ThemeNotifier(prefs)..setTheme(mode),
           ),
+          if (user != null)
+            currentUserProvider.overrideWithValue(user),
+          if (adapter != null)
+            apiClientProvider.overrideWithValue(
+              ApiClient(dio: fakeDio(adapter)),
+            ),
         ],
         child: const _SettingsHarness(),
       ),
@@ -228,6 +242,255 @@ void main() {
       expect(prefs.getString(ThemeNotifier.prefsKey), 'dark');
     });
   });
+
+  // -----------------------------------------------------------------------
+  // Phase 17 §17.1 — server-owned store settings
+  // -----------------------------------------------------------------------
+
+  group('Store settings (Phase 17)', () {
+    testWidgets('hidden for a user without settings_manage, and never '
+        'issues a request', (tester) async {
+      final adapter = FakeJsonAdapter(
+        (options) async => (statusCode: 200, body: kDefaultSettingsJson),
+      );
+
+      await pumpSettingsApp(
+        tester,
+        user: _userWith(const []),
+        adapter: adapter,
+      );
+
+      expect(find.byKey(const Key('settings-store-name')), findsNothing);
+      expect(find.byKey(const Key('settings-save-button')), findsNothing);
+      expect(adapter.requests, isEmpty,
+          reason: 'a non-manager must not trigger a settings GET');
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('an admin sees the section with the loaded values',
+        (tester) async {
+      await pumpSettingsApp(
+        tester,
+        user: _admin,
+        adapter: _echoAdapter(),
+        locale: AppLocale.en,
+      );
+
+      expect(find.byKey(const Key('settings-store-name')), findsOneWidget);
+      expect(find.text('Supermarket Pro'), findsOneWidget);
+      expect(
+        find.text(AppStrings.t('store_name', 'en')),
+        findsOneWidget,
+      );
+      expect(
+        find.text(AppStrings.t('allow_debt', 'en')),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('save stays disabled until a field actually changes',
+        (tester) async {
+      await pumpSettingsApp(
+        tester,
+        user: _admin,
+        adapter: _echoAdapter(),
+        locale: AppLocale.en,
+      );
+
+      final save = find.byKey(const Key('settings-save-button'));
+      expect(tester.widget<FilledButton>(save).onPressed, isNull);
+
+      await _enterText(
+        tester,
+        find.byKey(const Key('settings-store-name')),
+        'Boutique Centrale',
+      );
+      expect(tester.widget<FilledButton>(save).onPressed, isNotNull);
+    });
+
+    testWidgets('a successful save PUTs the form and reports saved',
+        (tester) async {
+      final adapter = _echoAdapter();
+      await pumpSettingsApp(
+        tester,
+        user: _admin,
+        adapter: adapter,
+        locale: AppLocale.en,
+      );
+
+      await _enterText(
+        tester,
+        find.byKey(const Key('settings-store-name')),
+        'Boutique Centrale',
+      );
+      await _tap(tester, find.byKey(const Key('settings-save-button')));
+
+      final put = adapter.requests
+          .lastWhere((r) => r.method == 'PUT');
+      expect(put.path, '/api/v1/settings');
+      final body = Map<String, dynamic>.from(put.data as Map);
+      expect(body['store_name'], 'Boutique Centrale');
+      expect(body['allow_debt'], isTrue);
+
+      expect(find.text(AppStrings.t('settings_saved', 'en')), findsOneWidget);
+      expect(find.byKey(const Key('settings-error-banner')), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'a failed save shows the failure banner, keeps the typed value '
+        'and never claims success', (tester) async {
+      final adapter = FakeJsonAdapter((options) async {
+        if (options.method == 'PUT') {
+          return (
+            statusCode: 403,
+            body: <String, Object>{
+              'error': <String, Object>{
+                'code': 'FORBIDDEN',
+                'message': 'Insufficient permissions',
+              },
+            },
+          );
+        }
+        return (statusCode: 200, body: kDefaultSettingsJson);
+      });
+      await pumpSettingsApp(
+        tester,
+        user: _admin,
+        adapter: adapter,
+        locale: AppLocale.en,
+      );
+
+      await _enterText(
+        tester,
+        find.byKey(const Key('settings-store-name')),
+        'Boutique Centrale',
+      );
+      await _tap(tester, find.byKey(const Key('settings-save-button')));
+
+      expect(find.byKey(const Key('settings-error-banner')), findsOneWidget);
+      expect(
+        find.text(
+          '${AppStrings.t('settings_save_failed', 'en')} — '
+          'Insufficient permissions',
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('Boutique Centrale'), findsOneWidget,
+          reason: 'the operator\'s typing must survive a failed save');
+      expect(find.text(AppStrings.t('settings_saved', 'en')), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a failed load offers a retry that recovers', (tester) async {
+      var failNext = true;
+      final adapter = FakeJsonAdapter((options) async {
+        if (failNext) {
+          return (statusCode: 500, body: _errorBody('down'));
+        }
+        return (statusCode: 200, body: kDefaultSettingsJson);
+      });
+      await pumpSettingsApp(
+        tester,
+        user: _admin,
+        adapter: adapter,
+        locale: AppLocale.en,
+      );
+
+      expect(find.byKey(const Key('settings-load-error')), findsOneWidget);
+      expect(
+        find.text(AppStrings.t('settings_load_failed', 'en')),
+        findsOneWidget,
+      );
+
+      failNext = false;
+      await _tap(
+        tester,
+        find.descendant(
+          of: find.byKey(const Key('settings-load-error')),
+          matching: find.byType(FilledButton),
+        ),
+      );
+
+      expect(find.byKey(const Key('settings-load-error')), findsNothing);
+      expect(find.text('Supermarket Pro'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('the toggles are editable and are sent on save',
+        (tester) async {
+      final adapter = _echoAdapter();
+      await pumpSettingsApp(
+        tester,
+        user: _admin,
+        adapter: adapter,
+        locale: AppLocale.en,
+      );
+
+      final debt = find.byKey(const Key('settings-allow-debt'));
+      expect(
+        tester.widget<SwitchListTile>(debt).value,
+        isTrue,
+      );
+      await _tap(tester, debt);
+      expect(tester.widget<SwitchListTile>(debt).value, isFalse);
+
+      await _tap(tester, find.byKey(const Key('settings-save-button')));
+
+      final put = adapter.requests.lastWhere((r) => r.method == 'PUT');
+      final body = Map<String, dynamic>.from(put.data as Map);
+      expect(body['allow_debt'], isFalse);
+    });
+  });
+}
+
+AuthUser _userWith(List<String> permissions) => AuthUser(
+      id: 'u-1',
+      fullName: 'Test User',
+      isActive: true,
+      roles: const ['cashier'],
+      permissions: permissions,
+    );
+
+const AuthUser _admin = AuthUser(
+  id: 'u-1',
+  fullName: 'Admin',
+  isActive: true,
+  roles: ['admin'],
+  permissions: [settingsManageScope],
+);
+
+Map<String, Object> _errorBody(String message) => <String, Object>{
+      'error': <String, Object>{'code': 'INTERNAL', 'message': message},
+    };
+
+/// GET returns the fixture; PUT echoes its body back (that is what the
+/// backend does — it answers with the stored settings).
+FakeJsonAdapter _echoAdapter() => FakeJsonAdapter((options) async {
+      if (options.method == 'PUT') {
+        return (
+          statusCode: 200,
+          body: Map<String, dynamic>.from(options.data as Map),
+        );
+      }
+      return (statusCode: 200, body: kDefaultSettingsJson);
+    });
+
+/// Scrolls a field into view, focuses it and types — settings now lives in
+/// a scroll view, so an off-screen tap would silently miss.
+Future<void> _enterText(WidgetTester tester, Finder finder, String text) async {
+  await tester.ensureVisible(finder);
+  await tester.pumpAndSettle();
+  await tester.enterText(finder, text);
+  await tester.pumpAndSettle();
+}
+
+Future<void> _tap(WidgetTester tester, Finder finder) async {
+  await tester.ensureVisible(finder);
+  await tester.pumpAndSettle();
+  await tester.tap(finder);
+  await tester.pumpAndSettle();
 }
 
 class _SettingsHarness extends ConsumerWidget {
@@ -248,7 +511,9 @@ class _SettingsHarness extends ConsumerWidget {
       locale: locale.flutterLocale,
       supportedLocales: appSupportedLocales,
       localizationsDelegates: appLocalizationsDelegates,
-      home: const SettingsScreen(),
+      // A Scaffold is what the real shell provides — the settings screen
+      // raises a SnackBar after a successful save.
+      home: const Scaffold(body: SettingsScreen()),
     );
   }
 }
