@@ -639,6 +639,91 @@ def test_guard_fails_before_jwt_is_checked(client, admin_headers, lan_on):
     assert resp.json()["error"]["code"] == "UNAUTHORIZED"
 
 
+# ── Q6: the server PC is its own till (loopback exception) ────────────────
+
+
+def _peer_client(host: str, port: int = 50000) -> TestClient:
+    """A TestClient whose accepted TCP peer address is ``host``.
+
+    Starlette's default peer is ``("testclient", 50000)`` — never
+    loopback — which is what every guard test above implicitly relies on.
+    Built without a context manager so the lifespan started by the
+    ``client`` fixture is not run a second time.
+    """
+    return TestClient(app, raise_server_exceptions=False, client=(host, port))
+
+
+def test_loopback_local_pos_is_allowed_without_device_headers(
+    client, admin_headers, lan_on
+):
+    """Q6: LAN_MODE + loopback + valid JWT + no device headers → allowed.
+
+    This is the store server's own POS talking to itself over loopback
+    (``http://localhost:8000``): no device was ever paired for it, so
+    demanding X-Device-ID here locked the server PC out of its own till.
+    """
+    local = _peer_client("127.0.0.1")
+    for path in (
+        "/api/v1/dashboard",
+        "/api/v1/products",
+        "/api/v1/categories",
+        "/api/v1/packs",
+        "/api/v1/expenses",
+        "/api/v1/returns",
+        "/api/v1/pos/holds",
+    ):
+        resp = local.get(path, headers=admin_headers)
+        assert resp.status_code == 200, (path, resp.status_code, resp.text)
+    assert "device_required" not in resp.text
+
+
+def test_remote_lan_client_without_device_headers_is_401(
+    client, admin_headers, lan_on
+):
+    """A perfectly valid JWT from a non-loopback peer is still not enough."""
+    resp = _peer_client("192.168.1.50").get(
+        "/api/v1/products", headers=admin_headers
+    )
+    assert resp.status_code == 401
+    assert resp.json()["error"]["code"] == "device_required"
+
+
+def test_remote_lan_client_with_unpaired_device_is_403(
+    client, admin_headers, lan_on
+):
+    """The loopback exception must never leak to 192.168.x.x clients."""
+    code = _pairing_code(client, admin_headers)
+    assert _pair(client, code).status_code == 201
+    resp = _peer_client("192.168.1.50").get(
+        "/api/v1/products",
+        headers={
+            **admin_headers,
+            "X-Device-ID": DEVICE_ID,
+            "X-Device-Token": "x" * 40,
+        },
+    )
+    assert resp.status_code == 403
+    assert resp.json()["error"]["code"] == "device_not_paired"
+
+
+def test_loopback_still_cannot_skip_jwt(client, lan_on):
+    """The exception is device-only: protected routes still need a session."""
+    for host in ("127.0.0.1", "::1"):
+        resp = _peer_client(host).get("/api/v1/users")
+        assert resp.status_code == 401, (host, resp.status_code, resp.text)
+        assert resp.json()["error"]["code"] == "UNAUTHORIZED"
+
+
+def test_lan_mode_off_is_unchanged_for_loopback_and_remote_peers(
+    client, admin_headers, monkeypatch
+):
+    """With LAN_MODE off nothing is device-checked, whatever the peer."""
+    monkeypatch.setattr(settings, "LAN_MODE", False)
+    for host in ("127.0.0.1", "192.168.1.50"):
+        resp = _peer_client(host).get("/api/v1/products", headers=admin_headers)
+        assert resp.status_code == 200, (host, resp.status_code, resp.text)
+
+
 def test_guard_rejects_revoked_device_with_distinct_code(client, admin_headers, lan_on):
     code = _pairing_code(client, admin_headers)
     _device_id, token = _approve_pairing(client, code, admin_headers)

@@ -255,7 +255,38 @@ offer (new `APP_ID`, documented as the counterpart of Flutter's
 `server_id`/`name`/`http_port`/`protocol`/`tls`, no secrets, ≤ 512 B) plus
 `app` assertions on the roundtrip and the loopback-responder tests.
 
-### 5.5 Deviations / notes
+### 5.5 Loopback exception — the server PC's own POS (Q6)
+
+Found in real 2-PC QA: with `LAN_MODE=1` the store server's own POS got
+`401 device_required` on every ordinary route (`/dashboard`, `/products`,
+`/categories`, `/packs`, `/expenses`, `/returns`, `/pos/…`) even though
+login and `/auth/me` returned 200 — the guard was locking the server PC
+out of its own till, contradicting Q6 ("server PC may also be a till"),
+whose local POS boots against `http://localhost:8000` and therefore has
+no paired device.
+
+Fix (one rule, `app/api/device_guard.py`): a request whose **TCP peer
+address is this machine** — `127.0.0.1`, `::1` or `::ffff:127.0.0.1` —
+skips the *device* layer only. JWT + RBAC still run on every route, the
+guard stays on for LAN_MODE, and a `192.168.x.x` client can never present
+a loopback peer address, so remote tills keep `X-Device-ID` +
+`X-Device-Token` with unchanged 401/403 codes. `LAN_MODE=0` behaviour is
+untouched.
+
+5 new tests (peer address is set with Starlette's `TestClient(client=...)`
+— its default peer is `"testclient"`, i.e. never loopback): loopback + JWT
+without device headers → 200 on 7 routes; remote peer without headers →
+401 `device_required`; remote peer with an unpaired device → 403
+`device_not_paired`; loopback without JWT → 401 `UNAUTHORIZED`; `LAN_MODE=0`
+→ 200 for both peers.
+
+Launch inspection (nothing changed): the app never binds a socket itself —
+no `uvicorn.run`, no usage of `settings.HOST`. The bind address is
+entirely the launch command, and the documented LAN command stays
+`uvicorn app.main:app --host 0.0.0.0 --port 8000`. No config was moved to
+127.0.0.1.
+
+### 5.6 Deviations / notes
 
 - **Migration verified, not assumed:** `alembic revision --autogenerate`
   reports *no changes* against the model (`test_autogenerate_detects_no_changes`
@@ -273,7 +304,7 @@ offer (new `APP_ID`, documented as the counterpart of Flutter's
 - `PermissionScope` was **not** widened (`permissions == 30` is pinned by
   `test_auth.py`); `device_manage` already exists in the seed.
 
-### 5.6 Tooling notes (reusable)
+### 5.7 Tooling notes (reusable)
 
 - **Never prepend the venv to `PATH` when running backend tests.**
   `_run_alembic` in `tests/integration/test_migrations.py` shells out to
@@ -322,6 +353,13 @@ passed**, full backend **1104 passed** (1103 + 1 new contract test),
 Run with `LAN_MODE=0 DISCOVERY_ENABLED=0` in the process environment —
 `.env` now enables both for the owner's real 2-PC QA. Phase 16 was
 committed by the owner as `8332a20`; this fix is uncommitted.
+
+Re-verified after the §5.5 loopback (Q6) fix: Phase 16 file **48 passed**,
+full backend **1109 passed** (1104 + 5 new Q6 tests), 517.87 s,
+`ruff check app` **64** with `app/api/device_guard.py` clean. Bug fix #1
+was committed by the owner as `67d20a6`; bug fix #2 (this one) is
+uncommitted. The run used the `LAN_MODE=0 DISCOVERY_ENABLED=0` override
+because `.env` still enables both for real 2-PC QA.
 
 ---
 

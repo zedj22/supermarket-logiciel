@@ -32,6 +32,12 @@ the very first till could never be approved):
     /api/v1/devices*         pair + pairing poll + device_manage admin API
 
 Everything else — products, sales, reports, users, backups — is guarded.
+
+Loopback exception (Q6): a request whose peer address is this machine
+itself (``127.0.0.1`` / ``::1``) skips the *device* layer only. That is
+the server PC's own local POS, which has nothing to pair with. JWT
+authentication and endpoint RBAC are untouched, and a remote
+``192.168.x.x`` client is unaffected — it never appears as loopback.
 """
 
 from __future__ import annotations
@@ -69,6 +75,40 @@ ALLOW_PATHS = (
     "/api/v1/auth",
     "/api/v1/devices",
 )
+
+# Q6 — "the server PC may also be a till".
+#
+# The local POS on the store server talks to *itself*: it boots against
+# AppConstants.defaultServerBaseUrl ("http://localhost:8000") and is the
+# same machine as the backend, so there is no second PC and nothing to
+# pair.  It therefore never sends X-Device-ID / X-Device-Token, and without
+# this exception LAN_MODE=1 would lock the server's own POS out of every
+# ordinary route (the defect found in real 2-PC QA).
+#
+# The exemption is the peer address of the accepted TCP socket, which
+# nothing on the wire can forge: a remote 192.168.x.x client can never
+# appear as one of these, so remote LAN tills stay fully guarded.
+LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "::ffff:127.0.0.1"})
+
+
+def is_loopback_client(request: Request) -> bool:
+    """True only when the TCP peer is this machine itself.
+
+    Covers IPv4 loopback, IPv6 loopback (a "localhost" resolution that
+    reaches a dual-stack listener) and the IPv4-mapped IPv6 spelling of
+    the same address.  Anything else — LAN IP, public IP, unknown peer —
+    is a remote client and must present device credentials.
+
+    Caveat: a reverse proxy running *on this host* would itself be a
+    loopback peer.  Phase 16 deploys uvicorn directly on the LAN (no
+    proxy, no tunnel), so that situation does not arise; if one is ever
+    introduced it must forward the real client address and this rule must
+    be revisited.
+    """
+    client = request.client
+    if client is None:
+        return False
+    return client.host in LOOPBACK_HOSTS
 
 
 def is_allowlisted(path: str) -> bool:
@@ -112,6 +152,14 @@ def device_guard(request: Request, db: Session = Depends(get_db)) -> None:
 
     path = request.url.path
     if is_allowlisted(path):
+        return
+
+    # Q6 — the server PC's own local POS is not a LAN client: it is this
+    # machine reaching itself on loopback (default base URL
+    # "http://localhost:8000"), so no device was ever paired for it. Skip
+    # the device layer for loopback peers only; remote clients fall through
+    # to the exact checks below, and JWT/RBAC still run on every route.
+    if is_loopback_client(request):
         return
 
     device_id = request.headers.get(DEVICE_ID_HEADER)
