@@ -15,6 +15,17 @@ is dropped silently — never answered, never logged at info level.
 
 The magic string ``SUPERMARKET_PRO_DISCOVER_V1`` is a *magic* (a
 "which app is this" marker), not a credential.
+
+Application id
+    Every datagram also carries ``"app": "supermarket_pro"``, which the
+    Flutter client checks in ``_decode``
+    (``lib/features/devices/discovery_service.dart``:
+    ``decoded['app'] == discoveryAppId``) before it accepts *anything*.
+    Magic + version alone are not enough there: without ``app`` the offer
+    is silently dropped and the wizard reports "server not found" even
+    though the responder answered correctly.  This is the cross-stack
+    contract mismatch found in real 2-PC LAN testing — keep the field, and
+    keep it equal to the Flutter constant.
 """
 
 from __future__ import annotations
@@ -23,6 +34,8 @@ import json
 
 MAGIC = b"SUPERMARKET_PRO_DISCOVER_V1"
 PROTOCOL_VERSION = 1
+# Must stay equal to `discoveryAppId` in Flutter's discovery_service.dart.
+APP_ID = "supermarket_pro"
 MAX_REQUEST_BYTES = 256
 MAX_RESPONSE_BYTES = 512
 NONCE_MIN = 8
@@ -93,9 +106,16 @@ def build_offer(
     protocol: int = PROTOCOL_VERSION,
     tls: bool = False,
 ) -> bytes:
-    """Server → client offer. Public metadata only (§4.3)."""
+    """Server → client offer. Public metadata only (§4.3).
+
+    ``app`` is a required field of the cross-stack contract: the Flutter
+    client's ``_decode`` drops any datagram whose ``app`` is not
+    ``supermarket_pro``, so omitting it made a perfectly good offer look
+    like "server not found" on the second PC.
+    """
     payload = {
         "v": PROTOCOL_VERSION,
+        "app": APP_ID,
         "t": TYPE_OFFER,
         "nonce": nonce,
         "server_id": server_id,

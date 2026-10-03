@@ -18,6 +18,7 @@ Also asserts the two negative guarantees of this phase:
 
 from __future__ import annotations
 
+import json
 import socket
 import uuid
 
@@ -32,8 +33,10 @@ from app.core.server_identity import get_server_id
 from app.db.base import Base
 from app.db.session import get_db
 from app.discovery.packet import (
+    APP_ID,
     MAGIC,
     MAX_REQUEST_BYTES,
+    MAX_RESPONSE_BYTES,
     build_discover,
     build_offer,
     parse_discover,
@@ -224,6 +227,7 @@ def test_discover_offer_roundtrip():
     )
     parsed = parse_offer(offer, expect_nonce="nonce-0123456789")
     assert parsed is not None
+    assert parsed["app"] == "supermarket_pro"
     assert parsed["protocol"] == 1
     assert parsed["tls"] is False
     assert parsed["http_port"] == 8000
@@ -264,6 +268,54 @@ def test_offer_never_carries_secrets():
         assert forbidden not in offer
 
 
+def test_offer_matches_the_flutter_client_contract():
+    """Regression for the real 2-PC LAN bug: offer dropped, "server not found".
+
+    Everything above the UDP layer was correct in that test (broadcast sent,
+    responder answered, TCP 8000 + /health + /system/info all fine), but the
+    Flutter client never accepted the offer: its ``_decode``
+    (``lib/features/devices/discovery_service.dart``) requires
+    ``decoded['app'] == discoveryAppId`` (``"supermarket_pro"``) on every
+    datagram, and the backend offer carried no ``app`` field at all.
+    """
+    assert APP_ID == "supermarket_pro", "must equal Flutter discoveryAppId"
+    nonce = "nonce-0123456789"
+    server_id = str(uuid.uuid4())
+    raw = build_offer(
+        nonce=nonce, server_id=server_id, name="Store", http_port=8000
+    )
+    assert len(raw) <= MAX_RESPONSE_BYTES
+
+    payload = json.loads(raw[len(MAGIC) + 1 :].decode("utf-8"))
+
+    # The exact offer shape the Flutter client validates.
+    assert set(payload) == {
+        "v",
+        "app",
+        "t",
+        "nonce",
+        "server_id",
+        "name",
+        "http_port",
+        "protocol",
+        "tls",
+    }
+    assert payload["app"] == "supermarket_pro"
+    assert payload["v"] == 1
+    assert payload["t"] == "offer"
+    assert payload["nonce"] == nonce
+    assert payload["server_id"] == server_id
+    assert payload["name"] == "Store"
+    assert payload["http_port"] == 8000
+    assert payload["protocol"] == 1
+    assert payload["tls"] is False
+
+    # Unauthenticated broadcast ⇒ public metadata only, never a secret.
+    blob = json.dumps(payload).lower()
+    for forbidden in ("token", "pairing_code", "pin", "password", "authorization"):
+        assert forbidden not in blob
+
+
 def test_discovery_responder_answers_on_loopback():
     responder = DiscoveryResponder(port=0, host="127.0.0.1")
     assert responder.start() is True
@@ -281,6 +333,7 @@ def test_discovery_responder_answers_on_loopback():
 
         offer = parse_offer(data, expect_nonce="nonce-abcdef123456")
         assert offer is not None
+        assert offer["app"] == "supermarket_pro"
         assert offer["server_id"] == get_server_id()
         assert offer["protocol"] == 1
         assert offer["tls"] is False

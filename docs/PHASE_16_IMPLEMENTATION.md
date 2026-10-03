@@ -233,7 +233,29 @@ status — no Flutter behaviour moved. Only the four guard status assertions in
 `test/unit/api_client_test.dart` changed; the header-missing case stays 401
 and the JWT-missing case stays an ordinary `UNAUTHORIZED` 401.
 
-### 5.4 Deviations / notes
+### 5.4 Real 2-PC discovery bug — offer missing the `app` field
+
+Found in genuine two-PC testing: broadcast left PC2, `DiscoveryResponder`
+answered on PC1, the offer parsed as well-formed, TCP 8000 /
+`/api/v1/health` / `/api/v1/system/info` all answered — and the Flutter
+wizard still reported "server not found".
+
+Cause: `discovery_service.dart::_decode` requires
+`decoded['app'] == discoveryAppId` (`"supermarket_pro"`) on **every**
+datagram, while the backend `build_offer()` sent no `app` at all, so the
+client silently dropped a perfectly good offer. The backend's own
+`parse_discover()` never required `app`, which is why the request side
+worked and the mismatch stayed invisible until a second PC was used.
+
+Fix — backend contract only, Flutter validation untouched:
+`app/discovery/packet.py` now emits `"app": "supermarket_pro"` in every
+offer (new `APP_ID`, documented as the counterpart of Flutter's
+`discoveryAppId`). Covered by `test_offer_matches_the_flutter_client_contract`
+(exact key set, `app`, `v`, `t`, nonce echo,
+`server_id`/`name`/`http_port`/`protocol`/`tls`, no secrets, ≤ 512 B) plus
+`app` assertions on the roundtrip and the loopback-responder tests.
+
+### 5.5 Deviations / notes
 
 - **Migration verified, not assumed:** `alembic revision --autogenerate`
   reports *no changes* against the model (`test_autogenerate_detects_no_changes`
@@ -251,7 +273,7 @@ and the JWT-missing case stays an ordinary `UNAUTHORIZED` 401.
 - `PermissionScope` was **not** widened (`permissions == 30` is pinned by
   `test_auth.py`); `device_manage` already exists in the seed.
 
-### 5.5 Tooling notes (reusable)
+### 5.6 Tooling notes (reusable)
 
 - **Never prepend the venv to `PATH` when running backend tests.**
   `_run_alembic` in `tests/integration/test_migrations.py` shells out to
@@ -269,6 +291,12 @@ and the JWT-missing case stays an ordinary `UNAUTHORIZED` 401.
   `localizationsDelegates` on the harness.
 - `FutureProvider` in Riverpod 2.6 has `overrideWith`, **not**
   `overrideWithValue`.
+- **The suite is written for the default config.** Real 2-PC QA needs
+  `.env` → `LAN_MODE=1` / `DISCOVERY_ENABLED=1`, which makes the
+  default-config sentinels fail (`test_guard_is_a_noop_when_lan_mode_is_off`,
+  `test_discovery_is_off_by_default`) — override them per run instead of
+  editing tests: `$env:LAN_MODE='0'; $env:DISCOVERY_ENABLED='0'; pytest -q`
+  (OS env beats `.env` in pydantic-settings).
 
 ---
 
@@ -287,6 +315,13 @@ git:      HEAD                            → b084d3d (phase-15) — no commit, 
 Re-verified after the §5.3 contract reconciliation (pair body + guard 403):
 same six results — **1103 / 64 / 61 / clean / 1259 / build OK**, HEAD
 unchanged.
+
+Re-verified after the §5.4 discovery `app` fix: discovery subset **8
+passed**, full backend **1104 passed** (1103 + 1 new contract test),
+526.13 s, `ruff check app` **64** with `app/discovery/packet.py` clean.
+Run with `LAN_MODE=0 DISCOVERY_ENABLED=0` in the process environment —
+`.env` now enables both for the owner's real 2-PC QA. Phase 16 was
+committed by the owner as `8332a20`; this fix is uncommitted.
 
 ---
 
