@@ -377,7 +377,9 @@ class LanConnectionNotifier extends StateNotifier<LanConnectionState> {
     List<ServerOffer> offers;
     try {
       offers = await _sweepOffers();
-    } catch (_) {
+    } catch (e) {
+      // A broken discovery socket is reported, never swallowed silently.
+      debugPrint('[LAN] UDP rediscovery failed: $e');
       return false;
     }
 
@@ -454,7 +456,8 @@ class LanConnectionNotifier extends StateNotifier<LanConnectionState> {
         if (current.contains(offer)) return;
         state = state.copyWith(offers: [...current, offer]);
       },
-      onError: (_) {
+      onError: (Object error, StackTrace stackTrace) {
+        debugPrint('[LAN] discovery failed: $error');
         if (state.phase == LanPhase.discovering) {
           state = state.copyWith(phase: LanPhase.unconfigured);
         }

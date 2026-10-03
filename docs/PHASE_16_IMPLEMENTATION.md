@@ -351,7 +351,122 @@ remembered address and stays on the existing heartbeat/backoff loop, so the
 boot reconnect dialog ("Try again now" / manual entry) remains the fallback
 for a server that is simply down.
 
-### 5.7 Deviations / notes
+### 5.7 Real 2-PC broadcast bug — `SO_BROADCAST` was never enabled
+
+**Symptom (PC2, after the §5.6 fix rebuilt).** Rediscovery was reached
+correctly —
+
+```
+[LAN] cached address http://192.168.1.7:8000 is unusable → UDP rediscovery
+
+Unhandled Exception: SocketException: Send failed
+(OS Error: An attempt was made to access a socket in a way forbidden by its
+ access permissions, errno = 10013)
+address = 0.0.0.0, port = 0
+    UdpDiscoveryService._start.sendOnce
+    discovery_service.dart:265 socket.send(...)
+    discovery_service.dart:272 sendOnce()
+
+[LAN] rediscovery found no offer for server_id 9a0cac7d-…
+```
+
+The same PC2 reaches PC1 over HTTP, and a **manual PowerShell UDP broadcast
+from PC2 gets PC1's `SUPERMARKET_PRO_DISCOVER_V1{…}` offer** — so PC1's
+responder, the packet, the port, the firewall and the pair were all fine.
+
+**Root cause 1 — IPv4 broadcast was never switched on.** The source carried
+this comment:
+
+> `dart:io` exposes no SO_BROADCAST toggle on RawDatagramSocket
+
+**That assumption is false.** The Dart SDK declares
+`RawDatagramSocket.broadcastEnabled` (`dart:io` `socket.dart:1268-1275`):
+
+> Whether IPv4 broadcast is enabled. IPv4 broadcast needs to be enabled by
+> the sender for sending IPv4 broadcast packages. **By default IPv4 broadcast
+> is disabled.**
+
+and implements it as a real `SO_BROADCAST` socket option
+(`socket_patch.dart:3080-3082`). With the option off, Windows rejects every
+send to `255.255.255.255` / `x.x.x.255` with `WSAEACCES` = **errno 10013**
+— the reported error — while unicast (the PowerShell *receive* side, PC2 →
+PC1 HTTP) keeps working. Nothing ever left PC2, so PC1's responder logged
+nothing.
+
+**Root cause 2 — the failure is a socket *stream* event, not a throw.** The
+`try/catch` around `socket.send()` could never see it:
+
+- `RawDatagramSocket.send` (`socket.dart:1325-1327`): "If a local failure to
+  send the datagram occurs then **an error event will be added to the
+  Stream**."
+- The VM wraps the native call: `_NativeSocket.send` catches, then
+  `scheduleMicrotask(() => reportError(e, st, "Send failed"))`
+  (`socket_patch.dart:1512-1516`); `reportError` invokes the socket's error
+  handler → `_controller.addError(e, st)` and **closes the socket**
+  (`socket_patch.dart:1926-1940`, `2980-2983`).
+- `_RawDatagramSocket.listen` forwards `onError` straight to that controller
+  (`socket_patch.dart:3015-3027`). Our call had **no `onError`**, so the
+  error fell through to the zone → *Unhandled Exception*.
+
+That also explains the "synchronous-looking" stack: it is
+`StackTrace.current` captured inside `send()`'s own `catch` and handed to
+the microtask, so the frames are the send site even though delivery is
+asynchronous.
+
+**Fix — 2 files, Flutter only.**
+
+| file | change |
+|---|---|
+| `lib/features/devices/discovery_service.dart` | `socket.broadcastEnabled = true;` immediately after `RawDatagramSocket.bind(...)`, with the false comment replaced by the SDK citation; `socket.listen(...)` now has an `onError` that logs `[LAN] discovery socket error: …` and forwards the error to the stream controller (surfaced to the caller, not swallowed) plus an `onDone` that closes the controller; the per-target send `catch` now logs instead of suppressing. A bind/enable failure propagates out of `_start` into `discover()`'s existing `catchError` → the subscriber. |
+| `lib/features/devices/connection_provider.dart` | the two remaining silent discovery catches now log: `startDiscovery`'s `onError` prints `[LAN] discovery failed: …`, `_recoverAddress`'s sweep `catch` prints `[LAN] UDP rediscovery failed: …`. |
+
+Untouched: packet format and the wire contract, discovery port `8000`,
+target generation, pairing, `server_id` validation, the device token, the
+backend, the firewall and no migration/dependency.
+
+A `DatagramBinder` constructor seam (`bindSocket`) lets a test observe socket
+setup without an OS socket; the production default is the original
+`RawDatagramSocket.bind(InternetAddress.anyIPv4, 0, reuseAddress: true)`.
+
+**Tests added (3):** `test/unit/discovery_socket_test.dart` —
+(1) broadcast is enabled **before** the first datagram and the first send
+lands on `255.255.255.255:8000` / `127.0.0.1:8000`; (2) a socket error event
+is delivered to the subscriber while the zone's uncaught handler stays
+empty; (3) a bind failure surfaces on the stream. Both mutations were
+checked by hand: removing `broadcastEnabled = true` fails (1), removing the
+listener's `onError` fails (2) with exactly the QA stack. The packet tests in
+`test/unit/discovery_packet_test.dart` are untouched.
+
+**Windows / manual 2-PC QA note (real broadcast).**
+
+Preconditions: PC1 `uvicorn … --host 0.0.0.0 --port 8000` with
+`DISCOVERY_ENABLED=1`; PC2 paired and holding a **dead** `paired_server_url`
+(`http://192.168.1.7:8000`) to force the sweep; both on the same subnet.
+
+1. *Baseline* — the PowerShell broadcast from PC2 still answers with
+   `SUPERMARKET_PRO_DISCOVER_V1{…}` (this isolates app regressions from
+   network regressions).
+2. *Restart PC2* → console must show `[LAN] cached address … → UDP
+   rediscovery` **without** any `SocketException`, then
+   `[LAN] rediscovered the paired server at http://192.168.1.20:8000`.
+3. *PC1 side* — no responder log exists for discovery, so confirm the offer
+   arrived by PC2's adoption (`paired_server_url` now `.20`, no
+   `/devices/pair`, `X-Device-Token` unchanged, login works). Optional:
+   `pktmon`/Wireshark UDP capture on PC2 shows the outbound broadcast and
+   PC1's reply on port 8000.
+4. *Failure path* — with PC1 stopped, PC2 must log
+   `[LAN] discovery socket error: …` **or** `[LAN] UDP rediscovery failed: …`
+   and fall back to the remembered address/backoff loop, never an
+   unhandled exception and never a wizard re-pair.
+5. *Regression guard* — a third PC on the same LAN answering port 8000 must
+   be ignored (foreign `server_id` filtered before probing).
+
+**Residual behaviour.** One refusing interface is still tolerated (logged,
+not fatal), because a multi-homed NIC may reject a broadcast target; a
+socket-level error is reported once, the VM closes that socket, and the
+sweep degrades to "no offers" → the existing reconnect fallback.
+
+### 5.8 Deviations / notes
 
 - **Migration verified, not assumed:** `alembic revision --autogenerate`
   reports *no changes* against the model (`test_autogenerate_detects_no_changes`
@@ -369,7 +484,7 @@ for a server that is simply down.
 - `PermissionScope` was **not** widened (`permissions == 30` is pinned by
   `test_auth.py`); `device_manage` already exists in the seed.
 
-### 5.8 Tooling notes (reusable)
+### 5.9 Tooling notes (reusable)
 
 - **Never prepend the venv to `PATH` when running backend tests.**
   `_run_alembic` in `tests/integration/test_migrations.py` shells out to
@@ -431,6 +546,16 @@ Re-verified after the §5.6 paired-client restart fix (Flutter only):
 **1267 passed** (1259 + 8 new, 2 min 23 s), `flutter build windows --debug`
 → **OK (supermarket_pos.exe, 23.4 s)**. No backend file, no migration, no
 dependency and no pairing/security rule was touched.
+
+Re-verified after the §5.7 broadcast / socket-error fix (Flutter only):
+`flutter analyze --no-pub` → **No issues found**, `flutter test` →
+**1270 passed** (1267 + 3 new, 2 min 26 s), `flutter build windows --debug`
+→ **OK (supermarket_pos.exe, 17.4 s)**. Both mutations were checked by hand
+— deleting `socket.broadcastEnabled = true` fails test (1); dropping the
+listener's `onError` fails test (2) with the exact QA stack. No backend
+file, no migration, no dependency, no pairing/security rule, no firewall
+setting and no discovery wire-contract change. HEAD → `3b2dd15`; this fix
+is uncommitted.
 
 ---
 

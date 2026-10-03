@@ -20,6 +20,7 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 
 import '../../core/constants.dart';
 
@@ -213,14 +214,25 @@ class FakeDiscoveryService implements DiscoveryService {
   }
 }
 
+/// Creates the datagram socket for a sweep. Injectable so a test can observe
+/// socket setup (IPv4 broadcast, target selection) without an OS socket.
+typedef DatagramBinder = Future<RawDatagramSocket> Function();
+
 /// Real UDP implementation (§11.1).
 class UdpDiscoveryService implements DiscoveryService {
   final int port;
+  final DatagramBinder _bind;
   RawDatagramSocket? _socket;
   StreamSubscription<RawSocketEvent>? _sub;
   Timer? _timer;
 
-  UdpDiscoveryService({required this.port});
+  UdpDiscoveryService({required this.port, DatagramBinder? bindSocket})
+      : _bind = bindSocket ??
+            (() => RawDatagramSocket.bind(
+                  InternetAddress.anyIPv4,
+                  0,
+                  reuseAddress: true,
+                ));
 
   @override
   Stream<ServerOffer> discover({Duration budget = const Duration(seconds: 3)}) {
@@ -240,14 +252,15 @@ class UdpDiscoveryService implements DiscoveryService {
     StreamController<ServerOffer> controller,
     Set<String> seen,
   ) async {
-    final socket = await RawDatagramSocket.bind(
-      InternetAddress.anyIPv4,
-      0,
-      reuseAddress: true,
-    );
-    // `dart:io` exposes no SO_BROADCAST toggle on RawDatagramSocket; the
-    // send below is attempted against 255.255.255.255 and every per-interface
-    // x.x.x.255 target, and any refusal is swallowed per target (§11.1).
+    final socket = await _bind();
+    // `dart:io` DOES expose SO_BROADCAST: RawDatagramSocket.broadcastEnabled
+    // — "IPv4 broadcast needs to be enabled by the sender for sending IPv4
+    // broadcast packages. By default IPv4 broadcast is disabled." Without it
+    // Windows refuses every send to 255.255.255.255 with WSAEACCES
+    // (errno 10013), so the sweep never leaves this machine. Enable it
+    // BEFORE the first send. A failure here must abort the sweep loudly —
+    // `_start` is wrapped in `.catchError` by `discover`.
+    socket.broadcastEnabled = true;
     _socket = socket;
 
     final nonce = _newNonce();
@@ -263,8 +276,11 @@ class UdpDiscoveryService implements DiscoveryService {
       for (final target in targets) {
         try {
           socket.send(packet, target, port);
-        } catch (_) {
-          // A single interface refusing to send must not abort the sweep.
+        } catch (e) {
+          // A single refusing interface must not abort the sweep, but the
+          // failure is reported — never suppressed silently.
+          debugPrint(
+              '[LAN] discovery send to ${target.host}:$port failed: $e');
         }
       }
     }
@@ -278,15 +294,30 @@ class UdpDiscoveryService implements DiscoveryService {
       sendOnce();
     });
 
-    _sub = socket.listen((event) {
-      if (event != RawSocketEvent.read || controller.isClosed) return;
-      final dg = socket.receive();
-      if (dg == null) return;
-      final offer = parseOfferPacket(dg.data, fromAddress: dg.address.host);
-      if (offer == null) return;
-      if (!seen.add('${offer.address}:${offer.serverId}')) return;
-      controller.add(offer);
-    });
+    _sub = socket.listen(
+      (event) {
+        if (event != RawSocketEvent.read || controller.isClosed) return;
+        final dg = socket.receive();
+        if (dg == null) return;
+        final offer = parseOfferPacket(dg.data, fromAddress: dg.address.host);
+        if (offer == null) return;
+        if (!seen.add('${offer.address}:${offer.serverId}')) return;
+        controller.add(offer);
+      },
+      // A local send failure never reaches the `catch` above: `dart:io`
+      // documents that it is reported as an event on this very stream ("If
+      // a local failure to send the datagram occurs then an error event
+      // will be added to the Stream"), and the VM schedules it through
+      // reportError() → controller.addError. Without an onError handler it
+      // lands in the zone as an unhandled SocketException.
+      onError: (Object error, StackTrace stackTrace) {
+        debugPrint('[LAN] discovery socket error: $error');
+        if (!controller.isClosed) controller.addError(error, stackTrace);
+      },
+      onDone: () {
+        if (!controller.isClosed) controller.close();
+      },
+    );
 
     Timer(budget, () {
       if (!controller.isClosed) controller.close();
