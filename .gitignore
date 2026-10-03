@@ -55,6 +55,8 @@ Desktop.ini
 *.db
 *.sqlite
 *.sqlite3
+# Backend runtime data (Phase 16: persisted stable server_id)
+new_app/backend/data/
 
 # =========================
 # Python application generated files

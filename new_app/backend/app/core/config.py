@@ -46,5 +46,29 @@ class Settings(BaseSettings):
     # Store defaults (Phase 2+ will expand these)
     STORE_NAME: str = "Supermarket Pro"
 
+    # Phase 16 — LAN / multi-PC.
+    #
+    # LAN_MODE turns on the router-level device guard (X-Device-ID +
+    # X-Device-Token enforcement) for every /api/v1 route outside the
+    # explicit allowlist.  It is OFF by default so single-PC behaviour
+    # (and the whole pre-Phase-16 test suite) is bit-for-bit unchanged.
+    #
+    # DISCOVERY_ENABLED starts the UDP discovery responder in the app
+    # lifespan.  DISCOVERY_PORT defaults to the SAME NUMBER as HTTP so a
+    # store only ever has to remember/open one port number (owner Q13).
+    # Both are plain numbers, never a secret.
+    #
+    # LAN-only: this phase never exposes the service to WAN/Internet
+    # (owner Q5) and does not terminate TLS (owner Q8).
+    LAN_MODE: bool = False
+    DISCOVERY_ENABLED: bool = False
+    DISCOVERY_PORT: int = 8000
+
+    # Stable server identity (§8.2).  SERVER_ID overrides the persisted
+    # file; SERVER_ID_FILE is the backend-local file that is created on
+    # first start.  It is not a secret (it is echoed by /system/info).
+    SERVER_ID: str = ""
+    SERVER_ID_FILE: str = "data/server_id"
+
 
 settings = Settings()

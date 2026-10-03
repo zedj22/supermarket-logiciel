@@ -1,4 +1,4 @@
-﻿"""Integration tests for Phase 2 Alembic migrations â€” PostgreSQL only.
+"""Integration tests for Phase 2 Alembic migrations â€” PostgreSQL only.
 
 These tests run against the dedicated supermarket_pro_test database.
 The production database is NEVER touched.
@@ -236,7 +236,7 @@ class TestPhase6SellingUnitsMigration:
     """Migration 0005/0006 â€” product_selling_units + purchase packaging tables."""
 
     SELLING_UNITS_REV = "c3d4e5f6a7b8"
-    HEAD_REV = "4a1e5c7b9d2f"  # 0020 phase14 report indexes head
+    HEAD_REV = "b7f3c2d91a04"  # 0021 phase16 devices head
 
     @pytest.fixture(autouse=True)
     def _setup_db(self):
@@ -394,7 +394,7 @@ class TestPhase6SellingUnitsMigration:
 class TestPhase6PurchasePackagingMigration:
     """Migration 0006 (d4e5f6a7b8c9) â€” purchase packaging / stock-breaking."""
 
-    HEAD_REV = "4a1e5c7b9d2f"  # linear chain head after 0020
+    HEAD_REV = "b7f3c2d91a04"  # linear chain head after 0021
 
     @pytest.fixture(autouse=True)
     def _setup_db(self):
@@ -584,7 +584,7 @@ class TestPhase6PurchasePackagingMigration:
 class TestPhase7InventoryPMPMigration:
     """Migration 0008 (f1a2b3c4d5e6) â€” products.avg_cost + movement cost cols."""
 
-    HEAD_REV = "4a1e5c7b9d2f"
+    HEAD_REV = "b7f3c2d91a04"
 
     @pytest.fixture(autouse=True)
     def _setup_db(self):
@@ -726,7 +726,7 @@ class TestPhase10AvgCostBackfillMigration:
     exactly 100%.
     """
 
-    HEAD_REV = "4a1e5c7b9d2f"
+    HEAD_REV = "b7f3c2d91a04"
     PREV_REV = "b7c8d9e0f1a2"
 
     @pytest.fixture(autouse=True)
@@ -862,7 +862,7 @@ class TestPhase10AvgCostBackfillMigration:
 class TestPhase12ReturnsVoidsMigration:
     """0016_phase12_returns_voids â€” void columns + return snapshot columns."""
 
-    HEAD_REV = "4a1e5c7b9d2f"
+    HEAD_REV = "b7f3c2d91a04"
     PREVIOUS_REV = "d3e4f5a6b7c8"
 
     @pytest.fixture(autouse=True)
@@ -1087,7 +1087,7 @@ class TestPhase17ReturnReasonOptionalMigration:
     ``tests/unit/test_void.py::test_reason_is_mandatory``).
     """
 
-    HEAD_REV = "4a1e5c7b9d2f"
+    HEAD_REV = "b7f3c2d91a04"
     PREVIOUS_REV = "e4f5a6b7c8d9"
     TEST_RETURN_NUMBER = "RET-TEST-0017-NO-REASON"
 
@@ -1201,7 +1201,7 @@ class TestPhase13ExpensesMigration:
     and never rewrites an existing value (decision record section 5).
     """
 
-    HEAD_REV = "4a1e5c7b9d2f"
+    HEAD_REV = "b7f3c2d91a04"
     PREVIOUS_REV = "f5a6b7c8d9e0"
     TEST_TITLE = "PHASE13-MIGRATION-TEST"
 
@@ -1440,7 +1440,7 @@ class TestPhase13TitleOptionalMigration:
     expense title can be stored as NULL (decision record B1).
     """
 
-    HEAD_REV = "4a1e5c7b9d2f"
+    HEAD_REV = "b7f3c2d91a04"
     PREVIOUS_REV = "1a2b3c4d5e6f"
     NULL_ROW_MARKER = "PHASE19-TITLE-NULL-TEST"
 

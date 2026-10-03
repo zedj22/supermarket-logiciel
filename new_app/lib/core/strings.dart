@@ -856,6 +856,76 @@ class AppStrings {
   'paper_a4': 'ورق A4',
   'save_pdf': 'حفظ PDF',
   'pdf_saved': 'تم حفظ ملف PDF',
+  // Phase 16 — الشبكة المحلية / أكثر من جهاز / الأجهزة (§24)
+  // المساعد والأدوار
+  'lan_wizard_title': 'إعداد هذا الجهاز',
+  'lan_server_role': 'هذا هو خادم المتجر',
+  'lan_client_role': 'هذا جهاز بيع إضافي',
+  'lan_role_server_desc': 'يشغّل قاعدة البيانات. تتصل أجهزة البيع الأخرى بهذا الجهاز.',
+  'lan_role_client_desc': 'يتصل بخادم المتجر عبر الشبكة المحلية.',
+  'lan_first_run_hint': 'اختر وظيفة هذا الجهاز. يمكنك تغييرها لاحقًا من الإعدادات.',
+  // الاكتشاف
+  'lan_searching_server': 'جارٍ البحث عن خادم المتجر على الشبكة…',
+  'lan_search_timeout': 'لم يتم العثور على خادم. أدخل عنوانه أدناه.',
+  'lan_server_found': 'تم العثور على خادم المتجر',
+  'lan_server_not_supermarket': 'هذا العنوان ليس خادم Supermarket Pro',
+  'lan_manual_entry': 'أدخل عنوان الخادم يدويًا',
+  'lan_ip_label': 'عنوان الخادم (IP أو الاسم)',
+  'lan_port_label': 'المنفذ',
+  'lan_connect': 'اتصال',
+  'lan_retry': 'إعادة المحاولة',
+  'lan_cancel': 'إلغاء',
+  // التأكيد
+  'lan_confirm_store': 'هل هذا متجرك؟',
+  'lan_confirm_store_body': 'تابع فقط إذا كان هذا هو الخادم المثبّت في هذا المتجر.',
+  'lan_yes_connect': 'نعم، اتصال',
+  // الاقتران
+  'lan_pairing_code': 'رمز الاقتران',
+  'lan_enter_pairing_code': 'أدخل الرمز المكوّن من ٦ أرقام المعروض على الخادم',
+  'lan_pairing_code_invalid': 'هذا الرمز غير صالح أو منتهي الصلاحية',
+  'lan_waiting_approval': 'في انتظار موافقة المسؤول على هذا الجهاز',
+  'lan_waiting_seconds': 'الوقت المتبقي: {s} ثانية',
+  'lan_pairing_approved': 'تمت الموافقة على هذا الجهاز',
+  'lan_pairing_rejected': 'لم تتم الموافقة على الاقتران',
+  'lan_pairing_timeout': 'لا يوجد رد من المسؤول (انتهى الوقت)',
+  'lan_pairing_rejected_body': 'رفض المسؤول هذا الجهاز. اطلب منه الموافقة ثم أعد المحاولة.',
+  'lan_repair_required': 'ستحتاج إلى بدء الاقتران من جديد.',
+  // شاشة الأجهزة
+  'lan_devices_title': 'الأجهزة',
+  'lan_pending_devices': 'في انتظار الموافقة',
+  'lan_no_pending': 'لا توجد أجهزة في انتظار الموافقة.',
+  'lan_approve': 'موافقة',
+  'lan_reject': 'رفض',
+  'lan_revoke': 'إلغاء الصلاحية',
+  'lan_revoke_confirm': 'هل تريد إلغاء صلاحية هذا الجهاز؟ سيفقد الوصول فورًا ويتطلب موافقة جديدة.',
+  'lan_device_last_seen': 'آخر ظهور',
+  'lan_device_ip': 'عنوان IP',
+  'lan_device_version': 'إصدار التطبيق',
+  'lan_status_pending': 'قيد الانتظار',
+  'lan_status_approved': 'مقبول',
+  'lan_status_rejected': 'مرفوض',
+  'lan_status_revoked': 'ملغاة الصلاحية',
+  'lan_registered_devices': 'الأجهزة المسجّلة',
+  'lan_no_registered': 'لا توجد أجهزة مسجّلة بعد.',
+  'lan_pairing_code_hint': 'شارك هذا الرمز مع جهاز البيع. تنتهي صلاحيته قريبًا ويتغير مع كل تحديث.',
+  'lan_generate_code': 'إنشاء رمز',
+  // شارة الحالة
+  'lan_connected': 'متصل',
+  'lan_reconnecting': 'جارٍ إعادة الاتصال…',
+  'lan_disconnected': 'غير متصل',
+  'lan_degraded_db': 'قاعدة بيانات الخادم غير متاحة',
+  'lan_connected_tooltip': 'متصل بخادم المتجر',
+  // إعادة الاتصال والأخطاء
+  'lan_reconnect_title': 'تعذر الوصول إلى خادم المتجر',
+  'lan_reconnect_body': 'انقطعت الاتصال بخادم المتجر. ستتوقف المبيعات حتى عودته.',
+  'lan_reconnect_now': 'أعد المحاولة الآن',
+  'lan_server_unreachable': 'لم يستجب الخادم',
+  'lan_device_revoked_title': 'تم إلغاء صلاحية هذا الجهاز',
+  'lan_device_revoked_body': 'ألغى المسؤول صلاحية هذا الجهاز. اطلب منه الموافقة مرة أخرى.',
+  'lan_version_mismatch': 'إصدار التطبيق هذا غير متوافق مع خادم المتجر',
+  'lan_server_changed': 'تغيّر الخادم على هذا العنوان. أعد الاقتران للمتابعة.',
+  // دون اتصال (§15)
+  'lan_offline_mutations_disabled': 'غير متاح أثناء انقطاع الاتصال بخادم المتجر',
   };
 
   static const Map<String, String> _french = {
@@ -1670,6 +1740,93 @@ class AppStrings {
   'paper_a4': 'Papier A4',
   'save_pdf': 'Enregistrer en PDF',
   'pdf_saved': 'Fichier PDF enregistré',
+  // Phase 16 — LAN / multi-PC / appareils (§24)
+  // Assistant / rôles
+  'lan_wizard_title': 'Configurer cette caisse',
+  'lan_server_role': 'Ceci est le serveur du magasin',
+  'lan_client_role': 'Ceci est une caisse cliente',
+  'lan_role_server_desc':
+      'Héberge la base de données. Les autres caisses se connectent à cet ordinateur.',
+  'lan_role_client_desc':
+      'Se connecte au serveur du magasin sur le réseau local.',
+  'lan_first_run_hint':
+      'Choisissez le rôle de cet ordinateur. Vous pourrez le modifier plus tard dans les paramètres.',
+  // Découverte
+  'lan_searching_server':
+      'Recherche du serveur du magasin sur le réseau…',
+  'lan_search_timeout':
+      'Aucun serveur trouvé. Saisissez son adresse ci-dessous.',
+  'lan_server_found': 'Serveur du magasin trouvé',
+  'lan_server_not_supermarket':
+      'Cette adresse n’est pas un serveur Supermarket Pro',
+  'lan_manual_entry': 'Saisir l’adresse du serveur manuellement',
+  'lan_ip_label': 'Adresse du serveur (IP ou nom)',
+  'lan_port_label': 'Port',
+  'lan_connect': 'Se connecter',
+  'lan_retry': 'Réessayer',
+  'lan_cancel': 'Annuler',
+  // Confirmation
+  'lan_confirm_store': 'Est-ce votre magasin ?',
+  'lan_confirm_store_body':
+      'Continuez uniquement s’il s’agit du serveur installé dans ce magasin.',
+  'lan_yes_connect': 'Oui, se connecter',
+  // Appairage
+  'lan_pairing_code': 'Code d’appairage',
+  'lan_enter_pairing_code':
+      'Saisissez le code à 6 chiffres affiché sur le serveur',
+  'lan_pairing_code_invalid': 'Ce code n’est pas valide ou a expiré',
+  'lan_waiting_approval':
+      'En attente de l’approbation d’un administrateur',
+  'lan_waiting_seconds': 'Temps restant : {s} secondes',
+  'lan_pairing_approved': 'Cet appareil a été approuvé',
+  'lan_pairing_rejected': 'L’appairage n’a pas été approuvé',
+  'lan_pairing_timeout': 'Pas de réponse de l’administrateur (délai dépassé)',
+  'lan_pairing_rejected_body':
+      'Un administrateur a rejeté cet appareil. Demandez-lui de l’approuver, puis réessayez.',
+  'lan_repair_required': 'Vous devrez recommencer l’appairage.',
+  // Écran appareils
+  'lan_devices_title': 'Appareils',
+  'lan_pending_devices': 'En attente d’approbation',
+  'lan_no_pending': 'Aucun appareil n’attend d’approbation.',
+  'lan_approve': 'Approuver',
+  'lan_reject': 'Refuser',
+  'lan_revoke': 'Révoquer',
+  'lan_revoke_confirm':
+      'Révoquer cet appareil ? Il perdra l’accès immédiat et devra être approuvé à nouveau.',
+  'lan_device_last_seen': 'Dernière connexion',
+  'lan_device_ip': 'Adresse IP',
+  'lan_device_version': 'Version de l’application',
+  'lan_status_pending': 'En attente',
+  'lan_status_approved': 'Approuvé',
+  'lan_status_rejected': 'Refusé',
+  'lan_status_revoked': 'Révoqué',
+  'lan_registered_devices': 'Appareils enregistrés',
+  'lan_no_registered': 'Aucun appareil n’est encore enregistré.',
+  'lan_pairing_code_hint':
+      'Partagez ce code avec la caisse cliente. Il expire bientôt et change à chaque actualisation.',
+  'lan_generate_code': 'Générer le code',
+  // Pastille d’état
+  'lan_connected': 'Connecté',
+  'lan_reconnecting': 'Reconnexion…',
+  'lan_disconnected': 'Déconnecté',
+  'lan_degraded_db': 'Base de données du serveur indisponible',
+  'lan_connected_tooltip': 'Connecté au serveur du magasin',
+  // Reconnexion / erreurs
+  'lan_reconnect_title': 'Impossible d’atteindre le serveur du magasin',
+  'lan_reconnect_body':
+      'La connexion au serveur du magasin est interrompue. Les ventes sont suspendues jusqu’au retour du serveur.',
+  'lan_reconnect_now': 'Réessayer maintenant',
+  'lan_server_unreachable': 'Le serveur n’a pas répondu',
+  'lan_device_revoked_title': 'Cet appareil a été révoqué',
+  'lan_device_revoked_body':
+      'Un administrateur a révoqué cet appareil. Demandez-lui de l’approuver à nouveau.',
+  'lan_version_mismatch':
+      'Cette version de l’application n’est pas compatible avec le serveur du magasin',
+  'lan_server_changed':
+      'Le serveur à cette adresse a changé. Refaites l’appairage pour continuer.',
+  // Hors ligne (§15)
+  'lan_offline_mutations_disabled':
+      'Indisponible lorsque la connexion au serveur du magasin est perdue',
   };
 
   static const Map<String, String> _english = {
@@ -2481,5 +2638,89 @@ class AppStrings {
   'paper_a4': 'A4 paper',
   'save_pdf': 'Save PDF',
   'pdf_saved': 'PDF file saved',
+  // Phase 16 — LAN / multi-PC / devices (§24)
+  // Wizard / roles
+  'lan_wizard_title': 'Set up this register',
+  'lan_server_role': 'This is the store server',
+  'lan_client_role': 'This is a client till',
+  'lan_role_server_desc':
+      'Runs the database. Other registers connect to this computer.',
+  'lan_role_client_desc':
+      'Connects to the store server over the local network.',
+  'lan_first_run_hint':
+      'Choose what this computer will do. You can change it later from Settings.',
+  // Discovery
+  'lan_searching_server': 'Looking for the store server on the network…',
+  'lan_search_timeout': 'No server found. Enter its address below.',
+  'lan_server_found': 'Store server found',
+  'lan_server_not_supermarket':
+      'That address is not a Supermarket Pro server',
+  'lan_manual_entry': 'Enter the server address manually',
+  'lan_ip_label': 'Server address (IP or name)',
+  'lan_port_label': 'Port',
+  'lan_connect': 'Connect',
+  'lan_retry': 'Try again',
+  'lan_cancel': 'Cancel',
+  // Confirm
+  'lan_confirm_store': 'Is this your store?',
+  'lan_confirm_store_body':
+      'Only continue if this is the server you installed in this shop.',
+  'lan_yes_connect': 'Yes, connect',
+  // Pairing
+  'lan_pairing_code': 'Pairing code',
+  'lan_enter_pairing_code': 'Enter the 6-digit code shown on the server',
+  'lan_pairing_code_invalid': 'That code is not valid or has expired',
+  'lan_waiting_approval':
+      'Waiting for an administrator to approve this device',
+  'lan_waiting_seconds': 'Time remaining: {s} seconds',
+  'lan_pairing_approved': 'This device was approved',
+  'lan_pairing_rejected': 'Pairing was not approved',
+  'lan_pairing_timeout': 'No answer from the administrator (timed out)',
+  'lan_pairing_rejected_body':
+      'An administrator rejected this device. Ask them to approve it, then try again.',
+  'lan_repair_required': 'You will need to start pairing again.',
+  // Devices screen
+  'lan_devices_title': 'Devices',
+  'lan_pending_devices': 'Waiting for approval',
+  'lan_no_pending': 'No devices are waiting for approval.',
+  'lan_approve': 'Approve',
+  'lan_reject': 'Reject',
+  'lan_revoke': 'Revoke',
+  'lan_revoke_confirm':
+      'Revoke this device? It will lose access immediately and must be approved again.',
+  'lan_device_last_seen': 'Last seen',
+  'lan_device_ip': 'IP address',
+  'lan_device_version': 'App version',
+  'lan_status_pending': 'Pending',
+  'lan_status_approved': 'Approved',
+  'lan_status_rejected': 'Rejected',
+  'lan_status_revoked': 'Revoked',
+  'lan_registered_devices': 'Registered devices',
+  'lan_no_registered': 'No devices are registered yet.',
+  'lan_pairing_code_hint':
+      'Share this code with the client till. It expires soon and changes every time you refresh.',
+  'lan_generate_code': 'Generate code',
+  // Status chip
+  'lan_connected': 'Connected',
+  'lan_reconnecting': 'Reconnecting…',
+  'lan_disconnected': 'Disconnected',
+  'lan_degraded_db': 'Server database unavailable',
+  'lan_connected_tooltip': 'Connected to the store server',
+  // Reconnect / errors
+  'lan_reconnect_title': 'Cannot reach the store server',
+  'lan_reconnect_body':
+      'The connection to the store server was lost. Sales are paused until it comes back.',
+  'lan_reconnect_now': 'Try again now',
+  'lan_server_unreachable': 'The server did not answer',
+  'lan_device_revoked_title': 'This device was revoked',
+  'lan_device_revoked_body':
+      'An administrator revoked this device. Ask them to approve it again.',
+  'lan_version_mismatch':
+      'This app version is not compatible with the store server',
+  'lan_server_changed':
+      'The server at this address has changed. Pair again to continue.',
+  // Offline semantics (§15)
+  'lan_offline_mutations_disabled':
+      'Not available while disconnected from the store server',
 };
 }

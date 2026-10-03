@@ -169,9 +169,22 @@ class ExpenseStatus(str, enum.Enum):
 
 
 class DeviceStatus(str, enum.Enum):
+    """Server-side device registry lifecycle (Phase 16).
+
+    pending  — a pairing request exists (pairing code was accepted) and is
+               waiting for a human with ``device_manage`` to approve it.
+    approved — a one-time device token was issued; the device may call the
+               guarded API presenting X-Device-ID + X-Device-Token.
+    rejected — the request was denied; the client must re-pair.
+    revoked  — an approved device was withdrawn; the stored token hash is
+               cleared and every further call fails with ``device_revoked``.
+               (Code-only addition — the column stays VARCHAR, §10.1/D-04.)
+    """
+
     PENDING = "pending"
     APPROVED = "approved"
     REJECTED = "rejected"
+    REVOKED = "revoked"
 
 
 # ── Audit ──────────────────────────────────────────────────────────────
@@ -196,3 +209,10 @@ class AuditAction(str, enum.Enum):
     # appends exactly one row.
     EXPORT = "export"
     PRINT = "print"
+    # Phase 16: device registry lifecycle.  Additive only — the audit_logs
+    # action column is String(30).  NEVER carries the pairing code or the
+    # device token (§18); no heartbeat/last_seen rows are ever written.
+    DEVICE_PAIR = "device_pair"
+    DEVICE_APPROVE = "device_approve"
+    DEVICE_REJECT = "device_reject"
+    DEVICE_REVOKE = "device_revoke"

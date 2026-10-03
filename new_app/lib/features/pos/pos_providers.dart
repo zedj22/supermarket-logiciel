@@ -14,6 +14,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../core/strings.dart';
 import '../../l10n/locale_provider.dart';
 import '../auth/auth_provider.dart';
+import '../devices/device_identity.dart';
 import '../products/models.dart';
 import 'pos_error_message.dart';
 import 'pos_models.dart';
@@ -23,22 +24,13 @@ const Duration kPosSearchDebounce = Duration(milliseconds: 250);
 // ---------------------------------------------------------------------------
 // Device id (holds filter + X-Device-ID)
 // ---------------------------------------------------------------------------
+//
+// Promoted to the app-level `deviceIdProvider` in
+// `features/devices/device_identity.dart` (Phase 16 §23.2). The storage key
+// (`pos_device_id`), the `pos-<millis>-<rand>` format and this provider's
+// type are unchanged — Phase 14/15 call sites read it exactly as before.
 
-const _deviceIdKey = 'pos_device_id';
-
-Future<String> ensurePosDeviceId() async {
-  final prefs = await SharedPreferences.getInstance();
-  final existing = prefs.getString(_deviceIdKey);
-  if (existing != null && existing.isNotEmpty) return existing;
-  final generated = 'pos-${DateTime.now().millisecondsSinceEpoch}-'
-      '${Random().nextInt(0x7fffffff)}';
-  await prefs.setString(_deviceIdKey, generated);
-  return generated;
-}
-
-final posDeviceIdProvider = FutureProvider<String>((ref) async {
-  return ensurePosDeviceId();
-});
+final posDeviceIdProvider = deviceIdProvider;
 
 // ---------------------------------------------------------------------------
 // Cart state

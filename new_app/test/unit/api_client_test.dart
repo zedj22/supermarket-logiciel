@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:supermarket_pos/core/constants.dart';
 import 'package:supermarket_pos/network/api_client.dart';
 
 void main() {
@@ -287,6 +288,153 @@ void main() {
 
       expect(unauthorizedCount, 0);
       expect(client.hasToken, true);
+      await server.close(force: true);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Phase 16 (§12.5 / §23.2) — dynamic base URL + machine identity headers
+  // ---------------------------------------------------------------------------
+
+  group('Phase 16 device identity', () {
+    test('defaults to the single-PC base URL', () {
+      expect(ApiClient().dio.options.baseUrl, AppConstants.defaultServerBaseUrl);
+      expect(AppConstants.defaultServerBaseUrl, contains('localhost'));
+    });
+
+    test('setBaseUrl switches the target and ignores blank input', () {
+      final client = ApiClient();
+      client.setBaseUrl('  http://192.168.1.10:8000  ');
+      expect(client.baseUrl, 'http://192.168.1.10:8000');
+      expect(client.dio.options.baseUrl, 'http://192.168.1.10:8000');
+
+      client.setBaseUrl('');
+      expect(client.baseUrl, 'http://192.168.1.10:8000',
+          reason: 'a failed lookup must never wipe a working URL');
+      client.setBaseUrl('   ');
+      expect(client.baseUrl, 'http://192.168.1.10:8000');
+    });
+
+    test('setDeviceIdentity attaches both guard headers together', () {
+      final client = ApiClient();
+      expect(client.hasDeviceIdentity, isFalse);
+
+      client.setDeviceIdentity(
+        deviceId: 'pos-1-2',
+        deviceToken: 'tok',
+      );
+      expect(client.dio.options.headers[deviceIdHeader], 'pos-1-2');
+      expect(client.dio.options.headers[deviceTokenHeader], 'tok');
+      expect(client.hasDeviceIdentity, isTrue);
+    });
+
+    test('a null/empty value removes that header', () {
+      final client = ApiClient();
+      client.setDeviceIdentity(deviceId: 'pos-1-2', deviceToken: 'tok');
+      client.setDeviceIdentity(deviceId: null, deviceToken: 'tok');
+      expect(client.dio.options.headers.containsKey(deviceIdHeader), isFalse);
+      expect(client.hasDeviceIdentity, isFalse);
+
+      client.setDeviceIdentity(deviceId: 'pos-1-2', deviceToken: '');
+      expect(client.dio.options.headers.containsKey(deviceTokenHeader),
+          isFalse);
+      expect(client.hasDeviceIdentity, isFalse);
+    });
+  });
+
+  group('shouldHandleSessionExpiry device-code exclusion', () {
+    DioException errWithCode(int status, String code) {
+      final path = '/api/v1/products';
+      return DioException(
+        requestOptions: RequestOptions(path: path),
+        response: Response(
+          requestOptions: RequestOptions(path: path),
+          statusCode: status,
+          data: {
+            'error': {'code': code, 'message': 'x'}
+          },
+        ),
+      );
+    }
+
+    test('isDeviceGuardErrorCode recognises exactly the three guard codes', () {
+      expect(deviceGuardErrorCodes, {'device_required',
+        'device_not_paired', 'device_revoked'});
+      expect(isDeviceGuardErrorCode('device_required'), isTrue);
+      expect(isDeviceGuardErrorCode('device_not_paired'), isTrue);
+      expect(isDeviceGuardErrorCode('device_revoked'), isTrue);
+      expect(isDeviceGuardErrorCode('PAIRING_CODE_INVALID'), isFalse);
+      expect(isDeviceGuardErrorCode(null), isFalse);
+      expect(isDeviceGuardErrorCode(''), isFalse);
+    });
+
+    test('a device rejection is NOT a session expiry at its canonical status',
+        () {
+      // Step A §12 contract: device_required → 401; device_not_paired and
+      // device_revoked → 403. Whatever the status, the device link must be
+      // kept separate from the user session.
+      const canonical = <String, int>{
+        'device_required': 401,
+        'device_not_paired': 403,
+        'device_revoked': 403,
+      };
+      canonical.forEach((code, status) {
+        expect(
+          shouldHandleSessionExpiry(errWithCode(status, code), hasToken: true),
+          isFalse,
+          reason: 'device code must not expire the session: $code@$status',
+        );
+        expect(
+          shouldHandleSessionExpiry(errWithCode(401, code), hasToken: true),
+          isFalse,
+          reason: 'device code must not expire the session at any status: '
+              '$code',
+        );
+      });
+    });
+
+    test('an ordinary 401 still expires the session', () {
+      expect(
+        shouldHandleSessionExpiry(
+            errWithCode(401, 'AUTHENTICATION_ERROR'),
+            hasToken: true),
+        isTrue,
+      );
+    });
+
+    test(
+        'the interceptor routes a device rejection (403 device_revoked) away '
+        'from the session handler', () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final port = server.port;
+      server.listen((request) {
+        // Step A §12: a revoked device is 403 FORBIDDEN, not 401.
+        request.response.statusCode = 403;
+        request.response.headers.contentType = ContentType.json;
+        request.response.write(
+          '{"error":{"code":"device_revoked","message":"revoked"}}',
+        );
+        request.response.close();
+      });
+
+      final client = ApiClient(baseUrl: 'http://127.0.0.1:$port');
+      var unauthorizedCount = 0;
+      final deviceErrors = <String>[];
+      client.setOnUnauthorized(() => unauthorizedCount++);
+      client.setOnDeviceError(deviceErrors.add);
+      client.setToken('valid-user-session');
+      client.setDeviceIdentity(deviceId: 'pos-1-2', deviceToken: 'stale');
+
+      await expectLater(
+        client.dio.get('/api/v1/products'),
+        throwsA(isA<DioException>()),
+      );
+
+      expect(deviceErrors, ['device_revoked']);
+      expect(unauthorizedCount, 0,
+          reason: 'the user session must survive a device rejection');
+      expect(client.hasToken, isTrue,
+          reason: 'the JWT is a separate layer from the device link');
       await server.close(force: true);
     });
   });

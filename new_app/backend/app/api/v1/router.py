@@ -2,15 +2,22 @@
 
 Central router that includes all feature-specific sub-routers.
 Each feature module adds its router here.
+
+Phase 16: the router carries the **device guard** as a router-level
+dependency, so it runs before every endpoint's own dependencies on every
+route below (including ones added later). It is a no-op unless
+``LAN_MODE=1``.
 """
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
+from app.api.device_guard import device_guard
 from app.api.v1.auth import router as auth_router
 from app.api.v1.categories import router as categories_router
 from app.api.v1.customers import router as customers_router
 from app.api.v1.dashboard import dashboard_router
 from app.api.v1.debts import router as debts_router
+from app.api.v1.devices import router as devices_router
 from app.api.v1.expenses import router as expenses_router
 from app.api.v1.exports import router as exports_router
 from app.api.v1.health import router as health_router
@@ -26,7 +33,7 @@ from app.api.v1.suppliers import router as suppliers_router
 from app.api.v1.system import router as system_router
 from app.api.v1.users import router as users_router
 
-api_router = APIRouter()
+api_router = APIRouter(dependencies=[Depends(device_guard)])
 
 api_router.include_router(health_router, tags=["health"])
 api_router.include_router(system_router, tags=["system"])
@@ -50,3 +57,4 @@ api_router.include_router(exports_router, prefix="/exports", tags=["exports"])
 api_router.include_router(print_router, prefix="/print", tags=["print"])
 api_router.include_router(dashboard_router, prefix="/dashboard", tags=["dashboard"])
 api_router.include_router(pos_router, prefix="/pos", tags=["pos"])
+api_router.include_router(devices_router, prefix="/devices", tags=["devices"])

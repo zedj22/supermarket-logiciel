@@ -22,6 +22,12 @@ import '../features/purchases/purchases_screen.dart';
 import '../features/reports/reports_screen.dart';
 import '../features/settings/settings_screen.dart';
 import '../features/users/users_screen.dart';
+import '../features/devices/device_identity.dart';
+import '../features/devices/connection_provider.dart';
+import '../features/devices/devices_screen.dart';
+import '../features/devices/reconnect_dialog.dart';
+import '../features/devices/setup_wizard_screen.dart';
+import '../features/devices/widgets/status_chip.dart';
 
 final routerProvider = Provider<GoRouter>((ref) {
   // Keep ONE GoRouter instance for the app's lifetime. Recreating the
@@ -31,6 +37,12 @@ final routerProvider = Provider<GoRouter>((ref) {
   final authRefresh = ValueNotifier<int>(0);
   ref.listen<AuthState>(
     authProvider,
+    (previous, next) => authRefresh.value++,
+  );
+  // Phase 16: finishing (or skipping) the first-run wizard must re-run the
+  // redirect so an unpaired client is pushed into /setup-network.
+  ref.listen(
+    networkConfiguredProvider,
     (previous, next) => authRefresh.value++,
   );
 
@@ -48,12 +60,29 @@ final routerProvider = Provider<GoRouter>((ref) {
       // While checking, show nothing (loading handled by app)
       if (isChecking) return null;
 
+      // Phase 16 (§23.2): a client that has never completed the wizard has
+      // no device identity, so there is nothing it can legitimately do.
+      // Checked before setup/login so the very first screen is the wizard.
+      final bootstrapped = ref.read(installBootstrappedProvider);
+      final configured = ref.read(networkConfiguredProvider);
+      if (bootstrapped &&
+          configured.hasValue &&
+          !configured.requireValue &&
+          path != '/setup-network') {
+        return '/setup-network';
+      }
+
       // Setup required → force setup screen
-      if (isSetupRequired && path != '/setup') return '/setup';
+      if (isSetupRequired && path != '/setup' && path != '/setup-network') {
+        return '/setup';
+      }
 
       // Unauthenticated (including login failure / session expiry)
       // → force login. Staying on /login returns null (no remount loop).
-      if (!isAuthenticated && path != '/login' && path != '/setup') {
+      if (!isAuthenticated &&
+          path != '/login' &&
+          path != '/setup' &&
+          path != '/setup-network') {
         return '/login';
       }
 
@@ -63,6 +92,11 @@ final routerProvider = Provider<GoRouter>((ref) {
       return null;
     },
     routes: [
+      GoRoute(
+        path: '/setup-network',
+        name: 'setup-network',
+        builder: (context, state) => const SetupWizardScreen(),
+      ),
       GoRoute(
         path: '/setup',
         name: 'setup',
@@ -148,6 +182,11 @@ final routerProvider = Provider<GoRouter>((ref) {
             builder: (context, state) => const UsersScreen(),
           ),
           GoRoute(
+            path: '/devices',
+            name: 'devices',
+            builder: (context, state) => const DevicesScreen(),
+          ),
+          GoRoute(
             path: '/settings',
             name: 'settings',
             builder: (context, state) => const SettingsScreen(),
@@ -219,6 +258,36 @@ class ScaffoldWithNav extends ConsumerWidget {
     final canViewReturns = ref.watch(hasPermissionProvider(returnViewScope));
     final canViewExpenses = ref.watch(hasPermissionProvider(expenseViewScope));
     final canViewReports = ref.watch(hasPermissionProvider(reportViewScope));
+    // Phase 16 §17: only admins see the device registry.
+    final canManageDevices =
+        ref.watch(hasPermissionProvider(deviceManageScope));
+
+    // Phase 16 (§14 / §23.1): the reconnect modal is a BOOT-TIME prompt and
+    // happens at most once per run. `connecting` is only ever entered from
+    // `bootstrap()`, a completed pairing or an explicit "retry now", so a
+    // mid-session flap (`connected` → `reconnecting`) never opens a modal —
+    // the chip reports it instead.
+    ref.listen(lanConnectionProvider, (previous, next) {
+      if (ref.read(reconnectPromptShownProvider)) return;
+      if (previous?.phase != LanPhase.connecting) return;
+      if (next.phase != LanPhase.reconnecting &&
+          next.phase != LanPhase.disconnected) {
+        return;
+      }
+      if (!next.isPaired && next.baseUrl == null) return;
+      ref.read(reconnectPromptShownProvider.notifier).state = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!context.mounted) return;
+        ReconnectDialog.show(context).then((action) {
+          if (!context.mounted) return;
+          if (action == ReconnectAction.retry) {
+            ref.read(lanConnectionProvider.notifier).retryNow();
+          } else if (action == ReconnectAction.manualEntry) {
+            context.go('/setup-network');
+          }
+        });
+      });
+    });
 
     final destinations = <NavigationRailDestination>[
       NavigationRailDestination(
@@ -298,6 +367,12 @@ class ScaffoldWithNav extends ConsumerWidget {
           selectedIcon: const Icon(Icons.summarize),
           label: Text(AppStrings.t('reports', loc)),
         ),
+      if (canManageDevices)
+        NavigationRailDestination(
+          icon: const Icon(Icons.devices_outlined),
+          selectedIcon: const Icon(Icons.devices),
+          label: Text(AppStrings.t('lan_devices_title', loc)),
+        ),
       NavigationRailDestination(
         icon: const Icon(Icons.settings_outlined),
         selectedIcon: const Icon(Icons.settings),
@@ -353,6 +428,10 @@ class ScaffoldWithNav extends ConsumerWidget {
     if (canViewReports) {
       index += 1;
       if (location == '/reports') selectedIndex = index;
+    }
+    if (canManageDevices) {
+      index += 1;
+      if (location == '/devices') selectedIndex = index;
     }
     index += 1;
     if (location == '/settings') selectedIndex = index;
@@ -411,6 +490,10 @@ class ScaffoldWithNav extends ConsumerWidget {
         context.go('/reports');
         return;
       }
+      if (canManageDevices && i++ == target) {
+        context.go('/devices');
+        return;
+      }
       if (i++ == target) {
         context.go('/settings');
       }
@@ -420,6 +503,12 @@ class ScaffoldWithNav extends ConsumerWidget {
       appBar: AppBar(
         title: Text(AppStrings.t('app_name', loc)),
         actions: [
+          // Phase 16: steady-state LAN health indicator (§14 — chip only,
+          // never a modal once the wizard is done).
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 8),
+            child: ConnectionStatusChip(),
+          ),
           if (user != null) ...[
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 8),

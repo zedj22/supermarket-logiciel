@@ -76,6 +76,9 @@ from app.models.inventory import InventoryMovement  # noqa: F401
 # Audit
 from app.models.audit import AuditLog  # noqa: F401
 
+# Devices / pairing (Phase 16)
+from app.models.device import Device  # noqa: F401
+
 # Base (re-export for convenience)
 from app.db.base import Base, BaseModel, DocumentModel, MasterModel  # noqa: F401
 

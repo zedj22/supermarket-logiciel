@@ -10,13 +10,25 @@ from app.core.config import settings
 from app.core.exceptions import register_exception_handlers
 from app.core.logging import setup_logging
 from app.core.middleware import RequestIDMiddleware
+from app.discovery.responder import start_discovery, stop_discovery
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Application lifespan: startup and shutdown events."""
+    """Application lifespan: startup and shutdown events.
+
+    Phase 16: when ``DISCOVERY_ENABLED=1`` the UDP discovery responder is
+    started here and stopped on shutdown. It binds ONE datagram port and
+    is a convenience only — a bind failure never prevents the API from
+    serving. With the flag off (default) nothing is bound at all.
+    """
     setup_logging(settings.LOG_LEVEL)
-    yield
+    discovery_started = start_discovery()
+    try:
+        yield
+    finally:
+        if discovery_started:
+            stop_discovery()
 
 
 def create_app() -> FastAPI:

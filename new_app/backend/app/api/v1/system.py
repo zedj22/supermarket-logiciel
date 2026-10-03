@@ -19,8 +19,10 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.constants import APP_VERSION
+from app.core.server_identity import get_server_id
 from app.db.session import get_db
 from app.schemas.common import StrictBaseModel
+from app.schemas.device import PROTOCOL_VERSION
 
 logger = structlog.get_logger(__name__)
 
@@ -33,13 +35,27 @@ router = APIRouter()
 
 
 class SystemInfoResponse(StrictBaseModel):
-    """System information response."""
+    """System information response.
+
+    Phase 16 (§8.2) adds TWO additive fields — nothing existing changed:
+
+    ``protocol``  the discovery/contract protocol version this server
+                  speaks. A client refuses an offer whose protocol does
+                  not match its own.
+    ``server_id`` a stable UUIDv4 identity (never an IP address) so a
+                  paired device can tell "my store's server" from any
+                  other box answering the same port. It is public
+                  metadata, not a credential, and it survives DHCP/IP
+                  changes.
+    """
 
     name: str
     version: str
     environment: str
     database_status: str
     timestamp: str
+    protocol: int = 1
+    server_id: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -66,6 +82,8 @@ def get_system_info(db: Session) -> SystemInfoResponse:
         environment=settings.APP_ENV,
         database_status=db_status,
         timestamp=datetime.now(timezone.utc).isoformat(),
+        protocol=PROTOCOL_VERSION,
+        server_id=get_server_id(),
     )
 
 

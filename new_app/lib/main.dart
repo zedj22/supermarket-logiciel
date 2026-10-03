@@ -4,6 +4,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'core/constants.dart';
 import 'features/auth/auth_provider.dart';
+import 'features/auth/credential_storage.dart';
+import 'features/devices/device_identity.dart';
+import 'network/api_client.dart';
 import 'theme/app_theme.dart';
 import 'theme/app_theme_mode.dart';
 import 'theme/theme_provider.dart';
@@ -26,11 +29,29 @@ const List<LocalizationsDelegate<dynamic>> appLocalizationsDelegates =
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final prefs = await SharedPreferences.getInstance();
+
+  // Phase 16 (§8.3 / §23.2): the client boots against the remembered
+  // server when one exists, otherwise the single-PC default, and carries
+  // the persisted machine identity from the very first request. Pairing is
+  // deliberately independent of the user session, so this survives logout.
+  final credentials = SecureCredentialStorage();
+  final apiClient = ApiClient(baseUrl: await initialBaseUrl());
+  final link = await readServerLink();
+  if (link.isPaired) {
+    apiClient.setDeviceIdentity(
+      deviceId: await ensurePosDeviceId(),
+      deviceToken: link.deviceToken,
+    );
+  }
+
   runApp(
     ProviderScope(
       overrides: [
         localeProvider.overrideWith((ref) => LocaleNotifier(prefs)),
         themeProvider.overrideWith((ref) => ThemeNotifier(prefs)),
+        apiClientProvider.overrideWithValue(apiClient),
+        credentialStorageProvider.overrideWithValue(credentials),
+        installBootstrappedProvider.overrideWithValue(true),
       ],
       child: const SupermarketPosApp(),
     ),

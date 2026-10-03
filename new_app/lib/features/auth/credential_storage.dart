@@ -7,6 +7,12 @@ class SecureCredentialStorage {
   static const _keyUserRoles = 'auth_user_roles';
   static const _keyUserPermissions = 'auth_user_permissions';
 
+  /// Phase 16 device token (§12.2): issued once by admin approval, kept in
+  /// the platform keystore, and deliberately OUTSIDE [clearAll] — pairing
+  /// survives logout because the device identity and the user session are
+  /// independent layers (§9.3).
+  static const _keyDeviceToken = 'device_token';
+
   final FlutterSecureStorage _storage;
 
   SecureCredentialStorage({FlutterSecureStorage? storage})
@@ -63,6 +69,20 @@ class SecureCredentialStorage {
     await _storage.delete(key: _keyUserName);
     await _storage.delete(key: _keyUserRoles);
     await _storage.delete(key: _keyUserPermissions);
+  }
+
+  // -- Phase 16 device link (kept across logout) --------------------------
+
+  Future<void> saveDeviceToken(String token) async {
+    await _storage.write(key: _keyDeviceToken, value: token);
+  }
+
+  Future<String?> readDeviceToken() async {
+    return _storage.read(key: _keyDeviceToken);
+  }
+
+  Future<void> clearDeviceToken() async {
+    await _storage.delete(key: _keyDeviceToken);
   }
 
   Future<bool> hasToken() async {
