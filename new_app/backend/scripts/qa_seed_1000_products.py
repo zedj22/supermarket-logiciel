@@ -60,7 +60,7 @@ QA_CATEGORY_PREFIX = "QA17 Category "
 QA_PRODUCT_COUNT = 1000
 QA_CATEGORY_COUNT = 10
 QA_UNIT = "piece"
-QA_QUANTITY = Decimal("9999")  # ample for the 5 x 200-line sale batches
+QA_QUANTITY = Decimal("9999")  # ample for full-catalog batches and large-line sales
 QA_LOW_STOCK = Decimal("5")
 QA_UNIT_COST_RATIO = Decimal("0.65")
 

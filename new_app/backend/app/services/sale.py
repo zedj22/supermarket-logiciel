@@ -18,9 +18,10 @@ from decimal import Decimal, ROUND_HALF_UP
 from typing import Any
 
 import structlog
-from sqlalchemy import update
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import set_committed_value
 
 from app.core.config import settings
 from app.core.exceptions import (
@@ -274,6 +275,46 @@ class SaleService(BaseService):
                     "debt_ceiling": str(ceiling),
                 },
             )
+
+    def _prefetch_catalog(self, items) -> list[Any]:
+        """Bulk-load the catalog rows a cart references (one query per chunk).
+
+        Loads products / variants / selling units up front so the per-line
+        lookups in ``_resolve_line`` are served from the session identity
+        map instead of one SELECT per cart line — a 10 000 line cart would
+        otherwise issue 10 000 round trips before the sale transaction even
+        starts.  Resolution logic is untouched: a missing or archived id
+        still raises exactly the same error from the same code path, and
+        pack components (loaded with their pack) are unaffected.
+
+        The loaded instances are RETURNED and the caller must keep them
+        referenced until resolution finishes: the identity map stores weak
+        references, so without a strong ref the rows would be collected and
+        every lookup would fall back to a SELECT.
+        """
+        product_ids: set[uuid.UUID] = set()
+        variant_ids: set[uuid.UUID] = set()
+        unit_ids: set[uuid.UUID] = set()
+        for item in items:
+            if item.product_id is not None:
+                product_ids.add(item.product_id)
+            if item.variant_id is not None:
+                variant_ids.add(item.variant_id)
+            if item.selling_unit_id is not None:
+                unit_ids.add(item.selling_unit_id)
+
+        loaded: list[Any] = []
+
+        def _load(model, ids: set[uuid.UUID]) -> None:
+            ordered = list(ids)
+            for start in range(0, len(ordered), 1000):
+                chunk = ordered[start : start + 1000]
+                loaded.extend(self.db.scalars(select(model).where(model.id.in_(chunk))))
+
+        _load(Product, product_ids)
+        _load(ProductVariant, variant_ids)
+        _load(ProductSellingUnit, unit_ids)
+        return loaded
 
     def _resolve_line(self, item, index: int, *, validate_stock: bool = True) -> _ResolvedLine:
         """Load product/variant/selling unit, resolve price, convert quantity."""
@@ -784,12 +825,14 @@ class SaleService(BaseService):
         # --- Resolve + validate all lines (read-only; raises before tx) ---
         # Demand map aggregates component requirements across pack lines in
         # this request only (GATE 4); plain product lines are unchanged.
+        prefetched = self._prefetch_catalog(request.items)
         lines: list[_ResolvedLine] = []
         demand: dict[tuple[uuid.UUID, uuid.UUID | None], Decimal] = {}
         for idx, item in enumerate(request.items):
             lines.extend(
                 self._resolve_item(item, idx, validate_stock=True, demand=demand)
             )
+        del prefetched  # strong refs only needed while resolving (see helper)
 
         customer: Customer | None = None
         if request.customer_id is not None:
@@ -1039,6 +1082,14 @@ class SaleService(BaseService):
 
         Captures stock_before / stock_after on the line for movement rows
         so multi-line sales of the same product stay correct.
+
+        The guarded UPDATE carries ``RETURNING`` so the new quantity comes
+        back with the same statement: one round trip per line instead of
+        UPDATE + ``refresh`` SELECT, and the identity map is updated
+        committed (never dirty) via ``set_committed_value`` — the follow-up
+        flush therefore issues no extra UPDATE.  Zero rows returned still
+        means "lost the concurrency race / insufficient stock" and raises
+        exactly the same ConflictError as before.
         """
         assert ln.product is not None
         product = ln.product
@@ -1054,13 +1105,15 @@ class SaleService(BaseService):
                 update(ProductVariant)
                 .where(ProductVariant.id == ln.variant.id)
                 .values(quantity=ProductVariant.quantity - qty)
+                .returning(ProductVariant.quantity)
             )
             if not product.allow_negative_stock:
                 stmt = stmt.where(ProductVariant.quantity >= qty)
             result = self.db.execute(
                 stmt.execution_options(synchronize_session=False)
             )
-            if result.rowcount != 1:
+            row = result.first()
+            if row is None:
                 raise ConflictError(
                     message="Insufficient variant stock (concurrent sale)",
                     details={
@@ -1070,7 +1123,7 @@ class SaleService(BaseService):
                         "available": str(ln.stock_quantity),
                     },
                 )
-            self.db.refresh(ln.variant)
+            set_committed_value(ln.variant, "quantity", row[0])
             ln.stock_before = before
             ln.stock_after = to_decimal(ln.variant.quantity)
             return
@@ -1080,13 +1133,15 @@ class SaleService(BaseService):
             update(Product)
             .where(Product.id == product.id)
             .values(quantity=Product.quantity - qty)
+            .returning(Product.quantity)
         )
         if not product.allow_negative_stock:
             stmt = stmt.where(Product.quantity >= qty)
         result = self.db.execute(
             stmt.execution_options(synchronize_session=False)
         )
-        if result.rowcount != 1:
+        row = result.first()
+        if row is None:
             raise ConflictError(
                 message="Insufficient stock (concurrent sale)",
                 details={
@@ -1095,7 +1150,7 @@ class SaleService(BaseService):
                     "available": str(ln.stock_quantity),
                 },
             )
-        self.db.refresh(product)
+        set_committed_value(product, "quantity", row[0])
         ln.stock_before = before
         ln.stock_after = to_decimal(product.quantity)
 
@@ -1311,6 +1366,7 @@ class SaleService(BaseService):
         subtotal = Decimal("0")
         line_discounts = Decimal("0")
         demand: dict[tuple[uuid.UUID, uuid.UUID | None], Decimal] = {}
+        prefetched = self._prefetch_catalog(request.items)
 
         for idx, item in enumerate(request.items):
             try:
@@ -1356,6 +1412,7 @@ class SaleService(BaseService):
                     )
                 )
 
+        del prefetched  # strong refs only needed while resolving (see helper)
         ok = not errors and bool(resolved)
         discount = Decimal("0")
         total = Decimal("0")
@@ -1470,6 +1527,7 @@ class SaleService(BaseService):
         lines_out: list[CartLineValidation] = []
         errors: list[str] = []
         demand: dict[tuple[uuid.UUID, uuid.UUID | None], Decimal] = {}
+        prefetched = self._prefetch_catalog(hold_resp.items)
         for idx, raw in enumerate(hold_resp.items):
             item = SaleLineRequest.model_validate(raw.model_dump())
             try:
@@ -1505,6 +1563,7 @@ class SaleService(BaseService):
                         message=exc.message,
                     )
                 )
+        del prefetched  # strong refs only needed while resolving (see helper)
         # FIX #5: successful restore removes the hold (atomic from user view).
         # Validation errors keep the hold so the client can retry.
         if not errors:

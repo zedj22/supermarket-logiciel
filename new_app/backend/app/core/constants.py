@@ -15,6 +15,15 @@ DEVICE_NAME_MAX_LENGTH = 100
 DEFAULT_PAGE_SIZE = 40
 MAX_PAGE_SIZE = 100
 
+# POS sale / cart lines
+# Maximum DISTINCT sale lines in ONE sale, cart-validate request or hold
+# snapshot.  This counts cart lines, never quantity: 500 x Product A plus
+# 700 x Product B is 2 lines; 10 000 different products x qty 1 is
+# 10 000 lines.  The sale itself stays ONE atomic transaction.
+# Applied by app/schemas/sale.py (CreateSaleRequest, CartValidateRequest,
+# HoldCreateRequest) — sale/cart lines only, no other contract uses it.
+MAX_SALE_LINES = 10_000
+
 # Money precision (PostgreSQL NUMERIC)
 MONEY_PRECISION = 18
 MONEY_SCALE = 3

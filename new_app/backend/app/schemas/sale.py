@@ -13,6 +13,7 @@ from uuid import UUID
 
 from pydantic import Field, field_validator, model_validator
 
+from app.core.constants import MAX_SALE_LINES
 from app.models.enums import PaymentMethod
 from app.schemas.common import StrictBaseModel
 
@@ -71,10 +72,19 @@ class CreateSaleRequest(StrictBaseModel):
     """POST /sales checkout payload.
 
     Does NOT include client subtotal/total/change/debt — server computes them.
+
+    ``items`` holds the cart's DISTINCT lines: 1..``MAX_SALE_LINES``
+    (10 000) entries.  Quantity never counts toward the limit — 500 of
+    product A plus 700 of product B is 2 lines; 10 000 different products
+    at qty 1 is 10 000 lines.  Over the limit is a 422 raised during
+    request validation, before any sale row, stock movement or payment
+    is written.  Checkout remains ONE atomic transaction.
     """
 
     client_request_id: str = Field(..., min_length=1, max_length=100)
-    items: list[SaleLineRequest] = Field(..., min_length=1, max_length=200)
+    items: list[SaleLineRequest] = Field(
+        ..., min_length=1, max_length=MAX_SALE_LINES
+    )
     customer_id: UUID | None = None
     invoice_discount: Decimal = Field(default=Decimal("0"), ge=0)
     payment_method: PaymentMethodLiteral = "cash"
@@ -227,7 +237,9 @@ class CartLineValidation(StrictBaseModel):
 
 
 class CartValidateRequest(StrictBaseModel):
-    items: list[SaleLineRequest] = Field(..., min_length=1, max_length=200)
+    items: list[SaleLineRequest] = Field(
+        ..., min_length=1, max_length=MAX_SALE_LINES
+    )
     customer_id: UUID | None = None
     invoice_discount: Decimal = Field(default=Decimal("0"), ge=0)
     payment_method: PaymentMethodLiteral = "cash"
@@ -284,7 +296,7 @@ class HoldCartItem(StrictBaseModel):
 class HoldCreateRequest(StrictBaseModel):
     device_id: str | None = Field(default=None, max_length=100)
     customer_id: UUID | None = None
-    items: list[HoldCartItem] = Field(..., min_length=1, max_length=200)
+    items: list[HoldCartItem] = Field(..., min_length=1, max_length=MAX_SALE_LINES)
     invoice_discount: Decimal = Field(default=Decimal("0"), ge=0)
     note: str | None = Field(default=None, max_length=500)
 

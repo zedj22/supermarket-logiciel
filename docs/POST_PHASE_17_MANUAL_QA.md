@@ -6,9 +6,9 @@ been verified on real hardware until those cells are filled.
 
 | | |
 |---|---|
-| Scope | Real-world acceptance of the Phase 1–17 build on two PCs on one LAN, with a 1000-product catalog, 200-distinct-line sales, 5 full-catalog batches, concurrency, reconnect, security, reconciliation |
+| Scope | Real-world acceptance of the Phase 1–17 build on two PCs on one LAN, with a 1000-product catalog, line-limit sales (1000 distinct lines in the UI; 5000 / 10000 / 10001 scripted), 5 full-catalog batches, concurrency, reconnect, security, reconciliation |
 | Out of scope | Installer / packaging / EXE build, Phase 18 work, architecture changes, changes to Phase 8–16 business logic or API contracts |
-| Contract frozen | `POST /sales` accepts **`items[]` with `min 1, max 200` lines** — verified at `new_app/backend/app/schemas/sale.py:77` (same cap on cart validate `:230` and hold `:287`). **Do not raise or lower this limit to make a test pass.** |
+| Contract frozen | `POST /sales` accepts **`items[]` with `min 1, max 10000` DISTINCT lines** — `MAX_SALE_LINES = 10_000` in `new_app/backend/app/core/constants.py`, enforced on `CreateSaleRequest.items`, cart-validate `CartValidateRequest.items`, and hold `HoldCreateRequest.items` in `new_app/backend/app/schemas/sale.py`. **Quantity never counts**: 500 of A + 700 of B = 2 lines. Over the cap is HTTP 422 before any write. Returns stay at 200 lines. **Do not raise or lower this limit to make a test pass.** |
 | Rule #1 | **No silent fixing.** Every failure, crash, wrong number, or unexpected status is recorded in §14 (defect log) with steps + expected vs actual. Fixes happen only after the test round, in a separate change |
 | Rule #2 | Rate limiting, auth, and device guard stay **exactly as shipped** — never disable or loosen them to make a flow work |
 | Rule #3 | Anything requiring hardware (printer), a second machine not available, or a scenario not reachable in this build is marked **UNVERIFIED**, never PASS |
@@ -63,6 +63,12 @@ cd C:\Users\MSI\Desktop\supermarket_logiciel\new_app\backend
 
 # 6. cleanup — hard delete QA fixtures only (refuses anything a document references)
 .\.venv\Scripts\python.exe scripts\qa_cleanup_1000_products.py --delete --include-categories
+
+# 7. extend the fixture to 10 000 products — ONLY before §6.2/§6.3 (scripted large sales)
+.\.venv\Scripts\python.exe scripts\qa_seed_1000_products.py --products 10000
+#    idempotent: re-running keeps the dataset; names/barcodes follow the same QA17 pattern
+#    (QA17 Product 1001 … 10000, barcodes QA1700001001 … QA1700010000), stock 9999 each
+#    §13.1 then expects 10000 instead of 1000 — record which fixture size the round used
 ```
 
 All commands print `target: postgresql://host:port/dbname` only — **no credentials are
@@ -72,7 +78,7 @@ ever printed**. The scripts read `DATABASE_URL` from `.env` (PC1's acceptance da
 
 | Table | Marker |
 |---|---|
-| `products` | `name LIKE 'QA17 Product %'` (`QA17 Product 0001` … `1000`), `barcode LIKE 'QA17%'` (`QA1700000001` … `QA1700001000`), `sku LIKE 'QA17-SKU-%'` |
+| `products` | `name LIKE 'QA17 Product %'` (`QA17 Product 0001` … `1000`; … `10000` after §1.2 step 7), `barcode LIKE 'QA17%'` (`QA1700000001` … `QA1700001000`; … `QA1700010000` after step 7), `sku LIKE 'QA17-SKU-%'` |
 | `categories` | `name LIKE 'QA17 Category %'` (`QA17 Category 01` … `10`) |
 | seeded stock | every QA product starts at quantity **9999**, unit `piece`, low-stock 5, cost = 65% of price |
 | price rule | deterministic: `price = 10.00 + (index mod 97) × 0.25` (so 0001 = 10.25, 1000 = 17.50) |
@@ -103,6 +109,7 @@ ever printed**. The scripts read `DATABASE_URL` from `.env` (PC1's acceptance da
 | 2.8 | Both PCs on the same LAN, same subnet; PC1 IP noted | PC1 IP = `____________` | ☐ |
 | 2.9 | Admin account + PIN known on PC1 | login works | ☐ |
 | 2.10 | Windows firewall prompt accepted for Python on PC1 | inbound 8000 allowed | ☐ |
+| 2.11 | (before §6.2/§6.3 only) fixture extended | §1.2 step 7 printed `dataset size now: 10000/10000` | ☐ |
 
 ---
 
@@ -157,26 +164,200 @@ Perform on **PC1 and PC2**.
 
 ---
 
-## 6. Sale with 200 distinct lines (the cap test) — steps A…G
+## 6. Sale line limit — 1000 lines (UI), 5000 / 10000 / 10001 (scripted)
 
-One sale containing **all 200 distinct products** `QA17 Product 0001 … 0200`, quantity 1
-each, on PC1 (repeat on PC2 as 6.x if time allows). Put note `QA17-LINE200` on the sale.
+The cap counts **DISTINCT cart lines, never quantity** (500 of A + 700 of B = 2 lines).
+Contract: `MAX_SALE_LINES = 10_000` (header "Contract frozen"); over-cap `items[]` is HTTP 422
+**before any write**. Building 5000+ lines by hand is impractical, so 6.1/6.5 are real-UI tests and
+6.2–6.4 are scripted. The same contract is covered by automated tests:
+`tests/unit/test_sale_line_limit.py` and `tests/integration/test_sale_line_limit_pg.py`.
+
+| Part | Lines | How | Note tag |
+|---|---|---|---|
+| 6.1 | 1000 distinct | real UI, PC1 (repeat on PC2 as 6.1b if time allows) | `QA17-LINE1000` |
+| 6.2 | 5000 distinct | scripted (§1.1 single-PC mode) | `QA17-LINE5000` |
+| 6.3 | 10 000 distinct — **at** the cap | scripted | `QA17-LINE10000` |
+| 6.4 | 10 001 → 422, zero write | scripted — runs with every script run | `QA17-LINE10001` |
+| 6.5 | quantity never counts: 500 + 700 = **2** lines | real UI | — |
+
+### 6.1 UI sale with 1000 distinct lines — steps A…G
+
+One sale containing **all 1000 distinct products** `QA17 Product 0001 … 1000`, quantity 1 each,
+on PC1 (repeat on PC2 as 6.1b if time allows). Put note `QA17-LINE1000` on the sale.
 
 | # | Step | Expected | Result |
 |---|---|---|---|
-| **A** | Build the cart: add all 200 distinct QA products (scan/search + add) | cart shows 200 lines, no duplicate merges, live subtotal updates | ☐ |
-| **A2** | Attempt to add a **201st** distinct line | the POS has no client-side 200-line cart guard (verified in `pos_screen.dart`), so the 201st line is expected to be addable; the **checkout** must then fail cleanly (HTTP 422 for `items[] > 200`), **no sale written, cart not corrupted**. Record what you saw: `__________` — do **not** change the 200 cap to make it pass | ☐ |
-| **B** | Checkout with `payment_method=cash`, `paid = exact total` | HTTP success (2xx) exactly once; UI shows invoice with the 200 lines | ☐ |
-| **C** | DB: `SELECT count(*) FROM sale_lines WHERE sale_id = <id>` | **200** | ☐ |
-| **C2** | DB: sale row `subtotal`/`total` equal the sum of `line_total` over its 200 lines | equal (use the SQL in §13.3) | ☐ |
-| **D** | Inventory: each of the 200 products stock 9999 → 9998, one `sale` movement each | exact (§13.4) | ☐ |
-| **E** | Payment: `sales.paid` / `sales.change` correct and `sale_payments` has one cash row (`method=cash`, `amount` = paid), `debt = 0` | correct | ☐ |
-| **F** | Invoice/receipt UI: number, date/time, store identity, 200 lines, totals | renders completely, totals match C2 (physical print = §12) | ☐ |
-| **G** | Reports/Dashboard/Day-close for today include this sale **once** (total, count, payment split) | reconciles with §13 | ☐ |
-| **G2** | Re-submit the same checkout (same `client_request_id`) — POS retry simulation | idempotent replay: original sale returned, **no second sale** | ☐ |
+| **A** | Build the cart: add all 1000 distinct QA products (scan/search + add) | cart shows 1000 lines, no duplicate merges, live subtotal updates; adding stays responsive at this scale | ☐ |
+| **A2** | Over-cap behavior | the POS has **no client-side cart guard** (by design — `pos_screen.dart`); the 10 000-line cap is enforced by the **schema at checkout**, proven by the scripted 10 001 probe in 6.4 (HTTP 422, zero write). Do **not** add a client-side guard and do not change the cap to make a test pass | ☐ |
+| **B** | Checkout with `payment_method=cash`, `paid = exact total` | HTTP 201 exactly once; UI shows the invoice with the 1000 lines; no timeout | ☐ |
+| **C** | DB: `SELECT count(*) FROM sale_lines WHERE sale_id = <id>` | **1000** | ☐ |
+| **C2** | DB: sale `subtotal`/`total` equal the sum of `line_total` over its 1000 lines | equal (SQL §13.3) | ☐ |
+| **D** | Inventory: each of the 1000 products stock 9999 → 9998, one `sale` movement each | exact (§13.4) | ☐ |
+| **E** | Payment: `sales.paid` / `sales.change` correct, one cash row in `sale_payments`, `debt = 0` | correct | ☐ |
+| **F** | Invoice/receipt UI: number, date/time, store identity, all 1000 lines, totals | renders completely, totals match C2 (physical print = §12.14) | ☐ |
+| **G** | Reports/Dashboard/Day-close for today include this sale **once** | reconciles with §13 | ☐ |
+| **G2** | Re-submit the same checkout (same `client_request_id`) — POS retry simulation | idempotent replay: original sale returned, **no second sale** (§13.2 stays at 1 for this note) | ☐ |
 
 Expected values to record: subtotal `__________` total `__________` paid `__________`
 change `__________` sale id `________________________` invoice `____________`.
+
+### 6.2 / 6.3 Scripted sales — 5000 and 10 000 lines
+
+**Preconditions**
+
+1. Fixture extended to 10 000 products: §1.2 step 7 (`--products 10000`), §2.11 ☑.
+2. Backend running in **single-PC mode** (§1.1 second block). The script is a raw HTTP call with no
+   device token; in LAN mode the device guard would (correctly) reject it (§10.3) — **do not disable
+   or loosen the guard**. Two-PC UI steps stay in LAN mode as usual.
+3. Admin PIN from §2.9 (`pin = '1234'` below is the fixture default).
+4. `curl.exe` ships with Windows 10+; PowerShell is 5.1.
+
+**Script** — paste into a PowerShell window on PC1 (or save as `qa17_large_sale.ps1` and run
+`powershell -NoProfile -ExecutionPolicy Bypass -File ...`). Run once with `$N = 5000`, then once
+with `$N = 10000`.
+
+```powershell
+$ErrorActionPreference = 'Stop'
+$base = 'http://127.0.0.1:8000'
+$N = 5000                      # then re-run with $N = 10000
+
+# 1) login as admin
+$users = (Invoke-RestMethod "$base/api/v1/auth/login-users").items
+$admin = $users | Where-Object { $_.full_name -eq 'Admin' } | Select-Object -First 1
+if (-not $admin) { $admin = $users | Select-Object -First 1 }
+$login = Invoke-RestMethod "$base/api/v1/auth/login" -Method Post `
+    -ContentType 'application/json' `
+    -Body (@{ user_id = $admin.id; pin = '1234' } | ConvertTo-Json)
+$token = $login.access_token
+
+# 2) page through the catalog (server caps page_size at 100)
+$items = New-Object 'System.Collections.Generic.List[object]'
+$page = 1
+$r = $null
+do {
+    $r = Invoke-RestMethod "$base/api/v1/products?page=$page&page_size=100" `
+        -Headers @{ Authorization = "Bearer $token" }
+    foreach ($p in $r.items) {
+        if ($items.Count -lt $N) {
+            $items.Add(@{
+                product_id    = $p.id
+                quantity      = '1.000'
+                unit_price    = ('{0:F3}' -f $p.price)
+                line_discount = '0.000'
+            })
+        }
+    }
+    $page++
+} while ($page -le $r.pages -and $items.Count -lt $N)
+if ($items.Count -lt $N) { throw "only $($items.Count) products - run fixture step 7 first" }
+Write-Output "items: $($items.Count)"
+
+# 3) payload (WriteAllText => UTF-8 without BOM, which curl needs)
+$sum = 0.0
+foreach ($i in $items) { $sum += [double]$i.unit_price }
+$clientRequestId = "qa17-line$N-$([guid]::NewGuid().Guid)"
+$payload = @{
+    client_request_id = $clientRequestId
+    items             = $items
+    invoice_discount  = '0.000'
+    payment_method    = 'cash'
+    paid              = ('{0:F3}' -f $sum)
+    device_id         = 'QA17-SCRIPT'
+    note              = "QA17-LINE$N"
+} | ConvertTo-Json -Depth 8
+$path = Join-Path $env:TEMP 'qa17_large_sale.json'
+[IO.File]::WriteAllText($path, $payload)
+
+# 4) checkout
+$respPath = Join-Path $env:TEMP 'qa17_large_sale_resp.json'
+$code = curl.exe -s -o $respPath -w "%{http_code}" -X POST "$base/api/v1/sales" `
+    -H "Authorization: Bearer $token" -H 'Content-Type: application/json' -d "@$path"
+Write-Output "POST /sales -> HTTP $code"
+if ($code -ne '201') { Get-Content $respPath -Raw; exit 1 }
+$resp = Get-Content $respPath -Raw | ConvertFrom-Json
+Write-Output ("sale id={0} invoice={1} lines={2} total={3} replay={4}" -f `
+    $resp.id, $resp.invoice_number, $resp.lines.Count, $resp.total, $resp.idempotent_replay)
+
+# 5) idempotent replay: exact same payload again
+$code2 = curl.exe -s -o $respPath -w "%{http_code}" -X POST "$base/api/v1/sales" `
+    -H "Authorization: Bearer $token" -H 'Content-Type: application/json' -d "@$path"
+$resp2 = Get-Content $respPath -Raw | ConvertFrom-Json
+Write-Output ("replay -> HTTP {0} same_id={1} idempotent_replay={2}" -f `
+    $code2, ($resp2.id -eq $resp.id), $resp2.idempotent_replay)
+
+# 6) over-cap probe (6.4): 10 001 lines, one real product repeated -> 422, zero write
+$over = New-Object 'System.Collections.Generic.List[object]'
+for ($i = 0; $i -lt 10001; $i++) {
+    $over.Add(@{ product_id = $items[0].product_id; quantity = '1.000'; unit_price = '10.000'; line_discount = '0.000' })
+}
+$overPayload = @{
+    client_request_id = "qa17-line10001-$([guid]::NewGuid().Guid)"
+    items             = $over
+    invoice_discount  = '0.000'
+    payment_method    = 'cash'
+    paid              = '100010.000'
+    device_id         = 'QA17-SCRIPT'
+    note              = 'QA17-LINE10001'
+} | ConvertTo-Json -Depth 8
+$overPath = Join-Path $env:TEMP 'qa17_over_limit.json'
+[IO.File]::WriteAllText($overPath, $overPayload)
+$code3 = curl.exe -s -o $respPath -w "%{http_code}" -X POST "$base/api/v1/sales" `
+    -H "Authorization: Bearer $token" -H 'Content-Type: application/json' -d "@$overPath"
+$body3 = Get-Content $respPath -Raw | ConvertFrom-Json
+Write-Output ("over-limit -> HTTP {0} code={1} details.items={2}" -f `
+    $code3, $body3.error.code, $body3.error.details.items)
+```
+
+**Expected — 6.2 (`$N = 5000`) and 6.3 (`$N = 10000`)**
+
+| Check | Expected | Result |
+|---|---|---|
+| `items:` line | `5000` / `10000` (paged 100/page → 50 / 100 requests) | ☐ |
+| `POST /sales` | HTTP **201**; `lines=` equals `$N`; total = sum of the first `$N` QA prices; payload ≈ 1.26 MB / 2.52 MB | ☐ |
+| Duration | whole script ≈ **12 s** / ≈ **24 s** (checkout alone ≈ 6 s / ≈ 12 s — must stay under the 30 s API timeout) | ☐ |
+| replay line | HTTP 201, `same_id=True`, `idempotent_replay=True`; still exactly **one** sale row | ☐ |
+| over-limit line | HTTP **422** with `VALIDATION_ERROR` (always, on every run) — detail in 6.4 | ☐ |
+| DB after both runs | SQL block below: one sale per note, line counts = the note's number, stock consistent | ☐ |
+| UI while/after | POS UI stays responsive during the script; after refresh the sale appears in reports/Day-close | ☐ |
+
+```sql
+-- one sale per note tag, line counts equal the tag's number (also feeds 13.2)
+SELECT s.note, count(DISTINCT s.id) AS sales, count(l.id) AS lines
+FROM sales s LEFT JOIN sale_lines l ON l.sale_id = s.id
+WHERE s.note LIKE 'QA17-LINE%' GROUP BY s.note;
+-- expect QA17-LINE1000 1/1000, QA17-LINE5000 1/5000, QA17-LINE10000 1/10000, no QA17-LINE10001 row
+
+-- one -1 movement per line of the 10 000-line sale
+SELECT count(*), min(quantity_change), max(quantity_change)
+FROM inventory_movements
+WHERE movement_type = 'sale'
+  AND source_document_id IN (SELECT id FROM sales WHERE note = 'QA17-LINE10000');
+-- expect 10000, -1, -1
+
+-- totals equal their lines (runs for every QA17-% note)
+-- SQL from 13.3
+```
+
+### 6.4 Over the cap — 10 001 lines → HTTP 422, zero write
+
+Runs automatically as step 6 of every script run (6.2/6.3). The probe repeats one real product id
+10 001 times: rejection happens during **request validation**, before any product is resolved or
+any row is touched — so distinctness of the probe itself is irrelevant.
+
+| Check | Expected | Result |
+|---|---|---|
+| HTTP | **422**, `error.code = VALIDATION_ERROR`, `error.details.items` = `List should have at most 10000 items after validation, not 10001` | ☐ |
+| Zero write | `SELECT count(*) FROM sales WHERE note = 'QA17-LINE10001'` → **0**; no sale_lines / movements / sale_payments for that `client_request_id`; no stock change (§13.5) | ☐ |
+| Boundary | 10 000 lines → 201 (6.3), 10 001 → 422: the cap is **inclusive**; 1 line → 201 (§5.5) | ☐ |
+| Recovery | after the failed call, a normal UI checkout still succeeds (1-line sale) — cart/session not corrupted | ☐ |
+
+### 6.5 Quantity is never counted (UI)
+
+| # | Step | Expected | Result |
+|---|---|---|---|
+| 6.5a | Cart: one distinct QA product × **500**, another distinct QA product × **700** (quantity control) | cart shows exactly **2 lines**; subtotal = 500×p1 + 700×p2 | ☐ |
+| 6.5b | Checkout `cash`, paid = exact total | 201; `SELECT count(*) FROM sale_lines WHERE sale_id = <id>` → **2** (not 1200) | ☐ |
+| 6.5c | Stock: product1 9999 → 9499, product2 9999 → 9299; movements `−500` and `−700` | exact (§13.4) | ☐ |
 
 ---
 
@@ -215,6 +396,7 @@ Five sales, each with **200 distinct QA products**, tag each with its note:
 | 8.3 | Two cash sales of the **same product** racing (both PCs, one product each) | stock decremented twice correctly, never negative, no 500 | ☐ |
 | 8.4 | PC1 voids/returns a line while PC2 sells the same product | no deadlock/500; stock and totals consistent afterwards | ☐ |
 | 8.5 | Repeat each race 3× | consistent, no flaky failure; record any 4xx/5xx: `____________` | ☐ |
+| 8.6 | PC1 checks out its §6.1 1000-line cart at the same moment PC2 completes a normal sale | both succeed (no 409/500/timeout); both appear once in reports; stock correct for both | ☐ |
 
 ---
 
@@ -285,6 +467,7 @@ Five sales, each with **200 distinct QA products**, tag each with its note:
 | 12.11 | Failure | Unplug/disable PC2 network mid-request | timeout → clear error → retry works; no duplicate sale after retry (§6 G2) | ☐ |
 | 12.12 | Failure | Backend exception (force a 500 if reachable, else skip) | structured 500 envelope, backend stays up, client shows recoverable message | ☐ |
 | 12.13 | Rollback | After any failed restore/cancel action | DB state equals pre-action state (counts unchanged) | ☐ |
+| 12.14 | Large invoice | Invoice/receipt UI for the §6.1 1000-line sale: full list, totals, paging/scroll | all 1000 lines render, totals match §6.1 C2; physical print → **UNVERIFIED if no printer attached** | ☐ |
 
 ---
 
@@ -295,20 +478,26 @@ Five sales, each with **200 distinct QA products**, tag each with its note:
 **13.1 QA dataset**
 
 ```sql
-SELECT count(*) FROM products  WHERE name LIKE 'QA17 Product %';   -- expect 1000
+SELECT count(*) FROM products  WHERE name LIKE 'QA17 Product %';   -- expect 1000 (10000 after §1.2 step 7)
 SELECT count(*) FROM categories WHERE name LIKE 'QA17 Category %'; -- expect 10
 SELECT count(DISTINCT category_id) FROM products WHERE name LIKE 'QA17 Product %'; -- expect 10
 SELECT min(quantity), max(quantity) FROM products WHERE name LIKE 'QA17 Product %';
 -- before sales: 9999/9999; after: 9999 minus sold qty
 ```
 
-**13.2 Batch / line-200 sales**
+**13.2 Batch / line-limit sales**
 
 ```sql
 SELECT note, count(*) AS sales, sum(total) AS total, sum(subtotal) AS subtotal
-FROM sales WHERE note LIKE 'QA17-BATCH-%' OR note = 'QA17-LINE200'
+FROM sales WHERE note LIKE 'QA17-BATCH-%' OR note LIKE 'QA17-LINE%'
 GROUP BY note ORDER BY note;
--- expect one row per executed batch; sales = 1 per note
+-- expect one row per executed tag: BATCH-A..E + LINE1000 + LINE5000 + LINE10000,
+-- sales = 1 per note; NO row for QA17-LINE10001 (that request was rejected, 6.4)
+
+SELECT s.note, count(l.id) AS lines
+FROM sales s JOIN sale_lines l ON l.sale_id = s.id
+WHERE s.note LIKE 'QA17-LINE%' GROUP BY s.note;
+-- expect LINE1000 = 1000, LINE5000 = 5000, LINE10000 = 10000 distinct lines per sale
 
 SELECT count(DISTINCT product_id) FROM sale_lines l
 JOIN sales s ON s.id = l.sale_id WHERE s.note LIKE 'QA17-BATCH-%';
@@ -390,7 +579,7 @@ the round — file the row and continue.
 | Server-side (PC1) | §3 | | | | |
 | Pairing / two-PC | §4 | | | | |
 | 1000-product search | §5 | | | | |
-| 200-line sale | §6 | | | | |
+| Line-limit sales | §6 | | | | |
 | 5 batches / payments | §7 | | | | |
 | Concurrency | §8 | | | | |
 | Reconnect / IP change | §9 | | | | |

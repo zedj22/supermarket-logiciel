@@ -1,0 +1,167 @@
+{
+  "generated_at": "2026-10-04T12:09:25.661485+00:00",
+  "runs": [
+    {
+      "generated_at": "2026-10-04T11:51:54.091916+00:00",
+      "database": "supermarket_bench_largesale",
+      "products": 10000,
+      "stock_each": 1000000,
+      "results": [
+        {
+          "lines": 1000,
+          "payload_bytes": 97942,
+          "validation_ms": 3.0,
+          "service_ms": 3233.3,
+          "db_statements": 3010,
+          "db_ms": 886.1,
+          "tx_ms": 1970.7,
+          "peak_memory_mb": 23.9,
+          "response_lines": 1000,
+          "http_total_ms": 2377.8993999876548,
+          "http_status": 201,
+          "response_bytes": 432983,
+          "detail_ms": 207.00090000173077,
+          "detail_bytes": 432995,
+          "list10_ms": 329.1540000063833,
+          "list10_bytes": 1298978
+        }
+      ],
+      "sizes_key": "1000"
+    },
+    {
+      "generated_at": "2026-10-04T11:55:03.786017+00:00",
+      "database": "supermarket_bench_largesale",
+      "products": 10000,
+      "stock_each": 1000000,
+      "results": [
+        {
+          "lines": 10000,
+          "payload_bytes": 978243,
+          "validation_ms": 27.3,
+          "service_ms": 23044.9,
+          "db_statements": 30046,
+          "db_ms": 6905.9,
+          "tx_ms": 14638.6,
+          "peak_memory_mb": 191.7,
+          "response_lines": 10000,
+          "http_total_ms": 23096.627799997805,
+          "http_status": 201,
+          "response_bytes": 4323477,
+          "detail_ms": 1719.9355000047944,
+          "detail_bytes": 4323490,
+          "list10_ms": 3947.3120999900857,
+          "list10_bytes": 14269386
+        }
+      ],
+      "sizes_key": "10000"
+    },
+    {
+      "generated_at": "2026-10-04T12:03:24.980275+00:00",
+      "database": "supermarket_bench_largesale",
+      "products": 10000,
+      "stock_each": 1000000,
+      "results": [
+        {
+          "lines": 1000,
+          "payload_bytes": 97942,
+          "validation_ms": 2.4,
+          "service_ms": 3756.9,
+          "db_statements": 2011,
+          "db_ms": 2077.7,
+          "tx_ms": 2724.2,
+          "peak_memory_mb": 21.5,
+          "response_lines": 1000,
+          "http_total_ms": 1805.716200004099,
+          "http_status": 201,
+          "response_bytes": 432983,
+          "detail_ms": 231.12009999749716,
+          "detail_bytes": 432995,
+          "list10_ms": 6155.341000005137,
+          "list10_bytes": 25511455
+        },
+        {
+          "lines": 10000,
+          "payload_bytes": 978243,
+          "validation_ms": 27.8,
+          "service_ms": 22117.7,
+          "db_statements": 20056,
+          "db_ms": 10118.1,
+          "tx_ms": 14213.3,
+          "peak_memory_mb": 168.8,
+          "response_lines": 10000,
+          "http_total_ms": 17381.941899991944,
+          "http_status": 201,
+          "response_bytes": 4323477,
+          "detail_ms": 1870.5052000004798,
+          "detail_bytes": 4323490,
+          "list10_ms": 6077.2825999883935,
+          "list10_bytes": 25511450
+        }
+      ],
+      "sizes_key": "1000,10000"
+    },
+    {
+      "generated_at": "2026-10-04T12:09:25.661485+00:00",
+      "database": "supermarket_bench_largesale",
+      "products": 10000,
+      "stock_each": 1000000,
+      "results": [
+        {
+          "lines": 1000,
+          "payload_bytes": 97942,
+          "validation_ms": 2.5,
+          "service_ms": 1297.1,
+          "db_statements": 1011,
+          "db_ms": 364.7,
+          "tx_ms": 840.0,
+          "peak_memory_mb": 21.1,
+          "response_lines": 1000,
+          "http_total_ms": 1262.3867000074824,
+          "http_status": 201,
+          "response_bytes": 432983,
+          "detail_ms": 222.24249999271706,
+          "detail_bytes": 432995,
+          "list10_ms": 3866.5542999951867,
+          "list10_bytes": 14360856
+        },
+        {
+          "lines": 5000,
+          "payload_bytes": 489217,
+          "validation_ms": 86.5,
+          "service_ms": 5593.5,
+          "db_statements": 5031,
+          "db_ms": 1723.8,
+          "tx_ms": 4414.6,
+          "peak_memory_mb": 86.9,
+          "response_lines": 5000,
+          "http_total_ms": 5876.183599990327,
+          "http_status": 201,
+          "response_bytes": 2162153,
+          "detail_ms": 936.544900003355,
+          "detail_bytes": 2162165,
+          "list10_ms": 4206.4701999916,
+          "list10_bytes": 16479089
+        },
+        {
+          "lines": 10000,
+          "payload_bytes": 978243,
+          "validation_ms": 25.9,
+          "service_ms": 11462.6,
+          "db_statements": 10056,
+          "db_ms": 3414.8,
+          "tx_ms": 8926.4,
+          "peak_memory_mb": 168.0,
+          "response_lines": 10000,
+          "http_total_ms": 11876.809400011552,
+          "http_status": 201,
+          "response_bytes": 4323477,
+          "detail_ms": 1651.01409998897,
+          "detail_bytes": 4323490,
+          "list10_ms": 5209.508600004483,
+          "list10_bytes": 20799728
+        }
+      ],
+      "sizes_key": "1000,5000,10000"
+    }
+  ]
+}

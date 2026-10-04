@@ -51,6 +51,13 @@ class CartLine {
   /// unit was chosen (direct base add).
   final String? unitMultiplier;
 
+  /// Line identity (const-cached at construction): the cart's O(n)
+  /// `indexWhere` in `PosCartNotifier.addLine` reads it once per existing
+  /// line, so rebuilding the 3-part string on every access made building a
+  /// 10 000 line cart quadratic (measured 14.9 s). Value semantics are
+  /// unchanged — same string the getter used to produce.
+  final String key;
+
   const CartLine({
     this.productId,
     this.variantId,
@@ -68,19 +75,13 @@ class CartLine {
     this.componentsSummary,
     this.baseUnitPrice,
     this.unitMultiplier,
-  });
+  }) : key = packId != null
+            ? 'pack:$packId'
+            : '${productId ?? ''}|${variantId ?? ''}|${sellingUnitId ?? ''}';
 
   /// Pack lines never share a key with product lines (Phase 10): a pack
   /// and its component product stay two independent cart lines.
   bool get isPack => packId != null;
-
-  String get key => isPack
-      ? 'pack:$packId'
-      : [
-          productId ?? '',
-          variantId ?? '',
-          sellingUnitId ?? '',
-        ].join('|');
 
   double get qty => double.tryParse(quantity) ?? 0;
   double get price => double.tryParse(unitPrice) ?? 0;
