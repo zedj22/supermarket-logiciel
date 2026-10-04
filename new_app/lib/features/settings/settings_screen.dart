@@ -6,16 +6,20 @@ import '../../l10n/locale_provider.dart';
 import '../../theme/app_theme_mode.dart';
 import '../../theme/theme_provider.dart';
 import '../auth/permission_helpers.dart';
+import 'backup_models.dart';
+import 'backup_provider.dart';
 import 'settings_models.dart';
 import 'settings_provider.dart';
 
-/// Language + theme (Phase 6) **and** the server-owned store settings
-/// (Phase 17, §17.1).
+/// Language + theme (Phase 6), the server-owned store settings
+/// (Phase 17, §17.1) and the backup catalogue (Phase 17, §17.2).
 ///
 /// The store section is rendered only for `settings_manage` — matching the
-/// server, which rejects `PUT /api/v1/settings` for anyone else.  It is
+/// server, which rejects `PUT /api/v1/settings` for anyone else.  The
+/// backup section is rendered only for `backup_restore` (admin), matching
+/// the server's `POST /backups` / `POST /backups/{id}/restore`.  Both are
 /// loaded lazily on first render, so a manager/cashier never issues a
-/// settings request at all.
+/// settings or backup request at all.
 class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({super.key});
 
@@ -32,6 +36,7 @@ class SettingsScreen extends ConsumerWidget {
     final localeState = ref.watch(localeProvider);
     final themeState = ref.watch(themeProvider);
     final canManage = ref.watch(hasPermissionProvider(settingsManageScope));
+    final canBackup = ref.watch(hasPermissionProvider(backupRestoreScope));
 
     return SingleChildScrollView(
       child: Padding(
@@ -121,6 +126,10 @@ class SettingsScreen extends ConsumerWidget {
             if (canManage) ...[
               const SizedBox(height: 16),
               const _StoreSettingsSection(),
+            ],
+            if (canBackup) ...[
+              const SizedBox(height: 16),
+              const _BackupSection(),
             ],
           ],
         ),
@@ -476,3 +485,191 @@ class _StoreSettingsSectionState extends ConsumerState<_StoreSettingsSection> {
     );
   }
 }
+
+/// Server-side backup catalogue (`GET` + `POST /api/v1/backups` and
+/// `POST /api/v1/backups/{id}/restore`), Phase 17 §17.2.
+///
+/// Admin-only, exactly like the endpoints it calls.  The section never
+/// claims success on its own: `create()` / `restore()` return `true` only
+/// for a 2xx answer, and those futures are the sole trigger for the
+/// "created" / "restored" snackbars.
+class _BackupSection extends ConsumerStatefulWidget {
+  const _BackupSection();
+
+  @override
+  ConsumerState<_BackupSection> createState() => _BackupSectionState();
+}
+
+class _BackupSectionState extends ConsumerState<_BackupSection> {
+  @override
+  void initState() {
+    super.initState();
+    // Deferred: the provider must not be read during build.
+    Future.microtask(_loadIfNeeded);
+  }
+
+  void _loadIfNeeded() {
+    if (!mounted) return;
+    final state = ref.read(backupProvider);
+    if (state.status == BackupStatus.idle && !state.busy) {
+      ref.read(backupProvider.notifier).load();
+    }
+  }
+
+  Future<void> _create() async {
+    final ok = await ref.read(backupProvider.notifier).create();
+    if (!mounted) return;
+    _snack(ok ? 'backup_created' : 'backup_create_failed');
+  }
+
+  Future<void> _restore(BackupInfo backup) async {
+    final loc = ref.read(localeProvider).flutterLocale.languageCode;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(AppStrings.t('backup_restore_confirm', loc)),
+        content: Text(
+          '${AppStrings.t('backup_restore_warning', loc)}\n\n'
+          '${backup.filename}',
+        ),
+        actions: [
+          TextButton(
+            key: const Key('settings-backup-cancel'),
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: Text(AppStrings.t('cancel', loc)),
+          ),
+          FilledButton(
+            key: const Key('settings-backup-confirm'),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: Text(AppStrings.t('confirm', loc)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    final ok = await ref.read(backupProvider.notifier).restore(backup.id);
+    if (!mounted) return;
+    _snack(ok ? 'backup_restored' : 'backup_restore_failed');
+  }
+
+  void _snack(String messageKey) {
+    final loc = ref.read(localeProvider).flutterLocale.languageCode;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(AppStrings.t(messageKey, loc))),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final loc = ref.watch(localeProvider).flutterLocale.languageCode;
+    final state = ref.watch(backupProvider);
+    // A failed *create* is not a failed *load*: the headline has to name
+    // what actually went wrong or the operator chases the wrong fix.
+    final headline =
+        state.failedDuringAction ? 'backup_failed' : 'backup_load_failed';
+
+    return Card(
+      key: const Key('settings-backup-section'),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (state.hasError)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 16),
+                child: Row(
+                  key: const Key('settings-backup-error'),
+                  children: [
+                    Icon(Icons.error_outline, color: theme.colorScheme.error),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        '${AppStrings.t(headline, loc)}'
+                        '${state.errorMessage == null ? '' : ' — ${state.errorMessage}'}',
+                        style: theme.textTheme.bodyMedium
+                            ?.copyWith(color: theme.colorScheme.error),
+                      ),
+                    ),
+                    IconButton(
+                      key: const Key('settings-backup-error-dismiss'),
+                      icon: const Icon(Icons.close),
+                      onPressed: () =>
+                          ref.read(backupProvider.notifier).clearError(),
+                    ),
+                  ],
+                ),
+              ),
+            Text(
+              AppStrings.t('backups', loc),
+              style: theme.textTheme.titleMedium,
+            ),
+            const SizedBox(height: 12),
+            FilledButton.icon(
+              key: const Key('settings-backup-create'),
+              onPressed: state.busy ? null : _create,
+              icon: state.busy
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.save_alt),
+              label: Text(AppStrings.t('backup_create', loc)),
+            ),
+            const SizedBox(height: 8),
+            if (state.isLoading && state.items.isEmpty)
+              const Center(
+                key: Key('settings-backup-loading'),
+                child: Padding(
+                  padding: EdgeInsets.all(16),
+                  child: CircularProgressIndicator(),
+                ),
+              )
+            else if (state.items.isEmpty)
+              Text(
+                AppStrings.t('backup_empty', loc),
+                key: const Key('settings-backup-empty'),
+                style: theme.textTheme.bodyMedium,
+              )
+            else
+              Column(
+                key: const Key('settings-backup-list'),
+                children: [
+                  for (final backup in state.items) _tile(backup, state, loc),
+                ],
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _tile(BackupInfo backup, BackupState state, String loc) {
+    final restoring = state.pendingRestoreId == backup.id;
+    return ListTile(
+      key: ValueKey<String>('settings-backup-item-${backup.id}'),
+      contentPadding: EdgeInsets.zero,
+      leading: const Icon(Icons.inventory_2_outlined),
+      title: Text(backup.filename),
+      subtitle: Text(
+        '${formatBytes(backup.size)} · ${formatBackupDate(backup.createdAt)}',
+      ),
+      trailing: OutlinedButton(
+        key: ValueKey<String>('settings-backup-restore-${backup.id}'),
+        onPressed: state.busy ? null : () => _restore(backup),
+        child: restoring
+            ? const SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : Text(AppStrings.t('backup_restore', loc)),
+      ),
+    );
+  }
+}
+
+

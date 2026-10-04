@@ -1,8 +1,14 @@
 """Application configuration using Pydantic Settings."""
 
+from pathlib import Path
 from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+#: Repository-local backend root (`new_app/backend`).  Absolute so a
+#: relative launch directory can never scatter runtime files around the
+#: machine — same reasoning as `SERVER_ID_FILE` (§8.2).
+BACKEND_ROOT = Path(__file__).resolve().parents[2]
 
 
 class Settings(BaseSettings):
@@ -69,6 +75,18 @@ class Settings(BaseSettings):
     # first start.  It is not a secret (it is echoed by /system/info).
     SERVER_ID: str = ""
     SERVER_ID_FILE: str = "data/server_id"
+
+    # Phase 17 §17.2 — backup / restore.
+    #
+    # A backup is a plain `.sql` written by `pg_dump` plus a JSON sidecar
+    # manifest; both live in BACKUP_DIR.  An empty BACKUP_DIR resolves to
+    # `<backend>/backups`.  The tools are located through PG_DUMP_PATH /
+    # PSQL_PATH first, then PATH, then the standard PostgreSQL install
+    # directories — `pg_dump` is NOT on PATH on this machine.
+    BACKUP_DIR: str = ""
+    BACKUP_TIMEOUT_SECONDS: int = 300
+    PG_DUMP_PATH: str = ""
+    PSQL_PATH: str = ""
 
 
 settings = Settings()

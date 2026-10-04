@@ -74,3 +74,10 @@ dist/
 # Legacy local database credentials
 python_app/config/db_config.json
 python_app.zip
+
+# =========================
+# Backups (Phase 17: pg_dump output, never committed)
+# =========================
+new_app/backend/backups/
+
+

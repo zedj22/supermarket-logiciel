@@ -34,3 +34,6 @@ htmlcov/
 
 # Alembic
 alembic/versions/*.pyc
+
+# Phase 17: pg_dump output (the server-side backup catalogue)
+backups/
