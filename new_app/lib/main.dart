@@ -9,7 +9,6 @@ import 'features/devices/connection_provider.dart';
 import 'features/devices/device_identity.dart';
 import 'network/api_client.dart';
 import 'theme/app_theme.dart';
-import 'theme/app_theme_mode.dart';
 import 'theme/theme_provider.dart';
 import 'l10n/locale_provider.dart';
 import 'router/app_router.dart';
@@ -81,6 +80,10 @@ class SupermarketPosApp extends ConsumerWidget {
     if (authState.status == AuthStatus.checking) {
       return MaterialApp(
         debugShowCheckedModeBanner: false,
+        // The boot splash used to render on the *default* light scaffold
+        // with a dark-theme icon hardcoded below, flashing the wrong
+        // palette for one frame on every cold start.
+        theme: AppTheme.forMode(themeState.mode),
         locale: localeState.flutterLocale,
         supportedLocales: appSupportedLocales,
         localizationsDelegates: appLocalizationsDelegates,
@@ -92,7 +95,9 @@ class SupermarketPosApp extends ConsumerWidget {
                 Icon(
                   Icons.store,
                   size: 64,
-                  color: AppTheme.dark().colorScheme.primary,
+                  color: AppTheme.forMode(
+                    themeState.mode,
+                  ).colorScheme.primary,
                 ),
                 const SizedBox(height: 16),
                 const CircularProgressIndicator(),
@@ -108,22 +113,11 @@ class SupermarketPosApp extends ConsumerWidget {
     return MaterialApp.router(
       title: AppConstants.appName,
       debugShowCheckedModeBanner: false,
-      theme: _getTheme(themeState.mode),
+      theme: AppTheme.forMode(themeState.mode),
       routerConfig: router,
       locale: localeState.flutterLocale,
       supportedLocales: appSupportedLocales,
       localizationsDelegates: appLocalizationsDelegates,
     );
-  }
-
-  ThemeData _getTheme(AppThemeMode mode) {
-    switch (mode) {
-      case AppThemeMode.dark:
-        return AppTheme.dark();
-      case AppThemeMode.light:
-        return AppTheme.light();
-      case AppThemeMode.grey:
-        return AppTheme.grey();
-    }
   }
 }

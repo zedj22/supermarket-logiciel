@@ -503,11 +503,7 @@ class _SettingsHarness extends ConsumerWidget {
 
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      theme: switch (mode) {
-        AppThemeMode.dark => AppTheme.dark(),
-        AppThemeMode.light => AppTheme.light(),
-        AppThemeMode.grey => AppTheme.grey(),
-      },
+      theme: AppTheme.forMode(mode),
       locale: locale.flutterLocale,
       supportedLocales: appSupportedLocales,
       localizationsDelegates: appLocalizationsDelegates,

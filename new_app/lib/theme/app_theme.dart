@@ -1,9 +1,26 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../core/colors.dart';
+import 'app_theme_mode.dart';
 
 class AppTheme {
   AppTheme._();
+
+  /// The single source of truth for mode → [ThemeData].
+  ///
+  /// `main.dart` and the settings shell used to carry their own copies of
+  /// this switch, so a new mode could be wired up in one place and silently
+  /// fall back to the default theme in another.
+  static ThemeData forMode(AppThemeMode mode) {
+    switch (mode) {
+      case AppThemeMode.dark:
+        return dark();
+      case AppThemeMode.light:
+        return light();
+      case AppThemeMode.grey:
+        return grey();
+    }
+  }
 
   static ThemeData dark() {
     return ThemeData(
