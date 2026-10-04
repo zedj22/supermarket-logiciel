@@ -657,7 +657,7 @@ class _PackFormDialogState extends ConsumerState<PackFormDialog> {
           ),
           if (unitsLoaded && multiplier != 1)
             Padding(
-              padding: const EdgeInsets.only(left: 4, top: 2),
+              padding: const EdgeInsetsDirectional.only(start: 4, top: 2),
               child: Text(
                 '${_fmt(entered)} ${selected.name} = '
                 '${_fmt(base)} ${row.productUnit}',

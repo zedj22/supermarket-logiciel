@@ -545,7 +545,7 @@ class _SummaryItem extends StatelessWidget {
     final theme = Theme.of(context);
     final loc = Localizations.localeOf(context).languageCode;
     return Padding(
-      padding: const EdgeInsets.only(right: 32),
+      padding: const EdgeInsetsDirectional.only(end: 32),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,

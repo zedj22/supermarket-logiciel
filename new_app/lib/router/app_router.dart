@@ -535,7 +535,7 @@ class ScaffoldWithNav extends ConsumerWidget {
               ),
             ),
             Padding(
-              padding: const EdgeInsets.only(right: 12),
+              padding: const EdgeInsetsDirectional.only(end: 12),
               child: TextButton.icon(
                 key: const Key('logout-button'),
                 onPressed: () => ref.read(authProvider.notifier).logout(),
