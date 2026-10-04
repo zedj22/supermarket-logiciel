@@ -42,6 +42,14 @@ CATEGORY_SORT_FIELDS: frozenset[str] = frozenset(
 DEFAULT_SEARCH_LIMIT = 20
 MAX_SEARCH_LIMIT = 50
 
+# Phase 17 §17.8 - the match count is a second pass over the same predicate,
+# and an unbounded pass (empty query, or a term that matches every row) was
+# the reason POS lookup missed the Phase 0 "p95 < 100 ms" target at
+# 100 000 products: 46 ms of COUNT on top of an indexed item query.
+# The count therefore stops at this bound.  Nothing consumes a total above
+# it - the Flutter POS / pack / purchase / return pickers read only `items`.
+SEARCH_TOTAL_CAP = 10_000
+
 
 class ProductRepository(BaseRepository[Product]):
     """Persistence for products."""
@@ -114,25 +122,25 @@ class ProductRepository(BaseRepository[Product]):
         """Bounded catalog search: exact barcode and/or name/barcode LIKE.
 
         Exact barcode (POS scan path) takes precedence over text matching.
+        ``total`` is capped at :data:`SEARCH_TOTAL_CAP` (see above).
         """
         bounded_limit = max(1, min(limit, MAX_SEARCH_LIMIT))
 
-        stmt = select(Product)
-        count_stmt = select(func.count()).select_from(Product)
-
+        predicates = []
         if barcode and barcode.strip():
-            exact = barcode.strip()
-            stmt = stmt.where(Product.barcode == exact)
-            count_stmt = count_stmt.where(Product.barcode == exact)
+            predicates.append(Product.barcode == barcode.strip())
         elif text and text.strip():
             pattern = f"%{text.strip()}%"
-            clause = or_(Product.name.ilike(pattern), Product.barcode.ilike(pattern))
-            stmt = stmt.where(clause)
-            count_stmt = count_stmt.where(clause)
-
+            predicates.append(
+                or_(Product.name.ilike(pattern), Product.barcode.ilike(pattern))
+            )
         if not include_archived:
-            stmt = stmt.where(Product.archived_at.is_(None))
-            count_stmt = count_stmt.where(Product.archived_at.is_(None))
+            predicates.append(Product.archived_at.is_(None))
+
+        count_stmt = select(func.count()).select_from(
+            select(Product.id).where(*predicates).limit(SEARCH_TOTAL_CAP).subquery()
+        )
+        stmt = select(Product).where(*predicates)
 
         total = self.db.scalar(count_stmt) or 0
         stmt = stmt.order_by(Product.name, Product.id).limit(bounded_limit)

@@ -283,6 +283,30 @@ def test_search_endpoint_bounded(client, admin_headers):
     assert body["total"] == 30
 
 
+def test_search_total_is_capped(client, admin_headers, monkeypatch):
+    """17.8: the match count stops at SEARCH_TOTAL_CAP (bounded scan)."""
+    from app.repositories import catalog
+
+    monkeypatch.setattr(catalog, "SEARCH_TOTAL_CAP", 10)
+    for i in range(15):
+        _create_product(
+            client, admin_headers, name=f"Capped {i}", barcode=f"CP{i:04d}"
+        )
+
+    resp = client.get(
+        "/api/v1/products/search?q=Capped&limit=50", headers=admin_headers
+    )
+    body = resp.json()
+    assert len(body["items"]) == 15
+    assert body["total"] == 10
+
+    # Below the cap the total is still exact.
+    resp = client.get(
+        "/api/v1/products/search?q=Capped 14", headers=admin_headers
+    )
+    assert resp.json()["total"] == 1
+
+
 def test_filter_by_category(client, admin_headers):
     cat = _create_category(client, admin_headers, "Drinks")
     other = _create_category(client, admin_headers, "Snacks")

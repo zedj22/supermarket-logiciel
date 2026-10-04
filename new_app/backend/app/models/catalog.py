@@ -8,7 +8,7 @@ import uuid
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import Boolean, Date, ForeignKey, Numeric, String, UniqueConstraint
+from sqlalchemy import Boolean, Date, ForeignKey, Index, Numeric, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import (
@@ -62,7 +62,7 @@ class Product(MasterModel):
 
     __tablename__ = "products"
 
-    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    name: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
     barcode: Mapped[str | None] = mapped_column(String(50), unique=True, index=True)
     sku: Mapped[str | None] = mapped_column(String(50), index=True)
     description: Mapped[str | None] = text_column()
@@ -126,6 +126,27 @@ class Product(MasterModel):
         "PackItem",
         back_populates="component_product",
         lazy="noload",
+    )
+
+    # Phase 17 §17.8 - substring search indexes.  Declared on the model, not
+    # only in migration 0023, so alembic autogenerate sees the schema the
+    # database actually has (test_migrations::test_autogenerate_detects_no_changes).
+    # `postgresql_*` dialect options are ignored by the SQLite engines the
+    # unit tests create tables with; on PostgreSQL they need pg_trgm, which
+    # migration 0023 installs inside a SAVEPOINT.
+    __table_args__ = (
+        Index(
+            "ix_products_name_trgm",
+            "name",
+            postgresql_using="gin",
+            postgresql_ops={"name": "gin_trgm_ops"},
+        ),
+        Index(
+            "ix_products_barcode_trgm",
+            "barcode",
+            postgresql_using="gin",
+            postgresql_ops={"barcode": "gin_trgm_ops"},
+        ),
     )
 
 
