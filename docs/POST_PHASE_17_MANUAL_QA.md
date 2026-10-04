@@ -162,6 +162,35 @@ Perform on **PC1 and PC2**.
 | 5.8 | Category filter on Products + POS picker | each QA category lists its ~100 products | ☐ |
 | 5.9 | Time 10 consecutive barcode searches | subjectively instant; note the slowest in ms: `____` | ☐ |
 
+### 5A. Infinite-scroll catalog — the POS grid pages the full catalog
+
+The POS product grid fetches `GET /api/v1/products?page=N&page_size=100&status=active`
+(the paginated list API) and **appends** the next page when the cashier scrolls near the
+end — the complete catalog is reachable by scrolling alone, never bulk-fetched, and no
+request may exceed `page_size=100` (backend `MAX_PAGE_SIZE`). Automated coverage:
+`test/unit/pos_catalog_pagination_test.dart` (append/dedupe/guards/staleness/debounce).
+
+**Precondition:** fixture §1.2 step 1 (1000 products) at minimum; run with step 7
+(10 000 products) for the strongest check. Keep the PC1 server console visible —
+uvicorn logs every request path including the query string, which is how you verify
+the contract below.
+
+| # | Step | Expected | Result |
+|---|---|---|---|
+| 5A.1 | POS, empty search box: scroll the grid continuously to the end of the catalog | pages append in order (server log: `page=1`, `page=2`, … each `page_size=100`); the scrollbar shrinks as rows are added; reaching `QA17 Product 1000` (or `10000`) requires only scrolling — no search | ☐ |
+| 5A.2 | While each next page loads | a small spinner appears in the grid footer; rows already on screen stay put and the scroll position does not jump to the top | ☐ |
+| 5A.3 | After the last page | the spinner disappears and no further `page=` request is logged no matter how much you keep scrolling | ☐ |
+| 5A.4 | Search `QA17 Product 0` (≈999 matches) and scroll through the results | result pages append the same way; every appended request repeats that same `search=` parameter; no duplicate product appears in the final row set | ☐ |
+| 5A.5 | Clear the search (× / empty the box) after browsing partway | the full catalog reloads from page 1; scrolling again appends pages of the full catalog | ☐ |
+| 5A.6 | Exact barcode `QA1700000001` + Enter **after** browsing several pages (grid scrolled far down) | unchanged behavior (5.5): exact match selected, add to cart succeeds; scroll position and loaded pages do not interfere | ☐ |
+| 5A.7 | Failure path: stop the backend (Ctrl+C on PC1), then scroll near the end | rows already loaded stay on screen; a retry message appears in the grid footer instead of the list being cleared | ☐ |
+| 5A.8 | Restart the backend and scroll near the end again | the failed page loads, the footer message clears, the catalog continues from where it stopped | ☐ |
+| 5A.9 | Server log across 5A.1–5A.4 | no request with `page_size` > 100; no single request returned the whole catalog | ☐ |
+
+Note: the POS grid has no category switcher (search box only) — `category_id` on every
+page, reset on category switch, and removal by clear are covered by the automated test
+above. Category browsing on the **Products screen** is §5.1/§5.8.
+
 ---
 
 ## 6. Sale line limit — 1000 lines (UI), 5000 / 10000 / 10001 (scripted)
@@ -579,6 +608,7 @@ the round — file the row and continue.
 | Server-side (PC1) | §3 | | | | |
 | Pairing / two-PC | §4 | | | | |
 | 1000-product search | §5 | | | | |
+| Infinite-scroll catalog | §5A | | | | |
 | Line-limit sales | §6 | | | | |
 | 5 batches / payments | §7 | | | | |
 | Concurrency | §8 | | | | |

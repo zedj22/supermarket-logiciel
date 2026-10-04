@@ -132,7 +132,7 @@ class FakeCredentialStorage extends SecureCredentialStorage {
 }
 
 const _loginPath = '/api/v1/auth/login';
-const _searchPath = '/api/v1/products/search';
+const _catalogPath = '/api/v1/products';
 const _favoritesPath = '/api/v1/pos/favorites';
 const _salesPath = '/api/v1/sales';
 
@@ -273,7 +273,7 @@ Response<dynamic> _ok(String path, Object? data) => Response(
     );
 
 Object? _defaultBody(String path) {
-  if (path == _searchPath) {
+  if (path == _catalogPath) {
     return {
       'items': [_product()],
       'total': 1,
@@ -361,7 +361,7 @@ void _mockDio(
   }
 
   Object? bodyFor(String path) {
-    if (path == _searchPath) {
+    if (path == _catalogPath) {
       onSearch?.call();
       return {
         'items': [
@@ -425,7 +425,7 @@ void _mockDio(
       .thenAnswer((invocation) async {
     final path = invocation.positionalArguments.first as String? ?? '';
     record(path);
-    if (path == _searchPath && !withProduct) {
+    if (path == _catalogPath && !withProduct) {
       return _ok(path, {'items': <dynamic>[], 'total': 0});
     }
     return _ok(path, bodyFor(path));
@@ -1245,7 +1245,7 @@ void main() {
         }
         return _ok(
           path,
-          path == _searchPath
+          path == _catalogPath
               ? {'items': [_product()], 'total': 1}
               : path.endsWith('/variants')
                   ? {'items': <dynamic>[], 'total': 0}
@@ -7890,16 +7890,16 @@ void main() {
       const secondId = '00000000-0000-0000-0000-0000000000p2';
       final twoDio = MockDio();
       _mockDio(twoDio);
-      final catalog = _ok(_searchPath, {
+      final catalog = _ok(_catalogPath, {
         'items': [
           _product(),
           _product(id: secondId, name: 'Milk', barcode: '222', price: '5.0'),
         ],
         'total': 2,
       });
-      when(() => twoDio.get(_searchPath, queryParameters: any(named: 'queryParameters')))
+      when(() => twoDio.get(_catalogPath, queryParameters: any(named: 'queryParameters')))
           .thenAnswer((_) async => catalog);
-      when(() => twoDio.get(_searchPath)).thenAnswer((_) async => catalog);
+      when(() => twoDio.get(_catalogPath)).thenAnswer((_) async => catalog);
       await _pumpApp(tester, dio: twoDio);
       await tester.pump(const Duration(milliseconds: 500));
 

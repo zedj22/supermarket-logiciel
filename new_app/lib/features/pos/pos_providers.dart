@@ -412,22 +412,70 @@ final posCartProvider =
 });
 
 // ---------------------------------------------------------------------------
-// Product search (debounced)
+// Product catalog browse (paginated) + debounced search
 // ---------------------------------------------------------------------------
 
+/// Catalog endpoint — the paginated products API (`page`/`page_size` ≤ 100,
+/// `search`, `category_id`, `status`), returning `items/total/page/pages`.
+/// The bounded `/products/search` endpoint (limit ≤ 50, no offset) cannot
+/// paginate and is reserved for exact-barcode pickers elsewhere.
+const String kPosCatalogPath = '/api/v1/products';
+
+/// Page size for every POS catalog request. Matches the backend
+/// `MAX_PAGE_SIZE` (100) — the catalog is scrolled incrementally, never
+/// bulk-fetched, so this must NOT be raised to "fill the screen".
+const int kPosCatalogPageSize = 100;
+
+/// How close to the end of the scrollable the cashier must be before the
+/// next page is requested.
+const int kPosCatalogLoadMoreThreshold = 600;
+
 class PosSearchState {
+  /// Raw search-field text (results update after the debounce).
   final String query;
+
+  /// Category filter — `null` = the full active catalog.
   final String? categoryId;
+
+  /// Rows loaded so far, in backend order. Append-only across pages;
+  /// replaced wholesale only by a page-1 load (initial/search/category).
   final List<ProductModel> items;
+
+  /// 1-based page currently at the end of [items] (0 = nothing loaded).
+  final int currentPage;
+  final int pageSize;
+
+  /// Server-reported totals for the CURRENT query/category.
+  final int total;
+  final int pages;
+  final bool hasMore;
+
+  /// Page-1 replacement load (initial load, debounced search, category
+  /// switch). The list stays visible while it refreshes.
   final bool loading;
+
+  /// Next-page append in flight — bottom spinner only.
+  final bool loadingMore;
+
+  /// Page-1 failure (catalog replaced by an error state, as before).
   final String? error;
+
+  /// Append failure — loaded rows stay on screen; scrolling again retries.
+  final String? loadMoreError;
 
   const PosSearchState({
     this.query = '',
     this.categoryId,
     this.items = const [],
+    this.currentPage = 0,
+    this.pageSize = kPosCatalogPageSize,
+    this.total = 0,
+    this.pages = 0,
+    this.hasMore = false,
     this.loading = false,
+    this.loadingMore = false,
     this.error,
+    this.loadMoreError,
   });
 
   PosSearchState copyWith({
@@ -435,17 +483,33 @@ class PosSearchState {
     String? categoryId,
     bool clearCategory = false,
     List<ProductModel>? items,
+    int? currentPage,
+    int? pageSize,
+    int? total,
+    int? pages,
+    bool? hasMore,
     bool? loading,
+    bool? loadingMore,
     String? error,
     bool clearError = false,
+    String? loadMoreError,
+    bool clearLoadMoreError = false,
   }) {
     return PosSearchState(
       query: query ?? this.query,
       categoryId:
           clearCategory ? null : (categoryId ?? this.categoryId),
       items: items ?? this.items,
+      currentPage: currentPage ?? this.currentPage,
+      pageSize: pageSize ?? this.pageSize,
+      total: total ?? this.total,
+      pages: pages ?? this.pages,
+      hasMore: hasMore ?? this.hasMore,
       loading: loading ?? this.loading,
+      loadingMore: loadingMore ?? this.loadingMore,
       error: clearError ? null : (error ?? this.error),
+      loadMoreError:
+          clearLoadMoreError ? null : (loadMoreError ?? this.loadMoreError),
     );
   }
 }
@@ -453,56 +517,160 @@ class PosSearchState {
 class PosSearchNotifier extends StateNotifier<PosSearchState> {
   final Dio _dio;
   final String Function() _localeCode;
+  final int _pageSize;
   Timer? _debounce;
-  int _requestId = 0;
 
-  PosSearchNotifier(this._dio, this._localeCode)
-      : super(const PosSearchState());
+  /// Monotonic token bumped whenever the RESULT SET changes (search text,
+  /// category, reset, page-1 reload). In-flight responses from an older
+  /// generation are discarded — a slow page-2 can never append rows into a
+  /// newer search, and a slow page-1 never overwrites fresher results.
+  int _generation = 0;
+
+  PosSearchNotifier(
+    this._dio,
+    this._localeCode, {
+    int pageSize = kPosCatalogPageSize,
+  })  : _pageSize = pageSize,
+        super(PosSearchState(pageSize: pageSize));
 
   // Localized primary (UX FIX #12 — FIX #5): backend text is never the
   // message the cashier reads.
   String _message(DioException e) => posApiMessage(e, _localeCode());
 
   void setQuery(String value) {
-    state = state.copyWith(query: value, clearError: true);
+    _generation++;
+    state = state.copyWith(
+      query: value,
+      clearError: true,
+      clearLoadMoreError: true,
+    );
     _debounce?.cancel();
     _debounce = Timer(kPosSearchDebounce, load);
   }
 
   void setCategory(String? categoryId) {
+    _generation++;
     state = categoryId == null
-        ? state.copyWith(clearCategory: true)
-        : state.copyWith(categoryId: categoryId);
+        ? state.copyWith(
+            clearCategory: true,
+            clearError: true,
+            clearLoadMoreError: true,
+          )
+        : state.copyWith(
+            categoryId: categoryId,
+            clearError: true,
+            clearLoadMoreError: true,
+          );
     load();
   }
 
   void clear() {
     _debounce?.cancel();
-    state = const PosSearchState();
+    _generation++;
+    state = PosSearchState(pageSize: _pageSize);
   }
 
-  Future<void> load() async {
+  Map<String, dynamic> _pageParams(int page) {
     final q = state.query.trim();
-    final requestId = ++_requestId;
-    state = state.copyWith(loading: true, clearError: true);
-    try {
-      final response = await _dio.get(
-        '/api/v1/products/search',
-        queryParameters: {
-          if (q.isNotEmpty) 'q': q,
-          if (state.categoryId != null) 'category_id': state.categoryId,
-          'limit': 40,
-        },
-      );
-      if (requestId != _requestId) return;
-      final data = response.data as Map<String, dynamic>? ?? const {};
-      final items = (data['items'] as List<dynamic>? ?? const [])
+    return <String, dynamic>{
+      'page': page,
+      'page_size': state.pageSize,
+      'status': 'active',
+      if (q.isNotEmpty) 'search': q,
+      if (state.categoryId != null) 'category_id': state.categoryId,
+    };
+  }
+
+  Future<Map<String, dynamic>> _fetch(int page) async {
+    final response = await _dio.get(
+      kPosCatalogPath,
+      queryParameters: _pageParams(page),
+    );
+    final data = response.data;
+    return data is Map ? Map<String, dynamic>.from(data) : const {};
+  }
+
+  static List<ProductModel> _parseItems(Map<String, dynamic> data) =>
+      (data['items'] as List<dynamic>? ?? const [])
           .map((e) => ProductModel.fromJson(e as Map<String, dynamic>))
           .toList();
-      state = state.copyWith(items: items, loading: false, clearError: true);
+
+  static int _parseTotal(Map<String, dynamic> data, int fallback) {
+    final total = data['total'];
+    return total is int ? total : fallback;
+  }
+
+  static int _parsePages(Map<String, dynamic> data, int total, int pageSize) {
+    final pages = data['pages'];
+    if (pages is int) return pages;
+    if (pageSize <= 0) return 0;
+    return (total + pageSize - 1) ~/ pageSize;
+  }
+
+  /// Page-1 replacement: initial load, debounced search, category switch.
+  Future<void> load() async {
+    _debounce?.cancel();
+    final generation = ++_generation;
+    state = state.copyWith(
+      loading: true,
+      // A replacement supersedes any in-flight append.
+      loadingMore: false,
+      clearError: true,
+      clearLoadMoreError: true,
+    );
+    try {
+      final data = await _fetch(1);
+      if (generation != _generation) return;
+      final items = _parseItems(data);
+      final total = _parseTotal(data, items.length);
+      final pages = _parsePages(data, total, state.pageSize);
+      state = state.copyWith(
+        items: items,
+        currentPage: 1,
+        total: total,
+        pages: pages,
+        hasMore: pages > 1,
+        loading: false,
+        clearError: true,
+      );
     } on DioException catch (e) {
-      if (requestId != _requestId) return;
+      if (generation != _generation) return;
       state = state.copyWith(loading: false, error: _message(e));
+    }
+  }
+
+  /// Append the next page. Guarded: one append in flight at a time, nothing
+  /// to append once [PosSearchState.hasMore] is false, and a stale response
+  /// (result set changed while it was in flight) is dropped, not merged.
+  Future<void> loadMore() async {
+    if (state.loading || state.loadingMore || !state.hasMore) return;
+    final generation = _generation;
+    final page = state.currentPage + 1;
+    state = state.copyWith(loadingMore: true, clearLoadMoreError: true);
+    try {
+      final data = await _fetch(page);
+      if (generation != _generation) return;
+      final incoming = _parseItems(data);
+      final merged = <ProductModel>[...state.items];
+      final seen = <String>{for (final p in merged) p.id};
+      for (final p in incoming) {
+        if (seen.add(p.id)) merged.add(p); // dedupe by stable product id
+      }
+      final total = _parseTotal(data, state.total);
+      final pages = _parsePages(data, total, state.pageSize);
+      state = state.copyWith(
+        items: merged,
+        currentPage: page,
+        total: total,
+        pages: pages,
+        hasMore: page < pages,
+        loadingMore: false,
+      );
+    } on DioException catch (e) {
+      if (generation != _generation) return;
+      // Keep the rows already on screen; the footer shows this and the next
+      // scroll near the end retries.
+      state = state.copyWith(loadingMore: false, loadMoreError: _message(e));
     }
   }
 

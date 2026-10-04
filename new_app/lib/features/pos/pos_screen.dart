@@ -921,6 +921,10 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     final productCatalog = _ProductCatalog(
       products: search.items,
       loading: search.loading,
+      loadingMore: search.loadingMore,
+      hasMore: search.hasMore,
+      loadMoreError: search.loadMoreError,
+      onLoadMore: () => ref.read(posSearchProvider.notifier).loadMore(),
       error: search.error,
       favorites: favorites.items,
       viewMode: viewMode,
@@ -1403,6 +1407,19 @@ Image? _tryProductImage(
 class _ProductCatalog extends StatelessWidget {
   final List<ProductModel> products;
   final bool loading;
+
+  /// Next page is being appended (bottom spinner).
+  final bool loadingMore;
+
+  /// Server reported more pages than [products] currently holds.
+  final bool hasMore;
+
+  /// Append failed — rows stay on screen, footer shows the message.
+  final String? loadMoreError;
+
+  /// Ask the provider for the next page (no-op while loading / exhausted).
+  final VoidCallback onLoadMore;
+
   final String? error;
   final List<FavoriteModel> favorites;
   final PosCatalogViewMode viewMode;
@@ -1412,6 +1429,10 @@ class _ProductCatalog extends StatelessWidget {
   const _ProductCatalog({
     required this.products,
     required this.loading,
+    required this.loadingMore,
+    required this.hasMore,
+    required this.loadMoreError,
+    required this.onLoadMore,
     required this.error,
     required this.favorites,
     required this.viewMode,
@@ -1718,6 +1739,54 @@ class _ProductCatalog extends StatelessWidget {
     );
   }
 
+  /// Near-the-end trigger: ask for the next page while the cashier scrolls.
+  /// The provider no-ops when exhausted or already loading, so this can fire
+  /// on every scroll tick near the bottom without issuing extra requests.
+  bool _onScroll(ScrollNotification notification) {
+    if (!hasMore) return false;
+    if (notification.metrics.axis != Axis.vertical) return false;
+    if (notification is! ScrollUpdateNotification &&
+        notification is! ScrollEndNotification) {
+      return false;
+    }
+    final metrics = notification.metrics;
+    if (metrics.pixels >=
+        metrics.maxScrollExtent - kPosCatalogLoadMoreThreshold) {
+      onLoadMore();
+    }
+    return false;
+  }
+
+  bool get _hasFooter => loadingMore || loadMoreError != null;
+
+  /// Bottom row: spinner while the next page appends, message on failure.
+  Widget _footer(BuildContext context) {
+    if (loadingMore) {
+      return const Center(
+        key: Key('pos-catalog-loading-more'),
+        child: SizedBox(
+          width: 24,
+          height: 24,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+      );
+    }
+    return Center(
+      key: const Key('pos-catalog-load-more-error'),
+      child: Padding(
+        padding: const EdgeInsets.all(8),
+        child: Text(
+          loadMoreError!,
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontSize: 12,
+            color: Theme.of(context).colorScheme.error,
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final loc = Localizations.localeOf(context).languageCode;
@@ -1744,27 +1813,46 @@ class _ProductCatalog extends StatelessWidget {
       );
     }
 
+    // GridView/ListView.builder stay the scrollables: only the visible
+    // window is ever built — never all loaded rows at once.
+    final footerCount = _hasFooter ? 1 : 0;
+
     if (viewMode == PosCatalogViewMode.list) {
-      return ListView.separated(
-        key: const Key('pos-product-list'),
-        padding: const EdgeInsets.symmetric(vertical: 4),
-        itemCount: products.length,
-        separatorBuilder: (_, _) => const Divider(height: 1),
-        itemBuilder: (context, index) => _listTile(context, products[index]),
+      return NotificationListener<ScrollNotification>(
+        onNotification: _onScroll,
+        child: ListView.separated(
+          key: const Key('pos-product-list'),
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          itemCount: products.length + footerCount,
+          separatorBuilder: (_, index) =>
+              index + 1 == products.length && footerCount > 0
+                  ? const SizedBox(height: 0)
+                  : const Divider(height: 1),
+          itemBuilder: (context, index) {
+            if (index >= products.length) return _footer(context);
+            return _listTile(context, products[index]);
+          },
+        ),
       );
     }
 
-    return GridView.builder(
-      key: const Key('pos-product-grid'),
-      padding: const EdgeInsets.all(12),
-      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-        maxCrossAxisExtent: 200,
-        mainAxisSpacing: 10,
-        crossAxisSpacing: 10,
-        childAspectRatio: 1.05,
+    return NotificationListener<ScrollNotification>(
+      onNotification: _onScroll,
+      child: GridView.builder(
+        key: const Key('pos-product-grid'),
+        padding: const EdgeInsets.all(12),
+        gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+          maxCrossAxisExtent: 200,
+          mainAxisSpacing: 10,
+          crossAxisSpacing: 10,
+          childAspectRatio: 1.05,
+        ),
+        itemCount: products.length + footerCount,
+        itemBuilder: (context, index) {
+          if (index >= products.length) return _footer(context);
+          return _gridCard(context, products[index]);
+        },
       ),
-      itemCount: products.length,
-      itemBuilder: (context, index) => _gridCard(context, products[index]),
     );
   }
 }

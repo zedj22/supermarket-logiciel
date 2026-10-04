@@ -57,7 +57,7 @@ class FakeCredentialStorage extends SecureCredentialStorage {
 
 const _packId = '00000000-0000-0000-0000-0000000000k1';
 const _packsPath = '/api/v1/packs';
-const _searchPath = '/api/v1/products/search';
+const _catalogPath = '/api/v1/products';
 
 const _scopes = <String>['pos_sale', 'product_view'];
 
@@ -161,7 +161,7 @@ void _mockDio(
   bool availabilityError = false,
 }) {
   Object? bodyFor(String path, {bool hasQuery = false}) {
-    if (path == _searchPath) {
+    if (path == _catalogPath) {
       return {
         'items': <dynamic>[],
         'total': 0,
