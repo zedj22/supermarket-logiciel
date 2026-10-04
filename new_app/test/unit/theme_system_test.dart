@@ -1,6 +1,6 @@
 // Phase 17 (§17.5) — theme system.
 //
-// "All themes work" is three separate guarantees:
+// "All themes work" is four separate guarantees:
 //
 //  1. every `AppThemeMode` resolves to a real, distinguishable [ThemeData]
 //     (`AppTheme.forMode` is the single mapping — `main.dart` and the
@@ -8,15 +8,19 @@
 //  2. every mode persists and survives a cold start, and a corrupt value
 //     degrades to the default instead of throwing;
 //  3. every mode is *readable* — a theme whose text disappears against its
-//     own card renders, but it does not work.  WCAG AA is 4.5:1 for body
-//     text and 3:1 for large/bold text, icons and button labels; the gate
-//     below asserts AA for primary text and 3:1 for everything else, and
-//     prints the measured ratios so a regression is visible, not silent.
+//     own card renders, but it does not work.  WCAG AA body text is 4.5:1
+//     and large/bold text, icons and button labels are 3:1; the gates below
+//     assert exactly that and print the measured ratios so a regression is
+//     visible, not silent;
+//  4. typography is deterministic and offline.  The app runs on an
+//     isolated LAN, so a font fetched from fonts.gstatic.com fails on
+//     every cold start and falls back to whatever the platform has — the
+//     family is bundled in `assets/fonts/` instead.
+import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supermarket_pos/theme/app_theme.dart';
 import 'package:supermarket_pos/theme/app_theme_mode.dart';
@@ -27,6 +31,26 @@ const _expectedBrightness = <AppThemeMode, Brightness>{
   AppThemeMode.light: Brightness.light,
   AppThemeMode.grey: Brightness.dark,
 };
+
+/// [TextTheme] has no way to iterate its styles, so they are listed once
+/// here and every style is checked rather than a hand-picked few.
+Map<String, TextStyle?> _stylesOf(TextTheme t) => <String, TextStyle?>{
+      'displayLarge': t.displayLarge,
+      'displayMedium': t.displayMedium,
+      'displaySmall': t.displaySmall,
+      'headlineLarge': t.headlineLarge,
+      'headlineMedium': t.headlineMedium,
+      'headlineSmall': t.headlineSmall,
+      'titleLarge': t.titleLarge,
+      'titleMedium': t.titleMedium,
+      'titleSmall': t.titleSmall,
+      'bodyLarge': t.bodyLarge,
+      'bodyMedium': t.bodyMedium,
+      'bodySmall': t.bodySmall,
+      'labelLarge': t.labelLarge,
+      'labelMedium': t.labelMedium,
+      'labelSmall': t.labelSmall,
+    };
 
 double _luminance(Color color) {
   double channel(double v) =>
@@ -44,10 +68,13 @@ double contrast(Color a, Color b) {
   return (hi + 0.05) / (lo + 0.05);
 }
 
+Iterable<File> _dartFiles(String root) => Directory(root)
+    .listSync(recursive: true)
+    .whereType<File>()
+    .where((f) => f.path.endsWith('.dart'));
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
-
-  setUp(() => GoogleFonts.config.allowRuntimeFetching = false);
 
   group('mode → ThemeData (Phase 17 §17.5)', () {
     testWidgets('every AppThemeMode resolves through AppTheme.forMode',
@@ -118,52 +145,62 @@ void main() {
   });
 
   group('every theme is readable', () {
-    testWidgets('primary text meets WCAG AA against its own surfaces',
+    testWidgets('body text — primary and secondary — meets WCAG AA (4.5:1)',
         (tester) async {
-      final failures = <String>[];
-      final measured = <String>[];
-
-      for (final mode in AppThemeMode.values) {
-        final theme = AppTheme.forMode(mode);
-        final text = theme.colorScheme.onSurface;
-        final surfaces = <String, Color>{
-          'surface': theme.colorScheme.surface,
-          'background': theme.scaffoldBackgroundColor,
-          'card': theme.cardTheme.color ?? theme.colorScheme.surface,
-        };
-        for (final entry in surfaces.entries) {
-          final ratio = contrast(text, entry.value);
-          measured.add('  $mode ${entry.key}: ${ratio.toStringAsFixed(2)}');
-          if (ratio < 4.5) {
-            failures.add('$mode ${entry.key}: ${ratio.toStringAsFixed(2)}');
-          }
-        }
-      }
-
-      // ignore: avoid_print
-      print('WCAG AA primary text (need 4.5)\n${measured.join('\n')}');
-      expect(
-        failures,
-        isEmpty,
-        reason: 'primary text below 4.5:1 — unreadable: $failures',
-      );
-    });
-
-    testWidgets('captions, buttons and accents stay legible (3:1)',
-        (tester) async {
+      const threshold = 4.5;
       final failures = <String>[];
       final measured = <String>[];
 
       for (final mode in AppThemeMode.values) {
         final theme = AppTheme.forMode(mode);
         final card = theme.cardTheme.color ?? theme.colorScheme.surface;
-        final bodySmall = theme.textTheme.bodySmall?.color ??
+        final secondary = theme.textTheme.bodySmall?.color ??
             theme.colorScheme.onSurface;
-        final labelMedium = theme.textTheme.labelMedium?.color ??
-            theme.colorScheme.onSurface;
+
         final checks = <String, (Color, Color)>{
-          'bodySmall on card': (bodySmall, card),
-          'labelMedium on background': (labelMedium, theme.scaffoldBackgroundColor),
+          'primary on surface': (theme.colorScheme.onSurface, theme.colorScheme.surface),
+          'primary on background':
+              (theme.colorScheme.onSurface, theme.scaffoldBackgroundColor),
+          'primary on card': (theme.colorScheme.onSurface, card),
+          'bodySmall on card': (secondary, card),
+          'bodySmall on background':
+              (secondary, theme.scaffoldBackgroundColor),
+          'labelMedium on card':
+              (theme.textTheme.labelMedium?.color ?? secondary, card),
+          'labelMedium on background': (
+            theme.textTheme.labelMedium?.color ?? secondary,
+            theme.scaffoldBackgroundColor,
+          ),
+          'labelSmall on card':
+              (theme.textTheme.labelSmall?.color ?? secondary, card),
+        };
+
+        for (final entry in checks.entries) {
+          final ratio = contrast(entry.value.$1, entry.value.$2);
+          measured.add('  $mode ${entry.key}: ${ratio.toStringAsFixed(2)}');
+          if (ratio < threshold) {
+            failures.add('$mode ${entry.key}: ${ratio.toStringAsFixed(2)}');
+          }
+        }
+      }
+
+      // ignore: avoid_print
+      print('WCAG AA body text (need $threshold)\n${measured.join('\n')}');
+      expect(
+        failures,
+        isEmpty,
+        reason: 'body text below $threshold:1 — fails WCAG AA: $failures',
+      );
+    });
+
+    testWidgets('buttons and accents stay legible (3:1)', (tester) async {
+      const threshold = 3.0;
+      final failures = <String>[];
+      final measured = <String>[];
+
+      for (final mode in AppThemeMode.values) {
+        final theme = AppTheme.forMode(mode);
+        final checks = <String, (Color, Color)>{
           'button label on primary': (
             theme.colorScheme.onPrimary,
             theme.colorScheme.primary,
@@ -176,20 +213,90 @@ void main() {
         for (final entry in checks.entries) {
           final ratio = contrast(entry.value.$1, entry.value.$2);
           measured.add('  $mode ${entry.key}: ${ratio.toStringAsFixed(2)}');
-          if (ratio < 3.0) {
+          if (ratio < threshold) {
             failures.add('$mode ${entry.key}: ${ratio.toStringAsFixed(2)}');
           }
         }
       }
 
       // ignore: avoid_print
-      print('WCAG 3:1 secondary text / controls (need 3.0)\n'
-          '${measured.join('\n')}');
+      print('WCAG 3:1 controls (need $threshold)\n${measured.join('\n')}');
       expect(
         failures,
         isEmpty,
-        reason: 'below 3:1 — a caption, button or accent disappears: '
+        reason: 'below $threshold:1 — a button or accent disappears: '
             '$failures',
+      );
+    });
+  });
+
+  group('typography is bundled, never fetched', () {
+    testWidgets('every text style in every theme carries the bundled family',
+        (tester) async {
+      for (final mode in AppThemeMode.values) {
+        final theme = AppTheme.forMode(mode);
+        final wrong = _stylesOf(theme.textTheme).entries
+            .where((e) => e.value?.fontFamily != AppTheme.fontFamily)
+            .map((e) => '${e.key}=${e.value?.fontFamily}');
+        expect(
+          wrong,
+          isEmpty,
+          reason:
+              '$mode would render in a platform font: ${wrong.join(', ')}',
+        );
+      }
+    });
+
+    test('the family is declared in pubspec.yaml with both weights', () {
+      final pubspec = File('pubspec.yaml').readAsStringSync();
+      expect(
+        pubspec,
+        contains('family: ${AppTheme.fontFamily}'),
+        reason: 'flutter.fonts must declare the bundled family',
+      );
+      expect(pubspec, contains('weight: 400'));
+      expect(pubspec, contains('weight: 700'));
+      expect(
+        pubspec,
+        isNot(contains('google_fonts')),
+        reason: 'google_fonts pulls fonts from the network at runtime',
+      );
+    });
+
+    test('the font files actually ship with the app', () {
+      for (final file in [
+        'assets/fonts/IBMPlexSansArabic-Regular.ttf',
+        'assets/fonts/IBMPlexSansArabic-Bold.ttf',
+      ]) {
+        expect(
+          File(file).existsSync(),
+          isTrue,
+          reason: '$file is missing — the app would silently lose its type',
+        );
+      }
+    });
+
+    test('nothing in lib/ reaches for a font over the network', () {
+      final banned = RegExp(
+        r'google_fonts|GoogleFonts|fonts\.gstatic\.com|allowRuntimeFetching',
+      );
+      final violations = <String>[];
+      for (final file in _dartFiles('lib')) {
+        final lines = file.readAsStringSync().split('\n');
+        for (var i = 0; i < lines.length; i++) {
+          // Only code counts: a doc comment may legitimately name the
+          // package it replaced.
+          if (lines[i].trimLeft().startsWith('//')) continue;
+          if (banned.hasMatch(lines[i])) {
+            violations.add('${file.path.replaceAll('\\', '/')}:${i + 1}');
+            break;
+          }
+        }
+      }
+      expect(
+        violations,
+        isEmpty,
+        reason: 'runtime font fetching on an offline LAN: $violations',
       );
     });
   });

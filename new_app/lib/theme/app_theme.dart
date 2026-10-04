@@ -1,10 +1,22 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 import '../core/colors.dart';
 import 'app_theme_mode.dart';
 
 class AppTheme {
   AppTheme._();
+
+  /// The one bundled family (declared under `flutter.fonts` in pubspec.yaml
+  /// and shipped in `assets/fonts/`), so typography is identical on every
+  /// machine and never depends on a network fetch the first time the app
+  /// is opened.
+  static const String fontFamily = 'IBMPlexSansArabic';
+
+  /// Flutter's default Material sizes with [fontFamily] swapped in — the
+  /// same base `GoogleFonts.cairoTextTheme()` used to produce, minus the
+  /// request to fonts.gstatic.com.  Cached: it is brightness-independent
+  /// and rebuilt on every theme switch otherwise.
+  static final TextTheme _baseTextTheme =
+      ThemeData.light().textTheme.apply(fontFamily: fontFamily);
 
   /// The single source of truth for mode → [ThemeData].
   ///
@@ -179,7 +191,7 @@ class AppTheme {
   }
 
   static TextTheme _textTheme(Color primary, Color secondary) {
-    final base = GoogleFonts.cairoTextTheme();
+    final base = _baseTextTheme;
     return base.copyWith(
       headlineLarge: base.headlineLarge?.copyWith(color: primary),
       headlineMedium: base.headlineMedium?.copyWith(color: primary),

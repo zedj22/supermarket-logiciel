@@ -1,16 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:supermarket_pos/theme/app_theme.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   group('AppTheme returns valid ThemeData', () {
-    setUp(() {
-      GoogleFonts.config.allowRuntimeFetching = false;
-    });
-
     testWidgets('dark theme renders', (tester) async {
       final theme = AppTheme.dark();
       expect(theme, isA<ThemeData>());

@@ -7,8 +7,8 @@
 // tuning cannot silently break the semantics while keeping tests green.
 //
 // Plain `ThemeData` fixtures instead of `AppTheme`: the tone system only
-// reads brightness/colorScheme/textTheme, and building GoogleFonts themes
-// outside a widget-test zone leaks async font errors into the test runner.
+// reads brightness/colorScheme/textTheme, so a bare fixture keeps the
+// colours under test explicit and independent of the theme's own palette.
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:supermarket_pos/features/reports/report_tones.dart';

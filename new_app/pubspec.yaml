@@ -17,7 +17,6 @@ dependencies:
   go_router: ^14.8.1
   dio: ^5.7.0
   intl: ^0.20.1
-  google_fonts: ^6.2.1
   freezed_annotation: ^2.4.4
   json_annotation: ^4.9.0
   shared_preferences: ^2.3.4
@@ -39,6 +38,20 @@ flutter:
   uses-material-design: true
 
   generate: true
+
+  # Phase 17 (§17 findings): typography is bundled, never fetched.  The
+  # app runs on an offline LAN, so a font loaded from fonts.gstatic.com
+  # would fail on every cold start and silently fall back to whatever the
+  # platform happens to have.  IBM Plex Sans Arabic is the same family the
+  # backend already embeds in printed receipts (OFL licence, OFL.txt next
+  # to the files).
+  fonts:
+    - family: IBMPlexSansArabic
+      fonts:
+        - asset: assets/fonts/IBMPlexSansArabic-Regular.ttf
+          weight: 400
+        - asset: assets/fonts/IBMPlexSansArabic-Bold.ttf
+          weight: 700
 
   # assets:
   #   - assets/icons/
