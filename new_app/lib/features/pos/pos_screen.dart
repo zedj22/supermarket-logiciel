@@ -2615,9 +2615,9 @@ class _CartLineTileState extends State<_CartLineTile> {
                         fontSize: short ? 15.0 : 16.0,
                         fontWeight: FontWeight.w700,
                       ),
-                      decoration: const InputDecoration(
+                      decoration: InputDecoration(
                         isDense: true,
-                        labelText: 'Qty',
+                        labelText: AppStrings.t('qty', loc),
                         contentPadding: EdgeInsets.symmetric(
                           horizontal: 6,
                           vertical: 12,
