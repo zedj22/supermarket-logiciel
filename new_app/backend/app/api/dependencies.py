@@ -16,6 +16,7 @@ Usage in routers:
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Annotated
 
 import structlog
@@ -30,8 +31,32 @@ from app.models.user import AuthSession, User
 
 logger = structlog.get_logger(__name__)
 
+#: Minimum gap between two liveness writes for the same session (§17.7).
+SESSION_HEARTBEAT_SECONDS = 60
 
-def _get_token_from_header(authorization: str | None = Header(None)) -> str | None:
+
+def _touch_session(db: Session, session: AuthSession) -> None:
+    """Refresh ``last_seen_at`` at most once per SESSION_HEARTBEAT_SECONDS.
+
+    A liveness write must never turn an otherwise valid request into an
+    error, so a failed commit rolls back and is logged instead of raised.
+    """
+    now = datetime.now(timezone.utc)
+    last_seen = session.last_seen_at
+    if last_seen is not None and last_seen.tzinfo is None:
+        # SQLite returns naive values for DateTime(timezone=True); they are UTC.
+        last_seen = last_seen.replace(tzinfo=timezone.utc)
+    if last_seen is not None and (now - last_seen).total_seconds() < SESSION_HEARTBEAT_SECONDS:
+        return
+    session.last_seen_at = now
+    try:
+        db.commit()
+    except Exception as exc:  # pragma: no cover - liveness must not fail the request
+        db.rollback()
+        logger.warning("session_heartbeat_failed", error=str(exc))
+
+
+def get_bearer_token(authorization: str | None = Header(None)) -> str | None:
     """Extract Bearer token from Authorization header."""
     if not authorization:
         return None
@@ -43,7 +68,7 @@ def _get_token_from_header(authorization: str | None = Header(None)) -> str | No
 
 def get_current_user(
     request: Request,
-    token: str | None = Depends(_get_token_from_header),
+    token: str | None = Depends(get_bearer_token),
     db: Session = Depends(get_db),
 ) -> User:
     """Extract and verify the current user from JWT.
@@ -87,10 +112,10 @@ def get_current_user(
     if user is None or not user.is_active:
         raise UnauthorizedError(message="User not found or inactive")
 
-    # Update last_seen_at (committed with the request-scoped session)
-    from datetime import datetime, timezone
-    session.last_seen_at = datetime.now(timezone.utc)
-    db.commit()
+    # Liveness heartbeat. Throttled (§17.7): committing on EVERY authenticated
+    # request meant two transactions and one write per read-only GET, and a
+    # transient DB fault in this write could 500 a perfectly valid request.
+    _touch_session(db, session)
 
     # Store user on request state for other dependencies
     request.state.user = user

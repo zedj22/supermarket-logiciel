@@ -5,22 +5,26 @@ Endpoints:
 - GET  /api/v1/auth/setup/check — Setup-needed check
 - GET  /api/v1/auth/login-users — Public active-user list for the login screen
 - POST /api/v1/auth/login — PIN-based login
-- POST /api/v1/auth/verify — Token verification
-- POST /api/v1/auth/logout — Session revocation
+- POST /api/v1/auth/verify — Token verification (header bearer, blueprint contract)
+- POST /api/v1/auth/verify-token — Token verification (explicit token string)
+- POST /api/v1/auth/logout — Session revocation for the request's bearer token
+- POST /api/v1/auth/logout-token — Session revocation for an explicit token string
 - POST /api/v1/auth/reauth — PIN reverification
 - GET  /api/v1/auth/me — Current user info
 """
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session
 
-from app.api.dependencies import CurrentUser, get_current_user, require_permission
+from app.api.dependencies import CurrentUser, get_bearer_token, get_current_user, require_permission
 from app.core.config import settings
-from app.core.exceptions import AuthenticationError, BusinessRuleError
+from app.core.exceptions import AppError, AuthenticationError, BusinessRuleError, UnauthorizedError
+from app.core.rate_limit import auth_limiter, enforce_rate_limit
 from app.db.session import get_db
 from app.models.enums import PermissionScope
+from app.models.user import User
 from app.schemas.auth import (
     LoginRequest,
     LoginResponse,
@@ -48,7 +52,8 @@ def _get_auth_service(db: Session = Depends(get_db)) -> AuthService:
 
 @router.post("/setup", response_model=SetupResponse, tags=["auth"])
 def first_admin_setup(
-    request: SetupRequest,
+    payload: SetupRequest,
+    request: Request,
     service: AuthService = Depends(_get_auth_service),
 ) -> SetupResponse:
     """Create the first admin account.
@@ -56,10 +61,11 @@ def first_admin_setup(
     Only works when no admin exists yet. The window cannot be closed
     without completing setup (client-side enforcement).
     """
+    enforce_rate_limit(request, auth_limiter, scope="setup")
     user = service.setup_first_admin(
-        name=request.name,
-        pin=request.pin,
-        pin_confirm=request.pin_confirm,
+        name=payload.name,
+        pin=payload.pin,
+        pin_confirm=payload.pin_confirm,
     )
     return SetupResponse(
         user_id=user.id,
@@ -102,14 +108,19 @@ def login_users(
 
 @router.post("/login", response_model=LoginResponse, tags=["auth"])
 def login(
-    request: LoginRequest,
+    payload: LoginRequest,
+    request: Request,
     service: AuthService = Depends(_get_auth_service),
 ) -> LoginResponse:
-    """Authenticate with user selection + PIN."""
+    """Authenticate with user selection + PIN.
+
+    Rate limited per client IP (§17.7) on top of the per-account lockout.
+    """
+    enforce_rate_limit(request, auth_limiter, scope="login")
     token, user = service.login(
-        user_id=request.user_id,
-        pin=request.pin,
-        device_name=request.device_name,
+        user_id=payload.user_id,
+        pin=payload.pin,
+        device_name=payload.device_name,
     )
     return LoginResponse(
         access_token=token,
@@ -119,21 +130,25 @@ def login(
 
 
 @router.post("/verify", response_model=VerifyResponse, tags=["auth"])
-def verify_token(
+def verify_current_token(
+    token: str | None = Depends(get_bearer_token),
     service: AuthService = Depends(_get_auth_service),
-    token: str | None = Depends(
-        lambda authorization: (
-            authorization.split(" ", 1)[1]
-            if authorization and authorization.startswith("Bearer ")
-            else None
-        )
-    ),
 ) -> VerifyResponse:
-    """Verify the current JWT token."""
-    from fastapi import Header
-    # This endpoint is called with Authorization header
-    # We'll use a simpler approach
-    return VerifyResponse(valid=False)
+    """Verify the bearer token presented with this request.
+
+    Blueprint contract for ``POST /api/v1/auth/verify``: 200 with the
+    resolved user/session when the token is good, 401 when it is missing,
+    malformed, expired or revoked. The token-string variant
+    ``/verify-token`` keeps its ``valid: false`` answer for the client.
+    """
+    if not token:
+        raise UnauthorizedError(message="Missing authentication token")
+    user, session = service.verify_token(token)
+    return VerifyResponse(
+        valid=True,
+        user=UserResponse.model_validate(user),
+        session_id=session.id,
+    )
 
 
 @router.post("/verify-token", response_model=VerifyResponse, tags=["auth"])
@@ -149,19 +164,26 @@ def verify_token_explicit(
             user=UserResponse.model_validate(user),
             session_id=session.id,
         )
-    except Exception:
+    except AppError:
+        # Only authentication-domain failures are an ordinary "not valid"
+        # answer. Anything else (DB down, bug) must surface — §17.7 removed
+        # the blanket `except Exception` that hid it.
         return VerifyResponse(valid=False)
 
 
 @router.post("/logout", tags=["auth"])
 def logout(
+    token: str | None = Depends(get_bearer_token),
     user: User = Depends(get_current_user),
     service: AuthService = Depends(_get_auth_service),
 ) -> dict:
-    """Revoke the current session."""
-    from fastapi import Header
-    # We need the token to revoke — get it from the dependency
-    # This is handled by the middleware storing it on request.state
+    """Revoke the session carried by this request's bearer token.
+
+    ``get_current_user`` already rejected a missing/invalid token, so the
+    token reaching this point is a live session that must be revoked.
+    """
+    if token:
+        service.logout(token)
     return {"message": "Logged out successfully"}
 
 
@@ -177,12 +199,23 @@ def logout_with_token(
 
 @router.post("/reauth", response_model=ReauthResponse, tags=["auth"])
 def reauth(
-    request: ReauthRequest,
+    payload: ReauthRequest,
+    request: Request,
     user: User = Depends(get_current_user),
     service: AuthService = Depends(_get_auth_service),
 ) -> ReauthResponse:
-    """Re-verify PIN for sensitive actions."""
-    service.reauth(user_id=user.id, pin=request.pin)
+    """Re-verify PIN for sensitive actions.
+
+    Rate limited per client IP **and** user (§17.7), so one session cannot
+    spray PINs any more than an anonymous caller can.
+    """
+    enforce_rate_limit(
+        request,
+        auth_limiter,
+        key=f"{request.client.host if request.client else 'unknown'}:{user.id}",
+        scope="reauth",
+    )
+    service.reauth(user_id=user.id, pin=payload.pin)
     return ReauthResponse(verified=True, message="PIN verified")
 
 

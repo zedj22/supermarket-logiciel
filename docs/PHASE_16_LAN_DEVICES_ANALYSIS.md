@@ -1146,12 +1146,12 @@ Full tally repeated in the Final Step A report (item 24).
 | D-05 | backend `VERSION="0.1.0"` [MODERN] vs Flutter `1.0.0+1` [pubspec] | version identity ambiguous | introduce explicit `protocol` field; align app versions later (packaging) | UNVERIFIED → Q12 |
 | D-06 | `settings.HOST/PORT` exist but are dead (0 usages) [MODERN `config.py:43-44`] | config that does nothing | Phase 16 wires them into launch docs + responder; no removal needed | RESOLVED |
 | D-07 | Legacy identity = IP/hostname [LEGACY] vs modern `pos-…` device_id [PHASE-14] | different identity models | modern wins; IP is metadata only (`last_ip`) | RESOLVED |
-| D-08 | Roadmap Phase 3 lists "Rate limiting" [ROADMAP:139-147] vs 0 rate limiting in code [MODERN] | gap persists after 15 phases | Phase 16 adds *pairing-only* throttle (§12.3); app-wide rate limiting stays open (Phase 17 security pass) | DEFERRED |
+| D-08 | Roadmap Phase 3 lists "Rate limiting" [ROADMAP:139-147] vs 0 rate limiting in code [MODERN] | gap persists after 15 phases | Phase 16 adds *pairing-only* throttle (§12.3); app-wide rate limiting stays open (Phase 17 security pass) | RESOLVED → Phase 17 §17.7 (`app/core/rate_limit.py`: per-IP API backstop + auth/setup/reauth limits, 429 `RATE_LIMITED` envelope) |
 | D-09 | Phase 0 lists `print_jobs`/`export_jobs` [DB:47]; Phase 15 deferred them citing "multi-PC Phase 16" [PHASE-15:1191] | multi-PC now arrives — tables still absent | **stay deferred**: synchronous rendering still meets SLOs; no new evidence → do not add tables | RESOLVED |
 | D-10 | Blueprint login body has `device_name` [BLUEPRINT:14-16] vs Phase 14 rename to `device_id` [PHASE-14 C4/D5] | two different fields | both exist legitimately: `AuthSession.device_name` (session label) vs `device_id` (reporting key) — documented, no change | RESOLVED |
 | D-11 | CORS allows only localhost origins [MODERN `config.py:37`] vs LAN clients | desktop Dio unaffected; browser clients would fail | leave unchanged (no browser client exists); note for any future web UI | RESOLVED |
 | D-12 | Roadmap Phase 16 depends on "Phase 3" [ROADMAP:23] vs actual dependency web (auth=P4, device_id=P8/14) | dependency line is stale | treat Phase 16 as depending on Phases 3,4,8,14 (all present) | RESOLVED |
-| D-13 | `POST /auth/logout` is a no-op stub vs real `/auth/logout-token` [MODERN `auth.py:156-175`] | client uses the real one | no change in Phase 16; note for Phase 17 cleanup | DEFERRED |
+| D-13 | `POST /auth/logout` is a no-op stub vs real `/auth/logout-token` [MODERN `auth.py:156-175`] | client uses the real one | no change in Phase 16; note for Phase 17 cleanup | RESOLVED → Phase 17 §17.7 (`/auth/logout` now revokes the presented token) |
 
 ---
 

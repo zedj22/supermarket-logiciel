@@ -21,7 +21,6 @@ import secrets
 import threading
 import time
 import uuid
-from collections import deque
 from datetime import datetime, timezone
 
 import structlog
@@ -31,6 +30,8 @@ from app.core.exceptions import (
     ConflictError,
     NotFoundError,
 )
+from app.core.rate_limit import SlidingWindowLimiter as _SlidingWindowLimiter
+from app.core.rate_limit import reset_rate_limiters
 from app.core.security import hash_token
 from app.models.audit import AuditLog
 from app.models.device import Device
@@ -163,33 +164,6 @@ class _PairingCodeState:
             self.expires_at = None
 
 
-class _SlidingWindowLimiter:
-    """Fixed-capacity sliding window keyed by an arbitrary string."""
-
-    def __init__(self, limit: int, window_seconds: int = RATE_WINDOW_SECONDS):
-        self.limit = limit
-        self.window_seconds = window_seconds
-        self._lock = threading.Lock()
-        self._hits: dict[str, deque[float]] = {}
-
-    def allow(self, key: str) -> bool:
-        now = time.monotonic()
-        with self._lock:
-            bucket = self._hits.setdefault(key, deque())
-            cutoff = now - self.window_seconds
-            while bucket and bucket[0] <= cutoff:
-                bucket.popleft()
-            if len(bucket) >= self.limit:
-                return False
-            bucket.append(now)
-            # Opportunistic sweep so a busy server never leaks keys.
-            if len(self._hits) > 4096:
-                for k in list(self._hits):
-                    if not self._hits[k] or self._hits[k][-1] <= cutoff:
-                        self._hits.pop(k, None)
-            return True
-
-
 class _TokenVault:
     """One-time delivery window for freshly minted device tokens.
 
@@ -226,17 +200,22 @@ class _TokenVault:
 
 
 pairing_codes = _PairingCodeState()
-pair_limiter_ip = _SlidingWindowLimiter(PAIR_LIMIT_PER_IP)
-pair_limiter_global = _SlidingWindowLimiter(PAIR_LIMIT_GLOBAL)
+pair_limiter_ip = _SlidingWindowLimiter(PAIR_LIMIT_PER_IP, RATE_WINDOW_SECONDS)
+pair_limiter_global = _SlidingWindowLimiter(PAIR_LIMIT_GLOBAL, RATE_WINDOW_SECONDS)
 token_vault = _TokenVault()
 
 
 def reset_process_state() -> None:
-    """Testing seam: forget every in-memory Phase 16 singleton."""
+    """Testing seam: forget every in-memory process singleton.
+
+    Covers the Phase 16 pairing state and, since §17.7, the app-wide
+    rate-limit windows too — both are process-global like this one.
+    """
     pairing_codes.clear()
     token_vault._tokens.clear()  # noqa: SLF001 - test seam
-    pair_limiter_ip._hits.clear()  # noqa: SLF001
-    pair_limiter_global._hits.clear()  # noqa: SLF001
+    pair_limiter_ip.clear()
+    pair_limiter_global.clear()
+    reset_rate_limiters()
 
 
 # ---------------------------------------------------------------------------

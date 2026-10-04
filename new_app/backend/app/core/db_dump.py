@@ -65,7 +65,8 @@ def find_pg_tool(name: str, override: str = "") -> Path | None:
             continue
         try:
             candidates = sorted(root.glob(f"*/bin/{name}.exe"), reverse=True)
-        except OSError:  # pragma: no cover - unreadable install dir
+        except OSError as exc:  # pragma: no cover - unreadable install dir
+            logger.debug("pg_tool_glob_failed", root=str(root), error=str(exc))
             continue
         for candidate in candidates:
             if candidate.is_file():

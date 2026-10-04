@@ -85,7 +85,8 @@ class DiscoveryResponder:
             return None
         try:
             return int(sock.getsockname()[1])
-        except OSError:  # pragma: no cover - socket already closed
+        except OSError as exc:  # pragma: no cover - socket already closed
+            logger.debug("discovery_port_query_failed", error=str(exc))
             return None
 
     def start(self) -> bool:
@@ -133,8 +134,10 @@ class DiscoveryResponder:
         if sock is not None:
             try:
                 sock.close()
-            except OSError:  # pragma: no cover - best effort shutdown
-                pass
+            except OSError as exc:  # pragma: no cover - best effort shutdown
+                # Best effort, but never silent (§17.7): a socket that will
+                # not close means the port may stay occupied after stop().
+                logger.warning("discovery_socket_close_failed", error=str(exc))
         logger.info("discovery_stopped")
 
     # ------------------------------------------------------------------
@@ -148,10 +151,10 @@ class DiscoveryResponder:
                 data, addr = sock.recvfrom(2048)
             except TimeoutError:
                 continue
-            except OSError:
+            except OSError as exc:
                 if self._stop.is_set():  # pragma: no cover - normal shutdown
                     break
-                logger.warning("discovery_recv_failed")
+                logger.warning("discovery_recv_failed", error=str(exc))
                 break
             try:
                 self._handle(data, addr, sock)

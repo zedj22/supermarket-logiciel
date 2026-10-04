@@ -7,6 +7,10 @@ Phase 16: the router carries the **device guard** as a router-level
 dependency, so it runs before every endpoint's own dependencies on every
 route below (including ones added later). It is a no-op unless
 ``LAN_MODE=1``.
+
+Phase 17 §17.7: the router also carries the **app-wide rate-limit backstop**
+(per client IP), which is the roadmap Phase 3 "Rate limiting" control that
+D-08 deferred to this security pass.
 """
 
 from fastapi import APIRouter, Depends
@@ -34,8 +38,11 @@ from app.api.v1.settings import router as settings_router
 from app.api.v1.suppliers import router as suppliers_router
 from app.api.v1.system import router as system_router
 from app.api.v1.users import router as users_router
+from app.core.rate_limit import api_rate_guard
 
-api_router = APIRouter(dependencies=[Depends(device_guard)])
+api_router = APIRouter(
+    dependencies=[Depends(api_rate_guard), Depends(device_guard)]
+)
 
 api_router.include_router(health_router, tags=["health"])
 api_router.include_router(system_router, tags=["system"])

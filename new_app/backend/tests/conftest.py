@@ -76,6 +76,23 @@ def _pg_available():
 PG_IS_AVAILABLE = _pg_available()
 
 
+# Phase 17 17.7 - reset process-global limiter/pairing state around every test
+
+@pytest.fixture(autouse=True)
+def _reset_process_state():
+    """Drop every process-global in-memory singleton around each test.
+
+    Sliding-window counters are keyed by client IP, and the TestClient is
+    always the same peer, so without this reset one test's requests would
+    consume the next test's budget.
+    """
+    from app.services.devices import reset_process_state
+
+    reset_process_state()
+    yield
+    reset_process_state()
+
+
 # ── SQLite fixtures (unit tests) ───────────────────────────────────────
 
 @pytest.fixture(scope="session")

@@ -120,11 +120,17 @@ class AuthService(BaseService):
         return user
 
     def is_setup_needed(self) -> bool:
-        """Check if first-admin setup is needed."""
-        count = self.db.scalar(
-            select(func.count()).select_from(User)
-        ) or 0
-        return count == 0
+        """Check if first-admin setup is needed.
+
+        Mirrors the guard inside :meth:`setup_first_admin`: setup exists
+        while no admin-role user does. Counting *all* users (§17.7) could
+        answer "setup not needed" for a database that the setup endpoint
+        would then accept.
+        """
+        existing_admin = self.db.execute(
+            select(User).join(UserRole).join(Role).where(Role.name == "admin")
+        ).scalar_one_or_none()
+        return existing_admin is None
 
     def list_active_users_for_login(self) -> list[User]:
         """Return active users for the public login user-discovery screen.

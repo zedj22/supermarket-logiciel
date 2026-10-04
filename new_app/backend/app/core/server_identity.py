@@ -21,7 +21,11 @@ import threading
 import uuid
 from pathlib import Path
 
+import structlog
+
 from app.core.config import settings
+
+logger = structlog.get_logger(__name__)
 
 _lock = threading.Lock()
 _cached: str | None = None
@@ -33,7 +37,8 @@ def _read_file(path: Path) -> str | None:
             value = path.read_text(encoding="utf-8").strip()
             if value:
                 return value
-    except OSError:  # pragma: no cover - unreadable data directory
+    except OSError as exc:  # unreadable data directory (§17.7: never silent)
+        logger.warning("server_id_read_failed", path=str(path), error=str(exc))
         return None
     return None
 
@@ -43,7 +48,10 @@ def _write_file(path: Path, value: str) -> bool:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(value, encoding="utf-8")
         return True
-    except OSError:  # pragma: no cover - read-only install location
+    except OSError as exc:  # read-only install location (§17.7: never silent)
+        # The identity stays usable for this process but will change on the
+        # next start, so paired clients would see a new server_id — log it.
+        logger.warning("server_id_write_failed", path=str(path), error=str(exc))
         return False
 
 
