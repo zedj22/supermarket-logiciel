@@ -49,9 +49,23 @@ def _method_label(method: str, locale: str) -> str:
     return method
 
 
+def _present(value: object) -> str | None:
+    """Trimmed, or None when the field is unset — templates test for None."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
 @dataclass
 class StoreBlock:
     name: str
+    #: Receipt contact block (Phase 17 §17.6, Phase 15 G19/Q3).  Optional so
+    #: an install that has never opened Settings renders byte-identically.
+    phone: str | None = None
+    address: str | None = None
+    #: Printed under the totals — the configured invoice footer text.
+    footer: str | None = None
 
 
 @dataclass
@@ -178,12 +192,22 @@ def _customer_block(customer_id, customer_name, locale) -> PartyBlock | None:
     return None  # known id, unknown name → omit (§7.2 step 3)
 
 
+def _store_field(source: object, key: str) -> object:
+    """Read one identity field from a schema model or its dict form."""
+    if isinstance(source, dict):
+        return source.get(key)
+    return getattr(source, key, None)
+
+
 def _store_block(payload_store=None) -> StoreBlock:
-    if payload_store is not None and getattr(payload_store, "name", None):
-        return StoreBlock(name=payload_store.name)
-    if isinstance(payload_store, dict) and payload_store.get("name"):
-        return StoreBlock(name=str(payload_store["name"]))
-    return StoreBlock(name=settings.STORE_NAME)
+    if payload_store is None:
+        return StoreBlock(name=settings.STORE_NAME)
+    return StoreBlock(
+        name=_present(_store_field(payload_store, "name")) or settings.STORE_NAME,
+        phone=_present(_store_field(payload_store, "phone")),
+        address=_present(_store_field(payload_store, "address")),
+        footer=_present(_store_field(payload_store, "footer")),
+    )
 
 
 def _meta(locale: str, note: str | None, generated_at: datetime | None) -> MetaBlock:

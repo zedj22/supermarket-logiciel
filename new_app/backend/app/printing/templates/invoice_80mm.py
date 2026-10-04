@@ -172,6 +172,10 @@ def build_flowables(data: DocumentData) -> list[Flowable]:
     story: list[Flowable] = []
 
     story.append(_p(data.store.name, 14, rtl, bold=True, align="center"))
+    if data.store.phone:
+        story.append(_p(data.store.phone, 8, rtl, align="center"))
+    if data.store.address:
+        story.append(_p(data.store.address, 8, rtl, align="center"))
     story.append(_p(data.header.document_title, 10, rtl, align="center"))
     story.append(Spacer(1, 2 * mm))
 
@@ -225,14 +229,25 @@ def build_flowables(data: DocumentData) -> list[Flowable]:
 
     story.append(Spacer(1, 2 * mm))
     story.append(_p(data.store.name, 8, rtl, align="center"))
+    if data.store.footer:
+        story.append(Spacer(1, 1.5 * mm))
+        story.append(_p(data.store.footer, 7.5, rtl, align="center"))
     return story
 
 
 def estimate_height(data: DocumentData) -> float:
-    """Content-driven page height: min 140mm, max 400mm segment (§7.6)."""
-    header_mm = 45.0
-    footer_mm = 25.0
+    """Content-driven page height: min 140mm, max 400mm segment (7.6)."""
+    # Receipt identity (17.6): the contact lines sit under the store name
+    # and the configured footer sits under the totals — ~4mm each, so they
+    # are budgeted rather than left to eat the roll segment.
+    identity_mm = 4.0 * sum(
+        1 for v in (data.store.phone, data.store.address) if v
+    )
+    footer_text_mm = 4.0 if data.store.footer else 0.0
+    header_mm = 45.0 + identity_mm
+    footer_mm = 25.0 + footer_text_mm
     rows_mm = 0.0
+
     for line in data.lines:
         rows_mm += 7.0
         if line.sku or line.base_qty:

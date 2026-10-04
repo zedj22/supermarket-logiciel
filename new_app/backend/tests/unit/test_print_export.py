@@ -21,6 +21,9 @@ Covers:
 5.  Audit — exactly one row per attempt, success details carry
     rows/bytes/duration/filename, failure details carry the error code,
     device id lands in the column.
+6.  Receipt store identity (§17.6) — the Settings phone/address/footer
+    reach sale AND return prints; a never-configured install still prints
+    the pre-§17.6 header.
 """
 
 from __future__ import annotations
@@ -28,8 +31,10 @@ from __future__ import annotations
 import io
 import json
 import re
+import sys
 import uuid
 from datetime import date, datetime, timezone
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -872,3 +877,106 @@ def test_print_audit_success_and_failure(client, admin_headers, db):
     failure_details = json.loads(failures[0].details)
     assert failure_details["error_code"] == "NOT_FOUND"
     assert failure_details["bytes"] == 0
+
+
+# ── Receipt store identity (§17.6, Settings → print) ────────────────────────
+
+
+def _pdf_text(raw: bytes) -> str:
+    """Extract drawn text via the G7 spike ToUnicode extractor."""
+    scripts = Path(__file__).resolve().parents[2] / "scripts"
+    if str(scripts) not in sys.path:
+        sys.path.insert(0, str(scripts))
+    import g7_spike
+
+    return "\n".join(text for _font, text in g7_spike.extract_text_blocks(raw))
+
+
+_IDENTITY = {
+    "store_name": "Store Alpha",
+    "store_phone": "0550 12 34 56",
+    "store_address": "12 Rue Didouche Mourad, Alger",
+    "invoice_footer": "Merci de votre achat - Thank you",
+}
+
+
+def _print(client, headers, document_type: str, document_id: str, **body):
+    resp = client.post(
+        "/api/v1/print",
+        json={
+            "document_type": document_type,
+            "document_id": document_id,
+            "paper": body.pop("paper", "80mm"),
+            "locale": body.pop("locale", "en"),
+            **body,
+        },
+        headers={**headers, "X-Device-ID": "POS-1"},
+    )
+    assert resp.status_code == 200, resp.text
+    return resp.content
+
+
+def test_print_sale_carries_settings_store_identity(client, admin_headers):
+    product = _product(client, admin_headers)
+    sale = _sale(client, admin_headers, product["id"])
+
+    saved = client.put("/api/v1/settings", json=_IDENTITY, headers=admin_headers)
+    assert saved.status_code == 200, saved.text
+
+    text = _pdf_text(_print(client, admin_headers, "sale", sale["id"]))
+    assert _IDENTITY["store_name"] in text
+    assert _IDENTITY["store_phone"] in text
+    assert _IDENTITY["store_address"] in text
+    assert _IDENTITY["invoice_footer"] in text
+
+
+def test_print_return_carries_settings_store_identity(client, admin_headers):
+    product = _product(client, admin_headers)
+    _sale(client, admin_headers, product["id"])
+    ret = _return(client, admin_headers, product["id"])
+
+    saved = client.put("/api/v1/settings", json=_IDENTITY, headers=admin_headers)
+    assert saved.status_code == 200, saved.text
+
+    text = _pdf_text(
+        _print(client, admin_headers, "return", ret["id"], paper="A4")
+    )
+    assert _IDENTITY["store_name"] in text
+    assert _IDENTITY["store_phone"] in text
+    assert _IDENTITY["store_address"] in text
+    assert _IDENTITY["invoice_footer"] in text
+
+
+def test_print_without_saved_settings_omits_contact_block(client, admin_headers):
+    """A never-configured install renders exactly what Phase 15 rendered."""
+    product = _product(client, admin_headers)
+    sale = _sale(client, admin_headers, product["id"])
+
+    text = _pdf_text(_print(client, admin_headers, "sale", sale["id"]))
+    assert _IDENTITY["store_phone"] not in text
+    assert _IDENTITY["store_address"] not in text
+    assert _IDENTITY["invoice_footer"] not in text
+    assert settings.STORE_NAME in text
+
+
+def test_print_identity_follows_later_settings_change(client, admin_headers):
+    product = _product(client, admin_headers)
+    sale = _sale(client, admin_headers, product["id"])
+
+    first = client.put(
+        "/api/v1/settings", json={"store_phone": "0550 12 34 56"},
+        headers=admin_headers,
+    )
+    assert first.status_code == 200, first.text
+    assert "0550 12 34 56" in _pdf_text(
+        _print(client, admin_headers, "sale", sale["id"])
+    )
+
+    second = client.put(
+        "/api/v1/settings", json={"store_phone": "0770 98 76 54"},
+        headers=admin_headers,
+    )
+    assert second.status_code == 200, second.text
+    text = _pdf_text(_print(client, admin_headers, "sale", sale["id"]))
+    assert "0770 98 76 54" in text
+    assert "0550 12 34 56" not in text

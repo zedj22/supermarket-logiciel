@@ -39,6 +39,34 @@ class PrintPreviewResult {
   final String filename;
 }
 
+/// Localized headline for a failed `POST /print` (envelope code first).
+///
+/// Shared by the preview dialog and the post-sale auto-print path (§17.6).
+String printFetchMessage(DioException error, String loc) {
+  switch (backendErrorCode(error)) {
+    case 'PRINT_RENDER_FAILED':
+      return AppStrings.t('print_render_failed', loc);
+    case 'MISSING_FONT':
+      return AppStrings.t('missing_font', loc);
+    case 'VALIDATION_ERROR':
+      return AppStrings.t('validation_error', loc);
+    case 'FORBIDDEN':
+    case 'AUTHORIZATION_ERROR':
+      return AppStrings.t('permission_denied', loc);
+    case 'UNAUTHORIZED':
+    case 'AUTHENTICATION_ERROR':
+      return AppStrings.t('session_expired_login', loc);
+    case 'NOT_FOUND':
+      return AppStrings.t('print_preview_failed', loc);
+    default:
+      return posApiError(
+        error,
+        loc,
+        fallbackKey: 'print_preview_failed',
+      ).message;
+  }
+}
+
 Future<PrintPreviewResult?> showPrintPreviewDialog(
   BuildContext context, {
   required String documentType,
@@ -120,7 +148,7 @@ class _PrintPreviewDialogState extends ConsumerState<PrintPreviewDialog> {
         _doc = null;
         _loading = false;
         // Typed envelope codes first (§16.1), generic preview key after.
-        _error = _printFetchMessage(e, _loc);
+        _error = printFetchMessage(e, _loc);
       });
     } catch (_) {
       if (!mounted || requestId != _requestId) return;
@@ -129,32 +157,6 @@ class _PrintPreviewDialogState extends ConsumerState<PrintPreviewDialog> {
         _loading = false;
         _error = AppStrings.t('print_preview_failed', _loc);
       });
-    }
-  }
-
-  /// Localized headline for a failed `POST /print` (envelope code first).
-  String _printFetchMessage(DioException error, String loc) {
-    switch (backendErrorCode(error)) {
-      case 'PRINT_RENDER_FAILED':
-        return AppStrings.t('print_render_failed', loc);
-      case 'MISSING_FONT':
-        return AppStrings.t('missing_font', loc);
-      case 'VALIDATION_ERROR':
-        return AppStrings.t('validation_error', loc);
-      case 'FORBIDDEN':
-      case 'AUTHORIZATION_ERROR':
-        return AppStrings.t('permission_denied', loc);
-      case 'UNAUTHORIZED':
-      case 'AUTHENTICATION_ERROR':
-        return AppStrings.t('session_expired_login', loc);
-      case 'NOT_FOUND':
-        return AppStrings.t('print_preview_failed', loc);
-      default:
-        return posApiError(
-          error,
-          loc,
-          fallbackKey: 'print_preview_failed',
-        ).message;
     }
   }
 

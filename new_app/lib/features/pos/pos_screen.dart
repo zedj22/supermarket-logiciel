@@ -35,6 +35,7 @@
 // field, so `+` keeps working without the mouse.
 import 'dart:io';
 
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -50,6 +51,7 @@ import '../packs/pack_models.dart';
 import '../products/models.dart';
 import '../products/selling_unit_picker.dart';
 import '../products/variant_picker.dart';
+import '../settings/settings_provider.dart';
 import 'customer_picker_dialog.dart';
 import 'holds_dialog.dart';
 import 'invoice_discount_dialog.dart';
@@ -63,6 +65,9 @@ import 'pos_quantity.dart';
 import 'pos_qty_shortcuts.dart';
 import 'pos_toast.dart';
 import 'price_override_dialog.dart';
+import 'print_document.dart';
+import 'print_preview_dialog.dart';
+import 'print_service.dart';
 import 'qty_multiplier_dialog.dart';
 import 'sale_history_dialog.dart';
 
@@ -700,6 +705,99 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     ref.read(posSearchProvider.notifier).load();
     ref.read(favoritesProvider.notifier).load();
     _refreshArViewsIfIndebt(result);
+    // §17.6 print hook runs last: the sale is committed, the cart is gone
+    // and the success toast is up — printing can never undo any of that.
+    await _maybeAutoPrint(result);
+  }
+
+  /// Post-sale print hook (POS workflow §9, Phase 17 §17.6).
+  ///
+  /// `ask_before_print` shows a "Print invoice?" dialog and prints only on
+  /// yes; otherwise `auto_print_invoice` prints straight away; with both off
+  /// (the fresh-install default) nothing happens and the cashier prints from
+  /// the sale detail exactly as before.  Every failure is a localized toast —
+  /// a completed sale is never reported as failed because of a printer.
+  Future<void> _maybeAutoPrint(CheckoutResult result) async {
+    final store = await loadStoreSettingsOnce(ref);
+    if (!mounted || store == null) return;
+    if (store.askBeforePrint) {
+      if (!await _confirmPrintInvoice()) return;
+    } else if (!store.autoPrintInvoice) {
+      return;
+    }
+    await _printInvoice(result, paper: store.defaultPaper);
+  }
+
+  Future<bool> _confirmPrintInvoice() async {
+    final loc = ref.read(localeProvider).flutterLocale.languageCode;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        key: const Key('ask-print-dialog'),
+        title: Text(AppStrings.t('print', loc)),
+        content: Text(AppStrings.t('ask_before_print_question', loc)),
+        actions: [
+          TextButton(
+            key: const Key('ask-print-cancel'),
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(AppStrings.t('cancel', loc)),
+          ),
+          ElevatedButton(
+            key: const Key('ask-print-confirm'),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(AppStrings.t('confirm', loc)),
+          ),
+        ],
+      ),
+    );
+    return confirmed ?? false;
+  }
+
+  /// Fetches the backend PDF for [paper] and hands it to the system print
+  /// dialog.  Any failure — fetch or print — degrades to an error toast.
+  Future<void> _printInvoice(CheckoutResult result, {required String paper}) async {
+    final loc = ref.read(localeProvider).flutterLocale.languageCode;
+    String? deviceId;
+    try {
+      deviceId = await ref.read(posDeviceIdProvider.future);
+    } catch (_) {
+      deviceId = null;
+    }
+    if (!mounted) return;
+    try {
+      final doc = await fetchPrintDocument(
+        ref.read(apiClientProvider).dio,
+        documentType: 'sale',
+        documentId: result.id,
+        paper: paper,
+        locale: loc,
+        deviceId: deviceId,
+      );
+      if (!mounted) return;
+      await ref.read(printServiceProvider).printPdf(
+            doc.bytes,
+            paper: doc.paper,
+            filename: doc.filename,
+          );
+    } on PrintServiceException catch (e) {
+      _autoPrintFailed(
+        e.code != null ? AppStrings.t(e.code!, loc) : AppStrings.t('print_failed', loc),
+      );
+    } on DioException catch (e) {
+      _autoPrintFailed(printFetchMessage(e, loc));
+    } catch (_) {
+      _autoPrintFailed(AppStrings.t('print_failed', loc));
+    }
+  }
+
+  void _autoPrintFailed(String message) {
+    if (!mounted) return;
+    showPosToast(
+      context,
+      message: message,
+      kind: PosToastKind.error,
+      key: const Key('auto-print-failed-toast'),
+    );
   }
 
   /// Fix Round 2 (debt balance bug): a credit sale raises the customer's

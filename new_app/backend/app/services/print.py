@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 
 import structlog
 
+from app.core.config import settings
 from app.core.exceptions import AppError
 from app.core.filenames import sanitize_filename
 from app.models.audit import AuditLog
@@ -31,6 +32,7 @@ from app.models.user import User
 from app.printing.document_data import (
     DocumentData,
     DocumentNames,
+    StoreBlock,
     build_return_document,
     build_sale_document,
 )
@@ -41,6 +43,7 @@ from app.schemas.sale import SaleResponse
 from app.services.base import BaseService
 from app.services.returns import ReturnService
 from app.services.sale import SaleService
+from app.services.settings import SettingsService
 
 logger = structlog.get_logger(__name__)
 
@@ -136,7 +139,9 @@ class PrintService(BaseService):
         if req.document_type == "sale":
             sale: SaleResponse = SaleService(self.db).get_sale(req.document_id)
             return (
-                build_sale_document(sale, locale=req.locale),
+                self._with_store_identity(
+                    build_sale_document(sale, locale=req.locale)
+                ),
                 sale.invoice_number,
             )
         if req.document_type == "return":
@@ -146,7 +151,9 @@ class PrintService(BaseService):
                 cashier=self._user_name(ret.user_id),
             )
             return (
-                build_return_document(ret, locale=req.locale, names=names),
+                self._with_store_identity(
+                    build_return_document(ret, locale=req.locale, names=names)
+                ),
                 ret.return_number,
             )
         # ``document_type`` is allowlisted to sale/return at the schema
@@ -159,6 +166,25 @@ class PrintService(BaseService):
             status_code=500,
             message_key="print_render_failed",
         )
+
+    def _with_store_identity(self, data: DocumentData) -> DocumentData:
+        """Stamp the receipt header with the stored store identity (§17.6).
+
+        The builders are deliberately DB-free (G19), so the print path is
+        where ``app_settings`` is read: name, phone, address and the
+        invoice footer the owner typed into Settings.  ``SettingsService``
+        never writes, so an install that has never saved Settings renders
+        exactly what it rendered before — ``STORE_NAME`` from ``.env`` and
+        no contact block.
+        """
+        row = SettingsService(self.db).get()
+        data.store = StoreBlock(
+            name=row.store_name or settings.STORE_NAME,
+            phone=_present(row.store_phone),
+            address=_present(row.store_address),
+            footer=_present(row.invoice_footer),
+        )
+        return data
 
     def _customer_name(self, customer_id: uuid.UUID | None) -> str | None:
         if customer_id is None:
@@ -254,3 +280,10 @@ class PrintService(BaseService):
 
 def _ms(started: float) -> int:
     return int((time.perf_counter() - started) * 1000)
+
+
+def _present(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None

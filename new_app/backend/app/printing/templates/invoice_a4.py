@@ -213,6 +213,10 @@ def build_flowables(data: DocumentData) -> list[Flowable]:
     story: list[Flowable] = []
 
     story.append(_p(data.store.name, 18, rtl, bold=True, align="center"))
+    if data.store.phone:
+        story.append(_p(data.store.phone, 10, rtl, align="center"))
+    if data.store.address:
+        story.append(_p(data.store.address, 10, rtl, align="center"))
     story.append(_p(data.header.document_title, 13, rtl, align="center"))
     if data.header.is_void:
         banner_parts = [label("status_void", locale)]
@@ -236,6 +240,10 @@ def build_flowables(data: DocumentData) -> list[Flowable]:
     if data.meta.note:
         story.append(Spacer(1, 3 * mm))
         story.append(_p(f"{label('note', locale)}: {data.meta.note}", 9.5, rtl))
+
+    if data.store.footer:
+        story.append(Spacer(1, 4 * mm))
+        story.append(_p(data.store.footer, 9.5, rtl, align="center"))
 
     story.append(Spacer(1, 6 * mm))
     story.append(

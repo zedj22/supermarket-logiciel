@@ -25,6 +25,7 @@ import '../auth/permission_helpers.dart';
 import '../returns/return_create_dialog.dart';
 import '../returns/return_providers.dart';
 import '../returns/return_void_dialog.dart';
+import '../settings/settings_provider.dart';
 import 'pos_error_message.dart';
 import 'pos_models.dart';
 import 'pos_providers.dart';
@@ -261,11 +262,14 @@ class _SaleDetailDialogState extends ConsumerState<SaleDetailDialog> {
     } catch (_) {
       deviceId = null;
     }
+    // §17.6: the owner's default paper opens the preview pre-selected.
+    final store = await loadStoreSettingsOnce(ref);
     if (!mounted) return;
     final result = await showPrintPreviewDialog(
       context,
       documentType: 'sale',
       documentId: sale.id,
+      initialPaper: store?.defaultPaper ?? '80mm',
       deviceId: deviceId,
     );
     if (result == null || !mounted) return; // cancelled — neutral

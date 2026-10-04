@@ -174,3 +174,21 @@ final settingsProvider =
     () => ref.read(localeProvider).flutterLocale.languageCode,
   );
 });
+
+/// Server-owned settings, fetched at most once per session (§17.6).
+///
+/// Returns `null` when they cannot be read — offline, a test client with no
+/// settings endpoint, or a load already in flight — so callers fall back to
+/// the documented fresh-install defaults (80 mm, no auto print) instead of
+/// failing the action they were about to perform.
+Future<StoreSettings?> loadStoreSettingsOnce(WidgetRef ref) async {
+  final current = ref.read(settingsProvider);
+  if (current.settings != null) return current.settings;
+  if (current.status != SettingsStatus.idle) return null;
+  try {
+    await ref.read(settingsProvider.notifier).load();
+  } catch (_) {
+    return null;
+  }
+  return ref.read(settingsProvider).settings;
+}

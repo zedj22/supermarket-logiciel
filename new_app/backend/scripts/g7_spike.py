@@ -10,6 +10,7 @@ Run:  python scripts/g7_spike.py
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import re
@@ -140,7 +141,20 @@ def stream_data(obj: bytes) -> bytes | None:
     if not m:
         return None
     data = m.group(1).rstrip(b"\r\n")
-    if b"/FlateDecode" in obj[: m.start()]:
+    head = obj[: m.start()]
+    # ReportLab wraps compressed page content in [ /ASCII85Decode /FlateDecode ]
+    # (what /api/v1/print returns); ASCII85 must be undone first.
+    if b"/ASCII85Decode" in head:
+        payload = data.strip()
+        if not payload.startswith(b"<~"):
+            payload = b"<~" + payload
+        if not payload.endswith(b"~>"):
+            payload = payload + b"~>"
+        try:
+            data = base64.a85decode(payload, adobe=True)
+        except ValueError:
+            return None
+    if b"/FlateDecode" in head:
         try:
             data = zlib.decompress(data)
         except zlib.error:

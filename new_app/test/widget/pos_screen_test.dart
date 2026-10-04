@@ -332,6 +332,7 @@ void _mockDio(
   bool restoreNetworkError = false,
   int? restoreErrorStatus,
   List<String>? recordPaths,
+  Map<String, dynamic>? settingsBody,
 }) {
   void record(String path) => recordPaths?.add(path);
   printRequestBodies.clear();
@@ -409,6 +410,10 @@ void _mockDio(
         );
       }
       return {'items': sellingUnits, 'total': sellingUnits.length};
+    }
+    if (path == '/api/v1/settings') {
+      // §17.6 print settings; the default keeps the pre-§17.6 behaviour.
+      return settingsBody ?? <String, dynamic>{'items': <dynamic>[]};
     }
     return _defaultBody(path);
   }
@@ -2009,6 +2014,7 @@ void main() {
       WidgetTester tester, {
       PrintService? printService,
       AppLocale locale = AppLocale.en,
+      Map<String, dynamic>? settingsBody,
     }) async {
       final mock = MockDio();
       _mockDio(
@@ -2020,6 +2026,7 @@ void main() {
           'page_size': 50,
         },
         saleDetailBody: saleDetailJson(),
+        settingsBody: settingsBody,
       );
       await _pumpApp(
         tester,
@@ -2136,6 +2143,24 @@ void main() {
       await pumpWithHistory(tester);
       await openDetail(tester);
       expect(find.byKey(const Key('sale-reprint')), findsOneWidget);
+    });
+
+    testWidgets('print preview opens on the configured default paper (§17.6)',
+        (tester) async {
+      await pumpWithHistory(
+        tester,
+        settingsBody: <String, dynamic>{'default_paper': 'A4'},
+      );
+      await openDetail(tester);
+
+      await tester.tap(find.byKey(const Key('sale-print')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('print-preview-dialog')), findsOneWidget);
+      expect(_fakePreview.papers, <String>['A4']);
+      expect(printRequestBodies, hasLength(1));
+      expect(printRequestBodies.single['paper'], 'A4');
+      expect(printRequestBodies.single['document_type'], 'sale');
     });
 
     testWidgets('print failure → localized error, never success',
@@ -8779,6 +8804,160 @@ void main() {
       expect(qtyAt(tester, 0), '5');
       expect(find.byKey(const Key('qty-multiplier-dialog')), findsOneWidget);
       expect(focusedFieldKey(tester), 'qty-multiplier-input');
+      expect(tester.takeException(), isNull);
+    });
+  });
+
+  group('print settings (§17.6)', () {
+    ProviderContainer containerOf(WidgetTester tester) =>
+        ProviderScope.containerOf(
+          tester.element(find.byKey(const Key('pos-screen'))),
+          listen: false,
+        );
+
+    Map<String, Object> settingsJson({
+      bool askBeforePrint = false,
+      bool autoPrintInvoice = false,
+      String defaultPaper = '80mm',
+    }) =>
+        <String, Object>{
+          'store_name': 'Supermarket Pro',
+          'store_phone': '',
+          'store_address': '',
+          'invoice_footer': '',
+          'default_paper': defaultPaper,
+          'ask_before_print': askBeforePrint,
+          'auto_print_invoice': autoPrintInvoice,
+          'allow_debt': true,
+          'low_stock_threshold': 5,
+        };
+
+    Future<void> checkout(WidgetTester tester) async {
+      containerOf(tester).read(posCartProvider.notifier).addLine(
+            const CartLine(
+              productId: _productId,
+              name: 'Bread',
+              quantity: '1',
+              unitPrice: '9',
+            ),
+          );
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('pos-pay-button')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('payment-dialog')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('payment-submit')));
+      await tester.pumpAndSettle(const Duration(seconds: 1));
+    }
+
+    testWidgets('defaults never print and never prompt', (tester) async {
+      final mock = MockDio();
+      _mockDio(mock, settingsBody: settingsJson());
+      final printer = _FakePrintService();
+      await _pumpApp(tester, dio: mock, printService: printer);
+
+      await checkout(tester);
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('ask-print-dialog')), findsNothing);
+      expect(printRequestBodies, isEmpty);
+      expect(printer.printedPdfs, isEmpty);
+      expect(find.byKey(const Key('checkout-success-snackbar')), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('auto_print_invoice prints on the default paper after checkout',
+        (tester) async {
+      final mock = MockDio();
+      _mockDio(
+        mock,
+        settingsBody: settingsJson(autoPrintInvoice: true, defaultPaper: 'A4'),
+      );
+      final printer = _FakePrintService();
+      await _pumpApp(tester, dio: mock, printService: printer);
+
+      await checkout(tester);
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('ask-print-dialog')), findsNothing);
+      expect(printRequestBodies, hasLength(1));
+      expect(printRequestBodies.single['document_type'], 'sale');
+      expect(printRequestBodies.single['paper'], 'A4');
+      expect(printRequestBodies.single['document_id'], isNotEmpty);
+      expect(printer.printedPapers, <String>['A4']);
+      // The sale is reported completed whether or not the print went out.
+      expect(find.byKey(const Key('checkout-success-snackbar')), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('ask_before_print: nothing prints until the cashier agrees',
+        (tester) async {
+      final mock = MockDio();
+      _mockDio(mock, settingsBody: settingsJson(askBeforePrint: true));
+      final printer = _FakePrintService();
+      await _pumpApp(tester, dio: mock, printService: printer);
+
+      await checkout(tester);
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('ask-print-dialog')), findsOneWidget);
+      expect(
+        find.text(AppStrings.t('ask_before_print_question', 'en')),
+        findsOneWidget,
+      );
+      expect(printRequestBodies, isEmpty);
+      expect(printer.printedPdfs, isEmpty);
+
+      await tester.tap(find.byKey(const Key('ask-print-cancel')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('ask-print-dialog')), findsNothing);
+      expect(printRequestBodies, isEmpty);
+      expect(printer.printedPdfs, isEmpty);
+      expect(find.byKey(const Key('checkout-success-snackbar')), findsOneWidget);
+    });
+
+    testWidgets('ask_before_print: confirming prints the invoice', (tester) async {
+      final mock = MockDio();
+      _mockDio(mock, settingsBody: settingsJson(askBeforePrint: true));
+      final printer = _FakePrintService();
+      await _pumpApp(tester, dio: mock, printService: printer);
+
+      await checkout(tester);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('ask-print-confirm')));
+      await tester.pumpAndSettle();
+
+      expect(printRequestBodies, hasLength(1));
+      expect(printRequestBodies.single['paper'], '80mm');
+      expect(printer.printedPapers, <String>['80mm']);
+      expect(find.byKey(const Key('checkout-success-snackbar')), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a failed auto print is a toast, never a failed sale',
+        (tester) async {
+      final mock = MockDio();
+      _mockDio(mock, settingsBody: settingsJson(autoPrintInvoice: true));
+      final printer = _FakePrintService(fail: true);
+      await _pumpApp(tester, dio: mock, printService: printer);
+
+      await checkout(tester);
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const Key('auto-print-failed-toast')),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining(AppStrings.t('print_failed', 'en')),
+        findsWidgets,
+      );
+      expect(printer.printedPdfs, isEmpty);
+      // Sale completed — cart cleared, payment dialog gone, no exception.
+      // (The error toast replaces the success toast: toasts never stack.)
+      expect(containerOf(tester).read(posCartProvider).isEmpty, isTrue);
+      expect(find.byKey(const Key('payment-dialog')), findsNothing);
+      expect(find.byKey(const Key('ask-print-dialog')), findsNothing);
       expect(tester.takeException(), isNull);
     });
   });

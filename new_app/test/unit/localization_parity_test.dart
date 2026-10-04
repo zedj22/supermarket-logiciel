@@ -94,10 +94,10 @@ void main() {
     });
 
     test('key count matches the Phase 17 baseline', () {
-      // Measured at §17.3.  Update this deliberately when a subphase adds
-      // strings — an unexplained drop means keys were deleted from one
-      // map only.
-      expect(_map('en').keys.length, 859);
+      // Measured at §17.3 (859); §17.6 added `ask_before_print_question`
+      // (860).  Update this deliberately when a subphase adds strings — an
+      // unexplained drop means keys were deleted from one map only.
+      expect(_map('en').keys.length, 860);
       expect(_map('ar').keys.length, _map('en').keys.length);
       expect(_map('fr').keys.length, _map('en').keys.length);
     });
