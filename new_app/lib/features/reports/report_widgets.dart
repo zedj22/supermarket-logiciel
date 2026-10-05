@@ -4,9 +4,13 @@
 // `formatMoney` (trailing-zero trim only) or a date label (§8 note: no
 // screen may compute money). Charts are plain Flutter widgets per G24 —
 // bar heights are display-only ratios of already-computed values.
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../../core/strings.dart';
+import '../../core/widgets/table_header.dart';
+import '../../theme/app_theme.dart';
 import 'report_tones.dart';
 import 'reports_providers.dart';
 
@@ -167,8 +171,21 @@ class ReportColumn {
   final bool numeric;
 }
 
-/// Horizontally scrollable `DataTable` with an optional totals footer
-/// (§12.2 mirrors this row in CSV exports).
+/// Horizontally scrollable report table with a **pinned** heading and an
+/// optional pinned totals footer (§12.2 mirrors the totals row in CSV
+/// exports).
+///
+/// The heading used to live inside the same vertical scroll view as the
+/// rows, so the column labels disappeared as soon as you scrolled past the
+/// first screen. It now sits above the scrolling body — and because the
+/// header and every row are laid out from the *same* resolved column
+/// widths, the labels stay glued to their cells in light/dark/grey, under
+/// RTL, and while the horizontal scroller moves.
+///
+/// Column widths are content-aware: each column gets at least the space its
+/// widest figure needs (money is never clipped), the slack is handed out by
+/// weight, and if the sum exceeds the viewport the table scrolls sideways
+/// with header and rows in lockstep.
 class ReportTable extends StatelessWidget {
   const ReportTable({
     super.key,
@@ -185,12 +202,113 @@ class ReportTable extends StatelessWidget {
   final String loc;
   final String rowKeyPrefix;
 
+  /// Rough advance width of one glyph at the 14px body size, plus the
+  /// 12+12 cell padding and a little slack. Deliberately approximate: the
+  /// table only needs a sane *minimum*, it never needs to be exact.
+  static const double _glyph = 7.6;
+  static const double _cellSlack = 30;
+  static const double _minColumn = 72;
+  static const double _maxColumn = 280;
+
+  static double _estimate(String value) =>
+      (value.length * _glyph + _cellSlack).clamp(_minColumn, _maxColumn);
+
+  /// Resolves one width per column that both the heading and every row use.
+  List<double> _resolveWidths(double viewport) {
+    final mins = <double>[];
+    final weights = <int>[];
+    for (var c = 0; c < columns.length; c++) {
+      final col = columns[c];
+      var est = _estimate(AppStrings.t(col.labelKey, loc));
+      if (col.numeric) {
+        // Money and counts must never be ellipsised away, so numeric
+        // columns are sized from their widest figure, not from the label.
+        for (final row in rows) {
+          if (c < row.length) est = math.max(est, _estimate(row[c]));
+        }
+        final totals = totalsRow;
+        if (totals != null && c < totals.length) {
+          est = math.max(est, _estimate(totals[c]));
+        }
+      }
+      mins.add(col.width ?? est);
+      weights.add(col.width != null ? 0 : (col.numeric ? 2 : 3));
+    }
+    if (mins.isEmpty) return const <double>[];
+    final sumMin = mins.fold<double>(0, (a, b) => a + b);
+    final tableWidth = math.max(viewport, sumMin);
+    final extra = tableWidth - sumMin;
+    var weightSum = weights.fold<int>(0, (a, b) => a + b);
+    if (weightSum == 0) {
+      // Every column is explicitly sized — split the leftover evenly so the
+      // row still fills the table instead of stopping short.
+      weightSum = mins.length;
+      return [for (final min in mins) min + extra / weightSum];
+    }
+    return [
+      for (var c = 0; c < mins.length; c++)
+        mins[c] + extra * weights[c] / weightSum,
+    ];
+  }
+
+  /// Header/body share this so a label can never drift off its column.
+  Widget _cell(int c, Widget child, List<double> widths) => SizedBox(
+        width: widths[c],
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          child: child,
+        ),
+      );
+
+  Widget _headerText(
+    int c,
+    List<double> widths, {
+    required TextStyle style,
+  }) {
+    final numeric = columns[c].numeric;
+    return _cell(
+      c,
+      Text(
+        AppStrings.t(columns[c].labelKey, loc),
+        key: Key('${columns[c].labelKey}-header'),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        textAlign: numeric ? TextAlign.end : TextAlign.start,
+        textDirection: numeric ? TextDirection.ltr : null,
+        style: style,
+      ),
+      widths,
+    );
+  }
+
+  Widget _valueText(
+    int c,
+    String value, {
+    required Key key,
+    required TextStyle style,
+    required List<double> widths,
+  }) {
+    final numeric = columns[c].numeric;
+    return _cell(
+      c,
+      Text(
+        value,
+        key: key,
+        textAlign: numeric ? TextAlign.end : TextAlign.start,
+        // Money/percent/dates stay LTR under the RTL locale so negatives
+        // never mirror.
+        textDirection: numeric ? TextDirection.ltr : null,
+        style: style,
+      ),
+      widths,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final headerStyle = theme.textTheme.bodySmall
-        ?.copyWith(fontWeight: FontWeight.w700);
-    final bodyStyle = theme.textTheme.bodyMedium;
+    final headerStyle = AppTheme.tableHeader(theme);
+    final bodyStyle = AppTheme.body(theme);
     final stripeColor = theme.colorScheme.surfaceContainerLow;
     // Semantic column accents (profit green, returns orange — else null).
     final colTones = <ReportMetricTone?>[
@@ -202,103 +320,116 @@ class ReportTable extends StatelessWidget {
         ? reportValueColor(raw, colTones[c], theme)
         : null;
 
-    // The DataTable sits inside a horizontal scroll view; pinning its
-    // minWidth to the viewport and giving every column a flex width makes
-    // the table fill the available width (columns share the slack) while
-    // still scrolling horizontally when the intrinsic columns overflow.
+    TextStyle dataStyle(int c, String raw) {
+      final color = cellColor(c, raw);
+      return color == null ? bodyStyle : bodyStyle.copyWith(color: color);
+    }
+
     return LayoutBuilder(
       builder: (context, constraints) {
         final viewport = constraints.maxWidth.isFinite
             ? constraints.maxWidth
             : 0.0;
-        return SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: ConstrainedBox(
-            constraints: BoxConstraints(minWidth: viewport),
-            child: SingleChildScrollView(
-              child: DataTable(
-                headingRowColor: WidgetStatePropertyAll(
-                  theme.colorScheme.surfaceContainerHighest,
-                ),
-                columns: [
-                  for (final col in columns)
-                    DataColumn(
-                      label: Text(
-                        AppStrings.t(col.labelKey, loc),
-                        key: Key('${col.labelKey}-header'),
-                        style: headerStyle,
-                      ),
-                      numeric: col.numeric,
-                      columnWidth: const IntrinsicColumnWidth(flex: 1.0),
-                    ),
-                ],
-                rows: [
-                  for (var i = 0; i < rows.length; i++)
-                    DataRow(
-                      // Light zebra striping — theme tonal color only, so
-                      // light/dark and both brand themes stay coherent.
-                      color: i.isOdd
-                          ? WidgetStatePropertyAll<Color?>(stripeColor)
-                          : null,
-                      cells: [
-                        for (var c = 0;
-                            c < columns.length && c < rows[i].length;
-                            c++)
-                          DataCell(
-                            Text(
-                              rows[i][c],
-                              key: Key('$rowKeyPrefix-$i-$c'),
-                              style: cellColor(c, rows[i][c]) == null
-                                  ? bodyStyle
-                                  : bodyStyle?.copyWith(
-                                      color: cellColor(c, rows[i][c]),
-                                    ),
-                              // Money/percent/dates stay LTR under the
-                              // RTL locale so negatives never mirror.
-                              textDirection: columns[c].numeric
-                                  ? TextDirection.ltr
-                                  : null,
-                              textAlign: columns[c].numeric
-                                  ? TextAlign.end
-                                  : TextAlign.start,
-                            ),
-                          ),
-                      ],
-                    ),
-                  if (totalsRow != null)
-                    DataRow(
-                      // Stronger + tinted + bold: the totals row must read
-                      // as the summary line, not one more data row.
-                      color: WidgetStatePropertyAll(
-                        Color.alphaBlend(
-                          theme.colorScheme.primary.withValues(alpha: 0.06),
-                          theme.colorScheme.surfaceContainerHighest,
-                        ),
-                      ),
-                      cells: [
-                        for (var c = 0;
-                            c < columns.length && c < totalsRow!.length;
-                            c++)
-                          DataCell(
-                            Text(
-                              totalsRow![c],
-                              key: Key('report-totals-$c'),
-                              style: bodyStyle?.copyWith(
-                                fontWeight: FontWeight.w700,
-                                color: cellColor(c, totalsRow![c]),
-                              ),
-                              textDirection: columns[c].numeric
-                                  ? TextDirection.ltr
-                                  : null,
-                              textAlign: columns[c].numeric
-                                  ? TextAlign.end
-                                  : TextAlign.start,
-                            ),
-                          ),
-                      ],
+        final widths = _resolveWidths(viewport);
+        final tableWidth = widths.fold<double>(0, (a, b) => a + b);
+        final unboundedHeight = !constraints.maxHeight.isFinite;
+
+        Widget header() => TableHeaderRow(
+              testKey: const Key('report-table-header'),
+              children: [
+                for (var c = 0; c < columns.length; c++)
+                  _headerText(c, widths, style: headerStyle),
+              ],
+            );
+
+        Widget row(List<String> cells, int index) => Container(
+              key: Key('$rowKeyPrefix-$index'),
+              color: index.isOdd ? stripeColor : null,
+              padding: const EdgeInsets.symmetric(vertical: 10),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  for (var c = 0;
+                      c < columns.length && c < cells.length;
+                      c++)
+                    _valueText(
+                      c,
+                      cells[c],
+                      key: Key('$rowKeyPrefix-$index-$c'),
+                      style: dataStyle(c, cells[c]),
+                      widths: widths,
                     ),
                 ],
               ),
+            );
+
+        final body = unboundedHeight
+            // No bounded height (the caller owns the scroll): keep the rows
+            // in place rather than asserting an Expanded that would throw.
+            ? [for (var i = 0; i < rows.length; i++) row(rows[i], i)]
+            : <Widget>[
+                Expanded(
+                  child: ListView.separated(
+                    key: Key('$rowKeyPrefix-body'),
+                    itemCount: rows.length,
+                    separatorBuilder: (_, _) => Divider(
+                      height: 1,
+                      thickness: 0.6,
+                      color: theme.dividerColor,
+                    ),
+                    itemBuilder: (context, index) => row(rows[index], index),
+                  ),
+                ),
+              ];
+
+        // Pinned footer: the summary line stays readable instead of hiding
+        // behind three screens of rows.
+        Widget? totals;
+        final t = totalsRow;
+        if (t != null) {
+          totals = Container(
+            key: const Key('report-totals-row'),
+            padding: const EdgeInsets.symmetric(vertical: 10),
+            decoration: BoxDecoration(
+              color: Color.alphaBlend(
+                theme.colorScheme.primary.withValues(alpha: 0.06),
+                theme.dataTableTheme.headingRowColor
+                        ?.resolve(const <WidgetState>{}) ??
+                    theme.colorScheme.surfaceContainerHighest,
+              ),
+              border: Border(
+                top: BorderSide(color: theme.dividerColor, width: 1),
+              ),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                for (var c = 0; c < columns.length && c < t.length; c++)
+                  _valueText(
+                    c,
+                    t[c],
+                    key: Key('report-totals-$c'),
+                    style: dataStyle(c, t[c]).copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                    widths: widths,
+                  ),
+              ],
+            ),
+          );
+        }
+
+        return SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: SizedBox(
+            width: math.max(tableWidth, viewport),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                header(),
+                ...body,
+                ?totals,
+              ],
             ),
           ),
         );

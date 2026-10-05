@@ -942,6 +942,32 @@ void main() {
       expectNoOverflow(tester);
     });
 
+    testWidgets('Phase 17 §17.2 the table heading is pinned above the rows',
+        (tester) async {
+      final dio = MockDio();
+      stubRequests(dio);
+      await pumpApp(tester, dio, size: const Size(1600, 900));
+
+      final header = find.byKey(const Key('products-table-header'));
+      final body = find.byKey(const Key('products-table-body'));
+      expect(header, findsOneWidget);
+      expect(body, findsOneWidget);
+      // Structurally the heading is a *sibling* of the scrolling body —
+      // if it were ever nested inside it, the labels would scroll away.
+      expect(find.descendant(of: body, matching: header), findsNothing);
+
+      final before = tester.getTopLeft(header);
+      expect(tester.getTopLeft(body).dy, greaterThan(before.dy));
+
+      await tester.drag(body, const Offset(0, -300));
+      await tester.pumpAndSettle();
+
+      expect(header, findsOneWidget);
+      expect(tester.getTopLeft(header), before,
+          reason: 'the heading must not travel with the rows');
+      expectNoOverflow(tester);
+    });
+
     testWidgets('narrow cards show status badge, pills, and unit pill',
         (tester) async {
       final dio = MockDio();

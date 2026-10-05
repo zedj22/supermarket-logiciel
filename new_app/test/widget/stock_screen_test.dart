@@ -556,6 +556,33 @@ void main() {
       expectNoOverflow(tester);
     });
 
+    testWidgets('Phase 17 §17.2 the stock heading is pinned above the list',
+        (tester) async {
+      final dio = MockDio();
+      stubRequests(dio);
+      await pumpApp(tester, dio, size: const Size(1366, 768));
+
+      final header = find.byKey(const Key('stock-table-header'));
+      final list = find.byKey(const Key('stock-list'));
+      expect(header, findsOneWidget);
+      expect(list, findsOneWidget);
+      // The heading sits *above* the scrolling list, never inside it.
+      final scroller = find.descendant(of: list, matching: find.byType(ListView));
+      expect(scroller, findsOneWidget);
+      expect(find.descendant(of: scroller, matching: header), findsNothing);
+
+      final before = tester.getTopLeft(header);
+      expect(tester.getTopLeft(scroller).dy, greaterThan(before.dy));
+
+      await tester.drag(scroller, const Offset(0, -120));
+      await tester.pumpAndSettle();
+
+      expect(header, findsOneWidget);
+      expect(tester.getTopLeft(header), before,
+          reason: 'the heading must not travel with the rows');
+      expectNoOverflow(tester);
+    });
+
     testWidgets('detail panel shows quantity, cost rows, adjust action',
         (tester) async {
       final dio = MockDio();

@@ -12,6 +12,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/strings.dart';
+import '../../core/widgets/section_header.dart';
 import '../../l10n/locale_provider.dart';
 import '../clients/customer_models.dart';
 import 'report_models.dart';
@@ -51,43 +52,13 @@ Widget _sectionTitle(
 }) {
   final accent =
       tone == null ? theme.colorScheme.primary : resolveReportTone(tone, theme);
-  final chipIcon = icon ?? (tone == null ? null : reportToneIcon(tone));
-  return Padding(
-    padding: const EdgeInsets.only(top: 16, bottom: 8),
-    child: Row(
-      children: [
-        if (chipIcon != null) ...[
-          Container(
-            width: 24,
-            height: 24,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              color: accent.withValues(alpha: 0.14),
-              borderRadius: BorderRadius.circular(6),
-            ),
-            child: Icon(chipIcon, size: 15, color: accent),
-          ),
-          const SizedBox(width: 8),
-        ],
-        Text(
-          AppStrings.t(titleKey, loc),
-          key: Key('report-section-$titleKey'),
-          style: theme.textTheme.titleMedium?.copyWith(
-            fontWeight: FontWeight.w700,
-          ),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Container(
-            height: 3,
-            decoration: BoxDecoration(
-              color: accent.withValues(alpha: 0.45),
-              borderRadius: BorderRadius.circular(2),
-            ),
-          ),
-        ),
-      ],
-    ),
+  // One shared implementation (lib/core/widgets/section_header.dart) so the
+  // reports, dashboard and devices section breaks read identically.
+  return SectionHeader(
+    title: AppStrings.t(titleKey, loc),
+    titleKey: titleKey,
+    accent: accent,
+    icon: icon ?? (tone == null ? null : reportToneIcon(tone)),
   );
 }
 
@@ -235,25 +206,32 @@ class _FinancialTabState extends ConsumerState<FinancialTab>
                 if (r.deviceBreakdown.isEmpty)
                   Text(AppStrings.t('state_no_data', loc))
                 else
-                  ReportTable(
-                    key: const Key('financial-devices'),
-                    rowKeyPrefix: 'device-row',
-                    loc: loc,
-                    columns: const [
-                      ReportColumn('col_device'),
-                      ReportColumn('col_count', numeric: true),
-                      ReportColumn('col_net_revenue', numeric: true),
-                      ReportColumn('col_share', numeric: true),
-                    ],
-                    rows: [
-                      for (final d in r.deviceBreakdown)
-                        [
-                          reportDeviceLabel(d.deviceId, loc),
-                          '${d.invoiceCount}',
-                          _m(d.netSales),
-                          _pct(d.sharePct),
-                        ],
-                    ],
+                  SizedBox(
+                    // Bounded so this table pins its heading and scrolls
+                    // its own rows instead of taking over the tab (§17.2).
+                    height: (44 + r.deviceBreakdown.length * 41)
+                        .clamp(120, 360)
+                        .toDouble(),
+                    child: ReportTable(
+                      key: const Key('financial-devices'),
+                      rowKeyPrefix: 'device-row',
+                      loc: loc,
+                      columns: const [
+                        ReportColumn('col_device'),
+                        ReportColumn('col_count', numeric: true),
+                        ReportColumn('col_net_revenue', numeric: true),
+                        ReportColumn('col_share', numeric: true),
+                      ],
+                      rows: [
+                        for (final d in r.deviceBreakdown)
+                          [
+                            reportDeviceLabel(d.deviceId, loc),
+                            '${d.invoiceCount}',
+                            _m(d.netSales),
+                            _pct(d.sharePct),
+                          ],
+                      ],
+                    ),
                   ),
               ],
             ),

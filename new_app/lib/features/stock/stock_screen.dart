@@ -11,7 +11,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/colors.dart';
 import '../../core/strings.dart';
+import '../../core/widgets/status_chip.dart';
+import '../../core/widgets/table_header.dart';
 import '../../l10n/locale_provider.dart';
+import '../../theme/app_theme.dart';
 import '../auth/permission_helpers.dart';
 import 'adjust_dialog.dart';
 import 'inventory_models.dart';
@@ -24,6 +27,17 @@ StockLayoutMode stockLayoutModeFor(double width) {
   if (width >= 800) return StockLayoutMode.medium;
   return StockLayoutMode.narrow;
 }
+
+/// The three stock states map onto the shared status tones, so every pill
+/// in the app gets the same brightness-aware tinted fill and foreground
+/// (§17.4 — no screen invents its own "green means fine" recipe). `null` is
+/// the archived state, which has no colour of its own.
+StatusTone stockTone(ProductStockStatus? status) => switch (status) {
+      ProductStockStatus.active => StatusTone.success,
+      ProductStockStatus.low => StatusTone.warning,
+      ProductStockStatus.out => StatusTone.error,
+      null => StatusTone.neutral,
+    };
 
 /// Localized label for a movement type (never hardcoded in widgets).
 String movementTypeLabel(String type, String loc) {
@@ -737,39 +751,37 @@ class _StockScreenState extends ConsumerState<StockScreen>
       clipBehavior: Clip.antiAlias,
       child: Column(
         children: [
-          // Header row
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            color: cs.surfaceContainerHighest.withValues(alpha: 0.45),
-            child: Row(
-              children: [
-                Expanded(flex: 3, child: _th(theme, AppStrings.t('name', loc))),
-                if (wide)
-                  Expanded(
-                      flex: 2,
-                      child: _th(theme, AppStrings.t('category', loc))),
-                SizedBox(
-                    width: 90,
-                    child: _th(theme, AppStrings.t('quantity', loc),
-                        numeric: true)),
-                SizedBox(
-                    width: 100,
-                    child: _th(theme, AppStrings.t('avg_cost', loc),
-                        numeric: true)),
-                SizedBox(
-                    width: 110,
-                    child: _th(theme, AppStrings.t('stock_value', loc),
-                        numeric: true)),
-                SizedBox(
-                    width: 76,
-                    child: _th(theme, AppStrings.t('status', loc),
-                        numeric: true)),
-                SizedBox(
-                    width: 48,
-                    child: _th(theme, AppStrings.t('actions', loc),
-                        numeric: true)),
-              ],
-            ),
+          // Header row — pinned above the scrolling body (§17.2).
+          TableHeaderRow(
+            testKey: const Key('stock-table-header'),
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            children: [
+              Expanded(flex: 3, child: _th(theme, AppStrings.t('name', loc))),
+              if (wide)
+                Expanded(
+                    flex: 2,
+                    child: _th(theme, AppStrings.t('category', loc))),
+              SizedBox(
+                  width: 90,
+                  child: _th(theme, AppStrings.t('quantity', loc),
+                      numeric: true)),
+              SizedBox(
+                  width: 100,
+                  child: _th(theme, AppStrings.t('avg_cost', loc),
+                      numeric: true)),
+              SizedBox(
+                  width: 110,
+                  child: _th(theme, AppStrings.t('stock_value', loc),
+                      numeric: true)),
+              SizedBox(
+                  width: 76,
+                  child: _th(theme, AppStrings.t('status', loc),
+                      numeric: true)),
+              SizedBox(
+                  width: 48,
+                  child: _th(theme, AppStrings.t('actions', loc),
+                      numeric: true)),
+            ],
           ),
           Expanded(
             child: ListView.separated(
@@ -891,20 +903,10 @@ class _StockScreenState extends ConsumerState<StockScreen>
                           width: 76,
                           child: Align(
                             alignment: AlignmentDirectional.centerEnd,
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 8, vertical: 3),
-                              decoration: BoxDecoration(
-                                color: statusColor.withValues(alpha: 0.12),
-                                borderRadius: BorderRadius.circular(999),
-                              ),
-                              child: Text(
-                                statusLabel,
-                                style: theme.textTheme.labelSmall?.copyWith(
-                                  color: statusColor,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
+                            child: StatusChip(
+                              label: statusLabel,
+                              tone: stockTone(status),
+                              dense: true,
                             ),
                           ),
                         ),
@@ -938,11 +940,10 @@ class _StockScreenState extends ConsumerState<StockScreen>
   Widget _th(ThemeData theme, String label, {bool numeric = false}) {
     return Text(
       label,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
       textAlign: numeric ? TextAlign.end : TextAlign.start,
-      style: theme.textTheme.labelSmall?.copyWith(
-        fontWeight: FontWeight.w700,
-        color: theme.colorScheme.onSurface.withValues(alpha: 0.55),
-      ),
+      style: AppTheme.tableHeader(theme),
     );
   }
 
@@ -1004,20 +1005,10 @@ class _StockScreenState extends ConsumerState<StockScreen>
                         ),
                       ),
                     ),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 3),
-                      decoration: BoxDecoration(
-                        color: statusColor.withValues(alpha: 0.12),
-                        borderRadius: BorderRadius.circular(999),
-                      ),
-                      child: Text(
-                        statusLabel,
-                        style: theme.textTheme.labelSmall?.copyWith(
-                          color: statusColor,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
+                    StatusChip(
+                      label: statusLabel,
+                      tone: stockTone(status),
+                      dense: true,
                     ),
                     if (canAdjust) ...[
                       const SizedBox(width: 4),
@@ -1220,34 +1211,10 @@ class _StockScreenState extends ConsumerState<StockScreen>
                         ?.copyWith(color: cs.outline),
                   ),
                 const SizedBox(height: 10),
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: statusColor.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Container(
-                        width: 8,
-                        height: 8,
-                        decoration: BoxDecoration(
-                          color: statusColor,
-                          shape: BoxShape.circle,
-                        ),
-                      ),
-                      const SizedBox(width: 6),
-                      Text(
-                        statusLabel,
-                        style: theme.textTheme.labelMedium?.copyWith(
-                          color: statusColor,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ],
-                  ),
+                StatusChip(
+                  label: statusLabel,
+                  tone: stockTone(status),
+                  leading: StatusDot(color: statusColor),
                 ),
                 const SizedBox(height: 12),
                 Text(

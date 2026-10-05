@@ -11,7 +11,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/colors.dart';
 import '../../core/strings.dart';
+import '../../core/widgets/table_header.dart';
 import '../../l10n/locale_provider.dart';
+import '../../theme/app_theme.dart';
 import '../auth/permission_helpers.dart';
 import '../pos/pos_toast.dart';
 import 'pack_detail_dialog.dart';
@@ -392,52 +394,37 @@ class _PacksScreenState extends ConsumerState<PacksScreen> {
     required bool canUpdate,
     required bool canArchive,
   }) {
-    final head = theme.textTheme.labelMedium?.copyWith(
-      fontWeight: FontWeight.w700,
-      color: theme.colorScheme.outline,
-    );
+    final head = AppTheme.tableHeader(theme);
     const widths = <int>[4, 2, 1, 2, 2, 2];
+
+    Widget th(int i, String key, {bool numeric = false}) => Expanded(
+          flex: widths[i],
+          child: Text(
+            AppStrings.t(key, loc),
+            key: Key('$key-header'),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: head,
+            textAlign: numeric ? TextAlign.end : TextAlign.start,
+          ),
+        );
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Padding(
-          key: const Key('packs-table-header'),
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          child: Row(
-            children: [
-              Expanded(
-                flex: widths[0],
-                child: Text(AppStrings.t('pack_name', loc), style: head),
-              ),
-              Expanded(
-                flex: widths[1],
-                child: Text(AppStrings.t('price', loc),
-                    style: head, textAlign: TextAlign.end),
-              ),
-              Expanded(
-                flex: widths[2],
-                child: Text(AppStrings.t('components', loc),
-                    style: head, textAlign: TextAlign.end),
-              ),
-              Expanded(
-                flex: widths[3],
-                child: Text(AppStrings.t('sum_of_parts', loc),
-                    style: head, textAlign: TextAlign.end),
-              ),
-              Expanded(
-                flex: widths[4],
-                child: Text(AppStrings.t('status', loc), style: head),
-              ),
-              Expanded(
-                flex: widths[5],
-                child: Text(AppStrings.t('actions', loc),
-                    style: head, textAlign: TextAlign.end),
-              ),
-            ],
-          ),
+        // Pinned heading: stays put while the pack list scrolls (§17.2).
+        TableHeaderRow(
+          testKey: const Key('packs-table-header'),
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          children: [
+            th(0, 'pack_name'),
+            th(1, 'price', numeric: true),
+            th(2, 'components', numeric: true),
+            th(3, 'sum_of_parts', numeric: true),
+            th(4, 'status'),
+            th(5, 'actions', numeric: true),
+          ],
         ),
-        const Divider(height: 1),
         Expanded(
           child: ListView.separated(
             key: const Key('packs-list'),

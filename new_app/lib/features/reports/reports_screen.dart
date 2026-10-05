@@ -12,6 +12,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/strings.dart';
+import '../../core/widgets/page_title.dart';
 import '../../l10n/locale_provider.dart';
 import '../auth/auth_provider.dart';
 import '../auth/permission_helpers.dart';
@@ -363,33 +364,30 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Text(
-                AppStrings.t('reports', loc),
-                key: const Key('reports-title'),
-                style: theme.textTheme.headlineSmall,
-              ),
-              const Spacer(),
-              if (canExport) ...[
-                OutlinedButton.icon(
-                  key: const Key('reports-export'),
-                  onPressed: (_exporting || !_exportReady()) ? null : _export,
-                  icon: _exporting
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.download_outlined, size: 18),
-                  label: Text(AppStrings.t('export_title', loc)),
-                ),
-              ],
-            ],
+          // Screen H1 (shared component) with the export action parked on
+          // the trailing edge — it drops below the title under 520px
+          // instead of squeezing the row.
+          PageTitle(
+            title: AppStrings.t('reports', loc),
+            titleKey: const Key('reports-title'),
+            trailing: canExport
+                ? OutlinedButton.icon(
+                    key: const Key('reports-export'),
+                    onPressed: (_exporting || !_exportReady()) ? null : _export,
+                    icon: _exporting
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.download_outlined, size: 18),
+                    label: Text(AppStrings.t('export_title', loc)),
+                  )
+                : null,
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 10),
           _buildFilterCard(theme, loc),
-          const SizedBox(height: 4),
+          const SizedBox(height: 10),
           TabBar(
             key: const Key('reports-tabbar'),
             controller: _tabController,

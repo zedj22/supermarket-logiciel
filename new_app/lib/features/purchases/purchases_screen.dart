@@ -17,7 +17,9 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/strings.dart';
+import '../../core/widgets/table_header.dart';
 import '../../l10n/locale_provider.dart';
+import '../../theme/app_theme.dart';
 import '../auth/permission_helpers.dart';
 import 'purchase_detail_dialog.dart';
 import 'purchase_form_dialog.dart';
@@ -387,44 +389,64 @@ class _PurchasesScreenState extends ConsumerState<PurchasesScreen> {
   }
 
   Widget _headerRow(ThemeData theme, String loc, {required bool wide}) {
-    return Padding(
-      key: const Key('purchases-table-header'),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      child: Row(
-        children: [
-          Expanded(flex: 3, child: Text(AppStrings.t('invoice_number', loc),
-              style: theme.textTheme.labelMedium)),
-          Expanded(flex: 3, child: Text(AppStrings.t('supplier', loc),
-              style: theme.textTheme.labelMedium)),
-          Expanded(flex: 2, child: Text(AppStrings.t('status', loc),
-              style: theme.textTheme.labelMedium)),
+    final style = AppTheme.tableHeader(theme);
+    return TableHeaderRow(
+      testKey: const Key('purchases-table-header'),
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      children: [
+        Expanded(
+          flex: 3,
+          child: Text(
+            AppStrings.t('invoice_number', loc),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: style,
+          ),
+        ),
+        Expanded(
+          flex: 3,
+          child: Text(
+            AppStrings.t('supplier', loc),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: style,
+          ),
+        ),
+        Expanded(
+          flex: 2,
+          child: Text(
+            AppStrings.t('status', loc),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: style,
+          ),
+        ),
+        Expanded(
+          flex: 2,
+          child: Text(
+            AppStrings.t('total', loc),
+            style: style,
+            textAlign: TextAlign.end,
+          ),
+        ),
+        Expanded(
+          flex: 2,
+          child: Text(
+            AppStrings.t('remaining', loc),
+            style: style,
+            textAlign: TextAlign.end,
+          ),
+        ),
+        if (wide)
           Expanded(
-            flex: 2,
+            flex: 3,
             child: Text(
-              AppStrings.t('total', loc),
-              style: theme.textTheme.labelMedium,
+              AppStrings.t('date', loc),
+              style: style,
               textAlign: TextAlign.end,
             ),
           ),
-          Expanded(
-            flex: 2,
-            child: Text(
-              AppStrings.t('remaining', loc),
-              style: theme.textTheme.labelMedium,
-              textAlign: TextAlign.end,
-            ),
-          ),
-          if (wide)
-            Expanded(
-              flex: 3,
-              child: Text(
-                AppStrings.t('date', loc),
-                style: theme.textTheme.labelMedium,
-                textAlign: TextAlign.end,
-              ),
-            ),
-        ],
-      ),
+      ],
     );
   }
 

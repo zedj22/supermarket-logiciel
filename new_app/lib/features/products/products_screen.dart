@@ -17,7 +17,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/colors.dart';
 import '../../core/shortcuts.dart';
 import '../../core/strings.dart';
+import '../../core/widgets/table_header.dart';
 import '../../l10n/locale_provider.dart';
+import '../../theme/app_theme.dart';
 import '../auth/permission_helpers.dart';
 import 'categories_dialog.dart';
 import 'models.dart';
@@ -74,23 +76,9 @@ String productStatusLabel(ProductStockStatus status, String loc) {
 }
 
 /// Deterministic subdued category color from identity/name (no DB change).
-Color categoryPillColor(String identity) {
-  const palette = <Color>[
-    Color(0xFF5B8FF9),
-    Color(0xFF5AD8A6),
-    Color(0xFF5D7092),
-    Color(0xFFF6BD16),
-    Color(0xFFE8684A),
-    Color(0xFF6DC8EC),
-    Color(0xFF9270CA),
-    Color(0xFFFF9D4D),
-  ];
-  var hash = 0;
-  for (final unit in identity.codeUnits) {
-    hash = (hash * 31 + unit) & 0x7fffffff;
-  }
-  return palette[hash % palette.length];
-}
+/// The palette itself lives with the other centralized tokens in
+/// `lib/core/colors.dart` — this alias keeps the screen's vocabulary.
+Color categoryPillColor(String identity) => AppColors.categoryIdentity(identity);
 
 /// Horizontal flex weights so the product column dominates without leaving
 /// intrinsic-width gaps. Actions stay compact (fixed width).
@@ -903,14 +891,7 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
       final inner = Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12),
         child: DefaultTextStyle(
-          style: header
-              ? theme.textTheme.labelLarge!.copyWith(
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w700,
-                  color: cs.onSurface.withValues(alpha: 0.82),
-                  letterSpacing: 0.2,
-                )
-              : theme.textTheme.bodyMedium!,
+          style: header ? tableHeaderStyle(context) : theme.textTheme.bodyMedium!,
           child: col.fixedWidth > 0
               ? SizedBox(width: col.fixedWidth, child: child)
               : Align(
@@ -1011,8 +992,8 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
           i++,
           Text(
             product.price,
-            style: theme.textTheme.bodyMedium?.copyWith(
-              fontSize: 13.5,
+            // Tabular figures so prices line up down the column.
+            style: AppTheme.numeric(theme, size: 13.5).copyWith(
               fontWeight: FontWeight.w700,
             ),
           ),
@@ -1024,8 +1005,8 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
             i++,
             Text(
               product.cost,
-              style: theme.textTheme.bodyMedium?.copyWith(
-                fontSize: 13,
+              style: AppTheme.numeric(theme, size: 13).copyWith(
+                fontWeight: FontWeight.w400,
                 color: cs.onSurface.withValues(alpha: 0.55),
               ),
             ),
@@ -1043,8 +1024,7 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
           Text(
             product.quantity,
             key: Key('product-qty-${product.id}'),
-            style: theme.textTheme.bodyMedium?.copyWith(
-              fontSize: 13.5,
+            style: AppTheme.numeric(theme, size: 13.5).copyWith(
               fontWeight: status == ProductStockStatus.active
                   ? FontWeight.w600
                   : FontWeight.w700,
@@ -1095,24 +1075,9 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
       key: const Key('products-table'),
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Material(
-          color: cs.surfaceContainerHighest.withValues(alpha: 0.9),
-          child: Container(
-            decoration: BoxDecoration(
-              border: Border(
-                bottom: BorderSide(
-                  color: cs.outline.withValues(alpha: 0.28),
-                ),
-              ),
-            ),
-            child: SizedBox(
-              height: 44,
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: headerCells(),
-              ),
-            ),
-          ),
+        TableHeaderRow(
+          testKey: const Key('products-table-header'),
+          children: headerCells(),
         ),
         Expanded(
           child: ListView.separated(
