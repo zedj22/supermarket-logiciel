@@ -376,7 +376,8 @@ def test_a4_meta_rows_span_themselves_and_never_the_item_rows() -> None:
     table = next(
         f
         for f in a4_flowables(data)
-        if isinstance(f, Table) and len(f._cellvalues[0]) == 8
+        # 7 cells: a customer invoice has no SKU column (§15.7 A1)
+        if isinstance(f, Table) and len(f._cellvalues[0]) == 7
     )
 
     def is_paragraph_row(row: list) -> bool:
@@ -419,7 +420,13 @@ def test_rendered_pdf_draws_name_then_value_row(locale: str) -> None:
     if locale == "ar":
         value.reverse()
     assert blocks[index + 1 : index + 4] == value
-    assert blocks[index + 4] == shape_text(f"{label('col_sku', locale)}: MILK-001")
+
+    # §15.7 A1/A2 — the line's identifiers never reach the customer paper.
+    drawn = " | ".join(blocks)
+    assert "MILK-001" not in drawn
+    assert BARCODE not in drawn
+    assert f"{label('col_sku', locale)}:" not in drawn
+    assert f"{label('barcode', locale)}:" not in drawn
 
 
 def test_arabic_product_name_is_shaped_exactly_once() -> None:
@@ -468,15 +475,18 @@ def test_normalization_is_locale_and_add_path_independent() -> None:
             for item in data.lines
         ]
 
-    baseline = snapshot(build_sale_document(payload, locale="en"))
+    en_doc = build_sale_document(payload, locale="en")
+    baseline = snapshot(en_doc)
     for locale in LOCALES:
         assert snapshot(build_sale_document(payload, locale=locale)) == baseline
 
-    table = _items(build_sale_document(payload, locale="en"))
-    assert table._nrows == 6  # (name + value + meta) for each of the two lines
-    assert "SKU1" in _texts(table, 2)[0]
-    assert BARCODE in _texts(table, 5)[0]
-    assert _texts(table, 1) == _texts(table, 4) == ["2 × piece", "100.00 DA", "200.00 DA"]
+    # §15.7 A1/A2 — identifiers are stripped from the customer document for
+    # EVERY locale, so the two add paths cannot produce different rows.
+    assert all(item.sku is None and item.barcode is None for item in en_doc.lines)
+
+    table = _items(en_doc)
+    assert table._nrows == 4  # (name + value) for each of the two lines
+    assert _texts(table, 1) == _texts(table, 3) == ["2 × piece", "100.00 DA", "200.00 DA"]
 
 
 # ─── 5. page budget ─────────────────────────────────────────────────────────

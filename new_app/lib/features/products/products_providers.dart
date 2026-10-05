@@ -248,6 +248,38 @@ class ProductsNotifier extends StateNotifier<ProductsState> {
     }
   }
 
+  /// Persist a stock change through the audited inventory journal.
+  ///
+  /// `PUT /products/{id}` deliberately has no `quantity` field (Phase 7 —
+  /// stock only ever moves via an adjustment), so this is the one path a
+  /// product form can use to actually save a quantity. `operation: set`
+  /// takes the NEW absolute base-unit stock and requires a reason.
+  ///
+  /// Unlike `inventoryProvider.adjust()` this never touches the inventory
+  /// list: an editor holding `inventory_adjust` but not `inventory_view`
+  /// would otherwise get a false 403 here.
+  Future<String?> setStock(
+    String productId,
+    String quantity,
+    String reason,
+  ) async {
+    try {
+      await _dio.post(
+        '/api/v1/inventory/adjust',
+        data: {
+          'product_id': productId,
+          'operation': 'set',
+          'quantity': quantity,
+          'reason': reason,
+        },
+      );
+      await load();
+      return null;
+    } on DioException catch (e) {
+      return _message(e);
+    }
+  }
+
   @override
   void dispose() {
     _debounce?.cancel();

@@ -148,6 +148,7 @@ LABELS: dict[str, tuple[str, str, str]] = {
     "sale_history": ("تاريخ البيع", "Date de vente", "Sale date"),
     "status": ("الحالة", "Statut", "Status"),
     "date": ("التاريخ", "Date", "Date"),
+    "time": ("الوقت", "Heure", "Time"),
     "customer": ("العميل", "Client", "Customer"),
     "cashier": ("البائع", "Caissier", "Cashier"),
     "note": ("ملاحظة", "Note", "Note"),

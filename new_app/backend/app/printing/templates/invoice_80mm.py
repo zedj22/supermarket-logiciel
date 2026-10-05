@@ -8,14 +8,21 @@ Normalized receipt item (identical for every sale line, every locale):
 
     Product name ................................ 72mm, spans all columns
     qty × unit   |   unit price   |   line total   34% / 33% / 33%
-    SKU: ABC123 (or barcode)  ·  Base: 24 unit       spans all columns
-    Discount: 5.00 DA                                spans all columns
+    Base: 24 unit  (selling-unit lines only)     spans all columns
+    Discount: 5.00 DA                            spans all columns
 
 Only the value row is a real 3-cell row; the name row and the optional
 meta/discount rows span it with ``SPAN (0,r)-(-1,r)``.  The item row itself
-must never be spanned — reportlab keeps just the top-left cell and drops the
-other three, which used to collapse the row to either the product name (LTR)
-or the line total (RTL) depending on the locale.
+must never be spanned — reportlab keeps just the top-left cell and drops
+the other three, which used to collapse the row to either the product name
+(LTR) or the line total (RTL) depending on the locale.
+
+Customer receipts (§15.7) carry NO SKU / barcode / cashier / device row —
+`build_sale_document` strips them from `DocumentData` before this template
+ever runs, so they cannot leak back in here.
+
+Meta block, in order: invoice number → date → time (when the builder split
+the timestamp) → source invoice → supplier → device → cashier → status.
 """
 
 from __future__ import annotations
@@ -40,7 +47,11 @@ CELL_PAD = 2.0
 HAIRLINE = 0.6
 
 
-def _p(text: str, size: float, rtl: bool, *, bold: bool = False, align: str = "left") -> Paragraph:
+def _p(text: str, size: float, rtl: bool, *, bold: bool = False, align: str | None = None) -> Paragraph:
+    """One shaped Paragraph.  `align=None` means "let the script decide":
+    right for Arabic, left for LTR (§15.7 A8).  Hard-coding ``"left"`` here
+    used to leave every un-aligned Arabic block — the meta lines, the
+    customer row, the totals labels — flush to the wrong margin."""
     style = paragraph_style(
         f"r80-{size}-{bold}-{align}-{rtl}",
         size=size,
@@ -109,8 +120,10 @@ def _items_table(data: DocumentData) -> Flowable | None:
 
     Layout is fixed: name row (spanned) → value row (3 cells) → optional
     meta row (spanned) → optional discount row (spanned).  A line without a
-    SKU, a barcode, a base quantity or a discount simply has fewer rows; its
-    value row lands in exactly the same columns as every other line.
+    base quantity or a discount simply has fewer rows; its value row lands
+    in exactly the same columns as every other line.  SKU/barcode are gone
+    from customer receipts upstream (§15.7 A1/A2) — only an internal
+    document can still put them in the meta row.
     """
     if not data.lines:
         return None
@@ -219,8 +232,11 @@ def build_flowables(data: DocumentData) -> list[Flowable]:
 
     meta_lines = [
         f"{label('invoice_number', locale)}: {data.header.document_number}",
-        f"{label('date', locale)}: {data.header.occurred_at}",
+        # A6 — Date then Time, both from the single authoritative timestamp.
+        f"{label('date', locale)}: {data.header.occurred_date or data.header.occurred_at}",
     ]
+    if data.header.occurred_time:
+        meta_lines.append(f"{label('time', locale)}: {data.header.occurred_time}")
     if data.header.source_invoice:
         meta_lines.append(
             f"{label('col_invoice', locale)}: {data.header.source_invoice}"

@@ -857,23 +857,64 @@ def test_a4_rtl_reverses_items_table():
     sale = _sale_payload()
     story_en = a4_flowables(build_sale_document(sale, locale="en"))
     story_ar = a4_flowables(build_sale_document(sale, locale="ar"))
+    # §15.7 A1 — a customer sale invoice drops the SKU column (7 cells).
+    customer_headers = [k for k in _ITEM_HEADERS if k != "col_sku"]
     table_en = next(
-        f for f in story_en if isinstance(f, Table) and len(f._cellvalues[0]) == 8
+        f for f in story_en if isinstance(f, Table) and len(f._cellvalues[0]) == 7
     )
     table_ar = next(
-        f for f in story_ar if isinstance(f, Table) and len(f._cellvalues[0]) == 8
+        f for f in story_ar if isinstance(f, Table) and len(f._cellvalues[0]) == 7
     )
 
     header_en = table_en._cellvalues[0]
     header_ar = table_ar._cellvalues[0]
-    assert len(header_en) == 8
+    assert len(header_en) == 7
     # RTL row = reversed localized headers (shape applied by the template)
-    expected_en = [shape_text(label(k, "en")) for k in _ITEM_HEADERS]
+    expected_en = [shape_text(label(k, "en")) for k in customer_headers]
     expected_ar = list(
-        reversed([shape_text(label(k, "ar")) for k in _ITEM_HEADERS])
+        reversed([shape_text(label(k, "ar")) for k in customer_headers])
     )
     assert [p.text for p in header_en] == expected_en
     assert [p.text for p in header_ar] == expected_ar
+
+
+def test_a4_return_document_keeps_the_sku_column():
+    """Internal documents are NOT customer receipts — 8 columns stay."""
+    ret = ReturnResponse(
+        id=uuid.uuid4(),
+        return_number="RET-0001",
+        sale_id=uuid.uuid4(),
+        invoice_number="INV-000123",
+        customer_id=None,
+        user_id=uuid.uuid4(),
+        reason="damaged",
+        subtotal=D("100.000"),
+        discount=D("0.000"),
+        total=D("100.000"),
+        device_id="POS-1",
+        return_date=datetime(2026, 1, 7, 9, 0),
+        lines=[
+            ReturnLineResponse(
+                id=uuid.uuid4(),
+                product_id=uuid.uuid4(),
+                product_name="Cola",
+                product_sku="SKU9",
+                product_unit="piece",
+                unit_price=D("100.000"),
+                unit_cost=D("60.000"),
+                quantity=D("1"),
+                line_discount=D("0.000"),
+                line_total=D("100.000"),
+            )
+        ],
+    )
+    data = build_return_document(ret, locale="en")
+    assert data.customer_facing is False
+    assert data.lines[0].sku == "SKU9"
+    story = a4_flowables(data)
+    table = next(f for f in story if isinstance(f, Table) and len(f._cellvalues[0]) in (7, 8))
+    assert len(table._cellvalues[0]) == 8
+    assert "SKU9" in [p.text for p in table._cellvalues[1]]
 
 
 # ── 7. DocumentData builders ──────────────────────────────────────────────
@@ -964,9 +1005,11 @@ def test_sale_document_void_and_header():
 
 
 def test_sale_document_customer_blocks():
+    # §15.7 A3 — an anonymous cash sale prints NO customer row at all:
+    # the localized "Cash customer" placeholder must not pose as a person.
     cash = build_sale_document(_sale_payload(), locale="en")
-    assert cash.customer is not None
-    assert cash.customer.name == label("cash_customer", "en")
+    assert cash.customer is None
+    assert cash.customer_facing is True
 
     named = build_sale_document(
         _sale_payload(customer_id=uuid.uuid4(), customer_name="Bob"), locale="en"
@@ -976,13 +1019,61 @@ def test_sale_document_customer_blocks():
     unknown = build_sale_document(
         _sale_payload(customer_id=uuid.uuid4(), customer_name=None), locale="en"
     )
-    assert unknown.customer is None  # known id, unknown name → omit (§7.2)
+    assert unknown.customer is None  # known id, unknown name �� omit (��7.2)
 
-    data = build_sale_document(
-        _sale_payload(cashier_name="Admin"), locale="en"
-    )
-    assert data.cashier_name == "Admin"
+    # §15.7 A4/A5 — cashier and device stay in the sale + audit trail but
+    # are presentation-stripped from the customer document.
+    data = build_sale_document(_sale_payload(cashier_name="Admin"), locale="en")
+    assert data.cashier_name is None
+    assert data.header.device_id is None
     assert data.store.name == settings.STORE_NAME
+    # A1/A2 — identifiers are gone from the customer line contract too.
+    assert all(line.sku is None and line.barcode is None for line in data.lines)
+
+
+def test_internal_documents_keep_cashier_device_and_identifiers():
+    """Returns/purchases are internal — the §15.7 policy must not leak."""
+    ret = ReturnResponse(
+        id=uuid.uuid4(),
+        return_number="RET-0001",
+        sale_id=uuid.uuid4(),
+        invoice_number="INV-000123",
+        customer_id=None,
+        user_id=uuid.uuid4(),
+        reason="damaged",
+        subtotal=D("100.000"),
+        discount=D("0.000"),
+        total=D("100.000"),
+        device_id="POS-1",
+        return_date=datetime(2026, 1, 7, 9, 0),
+        lines=[
+            ReturnLineResponse(
+                id=uuid.uuid4(),
+                product_id=uuid.uuid4(),
+                product_name="Cola",
+                product_sku="SKU9",
+                product_unit="piece",
+                unit_price=D("100.000"),
+                unit_cost=D("60.000"),
+                quantity=D("1"),
+                line_discount=D("0.000"),
+                line_total=D("100.000"),
+            )
+        ],
+    )
+    data = build_return_document(
+        ret, locale="en", names=DocumentNames(cashier="Admin")
+    )
+    assert data.customer_facing is False
+    assert data.cashier_name == "Admin"
+    assert data.header.device_id == "POS-1"
+    assert data.lines[0].sku == "SKU9"
+    # A6 is sale-only: internal documents keep the single combined stamp.
+    assert data.header.occurred_date is None
+    assert data.header.occurred_time is None
+    # the anonymous placeholder is still what an internal document prints
+    assert data.customer is not None
+    assert data.customer.name == label("cash_customer", "en")
 
 
 def test_sale_document_discount_consistency():

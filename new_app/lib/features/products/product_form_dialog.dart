@@ -7,10 +7,23 @@
 // (native file picker) with preview / choose / replace / remove — never a
 // raw path text field. Cancel closes without error; missing/invalid path
 // renders a placeholder (no crash).
+//
+// Stock (Phase 17):
+//   `PUT /products/{id}` has NO `quantity` field — sending one was silently
+//   dropped by Pydantic, so the quantity appeared to save while the backend
+//   never changed it. Quantity is now:
+//     * create → still sent in the body (the create endpoint seeds stock);
+//     * edit + `inventory_adjust` → PUT first, then an audited
+//       `POST /inventory/adjust` with `operation: set`; the dialog only
+//       reports success when BOTH calls succeed;
+//     * edit without `inventory_adjust` → read-only, with a route to /stock.
+//   PUT runs before the adjustment so a rejected adjustment leaves the
+//   dialog open (and the product data saved) instead of a false success.
 import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../core/strings.dart';
 import '../../l10n/locale_provider.dart';
@@ -76,6 +89,20 @@ class _ProductFormDialogState extends ConsumerState<ProductFormDialog> {
 
   bool get _isEdit => widget.product != null;
 
+  /// The quantity the user wants, as a backend decimal string.
+  String get _quantityValue =>
+      _quantity.text.trim().isEmpty ? '0' : _quantity.text.trim();
+
+  /// True when the stock value actually moved — compared numerically so
+  /// `240` and `240.000` are the same stock, never a phantom adjustment.
+  bool get _quantityChanged {
+    if (!_isEdit) return false;
+    final next = num.tryParse(_quantityValue);
+    final current = num.tryParse(widget.product!.quantity);
+    if (next == null || current == null) return false;
+    return next != current;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -131,9 +158,18 @@ class _ProductFormDialogState extends ConsumerState<ProductFormDialog> {
     }
   }
 
+  /// Strip the fractional zeros of a backend decimal for display.
+  ///
+  /// Only touches what sits AFTER the decimal point: `240.000` → `240`,
+  /// `10.10` → `10.1`, and a plain integer is returned untouched. The
+  /// earlier `\.?0+$` pattern also matched the trailing zeros of `100`
+  /// and showed `1` — which would then have been saved as a real stock
+  /// set once quantity became persistable.
   static String _trimDecimal(String value) {
     if (!value.contains('.')) return value;
-    return value.replaceFirst(RegExp(r'\.?0+$'), '');
+    final trimmed = value.replaceFirst(RegExp(r'0+$'), '');
+    if (!trimmed.endsWith('.')) return trimmed;
+    return trimmed.substring(0, trimmed.length - 1);
   }
 
   @override
@@ -194,7 +230,11 @@ class _ProductFormDialogState extends ConsumerState<ProductFormDialog> {
       'unit': _unit,
       'price': _price.text.trim(),
       'cost': _cost.text.trim().isEmpty ? '0' : _cost.text.trim(),
-      'quantity': _quantity.text.trim().isEmpty ? '0' : _quantity.text.trim(),
+      // Stock is not a product field on edit (see the header comment):
+      // including it would be dropped by the backend and report a false
+      // success. Create still seeds the initial quantity atomically.
+      if (!_isEdit)
+        'quantity': _quantity.text.trim().isEmpty ? '0' : _quantity.text.trim(),
       'low_stock_threshold': _threshold.text.trim().isEmpty
           ? '5'
           : _threshold.text.trim(),
@@ -273,6 +313,14 @@ class _ProductFormDialogState extends ConsumerState<ProductFormDialog> {
     setState(() => _imagePath = null);
   }
 
+  /// Without `inventory_adjust` the quantity is read-only here — send the
+  /// user to the audited stock screen instead of pretending the field works.
+  void _goToStock() {
+    final router = GoRouter.of(context);
+    Navigator.pop(context);
+    router.go('/stock');
+  }
+
   Future<void> _submit() async {
     final validation = _validate();
     if (validation != null) {
@@ -284,6 +332,8 @@ class _ProductFormDialogState extends ConsumerState<ProductFormDialog> {
       _error = null;
     });
 
+    final loc = ref.read(localeProvider).flutterLocale.languageCode;
+    final canAdjust = ref.read(hasPermissionProvider('inventory_adjust'));
     final notifier = ref.read(productsProvider.notifier);
     final payload = _payload();
     final error = _isEdit
@@ -291,25 +341,50 @@ class _ProductFormDialogState extends ConsumerState<ProductFormDialog> {
         : await notifier.createProduct(payload);
 
     if (!mounted) return;
-    if (error == null) {
-      final loc = ref.read(localeProvider).flutterLocale.languageCode;
-      Navigator.pop(context);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            AppStrings.t(
-              _isEdit ? 'product_updated' : 'product_created',
-              loc,
-            ),
-          ),
-        ),
-      );
-    } else {
+    if (error != null) {
       setState(() {
         _saving = false;
         _error = error;
       });
+      return;
     }
+
+    // Edit + moved stock → the audited inventory SET operation. Only now,
+    // so a rejected adjustment keeps this dialog open with a visible error
+    // instead of closing on a success toast that never landed in stock.
+    var stockChanged = false;
+    if (_isEdit && canAdjust && _quantityChanged) {
+      final stockError = await notifier.setStock(
+        widget.product!.id,
+        _quantityValue,
+        AppStrings.t('product_stock_reason', loc),
+      );
+      if (!mounted) return;
+      if (stockError != null) {
+        setState(() {
+          _saving = false;
+          _error = stockError;
+        });
+        return;
+      }
+      stockChanged = true;
+    }
+
+    Navigator.pop(context);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          AppStrings.t(
+            _isEdit
+                ? (stockChanged
+                    ? 'product_and_stock_updated'
+                    : 'product_updated')
+                : 'product_created',
+            loc,
+          ),
+        ),
+      ),
+    );
   }
 
   @override
@@ -319,6 +394,10 @@ class _ProductFormDialogState extends ConsumerState<ProductFormDialog> {
     final canCreate = ref.watch(hasPermissionProvider('product_create'));
     final canUpdate = ref.watch(hasPermissionProvider('product_update'));
     final canArchive = ref.watch(hasPermissionProvider('product_archive'));
+    // Stock can only be saved through the inventory journal, so the
+    // quantity field is a real input only for holders of that scope.
+    final canAdjustStock = ref.watch(hasPermissionProvider('inventory_adjust'));
+    final quantityReadOnly = _isEdit && !canAdjustStock;
     final categories = ref.watch(categoriesProvider).activeItems;
     final variantsState = ref.watch(variantsProvider);
     final sellingUnitsState = ref.watch(sellingUnitsProvider);
@@ -448,12 +527,17 @@ class _ProductFormDialogState extends ConsumerState<ProductFormDialog> {
                     narrow: narrow,
                     children: [
                       TextField(
+                        key: const Key('product-quantity-field'),
                         controller: _quantity,
+                        readOnly: quantityReadOnly,
                         keyboardType: const TextInputType.numberWithOptions(
                           decimal: true,
                         ),
                         decoration: InputDecoration(
                           labelText: AppStrings.t('quantity', loc),
+                          helperText: quantityReadOnly
+                              ? AppStrings.t('quantity_readonly', loc)
+                              : null,
                         ),
                       ),
                       TextField(
@@ -467,6 +551,18 @@ class _ProductFormDialogState extends ConsumerState<ProductFormDialog> {
                       ),
                     ],
                   ),
+                  if (quantityReadOnly) ...[
+                    const SizedBox(height: 4),
+                    Align(
+                      alignment: AlignmentDirectional.centerStart,
+                      child: TextButton.icon(
+                        key: const Key('product-quantity-open-stock'),
+                        onPressed: _goToStock,
+                        icon: const Icon(Icons.inventory_2_outlined, size: 18),
+                        label: Text(AppStrings.t('adjust_stock', loc)),
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 16),
                   _sectionHeader(
                     theme,
@@ -550,6 +646,7 @@ class _ProductFormDialogState extends ConsumerState<ProductFormDialog> {
       ),
       actions: [
         TextButton(
+          key: const Key('product-form-cancel'),
           onPressed: _saving ? null : () => Navigator.pop(context),
           child: Text(AppStrings.t('cancel', loc)),
         ),

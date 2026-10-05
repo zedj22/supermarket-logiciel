@@ -9,6 +9,7 @@ Covers:
 - Permissions (cashier denied inventory_adjust)
 - Authentication required (401)
 - ProductUpdateRequest no longer accepts quantity
+- The product form's two-step stock save (PUT, then audited operation=set)
 - Product create seeds ADJUSTMENT movement + avg_cost
 - Structured error contract
 """
@@ -326,6 +327,95 @@ class TestProductUpdateRejectsQuantity:
         # quantity unchanged (field stripped by Pydantic)
         assert float(resp.json()["quantity"]) == float(product["quantity"])
         assert resp.json()["name"] == "Renamed"
+
+
+# ── The product form's two-step stock save ──────────────────────────────
+
+
+class TestProductFormStockSavePath:
+    """Contract the product dialog relies on (Phase 17, Part B).
+
+    The edit dialog PUTs the product first (never carrying `quantity`),
+    then issues an audited `operation=set`. This pins both halves: the
+    update endpoint cannot move stock on its own, and the SET is what
+    actually persists the new quantity plus a journal row.
+    """
+
+    def test_put_then_set_persists_quantity_and_journals_it(
+        self, client, admin_headers, db
+    ):
+        product = _create_product(
+            client, admin_headers, quantity="12.000", barcode="PMP000004"
+        )
+        pid = product["id"]
+
+        update = client.put(
+            f"/api/v1/products/{pid}",
+            json={"name": "Renamed", "quantity": "40.000"},
+            headers=admin_headers,
+        )
+        assert update.status_code == 200, update.text
+        # Step 1 alone can never change the stock…
+        assert float(update.json()["quantity"]) == 12.0
+
+        adjust = _adjust(
+            client,
+            admin_headers,
+            product_id=pid,
+            operation="set",
+            quantity="40.000",
+            reason="Quantity set from the product form",
+        )
+        assert adjust["status"] == 200, adjust["body"]
+
+        # …step 2 does, and the new value is what a reload returns.
+        reloaded = client.get(
+            f"/api/v1/products/{pid}", headers=admin_headers
+        )
+        assert reloaded.status_code == 200, reloaded.text
+        assert float(reloaded.json()["quantity"]) == 40.0
+
+        movements = db.execute(
+            select(InventoryMovement).where(
+                InventoryMovement.product_id == uuid.UUID(pid)
+            )
+        ).scalars().all()
+        last = movements[-1]
+        assert last.movement_type == "adjustment"
+        assert float(last.quantity_before) == 12.0
+        assert float(last.quantity_after) == 40.0
+        assert last.reason == "Quantity set from the product form"
+
+    def test_set_never_touches_pmp(self, client, admin_headers):
+        product = _create_product(
+            client, admin_headers,
+            quantity="4.000", cost="100.000", barcode="PMP000005",
+        )
+        pid = product["id"]
+        before_avg = float(product["avg_cost"])
+
+        adjust = _adjust(
+            client, admin_headers,
+            product_id=pid, operation="set", quantity="9.000",
+            reason="Quantity set from the product form",
+        )
+        assert adjust["status"] == 200, adjust["body"]
+        # A SET rewrites quantity only — no receipt, so PMP is untouched.
+        assert float(adjust["body"]["avg_cost"]) == before_avg
+
+    def test_set_without_reason_is_rejected(
+        self, client, admin_headers
+    ):
+        # Documents why the form always sends a localized reason.
+        product = _create_product(
+            client, admin_headers, barcode="PMP000006"
+        )
+        adjust = _adjust(
+            client, admin_headers,
+            product_id=product["id"], operation="set", quantity="3.000",
+            reason=None,
+        )
+        assert adjust["status"] == 422, adjust["body"]
 
 
 # ── Inventory adjust + PMP via API ─────────────────────────────────────

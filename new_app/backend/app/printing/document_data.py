@@ -5,6 +5,25 @@ logic in templates). All derived values (line kinds, base quantities,
 discount sums, localized labels, formatted money) are computed ONCE here
 and unit-tested here. Builders never touch the DB — optional display
 names come in as parameters (G19 additive payload fields on sales).
+
+Customer-facing policy (Phase 17 §15.7)
+---------------------------------------
+`build_sale_document` is the ONLY customer-facing builder.  It marks the
+result `customer_facing=True` and strips presentation-only fields that a
+shopper has no business seeing, while every underlying store/API/audit
+value stays untouched:
+
+* ``LineItem.sku`` / ``LineItem.barcode``  → identifiers, never printed;
+* ``HeaderBlock.device_id``                → LAN/idempotency identity;
+* ``DocumentData.cashier_name``            → kept in the sale + audit log;
+* ``DocumentData.customer``                → ``None`` for an anonymous cash
+  sale (no localized "Cash customer" placeholder posing as a person); a
+  REAL attached customer keeps their name;
+* ``HeaderBlock.occurred_date``/``_time``  → one authoritative timestamp
+  (`sale.sale_date`) split for display, never a second source.
+
+Returns, purchases and reports keep the identifiers, the cashier line and
+the device id — they are internal/supplier documents, not receipts.
 """
 
 from __future__ import annotations
@@ -17,7 +36,7 @@ from typing import Literal
 
 from app.core.config import settings
 from app.printing.labels import label
-from app.printing.text import format_datetime, format_money, format_qty
+from app.printing.text import format_date, format_datetime, format_money, format_qty, format_time
 from app.schemas.purchase import PurchaseResponse
 from app.schemas.returns import ReturnResponse
 from app.schemas.sale import SaleResponse
@@ -74,6 +93,11 @@ class HeaderBlock:
     document_title: str
     occurred_at: str
     status_label: str | None
+    #: Split view of the SAME timestamp as `occurred_at` (§15.7).  Only the
+    #: customer sale builder fills them; every other document keeps the
+    #: single combined `occurred_at` row it has always printed.
+    occurred_date: str | None = None
+    occurred_time: str | None = None
     is_void: bool = False
     voided_at: str | None = None
     void_reason: str | None = None
@@ -150,6 +174,10 @@ class DocumentData:
     totals: TotalsBlock | None = None
     payments: list[PaymentLine] = field(default_factory=list)
     meta: MetaBlock | None = None
+    #: True only for the customer sale receipt/invoice.  Templates key
+    #: presentation-only omissions (SKU column, identifier rows) off this;
+    #: return/purchase/report documents stay internal and keep them.
+    customer_facing: bool = False
 
     @property
     def rtl(self) -> bool:
@@ -195,8 +223,25 @@ def _line_name(line, *, with_marker: bool = False, locale: str = "") -> str:
     return name
 
 
-def _customer_block(customer_id, customer_name, locale) -> PartyBlock | None:
+def _customer_block(
+    customer_id,
+    customer_name,
+    locale,
+    *,
+    anonymous_placeholder: bool = True,
+) -> PartyBlock | None:
+    """Party block for a document; `None` means "print no customer row".
+
+    `anonymous_placeholder` exists only for INTERNAL documents: returns and
+    reports keep printing the localized "Cash customer" line so their row
+    set does not change.  The customer sale invoice passes
+    `anonymous_placeholder=False` (§15.7 A3) — an anonymous cash sale must
+    not invent a person on the shopper's receipt.  A REAL attached customer
+    keeps their name either way.
+    """
     if customer_id is None:
+        if not anonymous_placeholder:
+            return None
         return PartyBlock(label_key="customer", name=label("cash_customer", locale))
     if customer_name:
         return PartyBlock(label_key="customer", name=customer_name)
@@ -232,13 +277,19 @@ def build_sale_document(
     locale: str,
     generated_at: datetime | None = None,
 ) -> DocumentData:
+    """Customer-facing sale receipt/invoice (§15.7).
+
+    Presentation-only stripping — the sale row itself, the API payload and
+    the audit trail all keep their SKU, barcode, device id and cashier:
+    a receipt shows WHAT was bought, not which till scanned it.
+    """
     lines = [
         LineItem(
             kind=kind,
             name=_line_name(line, with_marker=kind == "pack_summary", locale=locale),
             variant=line.variant_name,
-            sku=line.product_sku,
-            barcode=line.product_barcode,
+            sku=None,  # A1 — identifiers are never printed on a customer receipt
+            barcode=None,  # A2
             unit_label=_unit_label(line),
             qty=format_qty(line.quantity),
             base_qty=_base_qty(line),
@@ -276,23 +327,35 @@ def build_sale_document(
         document_number=sale.invoice_number,
         document_title=label("doc_invoice", locale),
         occurred_at=format_datetime(sale.sale_date),
+        # A6 — one authoritative timestamp (sale.sale_date), split for
+        # display only; EN/FR/AR share the app's existing YYYY-MM-DD / HH:MM.
+        occurred_date=format_date(sale.sale_date),
+        occurred_time=format_time(sale.sale_date),
         status_label=_status_label(sale.status, locale),
         is_void=is_void,
         voided_at=format_datetime(sale.voided_at) if is_void and sale.voided_at else None,
         void_reason=sale.void_reason if is_void else None,
-        device_id=sale.device_id,
+        device_id=None,  # A5 — LAN/idempotency identity, never printed
     )
 
     return DocumentData(
         store=_store_block(getattr(sale, "store", None)),
         header=header,
-        customer=_customer_block(sale.customer_id, getattr(sale, "customer_name", None), locale),
+        # A3 — no localized "Cash customer" placeholder on a receipt; a real
+        # attached customer keeps their name.
+        customer=_customer_block(
+            sale.customer_id,
+            getattr(sale, "customer_name", None),
+            locale,
+            anonymous_placeholder=False,
+        ),
         supplier=None,
-        cashier_name=getattr(sale, "cashier_name", None),
+        cashier_name=None,  # A4 — audit only, never printed on the receipt
         lines=lines,
         totals=totals,
         payments=payments,
         meta=_meta(locale, sale.note, generated_at),
+        customer_facing=True,
     )
 
 

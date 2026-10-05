@@ -595,8 +595,9 @@ SELECT customer_id, sum(total - paid) FROM sales
 | # | Date/tester | Area (§) | Steps to reproduce | Expected | Actual (status code / message / screenshot) | Severity (S1–S4) | Fixed in |
 |---|---|---|---|---|---|---|---|
 | 1 | 2026-10-05 / automated (Phase 17 §15) | Printing (§12.15) | Print an 80 mm receipt whose sale lines carry a SKU or a base quantity; compare with a line that carries neither | every line shows the same 4-row group: name → `qty × unit \| unit price \| line total` → meta → discount | the item row was `SPAN`ned, so reportlab kept one cell: **RTL showed only the line total, LTR only the product name**; lines without SKU/base qty were intact (inconsistent line to line); the money column also split `1600.00 DA` across two lines | S2 | `phase-17: normalize 80mm receipt item rendering` |
-| 2 | | | | | | | |
-| 3 | | | | | | | |
+| 2 | 2026-10-05 / automated (Phase 17 §14A) | Printing (§14A.5) | Print an **Arabic** customer receipt and read the Date row | `2026-01-05`, digits in logical order | bidi rule W2 reclassified the European number that follows Arabic as an Arabic number, so `التاريخ: 2026-01-05` printed as **`05-01-2026`** and `الخصم: 10.00 DA` printed as **`DA 10.00`**; fixed by isolating every ASCII digit run in `shape_text()` before the bidi pass | S2 | `phase-17: simplify customer invoice and fix product quantity save` |
+| 3 | 2026-10-05 / automated (Phase 17 §14A) | Products (§14A.8) | Edit a product, change **Quantity**, Save, then re-open / open Stock | the new quantity persists and a journal row records it | the dialog PUT `quantity` to `PUT /api/v1/products/{id}`, which has **no** `quantity` field (Phase 7): Pydantic dropped it, the endpoint answered **200**, and the dialog showed "Product updated" while the database never changed. A second bug showed stock as `1`/`24` instead of `100`/`240` (`_trimDecimal` ate integer zeros) | S1 | `phase-17: simplify customer invoice and fix product quantity save` |
+| 4 | | | | | | | | |
 
 Severity: **S1** data loss/money/stock wrong · **S2** feature unusable · **S3** workaround
 exists · **S4** cosmetic.
@@ -604,6 +605,49 @@ exists · **S4** cosmetic.
 Rules: capture the exact HTTP status + error `code`, the backend log line, and the DB
 row count that proves it. Do **not** edit code, config, rate limits, or contracts during
 the round — file the row and continue.
+
+---
+
+## 14A. Phase 17 change — customer invoice + product quantity save
+
+Two independent changes shipped together (`phase-17: simplify customer invoice and fix
+product quantity save`). Rows are split **A** (what the paper must look like) and **B**
+(the product quantity field). The two defects behind them are already filed in §14 rows
+2–3.
+
+### 14A.A — Customer invoice simplification (80 mm + A4)
+
+| # | Area | Step | Expected | Result |
+|---|---|---|---|---|
+| 14A.1 | Customer receipt, 80 mm | Sell a product that **has a SKU and a barcode**, with **no customer attached**, in EN; print the 80 mm receipt | the item row shows the product name, `qty × unit \| unit price \| line total`, `Base:`/`Discount:` only — **no `SKU:`, no `Barcode:` line**. Nowhere on the paper: a cashier name, a device ID, or a `Cash Customer` / `Client de passage` / `عميل نقدي` placeholder. Meta block order: invoice number → **Date: `2026-01-05`** → **Time: `10:30`** → status | ☐ |
+| 14A.2 | Customer receipt, A4 | Print the same sale on A4 | item table has **7** columns — `#`, Product, Unit, Qty, Price, Discount, Total — and **no SKU column**; the row still spans the full 180 mm body (no empty/gap column at the right). Meta table shows **Date** and **Time** as two separate rows | ☐ |
+| 14A.3 | Attached customer | Repeat 14A.1 with a customer selected | the customer's name is printed where the anonymous placeholder used to be; still no SKU/barcode/cashier/device | ☐ |
+| 14A.4 | Internal documents unchanged | Print a **return** receipt/invoice and a **purchase** invoice (A4) | SKU column, barcode, cashier name and device ID are **all still present**, and the anonymous `Cash Customer` placeholder still prints when no customer is attached; the meta block keeps the **single combined** `YYYY-MM-DD HH:MM` stamp — no separate Time row | ☐ |
+| 14A.5 | AR digits | Switch to **Arabic**, repeat 14A.1 on 80 mm and A4 | date reads **`2026-01-05`** (never `05-01-2026`), time reads **`10:30`**, invoice number `INV-…` intact, and a discount reads **`10.00 DA`** as one attached amount (never `DA 10.00`) | ☐ |
+| 14A.6 | AR alignment | Same AR prints: look at labels vs values on 80 mm **and** A4 | labels sit on the right margin, values on the left; the A4 items table is mirrored with the three value columns on the outside; **no** block is flush against the wrong (left) margin | ☐ |
+| 14A.7 | EN / FR parity | Repeat 14A.1 in **EN** and **FR** | identical structure to AR, LTR: `Date: 2026-01-05`, `Time: 10:30` / `Heure: 10:30`; nothing else on the receipt changed vs. the previous build apart from the removed fields | ☐ |
+
+*Fixture for 14A.1–14A.3: one product with a SKU **and** a barcode, one plain product,
+one line bought in a selling unit with a line discount — that covers every row the
+simplification touched.*
+
+### 14A.B — Product quantity save
+
+| # | Area | Step | Expected | Result |
+|---|---|---|---|---|
+| 14A.8 | Save with permission | As **admin/manager**, open Products → edit a product whose stock is **12** → set Quantity to **40** → Save | success toast; re-open the product and the Stock screen both show **40**; the stock movement journal holds a new row with `quantity_before = 12`, `quantity_after = 40` and reason *"Quantity set from the product form"* (localized); **average cost / PMP unchanged** | ☐ |
+| 14A.9 | No-op save | Edit the same product, change only the **name**, leave Quantity at 40 → Save | product updates, toast appears, and **no** new journal row is written | ☐ |
+| 14A.10 | Read-only path | Sign in with a role that has `product_update` but **not** `inventory_adjust`; open edit | Quantity field is **read-only**, shows helper text "Stock is adjusted from the Stock screen", and an **Adjust stock** button is shown; pressing it closes the dialog and lands on `/stock`. Saving a name-only change updates the product and never calls `/api/v1/inventory/adjust` | ☐ |
+| 14A.11 | Rejected adjustment | Make `POST /api/v1/inventory/adjust` fail (403/500) and save a quantity change | the product update goes through but the dialog **stays open** with the error visible, and **no success toast** is shown; fixing the cause and re-saving completes both calls | ☐ |
+| 14A.12 | Create still seeds | Add a product with **Quantity = 7** | stock is 7 immediately after create, with the usual "Initial stock on product create" journal row; no `/inventory/adjust` call | ☐ |
+| 14A.13 | Decimal display | Open edit for products whose stock is **100** and **240** | the field shows **100** and **240** — never `1` / `24` — and saving without touching it writes no journal row (§14A.9) | ☐ |
+| 14A.14 | Permission regression | Sign in as a **cashier** | cannot open the edit dialog at all (unchanged from the previous build) | ☐ |
+| 14A.15 | Receipt regression | Re-run §12.15, §12.16 and §12.17 | still PASS — the item-row group itself was not changed by 14A.A | ☐ |
+| 14A.16 | Reports / exports | Export a sales report and a dashboard view in **AR** | digits and `DA` amounts unchanged by the `shape_text()` digit-isolation fix; money/qty cells that contain no Arabic are byte-identical to the previous build | ☐ |
+
+*Hardware note: every "print" step above is **UNVERIFIED without a printer attached**
+(rule #3) — the on-screen PDF preview in the print dialog is an acceptable substitute
+for the layout checks, not for §12.4.*
 
 ---
 
@@ -624,6 +668,7 @@ the round — file the row and continue.
 | Inventory→reports | §11 | | | | |
 | Backup/print/localization/failure | §12 | | | | |
 | DB reconciliation | §13 | | | | |
+| Phase 17 change | §14A | | | | |
 
 **Outcome:** ☐ PASS (all sections PASS) ☐ PASS WITH DEFECTS (no S1/S2 open) ☐ FAIL
 (S1/S2 open)

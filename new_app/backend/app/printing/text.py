@@ -4,6 +4,13 @@
 the string contains Arabic (pure numbers/Latin pass through untouched —
 fixes the legacy over-application defect §2.4 C3). Never bidi a formatted
 money/qty cell.
+
+Every Arabic string is additionally shielded with an invisible LTR mark in
+front of each ASCII digit run, so bidi rule W2 cannot turn a European
+number that FOLLOWS Arabic text into an Arabic number (see
+`_isolate_european_numbers`). Without it `التاريخ: 2026-01-05` printed as
+`05-01-2026 :التاريخ` and `الخصم: 10.00 DA` printed as `DA 10.00 :الخصم`,
+both of which break the digit-order promises of §17 A8.
 """
 
 from __future__ import annotations
@@ -23,6 +30,12 @@ ARABIC_RANGES = (
     (0xFE70, 0xFEFF),
 )
 
+# Left-to-right mark. Injected ONLY between `sanitize_text()` (which strips
+# it from untrusted input) and `get_display()`, then removed again so it
+# never reaches the page or a width calculation.
+_LRM = "\u200e"
+_ASCII_DIGITS = frozenset("0123456789")
+
 
 def contains_arabic(text: str) -> bool:
     return any(lo <= ord(ch) <= hi for ch in text for lo, hi in ARABIC_RANGES)
@@ -41,12 +54,34 @@ def sanitize_text(text: str) -> str:
     return "".join(out)
 
 
+def _isolate_european_numbers(text: str) -> str:
+    """Put an invisible LTR mark in front of every ASCII digit run.
+
+    Arabic is a strong RTL character, so bidi rule W2 reclassifies a
+    following European number as an Arabic number; the reordering then
+    scrambles it (`2026-01-05` → `05-01-2026`, `10.00 DA` → `DA 10.00`).
+    An LRM resets "last strong type" to L for the run behind it, which
+    keeps the number LTR. The mark itself is deleted again by
+    `shape_text()`, so it participates in the bidi pass only and draws no
+    glyph.
+    """
+    out: list[str] = []
+    previous = ""
+    for character in text:
+        if character in _ASCII_DIGITS and previous not in _ASCII_DIGITS:
+            out.append(_LRM)
+        out.append(character)
+        previous = character
+    return "".join(out)
+
+
 def shape_text(text: str) -> str:
     """Sanitize, then reshape + bidi only when Arabic is present."""
     text = sanitize_text(text)
     if not contains_arabic(text):
         return text
-    return get_display(arabic_reshaper.reshape(text))
+    shaped = arabic_reshaper.reshape(_isolate_european_numbers(text))
+    return get_display(shaped).replace(_LRM, "")
 
 
 def _dec(value: Decimal | float | int | str) -> Decimal:
@@ -83,3 +118,8 @@ def format_datetime(value) -> str:  # noqa: ANN001 - datetime-like
 
 def format_date(value) -> str:  # noqa: ANN001 - date-like
     return value.strftime("%Y-%m-%d")
+
+
+def format_time(value) -> str:  # noqa: ANN001 - datetime-like
+    """Clock part of `format_datetime` — same timezone, same source value."""
+    return value.strftime("%H:%M")

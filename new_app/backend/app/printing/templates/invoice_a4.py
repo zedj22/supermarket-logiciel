@@ -1,10 +1,11 @@
 """A4 sale/return/purchase document template (Phase 15 §8).
 
-Geometry: A4 portrait, margins 15/15/18/18mm, body 10.5pt. Item table has
-8 columns with a repeating header row; meta block is a boxed 2-column
+Geometry: A4 portrait, margins 15/15/18/18mm, body 10.5pt.  Item table has
+8 columns (return/purchase, incl. SKU) or 7 (customer sale invoice, §15.7 —
+no SKU column) with a repeating header row; meta block is a boxed 2-column
 table; totals sit in a ~100mm block on the opposite side of the page from
-the title (mirrored for `locale=ar`). Page numbering (N of M) is applied
-by `render.py` via a NumberedCanvas. Zero business logic.
+the title (mirrored for `locale=ar`).  Page numbering (N of M) is applied
+by `render.py` via a NumberedCanvas.  Zero business logic.
 """
 
 from __future__ import annotations
@@ -18,14 +19,21 @@ from app.printing.styles import paragraph_style
 from app.printing.text import shape_text
 
 CONTENT_WIDTH = 180 * mm
+#: Internal documents (return/purchase): 8 columns incl. the SKU column.
 COL_WIDTHS = [6 * mm, 52 * mm, 24 * mm, 16 * mm, 14 * mm, 24 * mm, 20 * mm, 24 * mm]
+#: Customer sale invoice (§15.7 A1) — no SKU column.  The 24mm it used to
+#: occupy is redistributed so the row still spans the full 180mm body.
+CUSTOMER_COL_WIDTHS = [6 * mm, 68 * mm, 18 * mm, 16 * mm, 24 * mm, 22 * mm, 26 * mm]
 HAIRLINE = 0.6
 
 _ITEM_HEADERS = ("#", "col_product", "col_sku", "col_unit", "col_qty",
                  "price", "discount", "col_total")
 
 
-def _p(text: str, size: float, rtl: bool, *, bold: bool = False, align: str = "left") -> Paragraph:
+def _p(text: str, size: float, rtl: bool, *, bold: bool = False, align: str | None = None) -> Paragraph:
+    """One shaped Paragraph.  `align=None` → right for Arabic, left for LTR
+    (§15.7 A8); hard-coding ``"left"`` left every un-aligned Arabic block —
+    product names, meta rows, totals labels — flush to the wrong margin."""
     style = paragraph_style(
         f"ra4-{size}-{bold}-{align}-{rtl}",
         size=size,
@@ -42,9 +50,16 @@ def _items_table(data: DocumentData) -> Flowable | None:
         return None
     rtl = data.rtl
     locale = data.meta.locale  # meta is always set by builders
+    # §15.7 A1 — a customer receipt has no identifiers, so it has no SKU
+    # column either: an empty header would advertise a field that is not
+    # printed.  Returns/purchases keep theirs.
+    include_sku = not data.customer_facing
 
-    header = [_p(label(key, locale), 9, rtl, bold=True, align="center")
-              for key in _ITEM_HEADERS]
+    header = [
+        _p(label(key, locale), 9, rtl, bold=True, align="center")
+        for key in _ITEM_HEADERS
+        if include_sku or key != "col_sku"
+    ]
     body: list[list[Paragraph]] = [header if not rtl else list(reversed(header))]
     row_spans: list[int] = []
 
@@ -55,7 +70,10 @@ def _items_table(data: DocumentData) -> Flowable | None:
         cells = [
             _p(str(index), 9.5, rtl, align="center"),
             _p(name, 9.5, rtl),
-            _p(line.sku or "", 9, rtl),
+        ]
+        if include_sku:
+            cells.append(_p(line.sku or "", 9, rtl))
+        cells += [
             _p(line.unit_label, 9, rtl, align="center"),
             _p(line.qty, 9.5, rtl, align="center"),
             _p(line.unit_price if line.show_money else "", 9.5, rtl, align="left"),
@@ -72,7 +90,8 @@ def _items_table(data: DocumentData) -> Flowable | None:
             body.append([_p("   ".join(meta_bits), 8, rtl)])
             row_spans.append(row_index)
 
-    widths = COL_WIDTHS if not rtl else list(reversed(COL_WIDTHS))
+    col_widths = COL_WIDTHS if include_sku else CUSTOMER_COL_WIDTHS
+    widths = col_widths if not rtl else list(reversed(col_widths))
     table = Table(body, colWidths=widths, repeatRows=1)
     spans = [
         ("SPAN", (0, idx), (-1, idx))
@@ -117,8 +136,11 @@ def _meta_table(data: DocumentData) -> Flowable:
             label("invoice_number" if data.header.source_invoice is None else "return_number", locale),
             data.header.document_number,
         ),
-        (label("date", locale), data.header.occurred_at),
+        # A6 — Date then Time, both sliced from the one authoritative stamp.
+        (label("date", locale), data.header.occurred_date or data.header.occurred_at),
     ]
+    if data.header.occurred_time:
+        rows.append((label("time", locale), data.header.occurred_time))
     if data.header.source_invoice:
         rows.append((label("col_invoice", locale), data.header.source_invoice))
     if data.header.supplier_name:
@@ -138,9 +160,11 @@ def _meta_table(data: DocumentData) -> Flowable:
 
     body: list[list[Paragraph]] = []
     for lab, val in rows:
-        left = _p(lab, 9.5, rtl, bold=True)
-        right = _p(val, 9.5, rtl)
-        body.append([left, right] if not rtl else [right, left])
+        # Label defaults to the script's start edge; the value cell is pinned
+        # left so an RTL row keeps both cells flush to their OUTER margins.
+        label_cell = _p(lab, 9.5, rtl, bold=True)
+        value_cell = _p(val, 9.5, rtl, align="left")
+        body.append([label_cell, value_cell] if not rtl else [value_cell, label_cell])
     table = Table(body, colWidths=[CONTENT_WIDTH * 0.3, CONTENT_WIDTH * 0.7])
     table.setStyle(
         TableStyle(
