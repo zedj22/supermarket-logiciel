@@ -16,17 +16,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../core/keyboard.dart';
 import '../../core/strings.dart';
-
-/// True while an [EditableText] (quantity field, search field, …) holds
-/// primary focus. Shared with the POS quantity shortcuts (`+` / `*`) so a
-/// key the cashier is typing is never hijacked by a shortcut.
-bool editableTextHasFocus() {
-  final context = FocusManager.instance.primaryFocus?.context;
-  if (context == null) return false;
-  if (context.widget is EditableText) return true;
-  return context.findAncestorWidgetOfExactType<EditableText>() != null;
-}
 
 /// One selectable option card.
 class PosOptionCard {

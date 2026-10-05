@@ -17,11 +17,15 @@
 // Catalog view: grid (default) | list — persisted in SharedPreferences
 // (`pos_catalog_view_mode`). Toggle never reloads the product catalog.
 //
-// Keyboard: F4 search, Enter add/scan, F6 customer, F7 invoice discount,
-// F8 payment, F9 hold, F10 held sales, F11 history, F12 clear (confirm),
-// + add one unit / - remove one unit / * enter a new quantity for the
-// last active cart line, Escape closes dialogs. No shortcut destroys the
-// cart without confirm.
+// Keyboard: F1 POS / F2 Products / F3 (Ctrl+N) add product at the shell
+// level, F4 (Ctrl+F) search, F5 refresh, Enter add/scan, F6 customer,
+// F7 invoice discount, SPACE payment (legacy F8 removed), F9 hold,
+// F10 held sales, F11 history, F12 clear (confirm), + add one unit /
+// - remove one unit / * enter a new quantity for the last active cart
+// line, Escape clears search (or hands focus back to the workspace) —
+// never the cart. F1–F5/Ctrl+N live one level up in the nav shell so the
+// map is the same on every screen (lib/core/app_shortcuts.dart); the local
+// bindings below cover everything POS owns.
 //
 // `+`, `-`, `*` (UX FIX #12 / Phase 8 FIX #1–#3): claimed while the POS
 // search field or a cart quantity field has focus (typing them there
@@ -41,6 +45,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/colors.dart';
+import '../../core/keyboard.dart';
+import '../../core/shortcuts.dart';
 import '../../core/strings.dart';
 import '../../l10n/locale_provider.dart';
 import '../auth/auth_provider.dart';
@@ -52,6 +58,7 @@ import '../products/models.dart';
 import '../products/selling_unit_picker.dart';
 import '../products/variant_picker.dart';
 import '../settings/settings_provider.dart';
+import '../shell/shortcuts_help_dialog.dart';
 import 'customer_picker_dialog.dart';
 import 'holds_dialog.dart';
 import 'invoice_discount_dialog.dart';
@@ -107,9 +114,20 @@ class _PosScreenState extends ConsumerState<PosScreen> {
   final ValueNotifier<String?> _qtyFocusRequest = ValueNotifier<String?>(null);
   bool _cartDrawerOpen = false;
 
+  /// This screen's page-level shortcut hooks, published to the nav shell.
+  late final PageShortcuts _pageShortcuts;
+
   @override
   void initState() {
     super.initState();
+    // Phase 17 §18 — the shell's F4 / Ctrl+F / F5 act on the page that is
+    // actually on screen. Register this screen's hooks; never touches the
+    // cart, so a page-level refresh can never destroy a sale in progress.
+    _pageShortcuts = PageShortcuts(
+      focusSearch: _focusSearch,
+      refresh: _refreshWorkspace,
+    );
+    PageShortcutsRegistry.current = _pageShortcuts;
     Future.microtask(() {
       ref.read(posSearchProvider.notifier).load();
       ref.read(favoritesProvider.notifier).load();
@@ -119,11 +137,46 @@ class _PosScreenState extends ConsumerState<PosScreen> {
 
   @override
   void dispose() {
+    if (identical(PageShortcutsRegistry.current, _pageShortcuts)) {
+      PageShortcutsRegistry.current = null;
+    }
     _focusNode.dispose();
     _searchFocusNode.dispose();
     _searchController.dispose();
     _qtyFocusRequest.dispose();
     super.dispose();
+  }
+
+  /// F4 / Ctrl+F — move the keyboard to the barcode/search field.
+  void _focusSearch() {
+    if (!mounted) return;
+    _searchFocusNode.requestFocus();
+  }
+
+  /// F5 — reload the read-only POS lists. Deliberately never touches the
+  /// cart: a refresh must not clear, merge or reset a sale in progress.
+  void _refreshWorkspace() {
+    if (!mounted) return;
+    ref.read(posSearchProvider.notifier).load();
+    ref.read(favoritesProvider.notifier).load();
+    ref.read(holdsProvider.notifier).load();
+  }
+
+  /// Escape — the context-safe clear. With text in the search box it only
+  /// empties the box; when the box is already empty it hands focus back to
+  /// the POS workspace node (so SPACE / F-keys are reachable again).
+  /// It never, under any circumstance, clears the cart — that stays behind
+  /// F12 + its confirm dialog.
+  void _handleEscape() {
+    if (!mounted) return;
+    if (_searchController.text.isNotEmpty) {
+      _searchController.clear();
+      ref.read(posSearchProvider.notifier).clear();
+      ref.read(posSearchProvider.notifier).load();
+      _searchFocusNode.requestFocus();
+      return;
+    }
+    _focusNode.requestFocus();
   }
 
   /// Phase 8 FIX #1 — a successful add leaves the cart keyboard-first: the
@@ -146,10 +199,6 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     final cart = ref.read(posCartProvider);
     final canDiscount = ref.read(hasPermissionProvider('pos_discount'));
 
-    if (key == LogicalKeyboardKey.f4) {
-      _searchFocusNode.requestFocus();
-      return;
-    }
     if (key == LogicalKeyboardKey.f6) {
       final customer = await showCustomerPickerDialog(context);
       if (customer != null) {
@@ -172,12 +221,13 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       if (mounted) _searchFocusNode.requestFocus();
       return;
     }
-    if (key == LogicalKeyboardKey.f8) {
-      if (cart.isEmpty) return;
-      final result = await showPaymentDialog(context);
-      if (result != null && mounted) {
-        await _afterCheckoutSuccess(result);
-      }
+    // Phase 17 §18 — SPACE is the payment shortcut; the legacy F8 binding is
+    // gone. The activator already refused the key while any text field had
+    // primary focus, so this branch only runs with the POS workspace active
+    // and never while the cashier is typing. The empty-cart toast comes from
+    // the same `_openPayment()` the PAY button uses — one flow, one message.
+    if (key == LogicalKeyboardKey.space) {
+      await _openPayment();
       if (mounted) _searchFocusNode.requestFocus();
       return;
     }
@@ -1040,6 +1090,20 @@ class _PosScreenState extends ConsumerState<PosScreen> {
                 ),
               ),
               const SizedBox(width: 8),
+              // Phase 17 §18 — the keyboard map needs a discoverable entry
+              // point next to the tools it describes.
+              IconButton(
+                key: const Key('pos-shortcuts-button'),
+                tooltip: AppStrings.t('shortcuts_title', loc),
+                onPressed: () => showShortcutsDialog(context),
+                icon: const Icon(Icons.keyboard),
+                visualDensity: VisualDensity.compact,
+                constraints: const BoxConstraints(
+                  minWidth: 38,
+                  minHeight: 38,
+                ),
+              ),
+              const SizedBox(width: 8),
               // FIX #3: full labels when workspace allows; icons+tooltip when tight.
               if (layout != PosLayoutMode.narrow &&
                   (MediaQuery.sizeOf(context).width - cartWidth) < 500)
@@ -1154,23 +1218,31 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     }
 
     // Global shortcuts — Escape never clears cart; F12 requires confirm.
-    // F4 focuses search; after dialogs close, search remains the sensible
-    // default focus for barcode/keyboard-first cashier flow.
+    // F4 / Ctrl+F focus search; after dialogs close, search remains the
+    // sensible default focus for barcode/keyboard-first cashier flow.
+    // SPACE pays (Phase 17 §18, replaces legacy F8) but only when no text
+    // field is consuming the space — TextFreeKeyActivator declines it
+    // while an EditableText has primary focus, so typing is never stolen.
     // `+` / `-` / `*` act on the last active cart line: `+`, `-` and `*`
     // are also claimed while the search or a cart qty field is focused
     // (never inserted as text) — see PosQtyShortcutActivator. While a
     // dialog route is open its focus scope owns the keys, so none of them
-    // reach this layer.
+    // reach this layer — including Escape, which therefore stays safe to
+    // bind here (dialogs keep their own route-level dismiss).
     return CallbackShortcuts(
       bindings: {
-        const SingleActivator(LogicalKeyboardKey.f4): () =>
-            _handleShortcut(LogicalKeyboardKey.f4),
+        const SingleActivator(LogicalKeyboardKey.f4): _focusSearch,
+        const SingleActivator(LogicalKeyboardKey.keyF, control: true):
+            _focusSearch,
+        const SingleActivator(LogicalKeyboardKey.f5): _refreshWorkspace,
+        const SingleActivator(LogicalKeyboardKey.escape): _handleEscape,
         const SingleActivator(LogicalKeyboardKey.f6): () =>
             _handleShortcut(LogicalKeyboardKey.f6),
         const SingleActivator(LogicalKeyboardKey.f7): () =>
             _handleShortcut(LogicalKeyboardKey.f7),
-        const SingleActivator(LogicalKeyboardKey.f8): () =>
-            _handleShortcut(LogicalKeyboardKey.f8),
+        // SPACE replaces F8 (Phase 17 §18 — "SPACE replaces F8 for payment").
+        TextFreeKeyActivator(LogicalKeyboardKey.space): () =>
+            _handleShortcut(LogicalKeyboardKey.space),
         const SingleActivator(LogicalKeyboardKey.f9): () =>
             _handleShortcut(LogicalKeyboardKey.f9),
         const SingleActivator(LogicalKeyboardKey.f10): () =>

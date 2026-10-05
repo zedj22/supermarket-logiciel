@@ -1538,12 +1538,12 @@ void main() {
       await tester.tap(find.byKey(Key('selling-unit-$boxUnitId')));
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('quantity-dialog')), findsOneWidget);
-      if (quantity != '1') {
-        await tester.enterText(
-          find.byKey(const Key('quantity-input')),
-          quantity,
-        );
-      }
+      // Phase 17 §18: the dialog opens blank + focused, so the quantity is
+      // ALWAYS typed explicitly (there is no pre-filled `1` to fall back on).
+      await tester.enterText(
+        find.byKey(const Key('quantity-input')),
+        quantity,
+      );
       await tester.tap(find.byKey(const Key('quantity-submit')));
       await tester.pumpAndSettle();
     }
@@ -1883,6 +1883,10 @@ void main() {
       await tester.tap(find.byKey(const Key('selling-unit-base')));
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('quantity-dialog')), findsOneWidget);
+      await tester.enterText(
+        find.byKey(const Key('quantity-input')),
+        '1',
+      );
       await tester.tap(find.byKey(const Key('quantity-submit')));
       await tester.pumpAndSettle();
 
@@ -1904,6 +1908,10 @@ void main() {
       await tester.tap(find.byKey(const Key('selling-unit-su-box')));
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('quantity-dialog')), findsOneWidget);
+      await tester.enterText(
+        find.byKey(const Key('quantity-input')),
+        '1',
+      );
       await tester.tap(find.byKey(const Key('quantity-submit')));
       await tester.pumpAndSettle();
 
@@ -3571,6 +3579,10 @@ void main() {
         await tester.tap(find.byKey(const Key('selling-unit-su-box')));
         await tester.pumpAndSettle();
         if (find.byKey(const Key('quantity-dialog')).evaluate().isNotEmpty) {
+          await tester.enterText(
+            find.byKey(const Key('quantity-input')),
+            '1',
+          );
           await tester.tap(find.byKey(const Key('quantity-submit')));
           await tester.pumpAndSettle();
         }
@@ -4166,6 +4178,10 @@ void main() {
       await tester.tap(find.byKey(const Key('selling-unit-base')));
       await tester.pumpAndSettle();
       if (find.byKey(const Key('quantity-dialog')).evaluate().isNotEmpty) {
+        await tester.enterText(
+          find.byKey(const Key('quantity-input')),
+          '1',
+        );
         await tester.tap(find.byKey(const Key('quantity-submit')));
         await tester.pumpAndSettle();
       }
@@ -6311,7 +6327,8 @@ void main() {
 
       await pressStar(tester);
       await tester.pumpAndSettle();
-      // The field starts seeded with the current quantity — clear it.
+      // Phase 17 §18: the field opens BLANK (assert the seeded-then-cleared
+      // state is gone) — applying it now must be rejected as empty.
       await tester.enterText(
         find.byKey(const Key('qty-multiplier-input')),
         '',
@@ -8551,7 +8568,7 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('TEST 4: the dialog field starts with the current quantity',
+    testWidgets('TEST 4: the dialog field opens blank and focused (Phase 17 §18)',
         (tester) async {
       await _pumpApp(tester, dio: dio);
       await tester.pump(const Duration(milliseconds: 500));
@@ -8560,7 +8577,18 @@ void main() {
 
       await openDialog(tester);
 
-      expect(dialogText(tester), '24');
+      // Blank: the cashier types the NEW quantity instead of having to
+      // select and replace a pre-filled `24`.
+      expect(dialogText(tester), '');
+      // Focused: the very next keystroke lands in the field.
+      expect(focusedFieldKey(tester), 'qty-multiplier-input');
+      // The current quantity is still visible above the field.
+      expect(
+        tester
+            .widget<Text>(find.byKey(const Key('qty-multiplier-current')))
+            .data,
+        "${AppStrings.t('quantity', 'en')}: 24",
+      );
       expect(tester.takeException(), isNull);
     });
 
@@ -8790,7 +8818,8 @@ void main() {
       await tester.pump();
 
       await openDialog(tester);
-      expect(dialogText(tester), '5');
+      // Phase 17 §18: the field opens blank — apply is rejected as-is.
+      expect(dialogText(tester), '');
       expect(focusedFieldKey(tester), 'qty-multiplier-input');
 
       await pressPlus(tester);
@@ -8958,6 +8987,257 @@ void main() {
       expect(containerOf(tester).read(posCartProvider).isEmpty, isTrue);
       expect(find.byKey(const Key('payment-dialog')), findsNothing);
       expect(find.byKey(const Key('ask-print-dialog')), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Phase 17 §18 — POS keyboard shortcuts
+  // ---------------------------------------------------------------------------
+  group('Phase 17 §18 — POS keyboard shortcuts', () {
+    ProviderContainer containerOf(WidgetTester tester) =>
+        ProviderScope.containerOf(
+          tester.element(find.byKey(const Key('pos-screen'))),
+          listen: false,
+        );
+
+    void addLine(WidgetTester tester, CartLine line) {
+      containerOf(tester).read(posCartProvider.notifier).addLine(line);
+    }
+
+    String searchText(WidgetTester tester) => tester
+        .widget<TextField>(find.byKey(const Key('pos-search-field')))
+        .controller!
+        .text;
+
+    String qtyAt(WidgetTester tester, int index) =>
+        containerOf(tester).read(posCartProvider).lines[index].quantity;
+
+    /// Value key of the focused text field, if the focus is on one.
+    String? focusedFieldKey(WidgetTester tester) {
+      final context = FocusManager.instance.primaryFocus?.context;
+      if (context == null) return null;
+      final field = context.widget is TextField
+          ? context.widget as TextField
+          : context.findAncestorWidgetOfExactType<TextField>();
+      final key = field?.key;
+      return key is ValueKey<String> ? key.value : null;
+    }
+
+    Future<bool> press(WidgetTester tester, LogicalKeyboardKey key) async {
+      final handled = await tester.sendKeyEvent(key);
+      await tester.pump();
+      return handled;
+    }
+
+    Future<bool> pressSpace(WidgetTester tester) async {
+      final handled =
+          await tester.sendKeyEvent(LogicalKeyboardKey.space, character: ' ');
+      await tester.pump();
+      return handled;
+    }
+
+    Future<bool> pressCtrl(
+      WidgetTester tester,
+      LogicalKeyboardKey key,
+    ) async {
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      final handled = await tester.sendKeyEvent(key);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pump();
+      return handled;
+    }
+
+    /// With an empty search box Escape hands the keyboard back to the POS
+    /// workspace node (it NEVER touches the cart) — that is how SPACE
+    /// becomes reachable at all, since the search field is autofocused.
+    Future<void> focusWorkspace(WidgetTester tester) async {
+      await press(tester, LogicalKeyboardKey.escape);
+      expect(focusedFieldKey(tester), isNull);
+    }
+
+    const line24 = CartLine(
+      productId: 'p1',
+      name: 'Bread',
+      quantity: '24',
+      unitPrice: '10',
+      availableStock: '50',
+    );
+
+    testWidgets('SPACE opens the payment dialog (legacy F8 removed)', (
+      tester,
+    ) async {
+      await _pumpApp(tester, dio: dio);
+      addLine(tester, line24);
+      await tester.pump();
+      await focusWorkspace(tester);
+
+      expect(await pressSpace(tester), isTrue);
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('payment-dialog')), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('SPACE with an empty cart reports cart_empty, no dialog', (
+      tester,
+    ) async {
+      await _pumpApp(tester, dio: dio);
+      await focusWorkspace(tester);
+
+      expect(await pressSpace(tester), isTrue);
+      await tester.pump();
+
+      expect(find.byKey(const Key('payment-dialog')), findsNothing);
+      expect(find.text(AppStrings.t('cart_empty', 'en')), findsWidgets);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('F8 no longer opens payment', (tester) async {
+      await _pumpApp(tester, dio: dio);
+      addLine(tester, line24);
+      await tester.pump();
+      await focusWorkspace(tester);
+
+      final handled = await press(tester, LogicalKeyboardKey.f8);
+      await tester.pumpAndSettle();
+
+      expect(handled, isFalse, reason: 'F8 must not be bound any more');
+      expect(find.byKey(const Key('payment-dialog')), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('SPACE inside the search field is not stolen', (tester) async {
+      await _pumpApp(tester, dio: dio);
+      addLine(tester, line24);
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('pos-search-field')));
+      await tester.pump();
+      await tester.enterText(find.byKey(const Key('pos-search-field')), 'bre');
+      await tester.pump();
+
+      final handled = await pressSpace(tester);
+
+      expect(handled, isFalse, reason: 'a text field owns the space');
+      expect(find.byKey(const Key('payment-dialog')), findsNothing);
+      // Focus must stay in the box: an unhandled key event keeps flowing to the
+      // platform text input, so the space character is never swallowed by us.
+      expect(focusedFieldKey(tester), 'pos-search-field');
+      expect(searchText(tester), 'bre');
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('SPACE inside a cart quantity field is not stolen', (
+      tester,
+    ) async {
+      await _pumpApp(tester, dio: dio);
+      addLine(tester, line24);
+      await tester.pump();
+      final key = containerOf(tester).read(posCartProvider).lines.first.key;
+      await tester.enterText(find.byKey(Key('cart-line-qty-$key')), '24');
+      await tester.pump();
+      expect(focusedFieldKey(tester), 'cart-line-qty-$key');
+
+      final handled = await pressSpace(tester);
+
+      expect(handled, isFalse, reason: 'a text field owns the space');
+      expect(find.byKey(const Key('payment-dialog')), findsNothing);
+      expect(qtyAt(tester, 0), '24');
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('Escape clears the search box and never the cart', (
+      tester,
+    ) async {
+      await _pumpApp(tester, dio: dio);
+      addLine(tester, line24);
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('pos-search-field')));
+      await tester.pump();
+      await tester.enterText(find.byKey(const Key('pos-search-field')), 'bre');
+      await tester.pump();
+
+      await press(tester, LogicalKeyboardKey.escape);
+
+      expect(searchText(tester), '');
+      expect(qtyAt(tester, 0), '24');
+      expect(containerOf(tester).read(posCartProvider).lines, hasLength(1));
+
+      // A second Escape only moves focus — the cart is still untouched.
+      await press(tester, LogicalKeyboardKey.escape);
+      expect(qtyAt(tester, 0), '24');
+      expect(containerOf(tester).read(posCartProvider).lines, hasLength(1));
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('F4 and Ctrl+F focus the search field', (tester) async {
+      await _pumpApp(tester, dio: dio);
+      addLine(tester, line24);
+      await tester.pump();
+      await focusWorkspace(tester);
+
+      expect(await press(tester, LogicalKeyboardKey.f4), isTrue);
+      expect(focusedFieldKey(tester), 'pos-search-field');
+
+      await focusWorkspace(tester);
+      expect(await pressCtrl(tester, LogicalKeyboardKey.keyF), isTrue);
+      expect(focusedFieldKey(tester), 'pos-search-field');
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('F5 refreshes the catalog and never touches the cart', (
+      tester,
+    ) async {
+      var catalogLoads = 0;
+      final refreshDio = MockDio();
+      _mockDio(refreshDio, onSearch: () => catalogLoads++);
+      await _pumpApp(tester, dio: refreshDio);
+      await tester.pump(const Duration(milliseconds: 500));
+      addLine(tester, line24);
+      await tester.pump();
+      final before = catalogLoads;
+
+      await focusWorkspace(tester);
+      expect(await press(tester, LogicalKeyboardKey.f5), isTrue);
+      await tester.pump(const Duration(milliseconds: 500));
+
+      expect(catalogLoads, greaterThan(before), reason: 'F5 must reload');
+      expect(qtyAt(tester, 0), '24');
+      expect(containerOf(tester).read(posCartProvider).lines, hasLength(1));
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('the POS header exposes the localized shortcuts map', (
+      tester,
+    ) async {
+      await _pumpApp(tester, dio: dio);
+      await tester.pump(const Duration(milliseconds: 500));
+
+      expect(find.byKey(const Key('pos-shortcuts-button')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('pos-shortcuts-button')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('shortcuts-dialog')), findsOneWidget);
+      expect(
+        find.text(AppStrings.t('shortcuts_title', 'en')),
+        findsOneWidget,
+      );
+      // Both scopes are on screen, with the POS-only rows among them.
+      expect(
+        find.text(AppStrings.t('shortcuts_scope_global', 'en')),
+        findsWidgets,
+      );
+      expect(
+        find.text(AppStrings.t('shortcuts_scope_pos', 'en')),
+        findsWidgets,
+      );
+      expect(find.text('Space'), findsOneWidget);
+      expect(find.text('F12'), findsOneWidget);
+      expect(find.text('+'), findsWidgets);
+
+      await tester.tap(find.byKey(const Key('shortcuts-close')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('shortcuts-dialog')), findsNothing);
       expect(tester.takeException(), isNull);
     });
   });

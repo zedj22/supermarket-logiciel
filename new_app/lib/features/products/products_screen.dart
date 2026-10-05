@@ -15,6 +15,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/colors.dart';
+import '../../core/shortcuts.dart';
 import '../../core/strings.dart';
 import '../../l10n/locale_provider.dart';
 import '../auth/permission_helpers.dart';
@@ -116,10 +117,25 @@ class ProductsScreen extends ConsumerStatefulWidget {
 
 class _ProductsScreenState extends ConsumerState<ProductsScreen> {
   final TextEditingController _searchController = TextEditingController();
+  final FocusNode _searchFocusNode = FocusNode();
+
+  /// Phase 17 §18 — page-level hooks for the shell's F4 / Ctrl+F / F5.
+  late final PageShortcuts _pageShortcuts;
 
   @override
   void initState() {
     super.initState();
+    _pageShortcuts = PageShortcuts(
+      focusSearch: () {
+        if (!mounted) return;
+        _searchFocusNode.requestFocus();
+      },
+      refresh: () {
+        if (!mounted) return;
+        ref.read(productsProvider.notifier).refresh();
+      },
+    );
+    PageShortcutsRegistry.current = _pageShortcuts;
     Future.microtask(() {
       ref.read(productsProvider.notifier).load();
       ref.read(categoriesProvider.notifier).load(status: 'active');
@@ -128,6 +144,10 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
 
   @override
   void dispose() {
+    if (identical(PageShortcutsRegistry.current, _pageShortcuts)) {
+      PageShortcutsRegistry.current = null;
+    }
+    _searchFocusNode.dispose();
     _searchController.dispose();
     super.dispose();
   }
@@ -377,6 +397,7 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
       child: TextField(
         key: const Key('products-search-field'),
         controller: _searchController,
+        focusNode: _searchFocusNode,
         style: theme.textTheme.bodyMedium,
         decoration: InputDecoration(
           hintText: AppStrings.t('search', loc),

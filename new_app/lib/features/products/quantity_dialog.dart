@@ -59,7 +59,12 @@ class _QuantityDialogState extends ConsumerState<QuantityDialog> {
   @override
   void initState() {
     super.initState();
-    _qty = TextEditingController(text: '1');
+    // Phase 17 §18: blank + autofocused. The selling-unit picker just told
+    // the cashier which unit they picked, so the next keystroke is the
+    // quantity — not a selection of a pre-filled `1`. Empty is rejected by
+    // `_validate` (`enter_quantity`), and the conversion preview below
+    // still shows the multiplier the moment a number is typed.
+    _qty = TextEditingController(text: '');
   }
 
   @override

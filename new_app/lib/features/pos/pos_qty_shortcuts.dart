@@ -17,7 +17,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import 'pos_option_picker.dart';
+import '../../core/keyboard.dart';
 
 /// Which quantity shortcut a [PosQtyShortcutActivator] matches.
 enum PosQtyShortcutKind { increment, decrement, quantityEntry }

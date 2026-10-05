@@ -1,16 +1,20 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import '../core/shortcuts.dart';
 import '../core/strings.dart';
 import '../features/auth/auth_provider.dart';
 import '../features/auth/login_screen.dart';
 import '../features/auth/permission_helpers.dart';
 import '../features/auth/setup_screen.dart';
+import '../features/shell/shortcuts_help_dialog.dart';
 import '../l10n/locale_provider.dart';
 import '../features/dashboard/dashboard_screen.dart';
 import '../features/clients/clients_screen.dart';
 import '../features/packs/packs_screen.dart';
 import '../features/pos/pos_screen.dart';
+import '../features/products/product_form_dialog.dart';
 import '../features/products/products_screen.dart';
 import '../features/returns/returns_screen.dart';
 import '../features/stock/stock_screen.dart';
@@ -499,73 +503,155 @@ class ScaffoldWithNav extends ConsumerWidget {
       }
     }
 
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(AppStrings.t('app_name', loc)),
-        actions: [
-          // Phase 16: steady-state LAN health indicator (§14 — chip only,
-          // never a modal once the wizard is done).
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 8),
-            child: ConnectionStatusChip(),
-          ),
-          if (user != null) ...[
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                crossAxisAlignment: CrossAxisAlignment.end,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    user.fullName,
-                    key: const Key('shell-user-name'),
-                    style: theme.textTheme.titleSmall,
-                  ),
-                  Text(
-                    user.roles
-                        .map((r) => AppStrings.t(r, loc))
-                        .join(', '),
-                    key: const Key('shell-user-roles'),
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
+    return AppShortcuts(
+      child: Scaffold(
+        appBar: AppBar(
+          title: Text(AppStrings.t('app_name', loc)),
+          actions: [
+            // Phase 17 §18 — the keyboard map needs a single, always
+            // reachable entry point, whatever screen is on top.
+            IconButton(
+              key: const Key('shortcuts-help-button'),
+              tooltip: AppStrings.t('shortcuts_title', loc),
+              onPressed: () => showShortcutsDialog(context),
+              icon: const Icon(Icons.keyboard),
+            ),
+            // Phase 16: steady-state LAN health indicator (§14 — chip only,
+            // never a modal once the wizard is done).
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 8),
+              child: ConnectionStatusChip(),
+            ),
+            if (user != null) ...[
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      user.fullName,
+                      key: const Key('shell-user-name'),
+                      style: theme.textTheme.titleSmall,
                     ),
-                  ),
-                ],
+                    Text(
+                      user.roles
+                          .map((r) => AppStrings.t(r, loc))
+                          .join(', '),
+                      key: const Key('shell-user-roles'),
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color:
+                            theme.colorScheme.onSurface.withValues(alpha: 0.7),
+                      ),
+                    ),
+                  ],
+                ),
               ),
-            ),
-            Padding(
-              padding: const EdgeInsetsDirectional.only(end: 12),
-              child: TextButton.icon(
-                key: const Key('logout-button'),
-                onPressed: () => ref.read(authProvider.notifier).logout(),
-                icon: const Icon(Icons.logout, size: 18),
-                label: Text(AppStrings.t('logout', loc)),
+              Padding(
+                padding: const EdgeInsetsDirectional.only(end: 12),
+                child: TextButton.icon(
+                  key: const Key('logout-button'),
+                  onPressed: () => ref.read(authProvider.notifier).logout(),
+                  icon: const Icon(Icons.logout, size: 18),
+                  label: Text(AppStrings.t('logout', loc)),
+                ),
               ),
-            ),
+            ],
           ],
-        ],
+        ),
+        body: Row(
+          children: [
+            if (destinations.isNotEmpty) ...[
+              NavigationRail(
+                // QA fix round (Bug 2): with all destinations + labels the
+                // rail's internal destination Column overflows on short
+                // windows. `scrollable: true` wraps it in the framework's
+                // own scroll view — no destination is hidden or removed,
+                // tall-window layout is unchanged (content still sizes to
+                // its intrinsic height and is aligned as before).
+                scrollable: true,
+                selectedIndex: selectedIndex,
+                labelType: NavigationRailLabelType.all,
+                onDestinationSelected: onDestinationSelected,
+                destinations: destinations,
+              ),
+              const VerticalDivider(width: 1),
+            ],
+            Expanded(child: child),
+          ],
+        ),
       ),
-      body: Row(
-        children: [
-          if (destinations.isNotEmpty) ...[
-            NavigationRail(
-              // QA fix round (Bug 2): with all destinations + labels the
-              // rail's internal destination Column overflows on short
-              // windows. `scrollable: true` wraps it in the framework's
-              // own scroll view — no destination is hidden or removed,
-              // tall-window layout is unchanged (content still sizes to
-              // its intrinsic height and is aligned as before).
-              scrollable: true,
-              selectedIndex: selectedIndex,
-              labelType: NavigationRailLabelType.all,
-              onDestinationSelected: onDestinationSelected,
-              destinations: destinations,
-            ),
-            const VerticalDivider(width: 1),
-          ],
-          Expanded(child: child),
-        ],
+    );
+  }
+}
+
+/// Global keyboard map (Phase 17 §18).
+///
+/// The shell answers the keys that mean the same thing on every screen:
+///
+///   F1 / F2      → routes (POS / Products)
+///   F3 / Ctrl+N  → add-product form, permission-gated on `product_create`
+///   F4 / Ctrl+F  → the *current* page's search field
+///   F5           → the *current* page's safe refresh
+///
+/// F4/F5 delegate through [PageShortcutsRegistry] because only the
+/// mounted screen knows which field to focus and which read-only lists it
+/// may reload — the POS refuses to touch its cart, so a global refresh
+/// can never destroy an in-progress sale.
+///
+/// Ordering matters: this widget sits *outside* the page, so a key the
+/// page binds (POS: F6–F12, SPACE, `+`/`-`/`*`, its own F4/F5) is claimed
+/// by the page first and never reaches here; everything the page does not
+/// bind bubbles up and is answered here. While a dialog route is open its
+/// focus scope owns the keys entirely, so none of these fire behind a
+/// modal.
+///
+/// One activator per key: `CallbackShortcuts` runs *every* matching
+/// binding, so no key may be declared twice at the same layer.
+class AppShortcuts extends ConsumerWidget {
+  const AppShortcuts({super.key, required this.child});
+
+  /// The shell (usually the whole [Scaffold]).
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final canAddProduct = ref.watch(hasPermissionProvider('product_create'));
+
+    void go(String path) => context.go(path);
+
+    void focusSearch() => PageShortcutsRegistry.current?.focusSearch?.call();
+
+    void refresh() => PageShortcutsRegistry.current?.refresh?.call();
+
+    void addProduct() {
+      if (!canAddProduct) return;
+      showProductFormDialog(context);
+    }
+
+    return CallbackShortcuts(
+      bindings: {
+        const SingleActivator(LogicalKeyboardKey.f1): () => go('/pos'),
+        const SingleActivator(LogicalKeyboardKey.f2): () => go('/products'),
+        const SingleActivator(LogicalKeyboardKey.f3): addProduct,
+        const SingleActivator(LogicalKeyboardKey.keyN, control: true):
+            addProduct,
+        const SingleActivator(LogicalKeyboardKey.f4): focusSearch,
+        const SingleActivator(LogicalKeyboardKey.keyF, control: true):
+            focusSearch,
+        const SingleActivator(LogicalKeyboardKey.f5): refresh,
+      },
+      // The Focus anchor is what makes the layer reachable: key events are
+      // dispatched from the primary focus node UP its ancestor chain, so
+      // the shell needs a focusable node of its own to bubble through when
+      // the page itself has nothing focused. `skipTraversal` keeps it out
+      // of the Tab order and it never requests focus on its own, so page
+      // autofocused fields (the POS search box) are unaffected.
+      child: Focus(
+        key: const Key('shell-shortcuts-focus'),
+        skipTraversal: true,
+        child: child,
       ),
     );
   }

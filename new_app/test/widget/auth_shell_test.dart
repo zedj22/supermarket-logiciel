@@ -1,5 +1,6 @@
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
@@ -8,6 +9,7 @@ import 'package:supermarket_pos/features/auth/auth_provider.dart';
 import 'package:supermarket_pos/features/auth/credential_storage.dart';
 import 'package:supermarket_pos/features/auth/login_screen.dart';
 import 'package:supermarket_pos/features/dashboard/dashboard_screen.dart';
+import 'package:supermarket_pos/features/products/products_screen.dart';
 import 'package:supermarket_pos/features/users/users_screen.dart';
 import 'package:supermarket_pos/main.dart';
 import 'package:supermarket_pos/network/api_client.dart';
@@ -456,4 +458,239 @@ void main() {
       expect(tester.takeException(), isNull);
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // Phase 17 §18 — the global keyboard map
+  // ---------------------------------------------------------------------------
+  group('Phase 17 §18 — global keyboard shortcuts', () {
+    /// Admin carrying every scope the map needs (`pos_sale`, `product_view`,
+    /// `product_create`) — F3 is permission-gated, so without
+    /// `product_create` the shortcut must stay a no-op.
+    Response<dynamic> fullAdminLoginResponse() => Response<dynamic>(
+          requestOptions: RequestOptions(path: _loginPath),
+          data: {
+            'access_token': 'tok-admin',
+            'expires_in': 3600,
+            'user': {
+              'id': 'u1',
+              'full_name': 'Admin',
+              'is_active': true,
+              'roles': [
+                {'name': 'admin'},
+              ],
+              'permissions': [
+                'user_manage',
+                'pos_sale',
+                'product_view',
+                'product_create',
+              ],
+            },
+          },
+          statusCode: 200,
+        );
+
+    Response<dynamic> emptyList(String path) => Response<dynamic>(
+          requestOptions: RequestOptions(path: path),
+          data: {'items': <dynamic>[], 'total': 0},
+          statusCode: 200,
+        );
+
+    /// Every route the map can jump to loads lists on mount. Stub them all
+    /// so these tests measure navigation, not error handling; [getLog] records
+    /// each path so F5 can be shown to actually re-issue a request.
+    void stubListEndpoints(MockDio dio, {List<String>? getLog}) {
+      String record(Invocation invocation) {
+        final path = invocation.positionalArguments.first as String;
+        getLog?.add(path);
+        return path;
+      }
+
+      when(() => dio.get(any())).thenAnswer(
+        (invocation) async => emptyList(record(invocation)),
+      );
+      when(
+        () => dio.get(any(), queryParameters: any(named: 'queryParameters')),
+      ).thenAnswer((invocation) async => emptyList(record(invocation)));
+    }
+
+    /// Put the keyboard focus INSIDE the shell. Right after login the primary
+    /// focus is the Navigator's scope, which sits *above* the shell's
+    /// shortcut layer — without this a raw key press would never reach it.
+    Future<void> focusShell(WidgetTester tester) async {
+      final node = Focus.maybeOf(
+        tester.element(find.byKey(const Key('shortcuts-help-button'))),
+        createDependency: false,
+      );
+      expect(node, isNotNull, reason: 'shell must own a focus node');
+      node!.requestFocus();
+      await tester.pump();
+    }
+
+    Future<bool> press(WidgetTester tester, LogicalKeyboardKey key) async {
+      final handled = await tester.sendKeyEvent(key);
+      await tester.pump();
+      return handled;
+    }
+
+    Future<bool> pressCtrl(
+      WidgetTester tester,
+      LogicalKeyboardKey key,
+    ) async {
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      final handled = await tester.sendKeyEvent(key);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pump();
+      return handled;
+    }
+
+    Future<ProviderContainer> boot(WidgetTester tester) async {
+      final dio = MockDio();
+      stubListEndpoints(dio);
+      stubBootRequests(dio);
+      stubLogin(dio, fullAdminLoginResponse);
+      final container = await pumpFullApp(tester, dio);
+      await loginAs(tester, 'Admin');
+      expect(find.byType(DashboardScreen), findsOneWidget);
+      await focusShell(tester);
+      return container;
+    }
+
+    testWidgets('F1 opens the POS screen', (tester) async {
+      useDesktopViewport(tester);
+      final container = await boot(tester);
+
+      expect(await press(tester, LogicalKeyboardKey.f1), isTrue);
+      await tester.pumpAndSettle();
+
+      expect(container.read(routerProvider).state.uri.path, '/pos');
+      expect(find.byKey(const Key('pos-screen')), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('F2 opens the Products screen', (tester) async {
+      useDesktopViewport(tester);
+      final container = await boot(tester);
+
+      expect(await press(tester, LogicalKeyboardKey.f2), isTrue);
+      await tester.pumpAndSettle();
+
+      expect(container.read(routerProvider).state.uri.path, '/products');
+      expect(find.byType(ProductsScreen), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('F3 opens the add-product form', (tester) async {
+      useDesktopViewport(tester);
+      await boot(tester);
+
+      expect(await press(tester, LogicalKeyboardKey.f3), isTrue);
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('product-form-dialog')), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('Ctrl+N opens the add-product form', (tester) async {
+      useDesktopViewport(tester);
+      await boot(tester);
+
+      expect(await pressCtrl(tester, LogicalKeyboardKey.keyN), isTrue);
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('product-form-dialog')), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('F4 / Ctrl+F focus the current page search field', (
+      tester,
+    ) async {
+      useDesktopViewport(tester);
+      final container = await boot(tester);
+      expect(await press(tester, LogicalKeyboardKey.f2), isTrue);
+      await tester.pumpAndSettle();
+      expect(container.read(routerProvider).state.uri.path, '/products');
+
+      await focusShell(tester);
+      expect(await press(tester, LogicalKeyboardKey.f4), isTrue);
+      expect(
+        _focusedFieldKey(tester),
+        'products-search-field',
+        reason: 'F4 must reach the page, not just the shell',
+      );
+
+      await focusShell(tester);
+      expect(await pressCtrl(tester, LogicalKeyboardKey.keyF), isTrue);
+      expect(_focusedFieldKey(tester), 'products-search-field');
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('F5 refreshes the current page and never clears state', (
+      tester,
+    ) async {
+      useDesktopViewport(tester);
+      final dio = MockDio();
+      final productGets = <String>[];
+      stubListEndpoints(dio, getLog: productGets);
+      stubBootRequests(dio);
+      stubLogin(dio, fullAdminLoginResponse);
+      await pumpFullApp(tester, dio);
+      await loginAs(tester, 'Admin');
+      expect(await press(tester, LogicalKeyboardKey.f2), isTrue);
+      await tester.pumpAndSettle();
+
+      await focusShell(tester);
+      final before = productGets
+          .where((p) => p == '/api/v1/products')
+          .length;
+      expect(await press(tester, LogicalKeyboardKey.f5), isTrue);
+      await tester.pumpAndSettle();
+
+      expect(
+        productGets.where((p) => p == '/api/v1/products').length,
+        greaterThan(before),
+        reason: 'F5 must re-issue the page load',
+      );
+      expect(find.byType(ProductsScreen), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('the AppBar shortcuts button opens the localized map', (
+      tester,
+    ) async {
+      useDesktopViewport(tester);
+      await boot(tester);
+
+      await tester.tap(find.byKey(const Key('shortcuts-help-button')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('shortcuts-dialog')), findsOneWidget);
+      expect(
+        find.text(AppStrings.t('shortcuts_title', 'ar')),
+        findsOneWidget,
+      );
+      // Both scopes and every row of the map are rendered.
+      expect(find.text('Space'), findsOneWidget);
+      expect(find.text('F12'), findsOneWidget);
+      expect(
+        find.text(AppStrings.t('shortcuts_scope_pos', 'ar')),
+        findsWidgets,
+      );
+
+      await tester.tap(find.byKey(const Key('shortcuts-close')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('shortcuts-dialog')), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+  });
+}
+
+/// Value key of the focused text field, if the focus is on one.
+String? _focusedFieldKey(WidgetTester tester) {
+  final context = FocusManager.instance.primaryFocus?.context;
+  if (context == null) return null;
+  final field = context.widget is TextField
+      ? context.widget as TextField
+      : context.findAncestorWidgetOfExactType<TextField>();
+  final key = field?.key;
+  return key is ValueKey<String> ? key.value : null;
 }

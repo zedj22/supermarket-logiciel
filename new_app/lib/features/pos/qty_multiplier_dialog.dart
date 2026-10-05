@@ -66,9 +66,12 @@ class _QuantityInputDialogState extends State<QuantityInputDialog> {
   @override
   void initState() {
     super.initState();
-    // The current quantity seeds the field: the cashier confirms it as is
-    // or selects/replaces it with the new one.
-    _qty = TextEditingController(text: _currentText);
+    // Phase 17 §18: the field opens BLANK and autofocused, so the cashier
+    // types the new quantity straight away instead of having to select and
+    // replace the pre-filled current one. The current quantity still shows
+    // above the field (and in the `current → entered` preview), so nothing
+    // is lost. Empty is rejected by the shared validation in `_submit`.
+    _qty = TextEditingController(text: '');
   }
 
   @override
