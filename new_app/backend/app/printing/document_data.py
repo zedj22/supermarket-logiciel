@@ -90,6 +90,16 @@ class PartyBlock:
 
 @dataclass
 class LineItem:
+    """Normalized receipt line (Phase 17 item contract).
+
+    Every sale/return/purchase line is flattened into this shape before any
+    template sees it, so all renderers show the same fields in the same
+    order: ``name`` (never optional), ``sku``/``barcode`` metadata,
+    ``qty`` + ``unit_label``, ``unit_price``, ``line_total``.  Missing
+    optional fields only remove their own row — they never shift the
+    columns another field sits in.
+    """
+
     kind: LineKind
     name: str
     unit_label: str
@@ -98,6 +108,7 @@ class LineItem:
     line_total: str
     variant: str | None = None
     sku: str | None = None
+    barcode: str | None = None
     base_qty: str | None = None
     line_discount: str | None = None
     show_money: bool = True
@@ -227,6 +238,7 @@ def build_sale_document(
             name=_line_name(line, with_marker=kind == "pack_summary", locale=locale),
             variant=line.variant_name,
             sku=line.product_sku,
+            barcode=line.product_barcode,
             unit_label=_unit_label(line),
             qty=format_qty(line.quantity),
             base_qty=_base_qty(line),
@@ -298,6 +310,7 @@ def build_return_document(
             name=_line_name(line, with_marker=kind == "pack_summary", locale=locale),
             variant=line.variant_name,
             sku=line.product_sku,
+            barcode=line.product_barcode,
             unit_label=_unit_label(line),
             qty=format_qty(line.quantity),
             base_qty=_base_qty(line),
@@ -358,6 +371,7 @@ def build_purchase_document(
             name=_line_name(line, locale=locale),
             variant=None,
             sku=line.product_sku,
+            barcode=line.product_barcode,
             unit_label=line.purchase_unit_name or line.product_unit,
             qty=format_qty(line.quantity),
             base_qty=format_qty(line.base_qty_equivalent)

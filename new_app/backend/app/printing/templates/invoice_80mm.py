@@ -1,9 +1,21 @@
-"""80mm thermal receipt template (Phase 15 §7).
+"""80mm thermal receipt template (Phase 15 §7, Phase 17 item normalization).
 
-Geometry: 80mm page width, margins 4/4/5/5mm, body 9pt, meta 7.5pt,
-title 14pt bold. Columns share 40/18/20/22 % of the 72mm content width.
-Mirrors for `locale=ar` (visual RTL). Zero business logic — everything
-is pre-derived on `DocumentData`.
+Geometry: 80mm page width, margins 4/4/5/5mm, content width 72mm, body 9pt,
+meta 7.5pt, title 14pt bold.  Mirrors for `locale=ar` (visual RTL).  Zero
+business logic — everything is pre-derived on `DocumentData`.
+
+Normalized receipt item (identical for every sale line, every locale):
+
+    Product name ................................ 72mm, spans all columns
+    qty × unit   |   unit price   |   line total   34% / 33% / 33%
+    SKU: ABC123 (or barcode)  ·  Base: 24 unit       spans all columns
+    Discount: 5.00 DA                                spans all columns
+
+Only the value row is a real 3-cell row; the name row and the optional
+meta/discount rows span it with ``SPAN (0,r)-(-1,r)``.  The item row itself
+must never be spanned — reportlab keeps just the top-left cell and drops the
+other three, which used to collapse the row to either the product name (LTR)
+or the line total (RTL) depending on the locale.
 """
 
 from __future__ import annotations
@@ -17,7 +29,14 @@ from app.printing.styles import paragraph_style
 from app.printing.text import shape_text
 
 CONTENT_WIDTH = 72 * mm
-COL_WIDTHS = [0.40 * CONTENT_WIDTH, 0.18 * CONTENT_WIDTH, 0.20 * CONTENT_WIDTH, 0.22 * CONTENT_WIDTH]
+#: Value-row ratios: ``qty × unit`` | ``unit price`` | ``line total``.
+#: Sized so the widest realistic amount (``999999.99 DA``) and the widest
+#: realistic quantity (``999.999 × piece``) each stay on one line — the
+#: legacy 6pt padding left only 28.8pt usable and split every amount.
+COL_WIDTHS = [0.34 * CONTENT_WIDTH, 0.33 * CONTENT_WIDTH, 0.33 * CONTENT_WIDTH]
+#: Cell padding.  ReportLab's 6pt default leaves the money column 28.8pt
+#: usable, which is narrower than "1600.00 DA" — every amount wrapped.
+CELL_PAD = 2.0
 HAIRLINE = 0.6
 
 
@@ -86,57 +105,76 @@ def _totals_table(data: DocumentData) -> Flowable | None:
 
 
 def _items_table(data: DocumentData) -> Flowable | None:
+    """One uniform row group per sale line — see the module docstring.
+
+    Layout is fixed: name row (spanned) → value row (3 cells) → optional
+    meta row (spanned) → optional discount row (spanned).  A line without a
+    SKU, a barcode, a base quantity or a discount simply has fewer rows; its
+    value row lands in exactly the same columns as every other line.
+    """
     if not data.lines:
         return None
     rtl = data.rtl
     locale = data.meta.locale  # meta is always set by builders
+    text_align = "right" if rtl else "left"
 
     body: list[list[Paragraph]] = []
     span_rows: list[int] = []
+    separator_rows: list[int] = []
     for line in data.lines:
-        name = shape_text(line.name)
+        name = line.name
         if line.kind == "pack_component":
             name = f"└ {name}"
-        name_cell = _p(name, 9, rtl)
-        qty_cell = _p(f"{line.qty} × {line.unit_label}", 8.5, rtl, align="center")
-        price_cell = _p(line.unit_price, 8.5, rtl, align="left") if line.show_money else _p("", 8.5, rtl)
-        total_cell = _p(line.line_total, 8.5, rtl, align="left") if line.show_money else _p("", 8.5, rtl)
-        row = [name_cell, qty_cell, price_cell, total_cell]
-        body.append(row if not rtl else list(reversed(row)))
+        body.append([_p(name, 9, rtl, align=text_align)])
+        span_rows.append(len(body) - 1)
+
+        value_row = [
+            _p(f"{line.qty} × {line.unit_label}", 8.5, rtl, align="center"),
+            _p(line.unit_price if line.show_money else "", 8.5, rtl, align="left"),
+            _p(line.line_total if line.show_money else "", 8.5, rtl, align="left"),
+        ]
+        body.append(value_row if not rtl else list(reversed(value_row)))
+        last_row = len(body) - 1
 
         meta_bits = []
         if line.sku:
-            meta_bits.append(line.sku)
+            meta_bits.append(f"{label('col_sku', locale)}: {line.sku}")
+        elif line.barcode:
+            meta_bits.append(f"{label('barcode', locale)}: {line.barcode}")
         if line.base_qty:
             meta_bits.append(
                 f"{label('base', locale)}: {line.base_qty} {line.unit_label}"
             )
         if meta_bits:
+            body.append([_p("   ".join(meta_bits), 7.5, rtl, align=text_align)])
             span_rows.append(len(body) - 1)
-            body.append([_p("   ".join(meta_bits), 7.5, rtl)])
-            span_rows.append(len(body) - 1)
+            last_row = len(body) - 1
 
         if line.line_discount:
-            body.append([_p(f"{label('discount', locale)}: {line.line_discount}", 7.5, rtl)])
+            body.append(
+                [_p(f"{label('discount', locale)}: {line.line_discount}", 7.5, rtl,
+                    align=text_align)]
+            )
             span_rows.append(len(body) - 1)
+            last_row = len(body) - 1
+
+        separator_rows.append(last_row)
 
     widths = COL_WIDTHS if not rtl else list(reversed(COL_WIDTHS))
     table = Table(body, colWidths=widths, repeatRows=0)
 
-    span_styles: list[tuple] = []
-    seen: set[int] = set()
-    for idx in span_rows:
-        if idx in seen:
-            continue
-        seen.add(idx)
-        span_styles.append(("SPAN", (0, idx), (-1, idx)))
     style = [
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
         ("TOPPADDING", (0, 0), (-1, -1), 1.5),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 1.5),
-        ("LINEBELOW", (0, 0), (-1, -1), HAIRLINE, "grey"),
+        ("LEFTPADDING", (0, 0), (-1, -1), CELL_PAD),
+        ("RIGHTPADDING", (0, 0), (-1, -1), CELL_PAD),
     ]
-    table.setStyle(TableStyle(style + span_styles))
+    style += [("SPAN", (0, idx), (-1, idx)) for idx in span_rows]
+    style += [
+        ("LINEBELOW", (0, idx), (-1, idx), HAIRLINE, "grey") for idx in separator_rows
+    ]
+    table.setStyle(TableStyle(style))
     return table
 
 
@@ -249,11 +287,13 @@ def estimate_height(data: DocumentData) -> float:
     rows_mm = 0.0
 
     for line in data.lines:
-        rows_mm += 7.0
-        if line.sku or line.base_qty:
-            rows_mm += 4.0
+        # Normalized item = name row (9pt) + value row (8.5pt) with 1.5pt
+        # padding each ≈ 9.5mm; 10.0mm also covers a name that wraps once.
+        rows_mm += 10.0
+        if line.sku or line.barcode or line.base_qty:
+            rows_mm += 4.4
         if line.line_discount:
-            rows_mm += 4.0
+            rows_mm += 4.4
     totals_rows = 4
     if data.totals is not None:
         totals_rows += sum(

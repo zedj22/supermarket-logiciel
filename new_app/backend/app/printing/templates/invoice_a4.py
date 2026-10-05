@@ -49,7 +49,7 @@ def _items_table(data: DocumentData) -> Flowable | None:
     row_spans: list[int] = []
 
     for index, line in enumerate(data.lines, start=1):
-        name = shape_text(line.name)
+        name = line.name
         if line.kind == "pack_component":
             name = f"└ {name}"
         cells = [
@@ -76,7 +76,7 @@ def _items_table(data: DocumentData) -> Flowable | None:
     table = Table(body, colWidths=widths, repeatRows=1)
     spans = [
         ("SPAN", (0, idx), (-1, idx))
-        for idx in _span_targets(body, row_spans)
+        for idx in _span_targets(row_spans)
     ]
     table.setStyle(
         TableStyle(
@@ -96,19 +96,17 @@ def _items_table(data: DocumentData) -> Flowable | None:
     return table
 
 
-def _span_targets(body: list[list[Paragraph]], row_spans: list[int]) -> list[int]:
-    """Meta rows follow a data row; find their actual indices.
+def _span_targets(row_spans: list[int]) -> list[int]:
+    """Meta rows follow a data row; return their absolute indices.
 
-    `row_spans` stores the data-row index the meta row was inserted after,
-    so the meta row itself sits at data index + 1 (shifted by meta rows
-    already appended).
+    `row_spans` stores the data-row index captured immediately before the
+    meta row was appended, so the meta row always sits at data index + 1 —
+    including for the second and later meta rows, whose data index already
+    accounts for the meta rows appended before them.  (A cumulative offset
+    here used to span the wrong row: the third item row collapsed to one
+    cell as soon as two lines carried a base quantity.)
     """
-    targets: list[int] = []
-    offset = 0
-    for data_index in row_spans:
-        offset += 1
-        targets.append(data_index + offset)
-    return targets
+    return [data_index + 1 for data_index in row_spans]
 
 
 def _meta_table(data: DocumentData) -> Flowable:

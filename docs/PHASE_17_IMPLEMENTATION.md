@@ -41,6 +41,11 @@ Test-count arithmetic (each step is a gate recorded in a commit message or in §
 - `ruff --statistics`: 59 = 64 − 5 removed by the §17.7 cleanup (unused imports in the
   auth/dependencies path); no new categories.
 
+> **Post-record addendum (2026-10-05):** §15 below (80 mm receipt item normalization)
+> re-ran every gate after the snapshot above — backend **1279 passed / 0 failed**,
+> `ruff check app` **59** (unchanged), `flutter analyze` clean, `flutter test` **1400**.
+> §15.5 has the exact commands and test arithmetic.
+
 ---
 
 ## 1. Deliverable status — §17.1 … §17.10
@@ -358,6 +363,173 @@ flutter test                                                # expect 1377 passed
 | 17.7 Security | `app/core/rate_limit.py`, `tests/unit/test_security_phase17.py` | `app/api/dependencies.py`, `app/api/v1/{auth,router}.py`, `app/core/config.py`, `app/core/db_dump.py`, `app/core/server_identity.py`, `app/db/engine.py`, `app/discovery/responder.py`, `app/services/{auth,devices}.py`, `tests/conftest.py`, `PHASE_16_LAN_DEVICES_ANALYSIS.md` |
 | 17.8 Performance | `migrations/versions/0023_phase17_search_indexes.py`, `scripts/benchmark_phase17.py`, `docs/phase17_benchmark_results.json` | `app/models/catalog.py`, `app/repositories/catalog.py`, `tests/unit/test_products_categories.py`, `tests/integration/test_migrations.py` |
 | 17.10 | `docs/PHASE_17_IMPLEMENTATION.md` (this file) | — |
+| §15 Receipt item | `tests/unit/test_receipt_item_layout.py`, `new_app/test/unit/pos_sale_payload_contract_test.dart` | `app/printing/templates/invoice_80mm.py`, `app/printing/templates/invoice_a4.py`, `app/printing/document_data.py`, `app/printing/labels.py` |
 
 *(Exact per-commit line counts: `git show --stat` for `d9565fd 9c93bd0 f24eac0 bff3509
 86331d1 0de0dad b0001fd 391c999 29dd769`.)*
+
+---
+
+## 15. Receipt item normalization (80 mm) — root cause, contract, layout rule
+
+Added after §17.10: the printed receipt showed **two different line renderings for the
+same data** (a full structured row on some lines, a collapsed `PRICE`/`SKU`-only row on
+others), and the shape changed with the document locale. This section records the proven
+root cause, the contract that now replaces it, and the layout rule a reviewer can check
+on paper.
+
+### 15.1 Root cause (proven, not guessed)
+
+Classification: **(c) conditional renderer logic**. The whole data path — cart →
+`POST /api/v1/sales` → `SaleLine` → response → `build_sale_document` → `DocumentData` —
+is locale-independent and clean. Only `templates/invoice_80mm.py::_items_table` branched.
+
+The old 80 mm item row was **four cells**:
+`[product name, qty × unit, unit price, line total]`. The meta branch recorded the span
+row **before** appending the meta row:
+
+```python
+if meta_bits:
+    span_rows.append(len(body) - 1)   # ← still the ITEM row: the meta row is not appended yet
+    body.append([_p("   ".join(meta_bits), 7.5, rtl)])
+    span_rows.append(len(body) - 1)   # ← the meta row (correct)
+```
+
+So **every line carrying a SKU or a base quantity also got its own value row spanned**.
+ReportLab's `SPAN (0,r)-(-1,r)` keeps only the top-left cell and drops the other three:
+
+- **RTL** (`locale=ar`) → cell 0 is `line total` → the line shows only its amount;
+- **LTR** (`en`/`fr`) → cell 0 is the product name → qty, price and total disappear.
+
+A line with **no** SKU and **no** base quantity never entered that branch, so its 4-cell
+row stayed intact. That is the whole "CASE A vs CASE B" symptom: which branch a line
+takes depends on its identifier fields, and which *field* survives depends on the locale.
+A reportlab content-stream dump confirmed it — collapsed rows emit a single `cm` text
+operator, intact rows four.
+
+Two secondary defects rode along:
+
+1. **Money column too narrow.** `_items_table` never overrode `LEFTPADDING`/`RIGHTPADDING`,
+   so reportlab's 6 pt default left the money column `40 % × 72 mm − 12 pt = 28.8 pt`
+   usable — narrower than `1600.00 DA`. Every amount and quantity wrapped mid-string.
+2. **Double bidi shaping.** `invoice_80mm.py` and `invoice_a4.py` did
+   `name = shape_text(line.name)` and then `_p()` called `shape_text()` again.
+   `shape_text` is **not** idempotent (`shape_text(shape_text(x)) != shape_text(x)` for
+   Arabic), so Arabic product names were reordered twice. ReportLab only reorders when it
+   owns the bidi pass, which it does not here (`rtlSupport` disabled) — a single shaping
+   is correct.
+3. **Same collapse on A4, second occurrence.** `invoice_a4._span_targets` added a
+   *cumulative* offset to data-row indices that already included the meta rows appended
+   before them. From the second base-quantity line on, the span pointed at an **item** row
+   (and eventually at a row past the table): the third item row collapsed to one cell.
+   Fixed to `data_index + 1` — the meta row always sits immediately after its data row.
+
+### 15.2 Normalized receipt item contract (`LineItem`)
+
+One dataclass, filled by all three builders (`build_sale_document`,
+`build_return_document`, `build_purchase_document`) before any template sees it:
+
+| Field | Required | Meaning |
+|---|---|---|
+| `kind` | yes | `product` / `pack_summary` / `pack_component` |
+| `name` | yes | display name, **never optional** — no other field may substitute for it |
+| `qty`, `unit_label` | yes | formatted quantity + selling/base unit |
+| `unit_price`, `line_total` | yes | `format_money()` → `1600.00 DA` |
+| `sku` | no | catalog reference → meta row, preferred identifier |
+| `barcode` | no | fallback identifier when `sku` is unset (**new in §15**) |
+| `base_qty` | no | base units implied by a selling-unit line → joins the meta row |
+| `line_discount` | no | non-zero only → own full-width row |
+| `variant`, `show_money` | no | variant caption / `False` for pack components (money cells blank) |
+
+Rules the contract guarantees:
+
+- a missing optional field **removes its own row only** — it never shifts the column
+  another field sits in;
+- `sku` never replaces the product name; when both `sku` and `barcode` are set, the
+  **sku wins** and the barcode is not printed;
+- the client cannot influence any of this: `CartLine.toSaleJson()` sends only
+  `product_id | pack_id | variant_id | selling_unit_id | quantity | unit_price |
+  line_discount | barcode` — display snapshots (`product_name`, `unit_name`,
+  `base_unit_price`, `unit_multiplier`, `components_summary`, `available_stock`) are
+  hold-snapshot fields and never reach the receipt.
+
+### 15.3 The 80 mm layout rule
+
+For **every** sale line, in **every** locale — one fixed row group:
+
+```
+Product name ........................................ 72 mm, SPAN (0,r)-(-1,r)
+qty × unit        |   unit price   |   line total    34 % / 33 % / 33 %, 3 real cells
+SKU: ABC123  ·  Base: 24 unit  (or "Barcode: …")     full width, SPAN, only if any present
+Discount: 5.00 DA                                    full width, SPAN, only if discounted
+──────────────────────────────────────────────────── LINEBELOW on the last row of the group
+```
+
+Invariants (each has a test in `tests/unit/test_receipt_item_layout.py`):
+
+- exactly **one** spanned-able value row per line, **never** spanned;
+- spanned rows are exactly `{name} ∪ {meta?} ∪ {discount?}` — `SPAN` is emitted only as
+  `(0,r)-(-1,r)`, once per row;
+- one `LINEBELOW` per line, on the group's last row — never on a name row and never
+  inside an item that has meta/discount rows below its value row;
+- RTL mirrors the three **value** cells only (`line total | unit price | qty × unit`)
+  by reversing the cell list and the column widths together — data semantics are
+  unchanged, so `en`/`fr` and `ar` produce identical row structures;
+- geometry: `COL_WIDTHS = [0.34, 0.33, 0.33] × 72 mm`, `CELL_PAD = 2.0` pt, body 9 pt,
+  meta 7.5 pt, value cells 8.5 pt. Measured with `stringWidth` at 8.5 pt IBM Plex Sans
+  Arabic: `999999.99 DA` = 56.3 pt ≤ 63.4 pt usable, `999.999 × piece` = 62.7 pt ≤ 65.4 pt,
+  `1.234 × milliliter` = 63.3 pt ≤ 65.4 pt — none wrap. `999999.99 × milliliter`
+  (83.7 pt) still wraps; that is the accepted limit (row grows, no field shifts);
+- `estimate_height` budgets **10.0 mm** per line for name + value, **+4.4 mm** when
+  `sku | barcode | base_qty` is present, **+4.4 mm** for a discount, with the existing
+  140 mm floor / 400 mm segment ceiling unchanged.
+
+### 15.4 Visual QA scenario
+
+The scenario lives in `POST_PHASE_17_MANUAL_QA.md` §12 rows **12.15–12.17** (print a
+mixed 3-line sale in AR/EN/FR and check the four-row group above on paper) and the
+defect is recorded in §14 row 1.
+
+### 15.5 Verification (2026-10-05)
+
+```powershell
+# cwd: new_app/backend, venv interpreter
+$env:LAN_MODE='0'; $env:DISCOVERY_ENABLED='0'
+.\.venv\Scripts\python.exe -m pytest tests/unit/test_receipt_item_layout.py \
+     tests/unit/test_receipt_identity.py tests/unit/test_export_render.py \
+     tests/unit/test_print_export.py -q          # 159 passed
+.\.venv\Scripts\python.exe -m pytest -q          # 1279 passed, 0 failed, 701 s
+.\.venv\Scripts\python.exe -m ruff check app     # 59 (unchanged baseline)
+
+# cwd: new_app
+flutter analyze                                  # No issues found!
+flutter test                                     # All tests passed! (1400)
+```
+
+Test arithmetic: **1279 = 1250 + 29**. `1250` is the pre-change suite (1249 passed + the
+1 `test_discovery_is_off_by_default` row that only fails when `DISCOVERY_ENABLED` leaks
+from `.env` — the override above makes it pass). **29** = new
+`tests/unit/test_receipt_item_layout.py` (28 + the A4 `_span_targets` regression).
+Flutter **1400 = 1396 + 4** new `pos_sale_payload_contract_test.dart` cases.
+
+The new suite covers: 3-cell value rows never spanned · name row spans the full width ·
+optional rows never shift the value columns · separator per item group · localized
+`SKU:`/`Barcode:` meta row (EN/FR/AR) · `sku` beats `barcode` · `base_qty` joins the meta
+row · discount row only when discounted · pack-component `└` marker with blank money
+cells · `stringWidth` fit of money/qty cells · LTR/RTL structural equality · every field
+of every line present in the rendered PDF · draw order `name → value row → meta row` ·
+Arabic name shaped **exactly once** · payload normalization independent of add path and
+locale · `estimate_height` budgets · A4 meta-row span integrity.
+
+### 15.6 Files touched by §15
+
+- `new_app/backend/app/printing/templates/invoice_80mm.py` — rewritten `_items_table`,
+  `COL_WIDTHS`, `CELL_PAD`, `estimate_height`, module docstring.
+- `new_app/backend/app/printing/templates/invoice_a4.py` — drop the duplicate
+  `shape_text` on the product name; fix `_span_targets`.
+- `new_app/backend/app/printing/document_data.py` — `LineItem.barcode` + docstring,
+  `barcode` propagated by all three builders.
+- `new_app/backend/app/printing/labels.py` — `barcode` key (AR/FR/EN), mirroring
+  `lib/core/strings.dart`.
+- `new_app/backend/tests/unit/test_receipt_item_layout.py` — new, 29 tests.
+- `new_app/test/unit/pos_sale_payload_contract_test.dart` — new, 4 tests.

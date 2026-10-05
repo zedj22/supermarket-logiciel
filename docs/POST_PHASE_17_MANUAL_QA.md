@@ -497,6 +497,13 @@ Five sales, each with **200 distinct QA products**, tag each with its note:
 | 12.12 | Failure | Backend exception (force a 500 if reachable, else skip) | structured 500 envelope, backend stays up, client shows recoverable message | ☐ |
 | 12.13 | Rollback | After any failed restore/cancel action | DB state equals pre-action state (counts unchanged) | ☐ |
 | 12.14 | Large invoice | Invoice/receipt UI for the §6.1 1000-line sale: full list, totals, paging/scroll | all 1000 lines render, totals match §6.1 C2; physical print → **UNVERIFIED if no printer attached** | ☐ |
+| 12.15 | 80 mm item layout | Sell a 3-line cart: (a) a product **with a SKU**, (b) a product **without a SKU but with a barcode**, (c) a line bought in a **selling unit** (so a base quantity prints) **with a line discount**. Print the receipt on 80 mm paper | every line shows the same 4-row group: full-width product name → `qty × unit \| unit price \| line total` in three aligned columns → full-width `SKU:`/`Barcode:` + `Base:` line when applicable → full-width `Discount:` line. **No line shows only its amount or only its product name.** SKU/barcode never replaces the product name | ☐ |
+| 12.16 | 80 mm locales | Repeat 12.15 once in **EN**, once in **FR**, once in **AR** | identical row structure in all three; AR mirrors the three value columns (amounts on the right-hand side of the row) without changing any value; every amount is on **one** line (`1600.00 DA`, not `1600.00` / `DA` on two lines) | ☐ |
+| 12.17 | 80 mm A4 parity | Print the same sale on **A4** with at least **two** selling-unit lines (two base quantities) | the base-quantity note spans the full table width under *its own* line; no product row is squeezed into a single cell and no column header shifts | ☐ |
+
+*Fixture tip for 12.15/12.16: a cart with one SKU product, one barcode-only product and
+one selling-unit line with a discount is enough — §15.3 of `PHASE_17_IMPLEMENTATION.md`
+documents the exact row group the paper must match.*
 
 ---
 
@@ -587,7 +594,7 @@ SELECT customer_id, sum(total - paid) FROM sales
 
 | # | Date/tester | Area (§) | Steps to reproduce | Expected | Actual (status code / message / screenshot) | Severity (S1–S4) | Fixed in |
 |---|---|---|---|---|---|---|---|
-| 1 | | | | | | | |
+| 1 | 2026-10-05 / automated (Phase 17 §15) | Printing (§12.15) | Print an 80 mm receipt whose sale lines carry a SKU or a base quantity; compare with a line that carries neither | every line shows the same 4-row group: name → `qty × unit \| unit price \| line total` → meta → discount | the item row was `SPAN`ned, so reportlab kept one cell: **RTL showed only the line total, LTR only the product name**; lines without SKU/base qty were intact (inconsistent line to line); the money column also split `1600.00 DA` across two lines | S2 | `phase-17: normalize 80mm receipt item rendering` |
 | 2 | | | | | | | |
 | 3 | | | | | | | |
 

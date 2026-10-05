@@ -137,6 +137,7 @@ LABELS: dict[str, tuple[str, str, str]] = {
     "quantity": ("الكمية", "Quantité", "Quantity"),
     "price": ("السعر", "Prix", "Price"),
     "base": ("أساسي", "Base", "Base"),
+    "barcode": ("الباركود", "Code-barres", "Barcode"),
     "amount_paid": ("المبلغ المدفوع", "Montant payé", "Amount Paid"),
     "payment_method": ("طريقة الدفع", "Mode de paiement", "Payment Method"),
     "discount": ("خصم", "Remise", "Discount"),
