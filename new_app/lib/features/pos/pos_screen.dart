@@ -222,10 +222,13 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       return;
     }
     // Phase 17 §18 — SPACE is the payment shortcut; the legacy F8 binding is
-    // gone. The activator already refused the key while any text field had
-    // primary focus, so this branch only runs with the POS workspace active
-    // and never while the cashier is typing. The empty-cart toast comes from
-    // the same `_openPayment()` the PAY button uses — one flow, one message.
+    // gone. The activator refuses the key while ANY other text field has
+    // primary focus (search, dialogs, pickers — the cashier keeps typing),
+    // so this branch runs with the POS workspace active or while a cart
+    // quantity field is focused; the space character never reaches that
+    // quantity field, so its value cannot be touched by the pay key. The
+    // empty-cart toast comes from the same `_openPayment()` the PAY button
+    // uses — one flow, one message.
     if (key == LogicalKeyboardKey.space) {
       await _openPayment();
       if (mounted) _searchFocusNode.requestFocus();
@@ -1264,6 +1267,11 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     // SPACE pays (Phase 17 §18, replaces legacy F8) but only when no text
     // field is consuming the space — TextFreeKeyActivator declines it
     // while an EditableText has primary focus, so typing is never stolen.
+    // The one exception is a focused CART QUANTITY field (every add leaves
+    // focus there, Phase 8 FIX #1): it hands SPACE to the payment shortcut
+    // instead of inserting it, so the pay key can never corrupt a quantity
+    // (see cartQtyFieldHasFocus). The search field and every dialog input
+    // keep SPACE as ordinary text.
     // `+` / `-` / `*` act on the last active cart line: `+`, `-` and `*`
     // are also claimed while the search or a cart qty field is focused
     // (never inserted as text) — see PosQtyShortcutActivator. While a
@@ -1282,8 +1290,14 @@ class _PosScreenState extends ConsumerState<PosScreen> {
         const SingleActivator(LogicalKeyboardKey.f7): () =>
             _handleShortcut(LogicalKeyboardKey.f7),
         // SPACE replaces F8 (Phase 17 §18 — "SPACE replaces F8 for payment").
-        TextFreeKeyActivator(LogicalKeyboardKey.space): () =>
-            _handleShortcut(LogicalKeyboardKey.space),
+        // While a cart quantity field is focused the activator claims the
+        // key anyway (allowWhileEditing) — the callback is IDENTICAL, only
+        // the event precedence changes: handled key ⇒ the qty text input
+        // never sees the space character.
+        TextFreeKeyActivator(
+          LogicalKeyboardKey.space,
+          allowWhileEditing: cartQtyFieldHasFocus,
+        ): () => _handleShortcut(LogicalKeyboardKey.space),
         const SingleActivator(LogicalKeyboardKey.f9): () =>
             _handleShortcut(LogicalKeyboardKey.f9),
         const SingleActivator(LogicalKeyboardKey.f10): () =>

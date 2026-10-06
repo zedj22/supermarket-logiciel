@@ -440,6 +440,111 @@ void main() {
     });
   });
 
+  group('Large invoice (261 distinct lines)', () {
+    testWidgets('every line is posted in ONE request and the dialog closes',
+        (tester) async {
+      final dio = MockDio();
+      final log = _HttpLog();
+      stubRequests(dio, log: log);
+
+      await pumpDialog(
+        tester,
+        dio,
+        sale: _sale(
+          lines: [
+            for (var i = 0; i < 261; i++)
+              _line(id: 'sl-$i', name: 'Product $i'),
+          ],
+        ),
+      );
+
+      // All 261 lines render, each defaulted to its remaining quantity.
+      expect(find.byKey(const Key('return-line-260')), findsOneWidget);
+      expect(qtyText(tester, 260), '5');
+
+      await submit(tester);
+
+      expect(log.posts, hasLength(1));
+      final lines = log.posts.single['lines'] as List<dynamic>;
+      expect(lines, hasLength(261));
+      expect(log.posts.single['sale_id'], 'sale-1');
+      expect(
+        lines.every((ln) => ln['quantity'] == '5'),
+        isTrue,
+      );
+      expect(find.byKey(const Key('return-create-dialog')), findsNothing);
+      expect(find.byKey(const Key('return-create-error')), findsNothing);
+    });
+
+    testWidgets('a backend 422 keeps the dialog open and shows the error',
+        (tester) async {
+      final dio = MockDio();
+      final log = _HttpLog();
+      stubRequests(dio, log: log);
+      when(() => dio.post(any(), data: any(named: 'data'))).thenAnswer((
+        invocation,
+      ) async {
+        log.posts.add(
+          Map<String, dynamic>.from(
+            invocation.namedArguments[#data] as Map,
+          ),
+        );
+        throw DioException(
+          requestOptions: RequestOptions(path: _returnsPath),
+          type: DioExceptionType.badResponse,
+          response: Response<dynamic>(
+            requestOptions: RequestOptions(path: _returnsPath),
+            statusCode: 422,
+            data: {
+              'error': {
+                'code': 'VALIDATION_ERROR',
+                'message_key': 'errors.validation',
+                'message':
+                    'lines: List should have at most 10000 items after '
+                    'validation, not 10001',
+                'details': {
+                  'lines':
+                      'List should have at most 10000 items after validation, '
+                      'not 10001',
+                },
+                'request_id': 'req-1',
+              },
+            },
+          ),
+        );
+      });
+
+      await pumpDialog(
+        tester,
+        dio,
+        sale: _sale(
+          lines: [
+            for (var i = 0; i < 261; i++)
+              _line(id: 'sl-$i', name: 'Product $i'),
+          ],
+        ),
+      );
+      await submit(tester);
+
+      expect(log.posts, hasLength(1));
+      expect(find.byKey(const Key('return-create-dialog')), findsOneWidget);
+      expect(find.byKey(const Key('return-create-error')), findsOneWidget);
+      expect(
+        tester
+            .widget<Text>(find.byKey(const Key('return-create-error')))
+            .data,
+        AppStrings.t('validation_error', 'en'),
+      );
+      expect(
+        tester
+            .widget<Text>(find.byKey(const Key('return-create-error-detail')))
+            .data,
+        contains('10001'),
+      );
+      expect(tester.takeException(), isNull);
+    });
+  });
+
   group('Linked return dialog localization', () {
     for (final locale in [AppLocale.ar, AppLocale.fr, AppLocale.en]) {
       testWidgets('title + optional reason + direction for ${locale.name}',

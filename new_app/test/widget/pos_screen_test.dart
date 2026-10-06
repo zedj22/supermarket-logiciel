@@ -9064,6 +9064,33 @@ void main() {
       availableStock: '50',
     );
 
+    const lineMilk = CartLine(
+      productId: 'p2',
+      name: 'Milk',
+      quantity: '3',
+      unitPrice: '5',
+      availableStock: '40',
+    );
+
+    /// On-screen text of the cart quantity field of line [index] — what the
+    /// cashier actually sees (it can lag the committed cart quantity while
+    /// an incomplete expression is still being typed).
+    String qtyFieldText(WidgetTester tester, int index) {
+      final key = containerOf(tester).read(posCartProvider).lines[index].key;
+      return tester
+          .widget<TextField>(find.byKey(Key('cart-line-qty-$key')))
+          .controller!
+          .text;
+    }
+
+    /// Direct add through the real catalog (no variant / selling-unit
+    /// picker) — the flow that auto-focuses the new line's qty field
+    /// (Phase 8 FIX #1).
+    Future<void> addFromCatalog(WidgetTester tester) async {
+      await tester.tap(find.byKey(Key('pos-product-$_productId')));
+      await tester.pumpAndSettle();
+    }
+
     testWidgets('SPACE opens the payment dialog (legacy F8 removed)', (
       tester,
     ) async {
@@ -9127,7 +9154,46 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('SPACE inside a cart quantity field is not stolen', (
+    // ── SPACE vs the cart quantity field (regression) ─────────────────────
+    // Every add leaves focus in the new line's quantity field (Phase 8
+    // FIX #1), where SPACE used to fall through to the text input: the
+    // payment dialog never opened and the quantity was the field that
+    // received the key. SPACE must win there, and the key must be CONSUMED
+    // so the quantity text input never sees the character.
+    testWidgets(
+        'SPACE with the auto-focused qty field opens payment (regression)',
+        (tester) async {
+      await _pumpApp(tester, dio: dio);
+      await tester.pump(const Duration(milliseconds: 500));
+
+      await addFromCatalog(tester);
+
+      final cart = containerOf(tester).read(posCartProvider);
+      expect(cart.lines, hasLength(1));
+      final key = cart.lines.first.key;
+      expect(
+        focusedFieldKey(tester),
+        'cart-line-qty-$key',
+        reason: 'the add must leave focus on the new line qty field',
+      );
+      final textBefore = qtyFieldText(tester, 0);
+
+      final handled = await pressSpace(tester);
+      await tester.pumpAndSettle();
+
+      expect(handled, isTrue,
+          reason: 'SPACE is the payment shortcut, qty focus or not');
+      expect(find.byKey(const Key('payment-dialog')), findsOneWidget);
+      expect(qtyAt(tester, 0), '1');
+      expect(
+        qtyFieldText(tester, 0),
+        textBefore,
+        reason: 'the pay key must never edit the quantity',
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('SPACE inside a cart quantity field pays, quantity untouched', (
       tester,
     ) async {
       await _pumpApp(tester, dio: dio);
@@ -9139,10 +9205,140 @@ void main() {
       expect(focusedFieldKey(tester), 'cart-line-qty-$key');
 
       final handled = await pressSpace(tester);
+      await tester.pumpAndSettle();
 
-      expect(handled, isFalse, reason: 'a text field owns the space');
-      expect(find.byKey(const Key('payment-dialog')), findsNothing);
+      expect(handled, isTrue,
+          reason: 'the POS payment shortcut owns SPACE here');
+      expect(find.byKey(const Key('payment-dialog')), findsOneWidget);
       expect(qtyAt(tester, 0), '24');
+      expect(qtyFieldText(tester, 0), '24');
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('SPACE pays from any other cart quantity field too', (
+      tester,
+    ) async {
+      await _pumpApp(tester, dio: dio);
+      addLine(tester, line24);
+      addLine(tester, lineMilk);
+      await tester.pump();
+      final lines = containerOf(tester).read(posCartProvider).lines;
+      expect(lines, hasLength(2));
+      // An OLDER line's field — not the one the last add focused.
+      final firstKey = lines.first.key;
+      await tester.tap(find.byKey(Key('cart-line-qty-$firstKey')));
+      await tester.pump();
+      expect(focusedFieldKey(tester), 'cart-line-qty-$firstKey');
+
+      final handled = await pressSpace(tester);
+      await tester.pumpAndSettle();
+
+      expect(handled, isTrue);
+      expect(find.byKey(const Key('payment-dialog')), findsOneWidget);
+      expect(qtyAt(tester, 0), '24');
+      expect(qtyFieldText(tester, 0), '24');
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('SPACE inside a dialog text field stays ordinary text', (
+      tester,
+    ) async {
+      await _pumpApp(tester, dio: dio);
+      addLine(tester, line24);
+      await tester.pump();
+      await focusWorkspace(tester);
+      expect(await pressSpace(tester), isTrue);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('payment-dialog')), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('payment-paid-input')));
+      await tester.pump();
+      expect(focusedFieldKey(tester), 'payment-paid-input');
+      final paidBefore = tester
+          .widget<TextField>(find.byKey(const Key('payment-paid-input')))
+          .controller!
+          .text;
+
+      final handled = await pressSpace(tester);
+      await tester.pump();
+
+      expect(handled, isFalse, reason: 'a dialog input owns the space');
+      expect(find.byKey(const Key('payment-dialog')), findsOneWidget);
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const Key('payment-paid-input')))
+            .controller!
+            .text,
+        paidBefore,
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('Enter never pays — the qty field keeps its own submit', (
+      tester,
+    ) async {
+      await _pumpApp(tester, dio: dio);
+      addLine(tester, line24);
+      await tester.pump();
+      final key = containerOf(tester).read(posCartProvider).lines.first.key;
+      await tester.enterText(find.byKey(Key('cart-line-qty-$key')), '10*');
+      await tester.pump();
+      expect(focusedFieldKey(tester), 'cart-line-qty-$key');
+
+      await press(tester, LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('payment-dialog')), findsNothing);
+
+      // Real devices translate Enter into TextInputAction.done (Flutter's
+      // documented way to exercise onSubmitted): the invalid expression is
+      // rejected and the field rolls back — unchanged by this fix.
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.byKey(const Key('payment-dialog')), findsNothing);
+      expect(find.byKey(const Key('pos-qty-invalid')), findsOneWidget);
+      expect(qtyAt(tester, 0), '24');
+      expect(qtyFieldText(tester, 0), '24');
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('Escape from a quantity field hands focus to the workspace', (
+      tester,
+    ) async {
+      await _pumpApp(tester, dio: dio);
+      addLine(tester, line24);
+      await tester.pump();
+      final key = containerOf(tester).read(posCartProvider).lines.first.key;
+      await tester.enterText(find.byKey(Key('cart-line-qty-$key')), '7');
+      await tester.pump();
+      expect(focusedFieldKey(tester), 'cart-line-qty-$key');
+
+      await press(tester, LogicalKeyboardKey.escape);
+
+      expect(focusedFieldKey(tester), isNull,
+          reason: 'focus returns to the POS workspace node');
+      expect(qtyAt(tester, 0), '7');
+      expect(containerOf(tester).read(posCartProvider).lines, hasLength(1));
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('F12 still asks for confirmation from a focused qty field', (
+      tester,
+    ) async {
+      await _pumpApp(tester, dio: dio);
+      addLine(tester, line24);
+      await tester.pump();
+      final key = containerOf(tester).read(posCartProvider).lines.first.key;
+      await tester.enterText(find.byKey(Key('cart-line-qty-$key')), '24');
+      await tester.pump();
+      expect(focusedFieldKey(tester), 'cart-line-qty-$key');
+
+      await press(tester, LogicalKeyboardKey.f12);
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('clear-cart-confirm')), findsOneWidget);
+      expect(containerOf(tester).read(posCartProvider).isEmpty, isFalse);
       expect(tester.takeException(), isNull);
     });
 

@@ -26,6 +26,7 @@ from uuid import UUID
 
 from pydantic import ConfigDict, Field, field_validator
 
+from app.core.constants import MAX_SALE_LINES
 from app.schemas.common import StrictBaseModel
 from app.schemas.sale import SaleResponse
 
@@ -75,6 +76,12 @@ class ReturnCreateRequest(StrictBaseModel):
     mean "no reason" and persist as NULL. A supplied reason must still be
     one of the supported vocabulary values. Authorization of a return stays
     actor + audit row (§10). Voiding keeps its own mandatory reason.
+
+    ``lines`` holds the DISTINCT return lines: 1..``MAX_SALE_LINES``
+    (10 000) entries — the SAME cap as ``CreateSaleRequest.items``, so every
+    sale the POS can create can also be returned in full (quantity never
+    counts toward the limit). Over the cap is a 422 raised during request
+    validation, before any write.
     """
 
     client_request_id: str = Field(..., min_length=1, max_length=100)
@@ -82,7 +89,9 @@ class ReturnCreateRequest(StrictBaseModel):
     customer_id: UUID | None = None
     reason: str | None = None
     note: str | None = Field(default=None, max_length=2000)
-    lines: list[ReturnLineRequest] = Field(..., min_length=1, max_length=200)
+    lines: list[ReturnLineRequest] = Field(
+        ..., min_length=1, max_length=MAX_SALE_LINES
+    )
     device_id: str | None = Field(default=None, max_length=100)
     # §22 spells the device field ``device``; ``device_id`` matches every
     # other request schema in this API. Both are accepted, header wins.

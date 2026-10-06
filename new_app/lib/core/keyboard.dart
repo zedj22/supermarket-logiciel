@@ -3,8 +3,11 @@
 // One rule for every shortcut that must NOT steal a key the cashier is
 // currently typing: ask [editableTextHasFocus]. The POS quantity shortcuts
 // (`+` / `-` / `*`), the option-picker digit shortcuts and the SPACE-to-pay
-// shortcut all go through it, so a search field, a cart quantity field or
-// any dialog input always keeps normal text entry.
+// shortcut all go through it. Each shortcut then names the fields it may
+// still claim its key from — the search field and the cart quantity field
+// for `+` / `-` / `*`, the cart quantity field alone for SPACE (see
+// [TextFreeKeyActivator.allowWhileEditing]) — so every other input (dialogs,
+// pickers, invoices) keeps normal text entry.
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 
@@ -29,12 +32,24 @@ bool editableTextHasFocus() {
 /// focus the activator declines, `CallbackShortcuts` lets the event keep
 /// bubbling, and the space character is inserted as ordinary text.
 ///
+/// [allowWhileEditing] is the single sanctioned exception: when an
+/// [EditableText] DOES hold primary focus the activator asks it first, so
+/// the caller can hand one specific key back to the shortcut (the POS cart
+/// quantity field is auto-focused after every add — SPACE must pay there and
+/// never reach the quantity text input). Every other text field keeps its
+/// normal space character: the hook is opt-in, per binding, per caller.
+///
 /// Only [KeyDownEvent]s match: holding SPACE must not re-open a dialog
 /// through key auto-repeat.
 class TextFreeKeyActivator extends ShortcutActivator {
-  const TextFreeKeyActivator(this.trigger);
+  const TextFreeKeyActivator(this.trigger, {this.allowWhileEditing});
 
   final LogicalKeyboardKey trigger;
+
+  /// Consulted only while an [EditableText] has primary focus: returns true
+  /// when the shortcut may claim the key anyway (and therefore consume it,
+  /// so the text field never sees the character).
+  final bool Function()? allowWhileEditing;
 
   @override
   Iterable<LogicalKeyboardKey>? get triggers =>
@@ -44,7 +59,8 @@ class TextFreeKeyActivator extends ShortcutActivator {
   bool accepts(KeyEvent event, HardwareKeyboard state) {
     if (event is! KeyDownEvent) return false;
     if (event.logicalKey != trigger) return false;
-    return !editableTextHasFocus();
+    if (!editableTextHasFocus()) return true;
+    return allowWhileEditing?.call() ?? false;
   }
 
   @override

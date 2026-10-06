@@ -29,6 +29,40 @@ const String posSearchFieldKey = 'pos-search-field';
 /// True when [key] is a cart line quantity field key (`cart-line-qty-*`).
 bool isCartLineQtyFieldKey(String key) => key.startsWith('cart-line-qty-');
 
+/// `ValueKey<String>` of the POS text field the primary focus sits in —
+/// [posSearchFieldKey] or a cart line quantity key — else null (dialogs,
+/// pickers and every other input keep their own key or none at all).
+///
+/// Walks from the primary focus to the enclosing [TextField] and reads its
+/// `ValueKey<String>`; one shared walk for the focus rules below, so the
+/// `+` / `-` / `*` shortcuts and the SPACE payment shortcut can never
+/// disagree about which field is focused.
+String? focusedPosTextFieldKey() {
+  final context = FocusManager.instance.primaryFocus?.context;
+  if (context == null) return null;
+  TextField? field;
+  if (context.widget is TextField) {
+    field = context.widget as TextField;
+  } else {
+    field = context.findAncestorWidgetOfExactType<TextField>();
+  }
+  final key = field?.key;
+  return key is ValueKey<String> ? key.value : null;
+}
+
+/// True while a cart line quantity field holds primary focus — the field
+/// every add auto-focuses (Phase 8 FIX #1).
+///
+/// SPACE is the POS payment shortcut there: the key opens the payment dialog
+/// and is consumed before the quantity text input can see it, so a stray
+/// space can never change what is on screen. The search field and every
+/// other text field are deliberately NOT included — they keep SPACE as an
+/// ordinary character.
+bool cartQtyFieldHasFocus() {
+  final key = focusedPosTextFieldKey();
+  return key != null && isCartLineQtyFieldKey(key);
+}
+
 /// [ShortcutActivator] for the POS quantity shortcuts.
 ///
 /// A single activator instance per action guarantees the shortcut callback
@@ -64,22 +98,12 @@ class PosQtyShortcutActivator extends ShortcutActivator {
   /// True when the focused text input is one of the POS quantity inputs
   /// identified by [posSearchFieldKey] / [isCartLineQtyFieldKey].
   ///
-  /// Walks from the primary focus to the enclosing [TextField] and reads
-  /// its `ValueKey<String>` — any other text field (dialogs, pickers,
-  /// invoices) keeps normal typing behavior.
+  /// Any other text field (dialogs, pickers, invoices) keeps normal typing
+  /// behavior.
   static bool _focusIsPosQuantityInput() {
-    final context = FocusManager.instance.primaryFocus?.context;
-    if (context == null) return false;
-    TextField? field;
-    if (context.widget is TextField) {
-      field = context.widget as TextField;
-    } else {
-      field = context.findAncestorWidgetOfExactType<TextField>();
-    }
-    if (field == null) return false;
-    final key = field.key;
-    if (key is! ValueKey<String>) return false;
-    return key.value == posSearchFieldKey || isCartLineQtyFieldKey(key.value);
+    final key = focusedPosTextFieldKey();
+    if (key == null) return false;
+    return key == posSearchFieldKey || isCartLineQtyFieldKey(key);
   }
 
   /// Pure key-event matcher (no focus rules) — shared by tests.

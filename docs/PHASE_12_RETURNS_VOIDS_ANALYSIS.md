@@ -639,7 +639,7 @@ conventions (`StrictBaseModel`, Decimal strings for money/qty, envelope error).
 | Method | Path | Permission | Notes |
 |---|---|---|---|
 | `POST` | `/api/v1/sales/{sale_id}/void` | `POS_VOID` | Body `{ "reason": non-blank }`, header `X-Device-ID`; 200 `{ sale, credit_reversed, refund_due, cash_pending }` |
-| `POST` | `/api/v1/returns` | `POS_RETURN` | Body `{ client_request_id (required), sale_id?, customer_id?, reason? (optional: omitted / null / blank ⇒ NULL), note?, lines: [{ sale_line_id?, product_id?, variant_id?, pack_id?, quantity }] (1..200 lines), device }`; 201 `{ return, idempotent_replay, refund_total, credit_reversed, cash_pending }` |
+| `POST` | `/api/v1/returns` | `POS_RETURN` | Body `{ client_request_id (required), sale_id?, customer_id?, reason? (optional: omitted / null / blank ⇒ NULL), note?, lines: [{ sale_line_id?, product_id?, variant_id?, pack_id?, quantity }] (1..MAX_SALE_LINES = 10 000 lines - the SAME distinct-line cap as `POST /sales`, so every sale the POS can create can be returned in full), device }`; 201 `{ return, idempotent_replay, refund_total, credit_reversed, cash_pending }` |
 | `GET` | `/api/v1/returns` | `POS_RETURN` (read) | Filters: `page`, `page_size`, `sale_id`, `invoice_number`, `from`, `to`, `reason` |
 | `GET` | `/api/v1/returns/{return_id}` | `POS_RETURN` (read) | Header + lines |
 | `GET` | `/api/v1/sales/{sale_id}` | existing | gains void fields in the response |
