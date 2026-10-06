@@ -134,7 +134,7 @@ class _PacksScreenState extends ConsumerState<PacksScreen> {
                   key: const Key('packs-header-subtitle'),
                   style: theme.textTheme.bodySmall?.copyWith(
                     fontSize: 13,
-                    color: theme.colorScheme.onSurface.withValues(alpha: 0.55),
+                    color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
                   ),
                 ),
               ],
@@ -208,7 +208,7 @@ class _PacksScreenState extends ConsumerState<PacksScreen> {
       decoration: InputDecoration(
         hintText: AppStrings.t('search', loc),
         hintStyle: theme.textTheme.bodyMedium?.copyWith(
-          color: cs.onSurface.withValues(alpha: 0.45),
+          color: cs.onSurface.withValues(alpha: 0.6),
         ),
         prefixIcon: Icon(
           Icons.search,
@@ -633,7 +633,7 @@ class _PacksScreenState extends ConsumerState<PacksScreen> {
     final archived = pack.isArchived;
     final inactive = !pack.isActive;
     final color = archived
-        ? theme.colorScheme.onSurface.withValues(alpha: 0.45)
+        ? theme.colorScheme.onSurface.withValues(alpha: 0.6)
         : inactive
             ? AppColors.warning
             : AppColors.success;
@@ -756,9 +756,9 @@ class _PacksScreenState extends ConsumerState<PacksScreen> {
               '${AppStrings.t('total', loc)}: ${state.total}',
               key: const Key('packs-total'),
               overflow: TextOverflow.ellipsis,
-              style: theme.textTheme.bodySmall?.copyWith(
+              style: theme.textTheme.bodyMedium?.copyWith(
                 fontWeight: FontWeight.w600,
-                color: cs.onSurface.withValues(alpha: 0.75),
+                color: cs.onSurface.withValues(alpha: 0.8),
               ),
             ),
           ),

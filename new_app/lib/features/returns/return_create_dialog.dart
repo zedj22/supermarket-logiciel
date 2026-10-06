@@ -412,7 +412,7 @@ class _ReturnCreateDialogState extends ConsumerState<ReturnCreateDialog> {
                   '${AppStrings.t('return_returnable', loc)}: '
                   '${_fmtQty(remaining)} $unit',
                   key: Key('return-line-remaining-$index'),
-                  style: theme.textTheme.bodySmall?.copyWith(
+                  style: theme.textTheme.bodyMedium?.copyWith(
                     fontWeight: FontWeight.w600,
                   ),
                 ),

@@ -41,13 +41,13 @@ class AppTheme {
   // so a page title looks like a page title everywhere and the table header
   // on Products is the same table header as on Reports.
   //
-  //   display       KPI hero number / dashboard headline
-  //   pageTitle     the H1 at the top of a screen
-  //   sectionTitle  a labelled block inside a screen
-  //   tableHeader   column labels, pinned above the rows
-  //   body          primary reading text and table cells
-  //   secondary     supporting text (descriptions, meta)
-  //   caption       the smallest legal text (badges, units, footnotes)
+  //   display       KPI hero number / dashboard headline   36
+  //   pageTitle     the H1 at the top of a screen          24 bold
+  //   sectionTitle  a labelled block inside a screen       18 bold
+  //   tableHeader   column labels, pinned above the rows   13 bold
+  //   body          primary reading text and table cells   14
+  //   secondary     supporting text (descriptions, meta)   13
+  //   caption       the smallest legal text (badges, …)    12
   //
   // Every rung derives from the active [TextTheme], so it stays
   // brightness/color correct in light, dark and grey for free.
@@ -101,10 +101,11 @@ class AppTheme {
 
   /// Money / quantity / percent: fixed advance width so digits line up
   /// column to column, and never wraps. [size] lets a cell pick a step
-  /// down without inventing a new rung.
+  /// down without inventing a new rung — dense tables ask for 14–15, a
+  /// headline figure asks for nothing and gets the 16px default.
   static TextStyle numeric(ThemeData theme, {double? size}) =>
       (theme.textTheme.bodyMedium ?? const TextStyle()).copyWith(
-        fontSize: size ?? 14,
+        fontSize: size ?? 16,
         fontWeight: FontWeight.w600,
         height: 1.3,
         fontFeatures: const [FontFeature.tabularFigures()],
@@ -143,6 +144,13 @@ class AppTheme {
           error: AppColors.error,
           onPrimary: Colors.white,
           onSurface: AppColors.lightTextPrimary,
+          // `outline` doubles as the secondary text tone on cards in the
+          // packs/POS lists.  Material's baseline 0xFF79747E measures
+          // 4.05:1 on white — under the WCAG AA floor the theme test
+          // enforces for every other rung.  This is the same neutral as
+          // [AppColors.lightTextSecondary] (4.68:1 on the scaffold), so
+          // outlines pick up the readable tone too.
+          outline: AppColors.lightTextSecondary,
         ),
       );
 
@@ -261,12 +269,12 @@ class AppTheme {
         ),
         dataTextStyle: TextStyle(
           fontFamily: fontFamily,
-          fontSize: 14,
+          fontSize: 15,
           fontWeight: FontWeight.w400,
           height: 1.4,
           color: textPrimary,
         ),
-        dataRowMinHeight: 40,
+        dataRowMinHeight: 44,
         dataRowMaxHeight: 56,
         dividerThickness: 1,
         columnSpacing: 16,
@@ -295,9 +303,10 @@ class AppTheme {
   static TextTheme _textTheme(Color primary, Color secondary) {
     final base = _baseTextTheme;
     // Weights are the hierarchy: Material's defaults are almost all w400,
-    // which is why the old UI read as one flat wall of grey text. Sizes stay
-    // at Material's scale (already density-tested) so nothing reflows — only
-    // the rungs get heavier or lighter.
+    // which is why the old UI read as one flat wall of grey text. Sizes sit
+    // on a single ramp (readability floor: nothing the user has to *read*
+    // goes below 12px, section titles reach 18px) so nothing reflows
+    // wildly and no screen invents its own scale.
     return base.copyWith(
       displayLarge: base.displayLarge?.copyWith(
         color: primary,
@@ -339,17 +348,23 @@ class AppTheme {
       ),
       titleMedium: base.titleMedium?.copyWith(
         color: primary,
+        fontSize: 18,
         fontWeight: FontWeight.w600,
         height: 1.35,
       ),
       titleSmall: base.titleSmall?.copyWith(
         color: primary,
+        fontSize: 15,
         fontWeight: FontWeight.w600,
         height: 1.35,
       ),
       bodyLarge: base.bodyLarge?.copyWith(color: primary, height: 1.5),
       bodyMedium: base.bodyMedium?.copyWith(color: primary, height: 1.4),
-      bodySmall: base.bodySmall?.copyWith(color: secondary, height: 1.35),
+      bodySmall: base.bodySmall?.copyWith(
+        color: secondary,
+        fontSize: 13,
+        height: 1.35,
+      ),
       labelLarge: base.labelLarge?.copyWith(
         color: primary,
         fontWeight: FontWeight.w600,
@@ -358,12 +373,14 @@ class AppTheme {
       ),
       labelMedium: base.labelMedium?.copyWith(
         color: secondary,
+        fontSize: 13,
         fontWeight: FontWeight.w600,
         height: 1.3,
         letterSpacing: 0.2,
       ),
       labelSmall: base.labelSmall?.copyWith(
         color: secondary,
+        fontSize: 12,
         fontWeight: FontWeight.w600,
         height: 1.3,
         letterSpacing: 0.2,

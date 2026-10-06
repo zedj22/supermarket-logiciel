@@ -308,7 +308,9 @@ class ReportTable extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final headerStyle = AppTheme.tableHeader(theme);
-    final bodyStyle = AppTheme.body(theme);
+    // Table body sits one rung above plain body copy: the same 15px the
+    // `dataTableTheme` uses, so every table in the app reads alike.
+    final bodyStyle = AppTheme.body(theme).copyWith(fontSize: 15);
     final stripeColor = theme.colorScheme.surfaceContainerLow;
     // Semantic column accents (profit green, returns orange — else null).
     final colTones = <ReportMetricTone?>[

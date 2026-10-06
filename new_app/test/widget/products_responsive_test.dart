@@ -15,8 +15,11 @@ import 'package:supermarket_pos/features/auth/auth_provider.dart';
 import 'package:supermarket_pos/features/auth/credential_storage.dart';
 import 'package:supermarket_pos/features/products/product_image_picker_service.dart';
 import 'package:supermarket_pos/features/products/products_screen.dart';
+import 'package:supermarket_pos/l10n/locale_provider.dart';
 import 'package:supermarket_pos/main.dart';
 import 'package:supermarket_pos/network/api_client.dart';
+import 'package:supermarket_pos/theme/app_theme_mode.dart';
+import 'package:supermarket_pos/theme/theme_provider.dart';
 
 class MockDio extends Mock implements Dio {}
 
@@ -334,6 +337,8 @@ void main() {
     required Size size,
     FakeImagePicker? imagePicker,
     bool useArabic = false,
+    AppThemeMode? themeMode,
+    AppLocale? locale,
   }) async {
     // Login at a comfortable size first — the login PIN pad does not fit
     // in a 600×500 viewport. Then switch to the target size so the
@@ -349,6 +354,14 @@ void main() {
           credentialStorageProvider.overrideWithValue(FakeCredentialStorage()),
           if (imagePicker != null)
             productImagePickerProvider.overrideWithValue(imagePicker),
+          if (themeMode != null)
+            themeProvider.overrideWith(
+              (ref) => ThemeNotifier()..setTheme(themeMode),
+            ),
+          if (locale != null)
+            localeProvider.overrideWith(
+              (ref) => LocaleNotifier()..setLocale(locale),
+            ),
         ],
         child: const SupermarketPosApp(),
       ),
@@ -369,7 +382,7 @@ void main() {
     await tester.pumpAndSettle();
 
     await tester.tap(
-      find.text(AppStrings.t('products', 'ar')),
+      find.text(AppStrings.t('products', locale?.name ?? 'ar')),
       warnIfMissed: false,
     );
     await tester.pumpAndSettle();
@@ -410,6 +423,56 @@ void main() {
         expectNoOverflow(tester);
       });
     }
+
+    testWidgets('no table cell wraps into a second line at any desktop size',
+        (tester) async {
+      // A wrapped figure ("20.00" / "0%") reads as two values, so every
+      // cell in the table — header, figure, pill, badge — has to stay on
+      // one line at each supported desktop width.
+      const sizes = <String, Size>{
+        '1280x720': Size(1280, 720),
+        '1366x768': Size(1366, 768),
+        '1600x900': Size(1600, 900),
+        '1920x1080': Size(1920, 1080),
+      };
+
+      for (final entry in sizes.entries) {
+        final dio = MockDio();
+        stubRequests(dio);
+        await pumpApp(tester, dio, size: entry.value);
+
+        final texts = tester.widgetList<Text>(
+          find.descendant(
+            of: find.byKey(const Key('products-table')),
+            matching: find.byType(Text),
+          ),
+        );
+        expect(texts, isNotEmpty, reason: 'no table text at ${entry.key}');
+
+        for (final text in texts) {
+          // Local layout size: ancestor transforms (the figures are scaled
+          // down by a FittedBox when the column is tight) must not hide a
+          // wrap.
+          final size =
+              (tester.renderObject(find.byWidget(text)) as RenderBox).size;
+          final fontSize = text.style?.fontSize;
+          final ceiling = text.maxLines == 2
+              ? fontSize! * 3.0
+              : fontSize == null
+                  ? 26.0
+                  : fontSize * 1.6;
+          expect(
+            size.height,
+            lessThanOrEqualTo(ceiling),
+            reason: '"${text.data}" wrapped to ${size.height}px '
+                '(fs=$fontSize) at ${entry.key}',
+          );
+        }
+        expectNoOverflow(tester);
+
+        await tester.tap(find.byKey(const Key('products-search-field')));
+      }
+    });
 
     testWidgets('Arabic RTL narrow layout has no overflow', (tester) async {
       final dio = MockDio();
@@ -939,6 +1002,60 @@ void main() {
       expect(find.byKey(const Key('products-sort-filter')), findsOneWidget);
       expect(find.byKey(const Key('products-page-size')), findsOneWidget);
       expect(find.byKey(const Key('products-status-filter')), findsOneWidget);
+      expectNoOverflow(tester);
+    });
+
+    testWidgets('table cells, pills and badges meet the readability floor', (
+      tester,
+    ) async {
+      final dio = MockDio();
+      stubRequests(dio);
+      await pumpApp(tester, dio, size: const Size(1600, 900));
+
+      // Column labels: the shared table rung, read from the rendered
+      // RichText because the cell itself inherits its style.
+      final header = tester.widget<RichText>(
+        find.descendant(
+          of: find.descendant(
+            of: find.byKey(const Key('products-table-header')),
+            matching: find.text(AppStrings.t('price', 'ar')),
+          ),
+          matching: find.byType(RichText),
+        ),
+      );
+      expect(header.text.style?.fontSize, inInclusiveRange(13, 14));
+      expect(header.text.style?.fontWeight, FontWeight.w700);
+
+      // Product name: the strongest text in the row.
+      final name = tester.widget<Text>(find.text('Apple Juice'));
+      expect(name.style?.fontSize, greaterThanOrEqualTo(14));
+      expect(name.style?.fontWeight?.value, greaterThan(FontWeight.w500.value));
+
+      // Money and quantity: 14px floor, tabular figures from the numeric rung.
+      final qty = tester.widget<Text>(
+        find.byKey(const Key('product-qty-00000000-0000-0000-0000-0000000000p1')),
+      );
+      expect(qty.style?.fontSize, inInclusiveRange(14, 16));
+      expect(qty.style?.fontFeatures, isNotEmpty);
+
+      // Category pill and status badge are the smallest labels and still
+      // clear the 11px badge floor (12px for the pill).
+      final pill = tester.widget<Text>(
+        find.descendant(
+          of: find.byKey(const Key('product-category-pill-Drinks')),
+          matching: find.byType(Text),
+        ),
+      );
+      expect(pill.style?.fontSize, greaterThanOrEqualTo(12));
+
+      final badge = tester.widgetList<Text>(
+        find.descendant(
+          of: find.byKey(const Key('product-status-active')),
+          matching: find.byType(Text),
+        ),
+      ).first;
+      expect(badge.style?.fontSize, greaterThanOrEqualTo(11));
+
       expectNoOverflow(tester);
     });
 

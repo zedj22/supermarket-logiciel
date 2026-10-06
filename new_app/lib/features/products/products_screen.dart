@@ -21,6 +21,7 @@ import '../../core/widgets/table_header.dart';
 import '../../l10n/locale_provider.dart';
 import '../../theme/app_theme.dart';
 import '../auth/permission_helpers.dart';
+import '../clients/customer_models.dart';
 import 'categories_dialog.dart';
 import 'models.dart';
 import 'product_form_dialog.dart';
@@ -57,7 +58,7 @@ Color productStatusColor(ThemeData theme, ProductStockStatus status) {
     case ProductStockStatus.out:
       return AppColors.error;
     case ProductStockStatus.archived:
-      return theme.colorScheme.onSurface.withValues(alpha: 0.45);
+      return theme.colorScheme.onSurface.withValues(alpha: 0.6);
   }
 }
 
@@ -73,6 +74,28 @@ String productStatusLabel(ProductStockStatus status, String loc) {
     case ProductStockStatus.archived:
       return AppStrings.t('archived', loc);
   }
+}
+
+/// Phase 17 — profit and margin for one product row (display only).
+///
+/// Returns `(profit, margin)`: profit is `price - cost` in exact
+/// thousandths (`100.000 - 60.000` → `'40.000'`), margin is
+/// `profit / price` rendered `NN.NN%`. Margin is null when the price is 0
+/// — never divide by zero, the same rule the pack form applies to its
+/// estimated margin. Nothing here is persisted or sent anywhere.
+(String?, String?) productProfitMargin(ProductModel product) {
+  final priceMilli = moneyToMilli(product.price);
+  final costMilli = moneyToMilli(product.cost);
+  if (priceMilli == null || costMilli == null) return (null, null);
+  final value = priceMilli - costMilli;
+  if (priceMilli == 0) return (milliToMoney(value), null);
+  // hundredths of a percent, so 40.000 / 100.000 reads "40.00%".
+  final hundredths = (value * 10000) ~/ priceMilli;
+  final negative = hundredths < 0;
+  final abs = hundredths.abs();
+  final margin = '${negative ? '-' : ''}'
+      '${abs ~/ 100}.${(abs % 100).toString().padLeft(2, '0')}%';
+  return (milliToMoney(value), margin);
 }
 
 /// Deterministic subdued category color from identity/name (no DB change).
@@ -244,7 +267,7 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
                   key: const Key('products-header-subtitle'),
                   style: theme.textTheme.bodySmall?.copyWith(
                     fontSize: 13,
-                    color: theme.colorScheme.onSurface.withValues(alpha: 0.55),
+                    color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
                   ),
                 ),
               ],
@@ -390,7 +413,7 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
         decoration: InputDecoration(
           hintText: AppStrings.t('search', loc),
           hintStyle: theme.textTheme.bodyMedium?.copyWith(
-            color: cs.onSurface.withValues(alpha: 0.45),
+            color: cs.onSurface.withValues(alpha: 0.6),
           ),
           prefixIcon: Icon(
             Icons.search,
@@ -820,7 +843,7 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
               Text(
                 AppStrings.t('no_products_hint', loc),
                 style: theme.textTheme.bodySmall?.copyWith(
-                  color: theme.colorScheme.onSurface.withValues(alpha: 0.55),
+                  color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
                 ),
               ),
               if (canCreate) ...[
@@ -869,15 +892,27 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
     final showCost = canUpdate;
     final showUnit = mode == ProductsLayoutMode.wide;
     final showCategory = mode == ProductsLayoutMode.wide;
+    // Profit / margin / wholesale are wide-screen columns. Three extra
+    // figures at 800–1199px squeeze the name cell under 50px — below the
+    // thumbnail — so the medium table keeps the columns it always had.
+    final showFinancials =
+        canUpdate && mode == ProductsLayoutMode.wide;
     final showStatus = true;
     final showActions = canUpdate || canArchive;
 
     final cols = <_Col>[
-      _Col(AppStrings.t('name', loc), flex: 32),
+      _Col(AppStrings.t('name', loc), flex: 24),
       _Col(AppStrings.t('barcode', loc), flex: 13),
-      if (showCategory) _Col(AppStrings.t('category', loc), flex: 13),
+      if (showCategory) _Col(AppStrings.t('category', loc), flex: 11),
       _Col(AppStrings.t('price', loc), flex: 10, numeric: true),
       if (showCost) _Col(AppStrings.t('cost', loc), flex: 10, numeric: true),
+      // Phase 17 pricing — gated exactly like cost: both need `product_update`.
+      if (showFinancials)
+        _Col(AppStrings.t('profit', loc), flex: 10, numeric: true),
+      if (showFinancials)
+        _Col(AppStrings.t('margin', loc), flex: 15, numeric: true),
+      if (showFinancials)
+        _Col(AppStrings.t('wholesale_price', loc), flex: 16, numeric: true),
       _Col(AppStrings.t('quantity', loc), flex: 10, numeric: true),
       if (showUnit) _Col(AppStrings.t('unit', loc), flex: 8),
       if (showStatus)
@@ -889,7 +924,12 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
     Widget cell(int index, Widget child, {bool header = false}) {
       final col = cols[index];
       final inner = Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12),
+        // 10px horizontally, 5px vertically: a two-line product name must
+        // not touch the row divider, and a cell must not read as a wall of
+        // text. At 1280 the twelve columns are tight enough that the extra
+        // 4px per column is the difference between a figure on one line and
+        // a figure split in two.
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
         child: DefaultTextStyle(
           style: header ? tableHeaderStyle(context) : theme.textTheme.bodyMedium!,
           child: col.fixedWidth > 0
@@ -931,9 +971,12 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
                     Text(
                       product.name,
                       overflow: TextOverflow.ellipsis,
+                      // A name may take a second line; nothing else in the
+                      // row does, so a figure never reads as two values.
+                      maxLines: 2,
                       style: theme.textTheme.bodyMedium?.copyWith(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
                       ),
                     ),
                     if (!showCategory &&
@@ -944,7 +987,7 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
                         color: categoryPillColor(
                           product.categoryId ?? product.categoryName!,
                         ),
-                        fontSize: 10,
+                        fontSize: 11.5,
                         compact: true,
                       ),
                     ],
@@ -961,8 +1004,8 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
             overflow: TextOverflow.ellipsis,
             style: theme.textTheme.bodyMedium?.copyWith(
               fontFamily: 'monospace',
-              fontSize: 12.5,
-              color: cs.onSurface.withValues(alpha: 0.7),
+              fontSize: 13,
+              color: cs.onSurface.withValues(alpha: 0.78),
             ),
           ),
         ),
@@ -976,8 +1019,10 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
             name == null || name.isEmpty
                 ? Text(
                     AppStrings.t('no_category', loc),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: theme.textTheme.bodySmall?.copyWith(
-                      color: cs.onSurface.withValues(alpha: 0.45),
+                      color: cs.onSurface.withValues(alpha: 0.7),
                     ),
                   )
                 : _CategoryPill(
@@ -990,28 +1035,76 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
       cells.add(
         cell(
           i++,
-          Text(
+          _fitEnd(Text(
             product.price,
             // Tabular figures so prices line up down the column.
-            style: AppTheme.numeric(theme, size: 13.5).copyWith(
+            style: AppTheme.numeric(theme, size: 15).copyWith(
               fontWeight: FontWeight.w700,
             ),
-          ),
+          )),
         ),
       );
       if (showCost) {
         cells.add(
           cell(
             i++,
-            Text(
+            _fitEnd(Text(
               product.cost,
-              style: AppTheme.numeric(theme, size: 13).copyWith(
-                fontWeight: FontWeight.w400,
-                color: cs.onSurface.withValues(alpha: 0.55),
+              style: AppTheme.numeric(theme, size: 14).copyWith(
+                fontWeight: FontWeight.w500,
+                color: cs.onSurface.withValues(alpha: 0.75),
               ),
-            ),
+            )),
           ),
         );
+        // Phase 17 pricing — profit / margin / wholesale columns.
+        if (showFinancials) {
+          final (profit, margin) = productProfitMargin(product);
+          cells.add(
+            cell(
+              i++,
+              _fitEnd(Text(
+                profit ?? '—',
+                key: Key('product-profit-${product.id}'),
+                style: AppTheme.numeric(theme, size: 14).copyWith(
+                  fontWeight: FontWeight.w600,
+                  color: (profit?.startsWith('-') ?? false)
+                      ? AppColors.error
+                      : cs.primary,
+                ),
+              )),
+            ),
+          );
+          cells.add(
+            cell(
+              i++,
+              _fitEnd(Text(
+                margin ?? '—',
+                key: Key('product-margin-${product.id}'),
+                style: AppTheme.numeric(theme, size: 14).copyWith(
+                  fontWeight: FontWeight.w600,
+                  color: cs.onSurface.withValues(alpha: 0.8),
+                ),
+              )),
+            ),
+          );
+          final wholesale = product.wholesalePrice;
+          cells.add(
+            cell(
+              i++,
+              _fitEnd(Text(
+                wholesale ?? '—',
+                key: Key('product-wholesale-${product.id}'),
+                style: AppTheme.numeric(theme, size: 14).copyWith(
+                  fontWeight: FontWeight.w500,
+                  color: wholesale == null
+                      ? cs.onSurface.withValues(alpha: 0.6)
+                      : cs.onSurface.withValues(alpha: 0.8),
+                ),
+              )),
+            ),
+          );
+        }
       }
       final qtyColor = switch (status) {
         ProductStockStatus.out => AppColors.error,
@@ -1021,23 +1114,26 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
       cells.add(
         cell(
           i++,
-          Text(
+          _fitEnd(Text(
             product.quantity,
             key: Key('product-qty-${product.id}'),
-            style: AppTheme.numeric(theme, size: 13.5).copyWith(
+            style: AppTheme.numeric(theme, size: 15).copyWith(
               fontWeight: status == ProductStockStatus.active
                   ? FontWeight.w600
                   : FontWeight.w700,
               color: qtyColor,
             ),
-          ),
+          )),
         ),
       );
       if (showUnit) {
         cells.add(
           cell(
             i++,
-            _UnitPill(label: product.unit, loc: loc),
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              child: _UnitPill(label: product.unit, loc: loc),
+            ),
           ),
         );
       }
@@ -1155,7 +1251,7 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
                                 child: Text(
                                   product.name,
                                   style: theme.textTheme.titleSmall?.copyWith(
-                                    fontSize: 15,
+                                    fontSize: 16,
                                     fontWeight: FontWeight.w700,
                                   ),
                                   overflow: TextOverflow.ellipsis,
@@ -1170,7 +1266,7 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
                             product.barcode ?? '—',
                             style: theme.textTheme.bodySmall?.copyWith(
                               fontFamily: 'monospace',
-                              color: cs.onSurface.withValues(alpha: 0.6),
+                              color: cs.onSurface.withValues(alpha: 0.75),
                             ),
                           ),
                           const SizedBox(height: 6),
@@ -1234,7 +1330,7 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
                             theme,
                             AppStrings.t('cost', loc),
                             product.cost,
-                            color: cs.onSurface.withValues(alpha: 0.55),
+                            color: cs.onSurface.withValues(alpha: 0.72),
                           ),
                         ),
                       ],
@@ -1277,15 +1373,15 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
         Text(
           label,
           style: theme.textTheme.bodySmall?.copyWith(
-            fontSize: 11,
-            color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
+            fontSize: 13,
+            color: theme.colorScheme.onSurface.withValues(alpha: 0.72),
           ),
         ),
         const SizedBox(height: 2),
         Text(
           value,
           style: theme.textTheme.bodyMedium?.copyWith(
-            fontSize: strong ? 14 : 13,
+            fontSize: strong ? 15 : 14,
             fontWeight: strong ? FontWeight.w700 : FontWeight.w500,
             color: color,
           ),
@@ -1372,7 +1468,7 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
               style: TextStyle(
                 color: cs.onPrimary,
                 fontWeight: FontWeight.w700,
-                fontSize: 12.5,
+                fontSize: 13,
               ),
               child: child,
             ),
@@ -1411,7 +1507,7 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
               '${AppStrings.t('total', loc)}: ${state.total}',
               key: const Key('products-total'),
               overflow: TextOverflow.ellipsis,
-              style: theme.textTheme.bodySmall?.copyWith(
+              style: theme.textTheme.bodyMedium?.copyWith(
                 fontWeight: FontWeight.w600,
                 color: cs.onSurface.withValues(alpha: 0.75),
               ),
@@ -1614,7 +1710,7 @@ class _StatusBadge extends StatelessWidget {
     final label = productStatusLabel(status, loc);
     return Container(
       key: Key('product-status-${status.name}'),
-      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.14),
         borderRadius: BorderRadius.circular(999),
@@ -1634,7 +1730,7 @@ class _StatusBadge extends StatelessWidget {
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
-              fontSize: 10,
+              fontSize: 12,
               fontWeight: FontWeight.w700,
               color: color,
             ),
@@ -1655,7 +1751,7 @@ class _CategoryPill extends StatelessWidget {
   const _CategoryPill({
     required this.label,
     required this.color,
-    this.fontSize = 11.5,
+    this.fontSize = 12.5,
     this.compact = false,
   });
 
@@ -1684,6 +1780,14 @@ class _CategoryPill extends StatelessWidget {
   }
 }
 
+/// A table figure that must never break across two lines: when the column
+/// is tight it shrinks a hair instead of splitting "20.00%" mid-value.
+Widget _fitEnd(Widget child) => FittedBox(
+      fit: BoxFit.scaleDown,
+      alignment: AlignmentDirectional.centerEnd,
+      child: child,
+    );
+
 /// Compact unit pill / readable text.
 class _UnitPill extends StatelessWidget {
   final String label;
@@ -1709,8 +1813,9 @@ class _UnitPill extends StatelessWidget {
       child: Text(
         text,
         style: theme.textTheme.bodySmall?.copyWith(
-          fontSize: 11.5,
+          fontSize: 13,
           fontWeight: FontWeight.w600,
+          color: theme.colorScheme.onSurface.withValues(alpha: 0.85),
         ),
       ),
     );

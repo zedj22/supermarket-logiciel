@@ -501,7 +501,7 @@ class _SaleDetailDialogState extends ConsumerState<SaleDetailDialog> {
     final baseQty = line.baseQuantity;
     return Padding(
       key: Key('sale-detail-line-$index'),
-      padding: const EdgeInsets.symmetric(vertical: 3),
+      padding: const EdgeInsets.symmetric(vertical: 6),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -522,7 +522,9 @@ class _SaleDetailDialogState extends ConsumerState<SaleDetailDialog> {
                   '${_fmtMoney(line.unitPrice)} '
                   '${AppStrings.t('currency', loc)}',
                   key: Key('sale-detail-line-qty-$index'),
-                  style: theme.textTheme.bodySmall,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    fontWeight: FontWeight.w500,
+                  ),
                 ),
                 if (hasSellingUnit && baseQty != null)
                   Text(
@@ -531,7 +533,7 @@ class _SaleDetailDialogState extends ConsumerState<SaleDetailDialog> {
                     '${_fmtQty(baseQty)} '
                     '${AppStrings.unitLabel(line.productUnit, loc)}',
                     key: Key('sale-detail-line-base-$index'),
-                    style: theme.textTheme.labelSmall,
+                    style: theme.textTheme.labelMedium,
                   ),
               ],
             ),
@@ -539,7 +541,9 @@ class _SaleDetailDialogState extends ConsumerState<SaleDetailDialog> {
           Text(
             _fmtMoney(line.lineTotal),
             key: Key('sale-detail-line-total-$index'),
-            style: theme.textTheme.bodyMedium,
+            style: theme.textTheme.bodyMedium?.copyWith(
+              fontWeight: FontWeight.w700,
+            ),
           ),
         ],
       ),
@@ -548,12 +552,24 @@ class _SaleDetailDialogState extends ConsumerState<SaleDetailDialog> {
 
   Widget _totals(ThemeData theme, SaleDetail sale, String loc) {
     Widget row(String label, String value, {Key? key}) => Padding(
-          padding: const EdgeInsets.symmetric(vertical: 2),
+          padding: const EdgeInsets.symmetric(vertical: 4),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(label, style: theme.textTheme.bodySmall),
-              Text(value, key: key, style: theme.textTheme.bodyMedium),
+              Text(
+                label,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              Text(
+                value,
+                key: key,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  fontWeight: FontWeight.w700,
+                  fontFeatures: const [FontFeature.tabularFigures()],
+                ),
+              ),
             ],
           ),
         );

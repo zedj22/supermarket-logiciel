@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 from datetime import date, datetime
 from decimal import Decimal
+from typing import Literal
 from uuid import UUID
 
 from pydantic import Field, field_validator
@@ -24,6 +25,12 @@ ALLOWED_IMAGE_EXTENSIONS: frozenset[str] = frozenset(
 
 # Barcode column length (products.barcode is VARCHAR(50)).
 BARCODE_MAX_LENGTH = 50
+
+# Phase 17 TVA: the ONLY rates the API accepts. Anything else (7, 19.5, a
+# free-typed percentage) is rejected with 422 — the UI offers 0/9/19 and the
+# column is an enum-like SmallInteger, never an arbitrary percentage.
+VatRate = Literal[0, 9, 19]
+VAT_RATES: tuple[int, ...] = (0, 9, 19)
 
 
 def _non_blank(value: str, field_name: str) -> str:
@@ -128,6 +135,12 @@ class ProductResponse(StrictBaseModel):
     quantity: Decimal
     low_stock_threshold: Decimal = Decimal("5")
     allow_negative_stock: bool = False
+    # Phase 17 pricing. NULL wholesale = "not configured" (existing rows
+    # keep their behaviour with no data rewrite); vat_rate is the strict
+    # {0, 9, 19} product metadata — never used by sale totals today.
+    wholesale_price: Decimal | None = None
+    wholesale_min_qty: Decimal | None = None
+    vat_rate: VatRate = 0
     expiry_date: date | None = None
     image_path: str | None = None
     category_id: UUID | None = None
@@ -163,6 +176,17 @@ class ProductCreateRequest(StrictBaseModel):
         default=Decimal("5"), ge=0, max_digits=18, decimal_places=3
     )
     allow_negative_stock: bool = False
+    # Phase 17 pricing. Both wholesale fields are optional and NULL by
+    # default: omitted/NULL wholesale = feature disabled for this product.
+    # Validation mirrors the spec — price >= 0, minimum quantity > 0.
+    wholesale_price: Decimal | None = Field(
+        None, ge=0, max_digits=18, decimal_places=3
+    )
+    wholesale_min_qty: Decimal | None = Field(
+        None, gt=0, max_digits=18, decimal_places=3
+    )
+    # Strict rate set {0, 9, 19} — see VatRate. Never free-typed.
+    vat_rate: VatRate = 0
     expiry_date: date | None = None
     image_path: str | None = None
     category_id: UUID | None = None
@@ -222,6 +246,15 @@ class ProductUpdateRequest(StrictBaseModel):
         None, ge=0, max_digits=18, decimal_places=3
     )
     allow_negative_stock: bool | None = None
+    # Phase 17 pricing. Unset = preserved (partial update); explicitly
+    # sending null CLEARS the field (wholesale off / back to default TVA).
+    wholesale_price: Decimal | None = Field(
+        None, ge=0, max_digits=18, decimal_places=3
+    )
+    wholesale_min_qty: Decimal | None = Field(
+        None, gt=0, max_digits=18, decimal_places=3
+    )
+    vat_rate: VatRate | None = None
     expiry_date: date | None = None
     image_path: str | None = None
     category_id: UUID | None = None

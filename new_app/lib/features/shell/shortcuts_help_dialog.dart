@@ -9,6 +9,13 @@
 // same `showShortcutsDialog`). It is documentation only — it never mutates
 // cart or page state, and Escape closes it through the normal dialog route
 // before any POS binding is ever consulted.
+//
+// Layout: three columns of one table — the key, the action it triggers
+// (with its one-line meaning underneath, so no column is skipped), and the
+// scope the binding is live in.  The column widths are declared once and
+// shared by the header row and every body row, and the body scrolls inside
+// a height that tracks the window, so the map never overflows at 800×600
+// nor stacks Arabic characters in a 78px cell.
 import 'package:flutter/material.dart';
 
 import '../../core/strings.dart';
@@ -55,6 +62,15 @@ const _shortcutRows = <_ShortcutRow>[
   _ShortcutRow('*', 'sc_a_qty_entry', _pos, 'sc_d_qty_entry'),
 ];
 
+/// Column geometry, shared by the header and every body row so labels can
+/// never drift away from their cells.
+const double _keyColumn = 96;
+const double _scopeColumn = 132;
+const double _columnGap = 12;
+
+double _clamp(double value, double low, double high) =>
+    value < low ? low : (value > high ? high : value);
+
 /// Opens the localized keyboard-shortcuts map.
 void showShortcutsDialog(BuildContext context) {
   showDialog<void>(
@@ -70,63 +86,163 @@ class ShortcutsHelpDialog extends StatelessWidget {
   Widget build(BuildContext context) {
     final loc = Localizations.localeOf(context).languageCode;
     final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+    final view = MediaQuery.sizeOf(context);
 
-    Widget head(String key) => Padding(
-          padding: const EdgeInsets.only(bottom: 8),
+    // Responsive sizing: the map grows with the window but always stays
+    // inside the dialog's 40px inset, and the body height is what is left
+    // after the title and the close button — so nothing is ever pushed
+    // off-screen, including at the smallest supported 800×600.
+    final width = _clamp(view.width - 112, 340, 760);
+    final bodyHeight = _clamp(view.height - 230, 220, 540);
+
+    Widget column({double? width, required Widget child}) => width == null
+        ? Expanded(child: child)
+        : SizedBox(width: width, child: child);
+
+    Widget head(String key, {double? width}) => column(
+          width: width,
           child: Text(
             AppStrings.t(key, loc),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
             style: theme.textTheme.labelLarge?.copyWith(
+              fontSize: 13,
               fontWeight: FontWeight.w700,
+              letterSpacing: 0.4,
               color: theme.colorScheme.primary,
             ),
           ),
         );
 
-    Widget cell(String text, {bool bold = false}) => Padding(
-          padding: const EdgeInsetsDirectional.only(end: 12, bottom: 8),
-          child: Text(
-            text,
-            style: bold
-                ? theme.textTheme.bodyMedium
-                    ?.copyWith(fontWeight: FontWeight.w700)
-                : theme.textTheme.bodyMedium,
+    Widget keyBadge(String keys) => Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+          decoration: BoxDecoration(
+            color: cs.primary.withValues(alpha: 0.10),
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(color: cs.primary.withValues(alpha: 0.35)),
           ),
+          child: Text(
+            keys,
+            maxLines: 1,
+            overflow: TextOverflow.clip,
+            style: theme.textTheme.labelLarge?.copyWith(
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.3,
+              color: cs.primary,
+            ),
+          ),
+        );
+
+    Widget scopeChip(String label) => Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+          decoration: BoxDecoration(
+            color: cs.surfaceContainerHighest.withValues(alpha: 0.7),
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(color: cs.outline.withValues(alpha: 0.28)),
+          ),
+          child: Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: theme.textTheme.labelMedium?.copyWith(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 0,
+            ),
+          ),
+        );
+
+    // Identical geometry for the header and every body row.
+    Widget cells({required List<Widget> children}) => Padding(
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: children,
+          ),
+        );
+
+    Widget headerRow() => cells(
+          children: [
+            head('shortcuts_col_key', width: _keyColumn),
+            const SizedBox(width: _columnGap),
+            head('shortcuts_col_action'),
+            const SizedBox(width: _columnGap),
+            head('shortcuts_col_scope', width: _scopeColumn),
+          ],
+        );
+
+    Widget bodyRow(_ShortcutRow row) => cells(
+          children: [
+            column(width: _keyColumn, child: keyBadge(row.keys)),
+            const SizedBox(width: _columnGap),
+            column(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    AppStrings.t(row.actionKey, loc),
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                      height: 1.3,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    AppStrings.t(row.descKey, loc),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      height: 1.3,
+                      color: cs.onSurface.withValues(alpha: 0.75),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: _columnGap),
+            column(
+              width: _scopeColumn,
+              child: scopeChip(AppStrings.t(row.scopeKey, loc)),
+            ),
+          ],
         );
 
     return AlertDialog(
       key: const Key('shortcuts-dialog'),
       title: Text(AppStrings.t('shortcuts_title', loc)),
-      content: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 620),
-        child: SingleChildScrollView(
-          child: Table(
-            columnWidths: const {
-              0: FixedColumnWidth(78),
-              1: FixedColumnWidth(140),
-              2: FixedColumnWidth(78),
-              3: FlexColumnWidth(),
-            },
-            defaultVerticalAlignment: TableCellVerticalAlignment.middle,
-            children: [
-              TableRow(
-                children: [
-                  head('shortcuts_col_key'),
-                  head('shortcuts_col_action'),
-                  head('shortcuts_col_scope'),
-                  head('shortcuts_col_desc'),
-                ],
-              ),
-              for (final row in _shortcutRows)
-                TableRow(
+      contentPadding: const EdgeInsets.fromLTRB(20, 12, 20, 8),
+      content: SizedBox(
+        key: const Key('shortcuts-dialog-content'),
+        width: width,
+        height: bodyHeight,
+        child: Column(
+          children: [
+            headerRow(),
+            Divider(height: 1, thickness: 1, color: cs.outline.withValues(alpha: 0.4)),
+            Expanded(
+              // Eager, not a `ListView`: every row of the map is a real
+              // widget even when it sits below the fold (the help tests —
+              // and Ctrl+F — look for a key that is not on screen).
+              child: SingleChildScrollView(
+                child: Column(
                   children: [
-                    cell(row.keys, bold: true),
-                    cell(AppStrings.t(row.actionKey, loc)),
-                    cell(AppStrings.t(row.scopeKey, loc)),
-                    cell(AppStrings.t(row.descKey, loc)),
+                    for (var i = 0; i < _shortcutRows.length; i++) ...[
+                      if (i > 0)
+                        Divider(
+                          height: 1,
+                          color: cs.outline.withValues(alpha: 0.14),
+                        ),
+                      bodyRow(_shortcutRows[i]),
+                    ],
                   ],
                 ),
-            ],
-          ),
+              ),
+            ),
+          ],
         ),
       ),
       actions: [

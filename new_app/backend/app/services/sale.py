@@ -33,6 +33,7 @@ from app.core.exceptions import (
 )
 from app.domain.unit_conversions import QTY_QUANTUM, effective_unit_price, selling_to_base, to_decimal
 from app.domain.valuation import quantize_money
+from app.domain.wholesale import resolve_wholesale_unit_price
 from app.models.catalog import Pack, Product, ProductSellingUnit, ProductVariant
 from app.models.debt import DebtLedgerEntry
 from app.models.enums import (
@@ -389,11 +390,27 @@ class SaleService(BaseService):
                 details={"line_index": index, "quantity": str(qty)},
             )
 
+        # Phase 17 price precedence (see app/domain/wholesale.py):
+        #   selling-unit price > variant price > product retail price
+        #   (wholesale threshold may replace the retail price) > pack price.
+        # `line_uses_product_retail` is True only when the price came from
+        # products.price on a BASE-unit line — the single case wholesale
+        # pricing may touch.
+        line_uses_product_retail = False
         if selling_unit is not None:
             line.quantity_line = qty
             line.quantity_base = selling_to_base(qty, selling_unit.multiplier)
             server_price = effective_unit_price(
                 selling_unit.selling_price, product.price
+            )
+            # Wholesale belongs ONLY to the product's base/default unit.
+            # A custom selling unit (Box/Carton/Pack) prices from its own
+            # configured selling_price — or from the retail price when none
+            # is configured — and NEVER from the product's wholesale rule.
+            # Its multiplier only converts qty into quantity_base for stock;
+            # it can never qualify the line for wholesale_min_qty.
+            line_uses_product_retail = bool(
+                selling_unit.is_base_unit and selling_unit.selling_price is None
             )
         else:
             line.quantity_line = qty
@@ -401,7 +418,21 @@ class SaleService(BaseService):
             if variant is not None and variant.price is not None:
                 server_price = to_decimal(variant.price)
             else:
+                line_uses_product_retail = True
                 server_price = to_decimal(product.price)
+
+        if line_uses_product_retail:
+            # Wholesale threshold, measured on the line's BASE quantity
+            # (product units) — always equal to qty here, because only a
+            # base-unit line reaches this branch. Disabled wholesale returns
+            # the retail price unchanged. The server computes this on its
+            # own — a client unit_price can never invent a cheaper line.
+            server_price = resolve_wholesale_unit_price(
+                retail_price=server_price,
+                wholesale_price=product.wholesale_price,
+                wholesale_min_qty=product.wholesale_min_qty,
+                quantity_base=line.quantity_base,
+            )
 
         # Price policy: server authoritative price always wins.
         # Client unit_price is a display hint; mismatch is reported, not fatal.

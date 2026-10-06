@@ -839,8 +839,8 @@ class _StockScreenState extends ConsumerState<StockScreen>
                                 Text(
                                   item.barcode!,
                                   style: theme.textTheme.bodySmall?.copyWith(
-                                    color: cs.outline,
-                                    fontSize: 11,
+                                    color: cs.onSurface.withValues(alpha: 0.7),
+                                    fontSize: 12,
                                   ),
                                 ),
                             ],
@@ -874,8 +874,8 @@ class _StockScreenState extends ConsumerState<StockScreen>
                               Text(
                                 AppStrings.unitLabel(item.unit, loc),
                                 style: theme.textTheme.labelSmall?.copyWith(
-                                  color: cs.outline,
-                                  fontSize: 10,
+                                  color: cs.onSurface.withValues(alpha: 0.7),
+                                  fontSize: 11.5,
                                 ),
                               ),
                             ],
@@ -1025,8 +1025,8 @@ class _StockScreenState extends ConsumerState<StockScreen>
                   Text(
                     item.barcode!,
                     style: theme.textTheme.bodySmall?.copyWith(
-                      color: cs.outline,
-                      fontSize: 11,
+                      color: cs.onSurface.withValues(alpha: 0.7),
+                      fontSize: 12,
                     ),
                   ),
                 const SizedBox(height: 8),
@@ -1080,8 +1080,8 @@ class _StockScreenState extends ConsumerState<StockScreen>
           label,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
-          style: theme.textTheme.labelSmall?.copyWith(
-            color: theme.colorScheme.onSurface.withValues(alpha: 0.55),
+          style: theme.textTheme.labelMedium?.copyWith(
+            color: theme.colorScheme.onSurface.withValues(alpha: 0.72),
           ),
         ),
         Text(
@@ -1342,7 +1342,7 @@ class _StockScreenState extends ConsumerState<StockScreen>
             formatSignedQuantityChange(m.quantityChange),
             key: Key('movement-qty-${m.id}'),
             textDirection: TextDirection.ltr,
-            style: theme.textTheme.bodySmall
+            style: theme.textTheme.bodyMedium
                 ?.copyWith(color: qtyColor, fontWeight: FontWeight.w700),
           ),
         ],

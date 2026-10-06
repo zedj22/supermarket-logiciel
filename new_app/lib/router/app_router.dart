@@ -542,7 +542,7 @@ class ScaffoldWithNav extends ConsumerWidget {
                       key: const Key('shell-user-roles'),
                       style: theme.textTheme.bodySmall?.copyWith(
                         color:
-                            theme.colorScheme.onSurface.withValues(alpha: 0.7),
+                            theme.colorScheme.onSurface.withValues(alpha: 0.8),
                       ),
                     ),
                   ],

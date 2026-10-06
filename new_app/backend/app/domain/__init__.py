@@ -21,6 +21,10 @@ from app.domain.unit_conversions import (
     to_decimal,
     validate_multiplier,
 )
+from app.domain.wholesale import (
+    resolve_wholesale_unit_price,
+    wholesale_is_configured,
+)
 
 __all__ = [
     "QTY_QUANTUM",
@@ -35,9 +39,11 @@ __all__ = [
     "mixed_sale_base_cost",
     "nominal_base_unit_cost",
     "receive_packages",
+    "resolve_wholesale_unit_price",
     "sell_base_units",
     "sell_packages",
     "selling_to_base",
     "to_decimal",
     "validate_multiplier",
+    "wholesale_is_configured",
 ]

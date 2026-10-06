@@ -43,6 +43,12 @@ class ProductModel {
   final String quantity;
   final String lowStockThreshold;
   final bool allowNegativeStock;
+  // Phase 17 pricing. NULL wholesale = feature off for this product
+  // (pre-phase rows keep their retail behaviour). vat_rate is the strict
+  // {0, 9, 19} catalog metadata — display only, never in a sale total.
+  final String? wholesalePrice;
+  final String? wholesaleMinQty;
+  final int vatRate;
   final String? expiryDate;
   final String? imagePath;
   final String? categoryId;
@@ -62,6 +68,9 @@ class ProductModel {
     this.quantity = '0',
     this.lowStockThreshold = '5',
     this.allowNegativeStock = false,
+    this.wholesalePrice,
+    this.wholesaleMinQty,
+    this.vatRate = 0,
     this.expiryDate,
     this.imagePath,
     this.categoryId,
@@ -83,6 +92,9 @@ class ProductModel {
       quantity: '${json['quantity'] ?? 0}',
       lowStockThreshold: '${json['low_stock_threshold'] ?? 5}',
       allowNegativeStock: json['allow_negative_stock'] as bool? ?? false,
+      wholesalePrice: json['wholesale_price']?.toString(),
+      wholesaleMinQty: json['wholesale_min_qty']?.toString(),
+      vatRate: json['vat_rate'] as int? ?? 0,
       expiryDate: json['expiry_date'] as String?,
       imagePath: json['image_path'] as String?,
       categoryId: json['category_id'] as String?,

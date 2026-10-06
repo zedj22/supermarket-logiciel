@@ -9241,4 +9241,98 @@ void main() {
       expect(tester.takeException(), isNull);
     });
   });
+
+  group('Phase 17 pricing — wholesale cue in the cart', () {
+    ProviderContainer containerOf(WidgetTester tester) =>
+        ProviderScope.containerOf(
+          tester.element(find.byKey(const Key('pos-screen'))),
+          listen: false,
+        );
+
+    testWidgets('shows only while the line charges the wholesale rate', (
+      tester,
+    ) async {
+      await _pumpApp(tester, dio: dio);
+      final container = containerOf(tester);
+      container.read(posCartProvider.notifier).addLine(
+            const CartLine(
+              productId: 'p1',
+              name: 'Rice',
+              quantity: '5',
+              unitPrice: '80',
+              retailPrice: '100',
+              wholesalePrice: '80',
+              wholesaleMinQty: '5',
+              availableStock: '999',
+            ),
+          );
+      await tester.pump();
+      final key = container.read(posCartProvider).lines.first.key;
+      expect(find.byKey(Key('cart-line-wholesale-$key')), findsOneWidget);
+      expect(find.text(AppStrings.t('wholesale', 'en')), findsOneWidget);
+
+      // Drop below the threshold → back to retail, cue disappears.
+      container.read(posCartProvider.notifier).updateLine(key, quantity: '2');
+      await tester.pump();
+      expect(container.read(posCartProvider).lines.single.unitPrice, '100');
+      expect(find.byKey(Key('cart-line-wholesale-$key')), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('an explicit-price line never shows the cue', (tester) async {
+      await _pumpApp(tester, dio: dio);
+      final container = containerOf(tester);
+      container.read(posCartProvider.notifier).addLine(
+            const CartLine(
+              productId: 'p1',
+              name: 'Rice',
+              quantity: '50',
+              unitPrice: '550',
+              availableStock: '999',
+            ),
+          );
+      await tester.pump();
+      final key = container.read(posCartProvider).lines.single.key;
+      expect(container.read(posCartProvider).lines.single.unitPrice, '550');
+      expect(find.byKey(Key('cart-line-wholesale-$key')), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a custom selling-unit line never shows the cue', (
+      tester,
+    ) async {
+      await _pumpApp(tester, dio: dio);
+      final container = containerOf(tester);
+      // Box = 24 Piece: 5 Box = 120 base units, far past a threshold of 5.
+      // The multiplier converts quantity for INVENTORY only, so the line
+      // keeps retail 200 and never earns the wholesale cue.
+      container.read(posCartProvider.notifier).addLine(
+            const CartLine(
+              productId: 'p1',
+              name: 'Rice',
+              sellingUnitId: 'box-1',
+              unitName: 'Box',
+              quantity: '5',
+              unitPrice: '200',
+              retailPrice: '200',
+              wholesalePrice: '180',
+              wholesaleMinQty: '5',
+              unitMultiplier: '24',
+              availableStock: '999',
+            ),
+          );
+      await tester.pump();
+      final key = container.read(posCartProvider).lines.first.key;
+      expect(container.read(posCartProvider).lines.single.unitPrice, '200');
+      expect(find.byKey(Key('cart-line-wholesale-$key')), findsNothing);
+
+      // Raising the quantity past the threshold keeps retail on a Box too.
+      container.read(posCartProvider.notifier).updateLine(key, quantity: '10');
+      await tester.pump();
+      expect(container.read(posCartProvider).lines.single.unitPrice, '200');
+      expect(find.byKey(Key('cart-line-wholesale-$key')), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+  });
+
 }

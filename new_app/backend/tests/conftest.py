@@ -18,6 +18,14 @@ os.environ["APP_ENV"] = "testing"
 os.environ["APP_SECRET_KEY"] = "test-secret-key"
 os.environ["JWT_SECRET_KEY"] = "test-jwt-secret"
 
+# The runtime .env enables LAN_MODE / DISCOVERY_ENABLED (device guard +
+# UDP responder) for the live server, but the unit suite runs with both
+# OFF so pre-Phase-16 behaviour stays bit-for-bit unchanged (see
+# app/core/config.py). Device tests turn the guard back on explicitly with
+# monkeypatch.setattr(settings, "LAN_MODE", True).
+os.environ.setdefault("LAN_MODE", "0")
+os.environ.setdefault("DISCOVERY_ENABLED", "0")
+
 # SQLite for unit tests (default)
 os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
 

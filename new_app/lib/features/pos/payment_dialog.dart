@@ -122,12 +122,19 @@ class _PaymentDialogState extends ConsumerState<PaymentDialog> {
     final hasCustomer = cart.customer != null;
     final change = PaymentMath.changeOf(paid: _paidAmount, total: totals.total);
     final debt = PaymentMath.debtOf(paid: _paidAmount, total: totals.total);
+    // 440 clipped the amount-paid field and the change/debt pair on a
+    // 1366px window; the checkout dialog grows with the window but never
+    // becomes a portrait strip on a small one.
+    final view = MediaQuery.sizeOf(context);
+    var width = view.width - 96;
+    if (width < 400) width = 400;
+    if (width > 560) width = 560;
 
     return AlertDialog(
       key: const Key('payment-dialog'),
       title: Text(AppStrings.t('payment', loc)),
       content: SizedBox(
-        width: 440,
+        width: width,
         child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,

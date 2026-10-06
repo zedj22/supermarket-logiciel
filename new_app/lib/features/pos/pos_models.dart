@@ -2,6 +2,7 @@
 //
 // Server remains authoritative for prices, stock, and totals. Client
 // models only hold display state and the request payload shape.
+import '../../core/quantity_expression.dart';
 import '../../core/strings.dart';
 
 /// Payment methods accepted by POST /api/v1/sales.
@@ -51,6 +52,23 @@ class CartLine {
   /// unit was chosen (direct base add).
   final String? unitMultiplier;
 
+  /// Phase 17 pricing — the RETAIL branch this line priced off.
+  ///
+  /// * `retailPrice` — the product retail unit price (`products.price`)
+  ///   the line would use with no wholesale rule. Null means the line
+  ///   prices off an explicit variant / selling-unit price (or a pack) and
+  ///   is therefore NEVER wholesale-priced. It is also null for every
+  ///   CUSTOM selling unit, even one that falls back to the retail price:
+  ///   wholesale belongs to the product's base unit only.
+  /// * `wholesalePrice` / `wholesaleMinQty` — the product's wholesale rule
+  ///   snapshot at add-to-cart time. Both null = wholesale disabled.
+  ///
+  /// Display/UX state only: the checkout payload still sends ids, qty and
+  /// unit_price, and the SERVER recomputes the authoritative price.
+  final String? retailPrice;
+  final String? wholesalePrice;
+  final String? wholesaleMinQty;
+
   /// Line identity (const-cached at construction): the cart's O(n)
   /// `indexWhere` in `PosCartNotifier.addLine` reads it once per existing
   /// line, so rebuilding the 3-part string on every access made building a
@@ -75,6 +93,9 @@ class CartLine {
     this.componentsSummary,
     this.baseUnitPrice,
     this.unitMultiplier,
+    this.retailPrice,
+    this.wholesalePrice,
+    this.wholesaleMinQty,
   }) : key = packId != null
             ? 'pack:$packId'
             : '${productId ?? ''}|${variantId ?? ''}|${sellingUnitId ?? ''}';
@@ -90,6 +111,73 @@ class CartLine {
   /// Gross line amount before line discount (display only).
   double get lineTotal => (qty * price) - discountAmount;
 
+  /// True when the line sits on the retail branch AND the product carries
+  /// a usable wholesale rule (price present, minimum > 0). A line with an
+  /// explicit variant / selling-unit / pack price is never eligible, and
+  /// neither is a line sold in a CUSTOM selling unit (`unitMultiplier != null`,
+  /// e.g. Box = 24 Piece): wholesale belongs to the product's base unit,
+  /// and the multiplier converts quantity for inventory only — it can
+  /// never qualify the line for `wholesaleMinQty`. The guard also covers
+  /// holds restored from a snapshot stamped before that rule existed.
+  bool get wholesaleEligible {
+    if (retailPrice == null) return false;
+    if (unitMultiplier != null) return false;
+    final wholesale = double.tryParse(wholesalePrice ?? '');
+    final min = double.tryParse(wholesaleMinQty ?? '');
+    return wholesale != null && wholesale >= 0 && min != null && min > 0;
+  }
+
+  /// True while the line is actually charging the wholesale rate (the base
+  /// quantity reached the threshold) — drives the cart's "Wholesale" cue.
+  /// Compares parsed amounts so `8`, `8.0` and `8.00` (a hold round trip
+  /// re-serializes the money value) all read as the same price.
+  bool get wholesaleApplied {
+    if (!wholesaleEligible) return false;
+    final unit = double.tryParse(unitPrice);
+    final wholesale = double.tryParse(wholesalePrice!);
+    final retail = double.tryParse(retailPrice!);
+    if (unit == null || wholesale == null || retail == null) return false;
+    // Only a line that actually got CHEAPER than retail earns the cue
+    // (a wholesale rule equal to the retail price changes nothing).
+    return unit == wholesale && unit != retail;
+  }
+
+  /// Effective unit price for [quantity] under the Phase 17 precedence.
+  ///
+  /// Dart mirror of `app/domain/wholesale.py::resolve_wholesale_unit_price`:
+  ///
+  ///  * only the RETAIL branch is wholesale-priced (`retailPrice == null`
+  ///    → an explicit variant / selling-unit / pack price is left alone);
+  ///  * a CUSTOM selling-unit line (`unitMultiplier != null`) is never
+  ///    wholesale-priced either — its multiplier converts quantity for
+  ///    inventory, it does not scale up toward the threshold;
+  ///  * the threshold is compared against the line's BASE quantity
+  ///    (for the base unit that is simply `quantity`) in exact
+  ///    scaled-integer math;
+  ///  * the configured wholesale price is returned VERBATIM — it is a
+  ///    per-product-unit price, never multiplied by the multiplier;
+  ///  * anything unusable (missing half, minimum ≤ 0, unparsable) keeps
+  ///    retail, exactly like the backend's "disabled, never an error".
+  ///
+  /// Display only — the server recomputes the authoritative price.
+  String priceFor(String quantity) {
+    final retail = retailPrice;
+    if (retail == null || unitMultiplier != null) return unitPrice;
+    final wholesale = wholesalePrice;
+    final minText = wholesaleMinQty;
+    if (wholesale == null || minText == null) return retail;
+    final wholesaleValue = double.tryParse(wholesale);
+    if (wholesaleValue == null || wholesaleValue < 0) return retail;
+    final minScaled = posScaled(minText);
+    if (minScaled == null || minScaled <= 0) return retail;
+    final lineScaled = posScaled(quantity);
+    if (lineScaled == null) return retail;
+    final multiplierScaled = posScaled(unitMultiplier) ?? kPosQtyScale;
+    final baseScaled = (lineScaled * multiplierScaled) ~/ kPosQtyScale;
+    if (baseScaled < minScaled) return retail;
+    return wholesale;
+  }
+
   CartLine copyWith({
     String? quantity,
     String? unitPrice,
@@ -97,6 +185,7 @@ class CartLine {
     String? availableStock,
     String? name,
   }) {
+    final nextQuantity = quantity ?? this.quantity;
     return CartLine(
       productId: productId,
       variantId: variantId,
@@ -105,8 +194,13 @@ class CartLine {
       name: name ?? this.name,
       variantName: variantName,
       unitName: unitName,
-      quantity: quantity ?? this.quantity,
-      unitPrice: unitPrice ?? this.unitPrice,
+      quantity: nextQuantity,
+      // Phase 17 — a quantity change can cross the wholesale threshold in
+      // either direction, so the line re-prices itself here (one place:
+      // add-merge, qty shortcuts and hold edits all go through copyWith).
+      // An explicit unitPrice argument always wins.
+      unitPrice: unitPrice ??
+          (quantity == null ? this.unitPrice : priceFor(nextQuantity)),
       lineDiscount: lineDiscount ?? this.lineDiscount,
       barcode: barcode,
       availableStock: availableStock ?? this.availableStock,
@@ -114,6 +208,9 @@ class CartLine {
       componentsSummary: componentsSummary,
       baseUnitPrice: baseUnitPrice,
       unitMultiplier: unitMultiplier,
+      retailPrice: retailPrice,
+      wholesalePrice: wholesalePrice,
+      wholesaleMinQty: wholesaleMinQty,
     );
   }
 
@@ -138,6 +235,11 @@ class CartLine {
         'unit_multiplier': unitMultiplier,
         'available_stock': availableStock,
         'barcode': barcode,
+        // Phase 17 pricing — wholesale snapshot (display only, hold round
+        // trip: a restored line re-prices itself on the next qty edit).
+        'retail_price': retailPrice,
+        'wholesale_price': wholesalePrice,
+        'wholesale_min_qty': wholesaleMinQty,
       };
 
   /// Checkout payload for `POST /api/v1/sales` — fixed API contract.
@@ -175,6 +277,9 @@ class CartLine {
       componentsSummary: json['components_summary'] as String?,
       baseUnitPrice: json['base_unit_price']?.toString(),
       unitMultiplier: json['unit_multiplier']?.toString(),
+      retailPrice: json['retail_price']?.toString(),
+      wholesalePrice: json['wholesale_price']?.toString(),
+      wholesaleMinQty: json['wholesale_min_qty']?.toString(),
     );
   }
 }

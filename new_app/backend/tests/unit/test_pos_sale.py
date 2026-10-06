@@ -1183,6 +1183,76 @@ class TestHolds:
         assert snap["unit_multiplier"] == "5"
         assert snap["available_stock"] == "10"
 
+    def test_ai_hold_snapshot_preserves_wholesale_snapshot(
+        self, client, admin_headers
+    ):
+        """Phase 17: the wholesale snapshot rides the hold round trip.
+
+        A restored line must re-price itself when its quantity crosses the
+        threshold again, so the hold has to carry retail/wholesale/min_qty
+        through CREATE and RESTORE (display only — the sale still computes
+        the authoritative price server-side).
+        """
+        p = _create_product(client, admin_headers, price="270.000", quantity="10.000")
+        create = client.post(
+            "/api/v1/pos/holds",
+            json={
+                "device_id": "POS-1",
+                "items": [
+                    {
+                        "product_id": p["id"],
+                        "quantity": "5.000",
+                        "unit_price": "250.000",
+                        "retail_price": "270.000",
+                        "wholesale_price": "250.000",
+                        "wholesale_min_qty": "5",
+                    }
+                ],
+                "invoice_discount": "0.000",
+            },
+            headers=admin_headers,
+        )
+        assert create.status_code == 201, create.text
+        hold = create.json()
+        stored = hold["items"][0]
+        assert stored["retail_price"] == "270.000"
+        assert stored["wholesale_price"] == "250.000"
+        assert stored["wholesale_min_qty"] == "5"
+
+        restore = client.post(
+            f"/api/v1/pos/holds/{hold['id']}/restore", headers=admin_headers
+        )
+        assert restore.status_code == 200, restore.text
+        snap = restore.json()["hold"]["items"][0]
+        assert snap["retail_price"] == "270.000"
+        assert snap["wholesale_price"] == "250.000"
+        assert snap["wholesale_min_qty"] == "5"
+
+    def test_aj_hold_from_before_phase_17_still_validates(
+        self, client, admin_headers
+    ):
+        """Pre-phase holds carry no wholesale keys — they must not 422."""
+        p = _create_product(client, admin_headers, price="270.000", quantity="10.000")
+        create = client.post(
+            "/api/v1/pos/holds",
+            json={
+                "device_id": "POS-1",
+                "items": [
+                    {
+                        "product_id": p["id"],
+                        "quantity": "1.000",
+                        "unit_price": "270.000",
+                    }
+                ],
+            },
+            headers=admin_headers,
+        )
+        assert create.status_code == 201, create.text
+        stored = create.json()["items"][0]
+        assert stored["retail_price"] is None
+        assert stored["wholesale_price"] is None
+        assert stored["wholesale_min_qty"] is None
+
 
 # ── Favorites ──────────────────────────────────────────────────────────
 

@@ -259,7 +259,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                         _selectedUser!.roleNames.join(', '),
                         style: theme.textTheme.bodySmall?.copyWith(
                           color: theme.colorScheme.onSurface.withValues(
-                            alpha: 0.5,
+                            alpha: 0.7,
                           ),
                         ),
                       ),
@@ -413,7 +413,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                           user.roleNames.join(', '),
                           style: theme.textTheme.bodySmall?.copyWith(
                             color: theme.colorScheme.onSurface.withValues(
-                              alpha: 0.5,
+                              alpha: 0.7,
                             ),
                           ),
                         ),
@@ -422,7 +422,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                   ),
                   Icon(
                     Icons.chevron_right,
-                    color: theme.colorScheme.onSurface.withValues(alpha: 0.3),
+                    color: theme.colorScheme.onSurface.withValues(alpha: 0.45),
                   ),
                 ],
               ),

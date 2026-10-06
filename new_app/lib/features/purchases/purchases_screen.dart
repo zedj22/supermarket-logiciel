@@ -237,7 +237,9 @@ class _PurchasesScreenState extends ConsumerState<PurchasesScreen> {
           Text(
             '${AppStrings.t('total', loc)}: ${state.total}',
             key: const Key('purchases-total'),
-            style: theme.textTheme.bodySmall,
+            style: theme.textTheme.bodyMedium?.copyWith(
+              fontWeight: FontWeight.w600,
+            ),
           ),
           const SizedBox(height: 8),
           Expanded(child: _buildBody(theme, loc, state, mode)),

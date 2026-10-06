@@ -98,10 +98,11 @@ void main() {
       // (860); the product-quantity save added `product_and_stock_updated`,
       // `quantity_readonly` and `product_stock_reason` (863); §18 added the
       // keyboard-shortcuts help surface — 41 keys (`shortcuts_*` + the
-      // `sc_a_*` / `sc_d_*` action/description pairs, 904).  Update this
-      // deliberately when a subphase adds strings — an unexplained drop
-      // means keys were deleted from one map only.
-      expect(_map('en').keys.length, 904);
+      // `sc_a_*` / `sc_d_*` action/description pairs, 904); Phase 17 pricing
+      // added the wholesale / TVA / margin labels — 5 keys (909).  Update
+      // this deliberately when a subphase adds strings — an unexplained
+      // drop means keys were deleted from one map only.
+      expect(_map('en').keys.length, 909);
       expect(_map('ar').keys.length, _map('en').keys.length);
       expect(_map('fr').keys.length, _map('en').keys.length);
     });

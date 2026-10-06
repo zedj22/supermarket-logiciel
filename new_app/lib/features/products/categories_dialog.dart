@@ -77,7 +77,7 @@ class _CategoriesDialogState extends ConsumerState<CategoriesDialog> {
                                 ? Chip(
                                     label: Text(
                                       AppStrings.t('archived', loc),
-                                      style: const TextStyle(fontSize: 11),
+                                      style: const TextStyle(fontSize: 12),
                                     ),
                                   )
                                 : PopupMenuButton<String>(

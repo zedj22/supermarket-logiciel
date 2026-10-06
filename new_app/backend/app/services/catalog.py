@@ -464,7 +464,15 @@ class ProductService(BaseService):
                 setattr(product, key, value)
             if "cost" in updates and pmp_still_nominal:
                 product.avg_cost = float(to_decimal(product.cost))
-        logger.info("product_updated", product_id=str(product.id))
+        # Phase 17: every product mutation (price, cost, wholesale, TVA, …)
+        # travels through this one update path, so naming the changed fields
+        # here keeps the existing audit trail complete without introducing a
+        # second audit system.
+        logger.info(
+            "product_updated",
+            product_id=str(product.id),
+            changed_fields=sorted(updates.keys()),
+        )
         return product
 
     def archive(self, product_id: uuid.UUID) -> Product:

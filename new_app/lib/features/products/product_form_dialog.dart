@@ -28,6 +28,7 @@ import 'package:go_router/go_router.dart';
 import '../../core/strings.dart';
 import '../../l10n/locale_provider.dart';
 import '../auth/permission_helpers.dart';
+import '../clients/customer_models.dart';
 import 'models.dart';
 import 'product_image_picker_service.dart';
 import 'products_providers.dart';
@@ -72,11 +73,16 @@ class _ProductFormDialogState extends ConsumerState<ProductFormDialog> {
   late final TextEditingController _cost;
   late final TextEditingController _quantity;
   late final TextEditingController _threshold;
+  late final TextEditingController _wholesalePrice;
+  late final TextEditingController _wholesaleMinQty;
   late final TextEditingController _description;
   late final TextEditingController _expiryDate;
 
   String? _categoryId;
   String _unit = 'piece';
+  // Phase 17 TVA — strict {0, 9, 19}, never free-typed.
+  static const List<int> kVatRates = [0, 9, 19];
+  int _vatRate = 0;
   String? _imagePath;
   bool _saving = false;
   String? _error;
@@ -118,11 +124,25 @@ class _ProductFormDialogState extends ConsumerState<ProductFormDialog> {
     _threshold = TextEditingController(
       text: p != null ? _trimDecimal(p.lowStockThreshold) : '',
     );
+    final wholesalePrice = p?.wholesalePrice;
+    final wholesaleMinQty = p?.wholesaleMinQty;
+    _wholesalePrice = TextEditingController(
+      text: wholesalePrice == null ? '' : _trimDecimal(wholesalePrice),
+    );
+    _wholesaleMinQty = TextEditingController(
+      text: wholesaleMinQty == null ? '' : _trimDecimal(wholesaleMinQty),
+    );
+    _vatRate = p?.vatRate ?? 0;
     _description = TextEditingController(text: p?.description ?? '');
     _expiryDate = TextEditingController(text: p?.expiryDate ?? '');
     _categoryId = p?.categoryId;
     _unit = p?.unit ?? 'piece';
     _imagePath = p?.imagePath;
+
+    // Phase 17 — live profit / margin: a price or cost keystroke repaints
+    // the margin row only (no dialog-wide rebuild needed elsewhere).
+    _price.addListener(_onPriceOrCostChanged);
+    _cost.addListener(_onPriceOrCostChanged);
 
     // Ensure category options are available for the dropdown.
     Future.microtask(
@@ -172,6 +192,12 @@ class _ProductFormDialogState extends ConsumerState<ProductFormDialog> {
     return trimmed.substring(0, trimmed.length - 1);
   }
 
+  /// Rebuild so the profit / margin row tracks the live field values.
+  void _onPriceOrCostChanged() {
+    if (!mounted) return;
+    setState(() {});
+  }
+
   @override
   void dispose() {
     _name.dispose();
@@ -181,6 +207,8 @@ class _ProductFormDialogState extends ConsumerState<ProductFormDialog> {
     _cost.dispose();
     _quantity.dispose();
     _threshold.dispose();
+    _wholesalePrice.dispose();
+    _wholesaleMinQty.dispose();
     _description.dispose();
     _expiryDate.dispose();
     super.dispose();
@@ -201,6 +229,29 @@ class _ProductFormDialogState extends ConsumerState<ProductFormDialog> {
       final n = num.tryParse(text);
       if (n == null || n < 0) {
         return '${AppStrings.t(pair.$1 == 'threshold' ? 'low_stock_threshold' : pair.$1, loc)} ≥ 0';
+      }
+    }
+    // Phase 17 wholesale: both halves travel together — a price with no
+    // minimum (or the reverse) would be silently disabled by the backend,
+    // so the form says so instead of saving a rule that never fires.
+    final wholesalePrice = _wholesalePrice.text.trim();
+    final wholesaleMinQty = _wholesaleMinQty.text.trim();
+    if (wholesalePrice.isNotEmpty && wholesaleMinQty.isEmpty) {
+      return '${AppStrings.t('wholesale_min_qty', loc)} > 0';
+    }
+    if (wholesalePrice.isEmpty && wholesaleMinQty.isNotEmpty) {
+      return '${AppStrings.t('wholesale_price', loc)} ≥ 0';
+    }
+    if (wholesalePrice.isNotEmpty) {
+      final n = num.tryParse(wholesalePrice);
+      if (n == null || n < 0) {
+        return '${AppStrings.t('wholesale_price', loc)} ≥ 0';
+      }
+    }
+    if (wholesaleMinQty.isNotEmpty) {
+      final n = num.tryParse(wholesaleMinQty);
+      if (n == null || n <= 0) {
+        return '${AppStrings.t('wholesale_min_qty', loc)} > 0';
       }
     }
     final expiry = _expiryDate.text.trim();
@@ -230,6 +281,12 @@ class _ProductFormDialogState extends ConsumerState<ProductFormDialog> {
       'unit': _unit,
       'price': _price.text.trim(),
       'cost': _cost.text.trim().isEmpty ? '0' : _cost.text.trim(),
+      // Phase 17 pricing. Sent on create AND edit: null clears the field
+      // (wholesale off / TVA 0), a value sets it. Omitting them on edit
+      // would silently ignore a "clear wholesale" edit.
+      'wholesale_price': nonEmpty(_wholesalePrice),
+      'wholesale_min_qty': nonEmpty(_wholesaleMinQty),
+      'vat_rate': _vatRate,
       // Stock is not a product field on edit (see the header comment):
       // including it would be dropped by the backend and report a false
       // success. Create still seeds the initial quantity atomically.
@@ -522,6 +579,10 @@ class _ProductFormDialogState extends ConsumerState<ProductFormDialog> {
                         const SizedBox.shrink(),
                     ],
                   ),
+                  if (canSeeCost) ...[
+                    const SizedBox(height: 12),
+                    _marginRow(theme, loc),
+                  ],
                   const SizedBox(height: 12),
                   _fieldRow(
                     narrow: narrow,
@@ -563,6 +624,60 @@ class _ProductFormDialogState extends ConsumerState<ProductFormDialog> {
                       ),
                     ),
                   ],
+                  const SizedBox(height: 16),
+                  _sectionHeader(theme, AppStrings.t('wholesale', loc)),
+                  const SizedBox(height: 8),
+                  _fieldRow(
+                    narrow: narrow,
+                    children: [
+                      TextField(
+                        key: const Key('product-wholesale-price-field'),
+                        controller: _wholesalePrice,
+                        keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true,
+                        ),
+                        decoration: InputDecoration(
+                          labelText: AppStrings.t('wholesale_price', loc),
+                        ),
+                      ),
+                      TextField(
+                        key: const Key('product-wholesale-min-qty-field'),
+                        controller: _wholesaleMinQty,
+                        keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true,
+                        ),
+                        decoration: InputDecoration(
+                          labelText: AppStrings.t('wholesale_min_qty', loc),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  _fieldRow(
+                    narrow: narrow,
+                    children: [
+                      // Phase 17 TVA — a closed set, never a free-typed
+                      // percentage (the API rejects anything outside it).
+                      DropdownButtonFormField<int>(
+                        key: const Key('product-vat-rate-field'),
+                        initialValue: _vatRate,
+                        decoration: InputDecoration(
+                          labelText: AppStrings.t('vat_rate', loc),
+                        ),
+                        items: [
+                          for (final rate in kVatRates)
+                            DropdownMenuItem(
+                              value: rate,
+                              child: Text('$rate %'),
+                            ),
+                        ],
+                        onChanged: (v) {
+                          if (v != null) setState(() => _vatRate = v);
+                        },
+                      ),
+                      const SizedBox.shrink(),
+                    ],
+                  ),
                   const SizedBox(height: 16),
                   _sectionHeader(
                     theme,
@@ -656,6 +771,91 @@ class _ProductFormDialogState extends ConsumerState<ProductFormDialog> {
           child: Text(AppStrings.t('save', loc)),
         ),
       ],
+    );
+  }
+
+  /// Phase 17 — live profit / margin for the Pricing section.
+  ///
+  /// Both figures are DISPLAY ONLY (nothing is persisted): profit is
+  /// `price - cost` in exact thousandths, margin is `profit / price`.
+  /// A zero price yields a null margin — never divide by zero, the same
+  /// rule the pack form applies to its estimated margin.
+  Widget _marginRow(ThemeData theme, String loc) {
+    final priceMilli = moneyToMilli(_price.text);
+    final costMilli = moneyToMilli(_cost.text);
+    String? profit;
+    String? margin;
+    if (priceMilli != null && costMilli != null) {
+      final value = priceMilli - costMilli;
+      profit = milliToMoney(value);
+      if (priceMilli != 0) {
+        // hundredths of a percent, so 40.000 / 100.000 reads "40.00%".
+        final hundredths = (value * 10000) ~/ priceMilli;
+        final negative = hundredths < 0;
+        final abs = hundredths.abs();
+        margin = '${negative ? '-' : ''}'
+            '${abs ~/ 100}.${(abs % 100).toString().padLeft(2, '0')}%';
+      }
+    }
+
+    final cs = theme.colorScheme;
+    Widget block(String key, String label, String value, {Color? color}) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            label,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: cs.onSurface.withValues(alpha: 0.6),
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            value,
+            key: Key(key),
+            style: theme.textTheme.titleSmall?.copyWith(
+              fontWeight: FontWeight.w700,
+              color: color ?? cs.onSurface,
+            ),
+          ),
+        ],
+      );
+    }
+
+    final profitColor =
+        profit != null && profit.startsWith('-') ? cs.error : cs.primary;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: cs.surfaceContainerHighest.withValues(alpha: 0.45),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: cs.outline.withValues(alpha: 0.12)),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: block(
+              'product-form-profit',
+              AppStrings.t('profit', loc),
+              profit ?? '—',
+              color: profitColor,
+            ),
+          ),
+          Container(
+            width: 1,
+            height: 28,
+            color: cs.outline.withValues(alpha: 0.18),
+          ),
+          Expanded(
+            child: block(
+              'product-form-margin',
+              AppStrings.t('margin', loc),
+              margin ?? '—',
+            ),
+          ),
+        ],
+      ),
     );
   }
 

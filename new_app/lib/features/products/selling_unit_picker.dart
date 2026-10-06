@@ -39,6 +39,14 @@ class SellingUnitPickResult {
   final String? unitMultiplier;
   final bool isBaseUnit;
 
+  /// Phase 17 — true when the chosen unit carries ITS OWN configured
+  /// price (`product_selling_units.selling_price`). Such a line prices
+  /// off that price; a null-price CUSTOM unit falls back to the product
+  /// retail price. Neither branch is ever wholesale-priced — a custom
+  /// selling unit never inherits the product's wholesale rule, whatever
+  /// its multiplier (see `CartLine.priceFor`).
+  final bool hasExplicitPrice;
+
   const SellingUnitPickResult({
     required this.sellingUnitId,
     required this.unitName,
@@ -46,6 +54,7 @@ class SellingUnitPickResult {
     required this.quantity,
     this.unitMultiplier,
     this.isBaseUnit = false,
+    this.hasExplicitPrice = false,
   });
 }
 
@@ -128,6 +137,9 @@ class _SellingUnitPickerState extends ConsumerState<SellingUnitPicker> {
         quantity: qty,
         unitMultiplier: '1',
         isBaseUnit: true,
+        // The synthetic base always prices off the product retail price,
+        // so it is the branch wholesale pricing may replace.
+        hasExplicitPrice: false,
       ),
     );
   }
@@ -152,6 +164,10 @@ class _SellingUnitPickerState extends ConsumerState<SellingUnitPicker> {
         quantity: qty,
         unitMultiplier: unit.multiplier,
         isBaseUnit: unit.isBaseUnit,
+        // Only a configured selling price changes where this line prices
+        // from (products.price otherwise) — but a CUSTOM unit is never
+        // wholesale-priced either way: wholesale is the base unit's rule.
+        hasExplicitPrice: unit.sellingPrice != null,
       ),
     );
   }

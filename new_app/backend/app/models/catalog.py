@@ -8,7 +8,16 @@ import uuid
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import Boolean, Date, ForeignKey, Index, Numeric, String, UniqueConstraint
+from sqlalchemy import (
+    Boolean,
+    Date,
+    ForeignKey,
+    Index,
+    Numeric,
+    SmallInteger,
+    String,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import (
@@ -77,6 +86,25 @@ class Product(MasterModel):
     avg_cost: Mapped[float] = numeric_money()
     quantity: Mapped[float] = numeric_quantity()
     low_stock_threshold: Mapped[float] = numeric_quantity(default=5, server_default="5")
+    # Phase 17 pricing — wholesale. BOTH are nullable on purpose: NULL means
+    # "wholesale not configured" and is never coerced to 0 (0 would be a
+    # valid free price / a 1-unit threshold). Wholesale applies only when
+    # wholesale_price IS NOT NULL AND wholesale_min_qty IS NOT NULL AND
+    # wholesale_min_qty > 0 (see app/domain/wholesale.py).
+    # Independent of price / cost / avg_cost / selling_units.selling_price —
+    # none of them is overloaded for wholesale.
+    wholesale_price: Mapped[Decimal | None] = mapped_column(
+        Numeric(18, 3), nullable=True, default=None, server_default=None,
+    )
+    wholesale_min_qty: Mapped[Decimal | None] = mapped_column(
+        Numeric(18, 3), nullable=True, default=None, server_default=None,
+    )
+    # Phase 17 TVA — strict rate set {0, 9, 19}. Stored as product metadata
+    # only: the API schema rejects every other value, and NO sale/invoice
+    # total is affected (see docs/PHASE_17_PRICING.md — VAT policy).
+    vat_rate: Mapped[int] = mapped_column(
+        SmallInteger, nullable=False, default=0, server_default="0",
+    )
     allow_negative_stock: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default="false",
     )

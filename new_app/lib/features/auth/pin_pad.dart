@@ -188,7 +188,7 @@ class PinPadState extends State<PinPad> {
             decoration: InputDecoration(
               hintText: AppStrings.t('pin', widget.locale),
               hintStyle: theme.textTheme.bodyMedium?.copyWith(
-                color: theme.colorScheme.onSurface.withValues(alpha: 0.4),
+                color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
               ),
               suffixIcon: IconButton(
                 icon: Icon(

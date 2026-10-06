@@ -534,6 +534,10 @@ class _PosScreenState extends ConsumerState<PosScreen> {
         productUnit: product.unit,
         availableStock: stock,
         baseUnitPrice: price,
+        // Phase 17 pricing — wholesale snapshot (see [_retailPriceOf]).
+        retailPrice: _retailPriceOf(product, price),
+        wholesalePrice: product.wholesalePrice,
+        wholesaleMinQty: product.wholesaleMinQty,
       );
       return;
     }
@@ -567,6 +571,15 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       // Informational snapshot — totals always use unitPrice above.
       baseUnitPrice: price,
       unitMultiplier: pick.isBaseUnit ? null : pick.unitMultiplier,
+      // Phase 17 pricing — wholesale snapshot (see [_retailPriceOf]).
+      // Wholesale belongs ONLY to the product's base unit: a custom selling
+      // unit (Box/Carton/…) never gets the snapshot, so it can never become
+      // wholesale-eligible however high the multiplier drives the quantity.
+      retailPrice: pick.isBaseUnit
+          ? _retailPriceOf(product, pick.unitPrice)
+          : null,
+      wholesalePrice: product.wholesalePrice,
+      wholesaleMinQty: product.wholesaleMinQty,
     );
   }
 
@@ -655,6 +668,25 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     }
   }
 
+  /// Phase 17 pricing — the retail price to stamp on a line, or null when
+  /// the line must NEVER be wholesale-priced.
+  ///
+  /// [linePrice] is the unit price the line is added at. Wholesale may only
+  /// replace a price that came from `products.price` — the precedence in
+  /// `app/domain/wholesale.py` is explicit selling-unit price > explicit
+  /// variant price > product retail price > pack price. Stamping the
+  /// snapshot only when it equals [linePrice] keeps the invariant
+  /// `CartLine.retailPrice == CartLine.unitPrice` at construction, so
+  /// re-pricing a quantity change can only switch retail ↔ wholesale and
+  /// can never rewrite a variant / selling-unit / pack price.
+  ///
+  /// Callers additionally pass null for a CUSTOM selling-unit line (see the
+  /// picker call site): even when that unit falls back to the retail price,
+  /// its multiplier is an inventory conversion, never a wholesale
+  /// qualifier — the snapshot is reserved for the product's base unit.
+  static String? _retailPriceOf(ProductModel product, String linePrice) =>
+      linePrice == product.price ? product.price : null;
+
   void _addCartLine({
     String? productId,
     String? packId,
@@ -671,6 +703,12 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     String? baseUnitPrice,
     String? unitMultiplier,
     String? componentsSummary,
+    // Phase 17 pricing — wholesale snapshot of the retail branch this line
+    // was priced off (null everywhere wholesale must never apply: packs,
+    // explicit variant / selling-unit prices). See CartLine.priceFor.
+    String? retailPrice,
+    String? wholesalePrice,
+    String? wholesaleMinQty,
   }) {
     final loc = ref.read(localeProvider).flutterLocale.languageCode;
     // Merge + stock guard in one place (UX FIX #12 — FIX #6): adding a
@@ -693,6 +731,9 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       componentsSummary: componentsSummary,
       baseUnitPrice: baseUnitPrice,
       unitMultiplier: unitMultiplier,
+      retailPrice: retailPrice,
+      wholesalePrice: wholesalePrice,
+      wholesaleMinQty: wholesaleMinQty,
     );
     final applied = applyAddingLine(
       notifier: ref.read(posCartProvider.notifier),
@@ -1075,7 +1116,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
                 label: Text(
                   AppStrings.t('packs', loc),
                   style: const TextStyle(
-                    fontSize: 13,
+                    fontSize: 14,
                     fontWeight: FontWeight.w600,
                   ),
                   overflow: TextOverflow.ellipsis,
@@ -1399,7 +1440,7 @@ class _ViewModeToggle extends StatelessWidget {
                 softWrap: false,
                 overflow: TextOverflow.clip,
                 style: theme.textTheme.labelLarge?.copyWith(
-                  fontSize: 13,
+                  fontSize: 14,
                   color:
                       selected ? onSelected : theme.colorScheme.onSurface,
                   fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
@@ -1851,7 +1892,8 @@ class _ProductCatalog extends StatelessWidget {
           loadMoreError!,
           textAlign: TextAlign.center,
           style: TextStyle(
-            fontSize: 12,
+            fontSize: 13,
+            fontWeight: FontWeight.w500,
             color: Theme.of(context).colorScheme.error,
           ),
         ),
@@ -2064,7 +2106,8 @@ class _CartPanel extends StatelessWidget {
                           key: const Key('pos-cart-counts'),
                           style: theme.textTheme.bodyMedium?.copyWith(
                             fontSize: short ? 14.0 : 15.0,
-                            color: theme.colorScheme.outline,
+                            color: theme.colorScheme.onSurface
+                                .withValues(alpha: 0.7),
                           ),
                           overflow: TextOverflow.ellipsis,
                         ),
@@ -2123,7 +2166,7 @@ class _CartPanel extends StatelessWidget {
                               Text(
                                 cart.customer!.phone!,
                                 style: theme.textTheme.bodySmall?.copyWith(
-                                  fontSize: 12,
+                                  fontSize: 13,
                                 ),
                                 overflow: TextOverflow.ellipsis,
                               ),
@@ -2140,7 +2183,11 @@ class _CartPanel extends StatelessWidget {
                               horizontal: 10,
                             ),
                             minimumSize: const Size(0, 44),
-                            textStyle: const TextStyle(
+                            // styleFrom() *replaces* the button's labelLarge,
+                            // so it has to be derived from the theme: a bare
+                            // TextStyle has no fontFamily and the label would
+                            // silently fall back to the platform font.
+                            textStyle: theme.textTheme.labelLarge?.copyWith(
                               fontSize: 14,
                               fontWeight: FontWeight.w600,
                             ),
@@ -2188,8 +2235,9 @@ class _CartPanel extends StatelessWidget {
                             key: const Key('pos-cart-empty'),
                             textAlign: TextAlign.center,
                             style: theme.textTheme.bodyMedium?.copyWith(
-                              fontSize: 13,
-                              color: theme.colorScheme.outline,
+                              fontSize: 14,
+                              color: theme.colorScheme.onSurface
+                                  .withValues(alpha: 0.7),
                             ),
                           ),
                           const SizedBox(height: 8),
@@ -2197,8 +2245,9 @@ class _CartPanel extends StatelessWidget {
                             AppStrings.t('search_focus', loc),
                             key: const Key('pos-cart-empty-f4'),
                             style: theme.textTheme.labelLarge?.copyWith(
-                              fontSize: 12,
-                              color: theme.colorScheme.outline,
+                              fontSize: 13,
+                              color: theme.colorScheme.onSurface
+                                  .withValues(alpha: 0.75),
                             ),
                           ),
                         ],
@@ -2347,8 +2396,8 @@ class _CartPanel extends StatelessWidget {
             : Icon(icon, size: short ? 18 : 20),
         label: Text(
           label,
-          style: TextStyle(
-            fontSize: short ? 13.0 : 14.0,
+          style: theme.textTheme.labelLarge?.copyWith(
+            fontSize: 14,
             fontWeight: FontWeight.w600,
           ),
           overflow: TextOverflow.ellipsis,
@@ -2360,7 +2409,7 @@ class _CartPanel extends StatelessWidget {
           maximumSize: Size(double.infinity, height),
           visualDensity: VisualDensity.compact,
           tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-          textStyle: TextStyle(fontSize: short ? 13.0 : 14.0),
+          textStyle: theme.textTheme.labelLarge?.copyWith(fontSize: 14),
           side: BorderSide(color: theme.colorScheme.outline),
         ),
       ),
@@ -2426,7 +2475,7 @@ class _PosTotalsPanel extends StatelessWidget {
             final subSize = mediaH < 700 ? 14.0 : 15.0;
             final payFontSize = mediaH < 560 ? 15.0 : 17.0;
             final payIconSize = mediaH < 560 ? 20.0 : 22.0;
-            final rowPad = mediaH < 700 ? 1.0 : 2.0;
+            final rowPad = mediaH < 700 ? 3.0 : 5.0;
             final gapAfterTotal = mediaH < 700 ? 6.0 : 8.0;
 
             return Column(
@@ -2437,7 +2486,7 @@ class _PosTotalsPanel extends StatelessWidget {
                   label: AppStrings.t('subtotal_label', loc),
                   value: totals.subtotalDisplay,
                   valueKey: const Key('pos-subtotal-value'),
-                  color: cs.onSurface.withValues(alpha: 0.7),
+                  color: cs.onSurface.withValues(alpha: 0.78),
                   fontSize: subSize,
                   verticalPad: rowPad,
                 ),
@@ -2496,7 +2545,7 @@ class _PosTotalsPanel extends StatelessWidget {
                         maximumSize: Size(double.infinity, payHeight),
                         padding:
                             const EdgeInsets.symmetric(horizontal: 12),
-                        textStyle: TextStyle(
+                        textStyle: theme.textTheme.labelLarge?.copyWith(
                           fontSize: payFontSize,
                           fontWeight: FontWeight.w700,
                         ),
@@ -2579,7 +2628,11 @@ class _PosTotalsPanel extends StatelessWidget {
           Flexible(
             child: Text(
               label,
-              style: TextStyle(fontSize: fontSize),
+              style: TextStyle(
+                fontSize: fontSize,
+                fontWeight: FontWeight.w500,
+                height: 1.3,
+              ),
               overflow: TextOverflow.ellipsis,
             ),
           ),
@@ -2590,6 +2643,9 @@ class _PosTotalsPanel extends StatelessWidget {
             style: TextStyle(
               fontSize: fontSize + 1,
               fontWeight: FontWeight.w700,
+              height: 1.3,
+              // Digits line up down the right edge of the totals column.
+              fontFeatures: const [FontFeature.tabularFigures()],
               color: color,
             ),
           ),
@@ -2912,11 +2968,24 @@ class _CartLineTileState extends State<_CartLineTile> {
                           key: Key('cart-line-summary-${line.key}'),
                           style: theme.textTheme.bodyLarge?.copyWith(
                             fontWeight: FontWeight.w600,
-                            fontSize: short ? 13.0 : 14.0,
+                            fontSize: short ? 14.0 : 15.0,
                           ),
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                         ),
+                        if (line.wholesaleApplied)
+                          // Phase 17 pricing — the line crossed the whole-
+                          // sale threshold (base quantity) and is charging
+                          // the wholesale rate.
+                          Text(
+                            AppStrings.t('wholesale', loc),
+                            key: Key('cart-line-wholesale-${line.key}'),
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                              color: theme.colorScheme.primary,
+                            ),
+                          ),
                         if (line.isPack &&
                             (line.componentsSummary ?? '').isNotEmpty) ...[
                           // Phase 10 — what the pack bundles (display only).
@@ -2924,8 +2993,9 @@ class _CartLineTileState extends State<_CartLineTile> {
                             line.componentsSummary!,
                             key: Key('cart-line-pack-components-${line.key}'),
                             style: theme.textTheme.bodySmall?.copyWith(
-                              fontSize: 12,
-                              color: theme.colorScheme.outline,
+                              fontSize: 13,
+                              color: theme.colorScheme.onSurface
+                                  .withValues(alpha: 0.7),
                             ),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
@@ -2937,8 +3007,9 @@ class _CartLineTileState extends State<_CartLineTile> {
                             '${_fmtQty(baseQty)} $baseUnit',
                             key: Key('cart-line-base-qty-${line.key}'),
                             style: theme.textTheme.bodySmall?.copyWith(
-                              fontSize: 12,
-                              color: theme.colorScheme.outline,
+                              fontSize: 13,
+                              color: theme.colorScheme.onSurface
+                                  .withValues(alpha: 0.7),
                             ),
                           ),
                           // Informational only — never feeds the cart total.
@@ -2947,8 +3018,9 @@ class _CartLineTileState extends State<_CartLineTile> {
                             '${_fmtPrice(line.baseUnitPrice)} / $baseUnit',
                             key: Key('cart-line-base-price-${line.key}'),
                             style: theme.textTheme.bodySmall?.copyWith(
-                              fontSize: 12,
-                              color: theme.colorScheme.outline,
+                              fontSize: 13,
+                              color: theme.colorScheme.onSurface
+                                  .withValues(alpha: 0.7),
                             ),
                           ),
                         ],

@@ -236,7 +236,7 @@ class TestPhase6SellingUnitsMigration:
     """Migration 0005/0006 â€” product_selling_units + purchase packaging tables."""
 
     SELLING_UNITS_REV = "c3d4e5f6a7b8"
-    HEAD_REV = "5c8d2e1f4a73"  # 0023 phase17 search indexes head
+    HEAD_REV = "c4e8a1d7b953"  # 0024 phase17 pricing head
 
     @pytest.fixture(autouse=True)
     def _setup_db(self):
@@ -394,7 +394,7 @@ class TestPhase6SellingUnitsMigration:
 class TestPhase6PurchasePackagingMigration:
     """Migration 0006 (d4e5f6a7b8c9) â€” purchase packaging / stock-breaking."""
 
-    HEAD_REV = "5c8d2e1f4a73"  # linear chain head after 0023
+    HEAD_REV = "c4e8a1d7b953"  # linear chain head after 0024
 
     @pytest.fixture(autouse=True)
     def _setup_db(self):
@@ -584,7 +584,7 @@ class TestPhase6PurchasePackagingMigration:
 class TestPhase7InventoryPMPMigration:
     """Migration 0008 (f1a2b3c4d5e6) â€” products.avg_cost + movement cost cols."""
 
-    HEAD_REV = "5c8d2e1f4a73"
+    HEAD_REV = "c4e8a1d7b953"
 
     @pytest.fixture(autouse=True)
     def _setup_db(self):
@@ -726,7 +726,7 @@ class TestPhase10AvgCostBackfillMigration:
     exactly 100%.
     """
 
-    HEAD_REV = "5c8d2e1f4a73"
+    HEAD_REV = "c4e8a1d7b953"
     PREV_REV = "b7c8d9e0f1a2"
 
     @pytest.fixture(autouse=True)
@@ -862,7 +862,7 @@ class TestPhase10AvgCostBackfillMigration:
 class TestPhase12ReturnsVoidsMigration:
     """0016_phase12_returns_voids â€” void columns + return snapshot columns."""
 
-    HEAD_REV = "5c8d2e1f4a73"
+    HEAD_REV = "c4e8a1d7b953"
     PREVIOUS_REV = "d3e4f5a6b7c8"
 
     @pytest.fixture(autouse=True)
@@ -1087,7 +1087,7 @@ class TestPhase17ReturnReasonOptionalMigration:
     ``tests/unit/test_void.py::test_reason_is_mandatory``).
     """
 
-    HEAD_REV = "5c8d2e1f4a73"
+    HEAD_REV = "c4e8a1d7b953"
     PREVIOUS_REV = "e4f5a6b7c8d9"
     TEST_RETURN_NUMBER = "RET-TEST-0017-NO-REASON"
 
@@ -1201,7 +1201,7 @@ class TestPhase13ExpensesMigration:
     and never rewrites an existing value (decision record section 5).
     """
 
-    HEAD_REV = "5c8d2e1f4a73"
+    HEAD_REV = "c4e8a1d7b953"
     PREVIOUS_REV = "f5a6b7c8d9e0"
     TEST_TITLE = "PHASE13-MIGRATION-TEST"
 
@@ -1440,7 +1440,7 @@ class TestPhase13TitleOptionalMigration:
     expense title can be stored as NULL (decision record B1).
     """
 
-    HEAD_REV = "5c8d2e1f4a73"
+    HEAD_REV = "c4e8a1d7b953"
     PREVIOUS_REV = "1a2b3c4d5e6f"
     NULL_ROW_MARKER = "PHASE19-TITLE-NULL-TEST"
 
@@ -1537,3 +1537,111 @@ class TestPhase13TitleOptionalMigration:
             assert result.returncode == 0, result.stderr
 
         assert self._columns("expenses")["title"][2] == "YES"
+
+
+class TestPhase17PricingMigration:
+    """Migration 0024 (c4e8a1d7b953) — wholesale + TVA product columns.
+
+    Additive only: wholesale_price / wholesale_min_qty land NULL (the
+    "wholesale disabled" state every pre-phase product already means) and
+    vat_rate lands 0. Sale, invoice and report tables are untouched.
+    """
+
+    HEAD_REV = "c4e8a1d7b953"
+    PREVIOUS_REV = "5c8d2e1f4a73"
+
+    @pytest.fixture(autouse=True)
+    def _setup_db(self):
+        result = _run_alembic("upgrade head")
+        assert result.returncode == 0, f"Setup upgrade failed: {result.stderr}"
+
+    @staticmethod
+    def _columns(table: str) -> dict:
+        conn = _get_test_conn()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT column_name, data_type, numeric_precision, numeric_scale,
+                   is_nullable, column_default
+            FROM information_schema.columns
+            WHERE table_name = %s
+            """,
+            (table,),
+        )
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+        return {row[0]: row for row in rows}
+
+    def test_current_is_phase17_pricing_head(self):
+        current = _run_alembic("current")
+        assert current.returncode == 0, current.stderr
+        assert self.HEAD_REV in current.stdout, current.stdout
+
+        heads = _run_alembic("heads")
+        assert heads.returncode == 0, heads.stderr
+        assert self.HEAD_REV in heads.stdout, heads.stdout
+        assert heads.stdout.count("(head)") == 1, heads.stdout
+
+    def test_wholesale_columns_shape(self):
+        cols = self._columns("products")
+
+        wholesale = cols["wholesale_price"]
+        assert wholesale[1].startswith("numeric"), wholesale[1]
+        assert wholesale[2] == 18 and wholesale[3] == 3, wholesale
+        assert wholesale[4] == "YES", f"wholesale_price must be NULL-able: {wholesale}"
+
+        minimum = cols["wholesale_min_qty"]
+        assert minimum[1].startswith("numeric"), minimum[1]
+        assert minimum[2] == 18 and minimum[3] == 3, minimum
+        assert minimum[4] == "YES", f"wholesale_min_qty must be NULL-able: {minimum}"
+
+    def test_vat_rate_column_shape(self):
+        vat = self._columns("products")["vat_rate"]
+        assert vat[1] == "smallint", vat[1]
+        assert vat[4] == "NO", f"vat_rate must be NOT NULL: {vat}"
+        # Postgres renders server_default="0" as "'0'::smallint".
+        default = (vat[5] or "").strip()
+        assert default.startswith("'0'") or default == "0", (
+            f"vat_rate must default to 0: {vat}"
+        )
+
+    def test_existing_product_is_backwards_compatible(self):
+        conn = _get_test_conn()
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                """
+                INSERT INTO products (name, price, cost, quantity, unit)
+                VALUES ('phase17_pricing_canary', 100, 65, 0, 'piece')
+                RETURNING id, wholesale_price, wholesale_min_qty, vat_rate
+                """
+            )
+            row = cur.fetchone()
+            assert row is not None
+            assert row[1] is None, f"wholesale_price must default NULL: {row}"
+            assert row[2] is None, f"wholesale_min_qty must default NULL: {row}"
+            assert row[3] == 0, f"vat_rate must default 0: {row}"
+            cur.execute("DELETE FROM products WHERE id = %s", (row[0],))
+            conn.commit()
+        finally:
+            conn.rollback()
+            cur.close()
+            conn.close()
+
+    def test_upgrade_downgrade_upgrade(self):
+        result = _run_alembic(f"downgrade {self.PREVIOUS_REV}")
+        assert result.returncode == 0, result.stderr
+        try:
+            cols = self._columns("products")
+            assert "wholesale_price" not in cols, cols.keys()
+            assert "wholesale_min_qty" not in cols, cols.keys()
+            assert "vat_rate" not in cols, cols.keys()
+        finally:
+            result = _run_alembic("upgrade head")
+            assert result.returncode == 0, result.stderr
+
+        cols = self._columns("products")
+        assert "wholesale_price" in cols
+        assert "wholesale_min_qty" in cols
+        assert "vat_rate" in cols

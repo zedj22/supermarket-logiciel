@@ -283,6 +283,14 @@ class HoldCartItem(StrictBaseModel):
     base_unit_price: str | None = None
     unit_multiplier: str | None = None
     available_stock: str | None = None
+    # Phase 17 pricing — wholesale snapshot of the retail branch the line
+    # was priced off (display only). Kept in the hold so a restored line can
+    # re-price itself when its quantity crosses the threshold again; the
+    # sale itself always recomputes the authoritative price server-side.
+    # Optional so holds created before this change still validate.
+    retail_price: str | None = None
+    wholesale_price: str | None = None
+    wholesale_min_qty: str | None = None
 
     @model_validator(mode="after")
     def _exactly_one_target(self) -> HoldCartItem:

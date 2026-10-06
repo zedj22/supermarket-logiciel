@@ -156,8 +156,9 @@ class _SetupScreenState extends ConsumerState<SetupScreen> {
         const SizedBox(height: 4),
         Text(
           AppStrings.t('pin', loc),
-          style: theme.textTheme.bodySmall?.copyWith(
-            color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
+          style: theme.textTheme.bodyMedium?.copyWith(
+            fontWeight: FontWeight.w600,
+            color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
           ),
         ),
         const SizedBox(height: 16),
