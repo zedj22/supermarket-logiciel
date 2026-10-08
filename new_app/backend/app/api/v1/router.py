@@ -31,6 +31,7 @@ from app.api.v1.packs import router as packs_router
 from app.api.v1.pos import pos_router, sales_router
 from app.api.v1.print import router as print_router
 from app.api.v1.products import router as products_router
+from app.api.v1.promotions import router as promotions_router
 from app.api.v1.purchases import router as purchases_router
 from app.api.v1.reports import reports_router
 from app.api.v1.returns import router as returns_router
@@ -49,6 +50,7 @@ api_router.include_router(system_router, tags=["system"])
 api_router.include_router(auth_router, prefix="/auth", tags=["auth"])
 api_router.include_router(users_router, prefix="/users", tags=["users"])
 api_router.include_router(products_router, prefix="/products", tags=["products"])
+api_router.include_router(promotions_router, prefix="/promotions", tags=["promotions"])
 api_router.include_router(packs_router, prefix="/packs", tags=["packs"])
 api_router.include_router(categories_router, prefix="/categories", tags=["categories"])
 api_router.include_router(customers_router, prefix="/customers", tags=["customers"])

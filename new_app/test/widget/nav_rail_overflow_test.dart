@@ -18,6 +18,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:supermarket_pos/core/strings.dart';
+import 'package:supermarket_pos/features/shell/app_nav_rail.dart';
 import 'package:supermarket_pos/features/auth/auth_provider.dart';
 import 'package:supermarket_pos/features/auth/credential_storage.dart';
 import 'package:supermarket_pos/l10n/locale_provider.dart';
@@ -240,7 +241,7 @@ void main() {
   }
 
   Finder railLabel(String label) => find.descendant(
-        of: find.byType(NavigationRail),
+        of: find.byType(AppNavRail),
         matching: find.text(label),
       );
 

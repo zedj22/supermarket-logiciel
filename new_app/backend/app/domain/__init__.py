@@ -11,6 +11,10 @@ from app.domain.packaging import (
     sell_base_units,
     sell_packages,
 )
+from app.domain.promotion import (
+    promotion_is_configured,
+    promotional_unit_price,
+)
 from app.domain.unit_conversions import (
     QTY_QUANTUM,
     base_to_selling_available,
@@ -38,6 +42,8 @@ __all__ = [
     "effective_unit_price",
     "mixed_sale_base_cost",
     "nominal_base_unit_cost",
+    "promotion_is_configured",
+    "promotional_unit_price",
     "receive_packages",
     "resolve_wholesale_unit_price",
     "sell_base_units",

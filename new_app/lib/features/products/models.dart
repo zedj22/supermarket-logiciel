@@ -30,6 +30,68 @@ class CategoryModel {
   }
 }
 
+/// Phase 18 — the ACTIVE promotion attached to a product response.
+///
+/// `price` is the SERVER-computed effective promotional unit price for
+/// this product (decimal string, quantized to 0.001) — clients never
+/// re-derive it from `value`, so the catalog, the cart and the checkout
+/// always agree on one number. The product's own `price` stays the
+/// original retail price (the backend never writes it).
+class ProductPromotionInfo {
+  final String id;
+  final String name;
+
+  /// `'percentage'` (value = percent OFF) or `'fixed_price'`
+  /// (value = replacement unit price).
+  final String promotionType;
+
+  /// Decimal string — percent off, or the fixed selling price.
+  final String value;
+
+  /// Server-computed effective promo unit price (decimal string).
+  final String price;
+
+  const ProductPromotionInfo({
+    required this.id,
+    required this.name,
+    required this.promotionType,
+    required this.value,
+    required this.price,
+  });
+
+  factory ProductPromotionInfo.fromJson(Map<String, dynamic> json) {
+    return ProductPromotionInfo(
+      id: '${json['id'] ?? ''}',
+      name: '${json['name'] ?? ''}',
+      promotionType: '${json['promotion_type'] ?? 'percentage'}',
+      value: '${json['value'] ?? 0}',
+      price: '${json['price'] ?? 0}',
+    );
+  }
+
+  bool get isPercentage => promotionType == 'percentage';
+
+  /// Catalog badge against the product's retail price, e.g. `-20%` for a
+  /// percentage promotion; for a fixed price the percent off is computed.
+  /// Empty when there is no visible discount (a fixed price at/above
+  /// retail never raises the price — the backend clamps it to retail).
+  String discountBadgeFor(String retailPrice) {
+    final retail = double.tryParse(retailPrice);
+    final promo = double.tryParse(price);
+    if (retail == null || promo == null || retail <= 0 || promo >= retail) {
+      return '';
+    }
+    if (isPercentage) {
+      final base = double.tryParse(value);
+      if (base == null || base <= 0 || base > 100) return '';
+      final shown = base == base.roundToDouble() ? base.toInt() : base;
+      return '-$shown%';
+    }
+    final percent = ((retail - promo) / retail * 100).round();
+    return percent > 0 ? '-$percent%' : '';
+  }
+}
+
 class ProductModel {
   final String id;
   final String name;
@@ -48,6 +110,11 @@ class ProductModel {
   // {0, 9, 19} catalog metadata — display only, never in a sale total.
   final String? wholesalePrice;
   final String? wholesaleMinQty;
+  // Phase 18 promotion — the ACTIVE promotion covering this product, as
+  // attached by the API (null = none / inactive). Display + add-to-cart
+  // gate only: `promotion.price` is the SERVER-computed effective promo
+  // unit price, and `price` above stays the untouched retail price.
+  final ProductPromotionInfo? promotion;
   final int vatRate;
   final String? expiryDate;
   final String? imagePath;
@@ -70,6 +137,7 @@ class ProductModel {
     this.allowNegativeStock = false,
     this.wholesalePrice,
     this.wholesaleMinQty,
+    this.promotion,
     this.vatRate = 0,
     this.expiryDate,
     this.imagePath,
@@ -94,6 +162,11 @@ class ProductModel {
       allowNegativeStock: json['allow_negative_stock'] as bool? ?? false,
       wholesalePrice: json['wholesale_price']?.toString(),
       wholesaleMinQty: json['wholesale_min_qty']?.toString(),
+      promotion: json['promotion'] == null
+          ? null
+          : ProductPromotionInfo.fromJson(
+              json['promotion'] as Map<String, dynamic>,
+            ),
       vatRate: json['vat_rate'] as int? ?? 0,
       expiryDate: json['expiry_date'] as String?,
       imagePath: json['image_path'] as String?,

@@ -67,18 +67,29 @@ String printFetchMessage(DioException error, String loc) {
   }
 }
 
+/// Fetches a PDF by paper + locale — lets callers with a different shape
+/// of document (e.g. product labels) reuse the same preview + confirm flow.
+typedef PrintDocumentFetcher =
+    Future<PrintDocument> Function(String paper, String locale);
+
 Future<PrintPreviewResult?> showPrintPreviewDialog(
   BuildContext context, {
-  required String documentType,
-  required String documentId,
+  String? documentType,
+  String? documentId,
+  PrintDocumentFetcher? fetcher,
   String initialPaper = '80mm',
   String? deviceId,
 }) {
+  assert(
+    fetcher != null || (documentType != null && documentId != null),
+    'Either fetcher or documentType+documentId must be provided',
+  );
   return showDialog<PrintPreviewResult>(
     context: context,
     builder: (_) => PrintPreviewDialog(
       documentType: documentType,
       documentId: documentId,
+      fetcher: fetcher,
       initialPaper: initialPaper,
       deviceId: deviceId,
     ),
@@ -88,14 +99,19 @@ Future<PrintPreviewResult?> showPrintPreviewDialog(
 class PrintPreviewDialog extends ConsumerStatefulWidget {
   const PrintPreviewDialog({
     super.key,
-    required this.documentType,
-    required this.documentId,
+    this.documentType,
+    this.documentId,
+    this.fetcher,
     this.initialPaper = '80mm',
     this.deviceId,
-  });
+  }) : assert(
+         fetcher != null || (documentType != null && documentId != null),
+         'Either fetcher or documentType+documentId must be provided',
+       );
 
-  final String documentType;
-  final String documentId;
+  final String? documentType;
+  final String? documentId;
+  final PrintDocumentFetcher? fetcher;
   final String initialPaper;
   final String? deviceId;
 
@@ -129,14 +145,16 @@ class _PrintPreviewDialogState extends ConsumerState<PrintPreviewDialog> {
     });
     final dio = ref.read(apiClientProvider).dio;
     try {
-      final doc = await fetchPrintDocument(
-        dio,
-        documentType: widget.documentType,
-        documentId: widget.documentId,
-        paper: paper,
-        locale: _loc,
-        deviceId: widget.deviceId,
-      );
+      final doc = widget.fetcher != null
+          ? await widget.fetcher!(paper, _loc)
+          : await fetchPrintDocument(
+              dio,
+              documentType: widget.documentType!,
+              documentId: widget.documentId!,
+              paper: paper,
+              locale: _loc,
+              deviceId: widget.deviceId,
+            );
       if (!mounted || requestId != _requestId) return;
       setState(() {
         _doc = doc;

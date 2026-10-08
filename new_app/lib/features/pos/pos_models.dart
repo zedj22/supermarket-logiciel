@@ -65,9 +65,17 @@ class CartLine {
   ///
   /// Display/UX state only: the checkout payload still sends ids, qty and
   /// unit_price, and the SERVER recomputes the authoritative price.
+  ///
+  /// Phase 18 promotion: `promotionPrice` is the active promotion's
+  /// effective unit price snapshot (null when the line is not promoted).
+  /// When set, the line was added at `unitPrice == promotionPrice` while
+  /// `retailPrice` keeps the ORIGINAL retail price — so the cart can show
+  /// the promotion cue, and a quantity change re-prices
+  /// retail → promotion → wholesale exactly like the backend does.
   final String? retailPrice;
   final String? wholesalePrice;
   final String? wholesaleMinQty;
+  final String? promotionPrice;
 
   /// Line identity (const-cached at construction): the cart's O(n)
   /// `indexWhere` in `PosCartNotifier.addLine` reads it once per existing
@@ -96,6 +104,7 @@ class CartLine {
     this.retailPrice,
     this.wholesalePrice,
     this.wholesaleMinQty,
+    this.promotionPrice,
   }) : key = packId != null
             ? 'pack:$packId'
             : '${productId ?? ''}|${variantId ?? ''}|${sellingUnitId ?? ''}';
@@ -130,51 +139,73 @@ class CartLine {
   /// True while the line is actually charging the wholesale rate (the base
   /// quantity reached the threshold) — drives the cart's "Wholesale" cue.
   /// Compares parsed amounts so `8`, `8.0` and `8.00` (a hold round trip
-  /// re-serializes the money value) all read as the same price.
+  /// re-serializes the money value) all read as the same price. The price
+  /// a wholesale rule must beat is the PROMOTION price when one applies
+  /// (Phase 18: wholesale replaces the promo price at/above the threshold,
+  /// mirroring app/services/sale.py) — a rule equal to that base changes
+  /// nothing and earns no cue.
   bool get wholesaleApplied {
     if (!wholesaleEligible) return false;
     final unit = double.tryParse(unitPrice);
     final wholesale = double.tryParse(wholesalePrice!);
-    final retail = double.tryParse(retailPrice!);
-    if (unit == null || wholesale == null || retail == null) return false;
-    // Only a line that actually got CHEAPER than retail earns the cue
-    // (a wholesale rule equal to the retail price changes nothing).
-    return unit == wholesale && unit != retail;
+    final base = double.tryParse(promotionPrice ?? retailPrice!);
+    if (unit == null || wholesale == null || base == null) return false;
+    return unit == wholesale && unit != base;
   }
 
-  /// Effective unit price for [quantity] under the Phase 17 precedence.
+  /// True while the line is charging the promotion price — drives the
+  /// cart's "Promotion" cue. False once a wholesale threshold replaces
+  /// the promo price (the two cues are mutually exclusive), and false
+  /// when the promo price is not below retail (no visible discount).
+  bool get promotionApplied {
+    final promo = double.tryParse(promotionPrice ?? '');
+    if (promo == null) return false;
+    final unit = double.tryParse(unitPrice);
+    if (unit == null || unit != promo) return false;
+    final retail = double.tryParse(retailPrice ?? '');
+    if (retail != null && promo >= retail) return false;
+    return true;
+  }
+
+  /// Effective unit price for [quantity] under the Phase 17/18 precedence.
   ///
-  /// Dart mirror of `app/domain/wholesale.py::resolve_wholesale_unit_price`:
+  /// Dart mirror of `app/domain/wholesale.py::resolve_wholesale_unit_price`
+  /// + `app/domain/promotion.py::promotional_unit_price`:
   ///
-  ///  * only the RETAIL branch is wholesale-priced (`retailPrice == null`
+  ///  * only the RETAIL branch is priced here (`retailPrice == null`
   ///    → an explicit variant / selling-unit / pack price is left alone);
   ///  * a CUSTOM selling-unit line (`unitMultiplier != null`) is never
   ///    wholesale-priced either — its multiplier converts quantity for
   ///    inventory, it does not scale up toward the threshold;
+  ///  * the PROMOTION price (when snapshotted) is the base below the
+  ///    wholesale threshold — `promotionPrice ?? retailPrice`;
   ///  * the threshold is compared against the line's BASE quantity
   ///    (for the base unit that is simply `quantity`) in exact
   ///    scaled-integer math;
   ///  * the configured wholesale price is returned VERBATIM — it is a
   ///    per-product-unit price, never multiplied by the multiplier;
   ///  * anything unusable (missing half, minimum ≤ 0, unparsable) keeps
-  ///    retail, exactly like the backend's "disabled, never an error".
+  ///    the base, exactly like the backend's "disabled, never an error".
   ///
   /// Display only — the server recomputes the authoritative price.
   String priceFor(String quantity) {
     final retail = retailPrice;
     if (retail == null || unitMultiplier != null) return unitPrice;
+    // Phase 18 — a promotion discounts the retail branch first; the
+    // wholesale threshold may then replace the discounted price.
+    final base = promotionPrice ?? retail;
     final wholesale = wholesalePrice;
     final minText = wholesaleMinQty;
-    if (wholesale == null || minText == null) return retail;
+    if (wholesale == null || minText == null) return base;
     final wholesaleValue = double.tryParse(wholesale);
-    if (wholesaleValue == null || wholesaleValue < 0) return retail;
+    if (wholesaleValue == null || wholesaleValue < 0) return base;
     final minScaled = posScaled(minText);
-    if (minScaled == null || minScaled <= 0) return retail;
+    if (minScaled == null || minScaled <= 0) return base;
     final lineScaled = posScaled(quantity);
-    if (lineScaled == null) return retail;
+    if (lineScaled == null) return base;
     final multiplierScaled = posScaled(unitMultiplier) ?? kPosQtyScale;
     final baseScaled = (lineScaled * multiplierScaled) ~/ kPosQtyScale;
-    if (baseScaled < minScaled) return retail;
+    if (baseScaled < minScaled) return base;
     return wholesale;
   }
 
@@ -211,6 +242,7 @@ class CartLine {
       retailPrice: retailPrice,
       wholesalePrice: wholesalePrice,
       wholesaleMinQty: wholesaleMinQty,
+      promotionPrice: promotionPrice,
     );
   }
 
@@ -240,6 +272,9 @@ class CartLine {
         'retail_price': retailPrice,
         'wholesale_price': wholesalePrice,
         'wholesale_min_qty': wholesaleMinQty,
+        // Phase 18 promotion — same contract (display snapshot only; the
+        // sale payload never carries it — see toSaleJson).
+        'promotion_price': promotionPrice,
       };
 
   /// Checkout payload for `POST /api/v1/sales` — fixed API contract.
@@ -280,6 +315,7 @@ class CartLine {
       retailPrice: json['retail_price']?.toString(),
       wholesalePrice: json['wholesale_price']?.toString(),
       wholesaleMinQty: json['wholesale_min_qty']?.toString(),
+      promotionPrice: json['promotion_price']?.toString(),
     );
   }
 }

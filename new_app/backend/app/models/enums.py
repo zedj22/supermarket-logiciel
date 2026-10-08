@@ -56,6 +56,13 @@ class PermissionScope(str, enum.Enum):
     EXPENSE_CREATE = "expense_create"
     EXPENSE_CANCEL = "expense_cancel"
 
+    # Promotions (Phase 18) — pricing management, admin + manager only.
+    # The POS reads promotion prices through PRODUCT_VIEW (they ride on the
+    # product response), so a cashier never needs these scopes.
+    PROMOTION_VIEW = "promotion_view"
+    PROMOTION_CREATE = "promotion_create"
+    PROMOTION_UPDATE = "promotion_update"
+
     # Financial
     REPORT_FINANCIAL = "report_financial"
     EXPORT_DATA = "export_data"
@@ -163,6 +170,21 @@ class ExpenseStatus(str, enum.Enum):
     POSTED = "posted"
     CANCELLED = "cancelled"
 
+
+
+# ── Promotions (Phase 18) ──────────────────────────────────────────────
+
+
+class PromotionType(str, enum.Enum):
+    """How a promotion rewrites the retail-branch price of its products.
+
+    percentage  — value is the percent OFF (20 → pay 80% of retail)
+    fixed_price — value replaces the retail unit price (single-product
+                  promotions only; rejected for multi-product ones)
+    """
+
+    PERCENTAGE = "percentage"
+    FIXED_PRICE = "fixed_price"
 
 
 # ── Devices ────────────────────────────────────────────────────────────

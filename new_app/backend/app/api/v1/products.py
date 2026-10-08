@@ -75,6 +75,7 @@ from app.services.catalog import (
     PurchaseUnitService,
     SellingUnitService,
 )
+from app.services.promotions import PromotionService
 
 router = APIRouter()
 
@@ -104,6 +105,24 @@ def to_product_response(product: Product) -> ProductResponse:
     response = ProductResponse.model_validate(product)
     response.category_name = product.category.name if product.category else None
     return response
+
+
+def attach_promotions(db: Session, responses: list[ProductResponse]) -> list[ProductResponse]:
+    """Phase 18 — attach each product's ACTIVE promotion (ONE query).
+
+    The effective promotional price comes from the same domain function
+    the checkout uses (``promotional_unit_price``), so POS, catalog and
+    sale resolution always agree on one number. ``products.price`` stays
+    untouched — the retail price remains the original value.
+    """
+    if not responses:
+        return responses
+    infos = PromotionService(db).promotion_info_for(
+        {r.id: r.price for r in responses}
+    )
+    for response in responses:
+        response.promotion = infos.get(response.id)
+    return responses
 
 
 def _pages(total: int, page_size: int) -> int:
@@ -188,7 +207,9 @@ def list_products(
         sort_order=sort_order,
     )
     return ProductListResponse(
-        items=[to_product_response(p) for p in items],
+        items=attach_promotions(
+            service.db, [to_product_response(p) for p in items]
+        ),
         total=total,
         page=page,
         page_size=effective_page_size,
@@ -224,7 +245,9 @@ def search_products(
         limit=limit,
     )
     return ProductSearchResponse(
-        items=[to_product_response(p) for p in items],
+        items=attach_promotions(
+            service.db, [to_product_response(p) for p in items]
+        ),
         total=total,
     )
 
@@ -252,7 +275,9 @@ def list_low_stock_products(
         page=page, page_size=page_size, threshold=threshold
     )
     return ProductListResponse(
-        items=[to_product_response(p) for p in items],
+        items=attach_promotions(
+            service.db, [to_product_response(p) for p in items]
+        ),
         total=total,
         page=page,
         page_size=page_size,
@@ -273,7 +298,7 @@ def get_product(
 ) -> ProductResponse:
     """Get a single product by ID."""
     product = service.get(product_id)
-    return to_product_response(product)
+    return attach_promotions(service.db, [to_product_response(product)])[0]
 
 
 @router.post(
@@ -290,7 +315,7 @@ def create_product(
 ) -> ProductResponse:
     """Create a new product. Barcode must be unique when provided."""
     product = service.create(request)
-    return to_product_response(product)
+    return attach_promotions(service.db, [to_product_response(product)])[0]
 
 
 @router.put(
@@ -307,7 +332,7 @@ def update_product(
 ) -> ProductResponse:
     """Partial update — only fields present in the body are changed."""
     product = service.update(product_id, request)
-    return to_product_response(product)
+    return attach_promotions(service.db, [to_product_response(product)])[0]
 
 
 @router.delete(
@@ -323,7 +348,7 @@ def archive_product(
 ) -> ProductResponse:
     """Archive (soft-delete) a product. Never destroys historical data."""
     product = service.archive(product_id)
-    return to_product_response(product)
+    return attach_promotions(service.db, [to_product_response(product)])[0]
 
 
 # ---------------------------------------------------------------------------

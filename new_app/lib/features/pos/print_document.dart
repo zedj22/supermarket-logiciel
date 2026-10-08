@@ -71,3 +71,65 @@ Future<PrintDocument> fetchPrintDocument(
     paper: paper,
   );
 }
+
+/// `POST /api/v1/print/labels` — render product price / barcode labels.
+const String kPrintLabelsPath = '/api/v1/print/labels';
+
+/// One selected product: its shelf label printed [quantity] times.
+class LabelPrintItem {
+  const LabelPrintItem({required this.productId, required this.quantity});
+
+  final String productId;
+  final int quantity;
+}
+
+/// Renders a label batch as PDF. Prices are resolved SERVER-side (promo
+/// price when an active promotion applies) — the client never sends a
+/// price; `layout` only carries physical sheet geometry (mm / cols / rows)
+/// and may be omitted for the default 50x30 mm A4 grid.
+Future<PrintDocument> fetchLabelPdf(
+  Dio dio, {
+  required List<LabelPrintItem> items,
+  required String paper,
+  required String locale,
+  Map<String, dynamic>? layout,
+  String? deviceId,
+}) async {
+  final Response<Uint8List> response;
+  final Map<String, dynamic> body = <String, dynamic>{
+    'items': [
+      for (final item in items)
+        <String, dynamic>{
+          'product_id': item.productId,
+          'quantity': item.quantity,
+        },
+    ],
+    'paper': paper,
+    'locale': locale,
+  };
+  // Layout only when sent — absence tells the server to auto-fit the grid.
+  if (layout != null) body['layout'] = layout;
+  if (deviceId != null && deviceId.isNotEmpty) body['device_id'] = deviceId;
+  try {
+    response = await dio.post<Uint8List>(
+      kPrintLabelsPath,
+      data: body,
+      options: Options(
+        responseType: ResponseType.bytes,
+        headers: <String, dynamic>{
+          if (deviceId != null && deviceId.isNotEmpty) 'X-Device-ID': deviceId,
+        },
+      ),
+    );
+  } on DioException catch (e) {
+    throw decodeByteErrorEnvelope(e);
+  }
+  return PrintDocument(
+    bytes: bytesOfResponse(response.data),
+    filename: filenameFromDisposition(
+      response.headers.value('content-disposition'),
+      'labels.pdf',
+    ),
+    paper: paper,
+  );
+}

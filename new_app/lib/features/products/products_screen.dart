@@ -23,6 +23,7 @@ import '../../theme/app_theme.dart';
 import '../auth/permission_helpers.dart';
 import '../clients/customer_models.dart';
 import 'categories_dialog.dart';
+import 'label_print_dialog.dart';
 import 'models.dart';
 import 'product_form_dialog.dart';
 import 'products_providers.dart';
@@ -129,6 +130,11 @@ class ProductsScreen extends ConsumerStatefulWidget {
 class _ProductsScreenState extends ConsumerState<ProductsScreen> {
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _searchFocusNode = FocusNode();
+
+  /// Barcode / price-label selection mode (§ labels). Selection SURVIVES
+  /// paging — [_labelSelected] is keyed by product id, not by page.
+  bool _labelMode = false;
+  final Map<String, ProductModel> _labelSelected = {};
 
   /// Phase 17 §18 — page-level hooks for the shell's F4 / Ctrl+F / F5.
   late final PageShortcuts _pageShortcuts;
@@ -324,13 +330,38 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
           )
         : null;
 
-    final actionChildren = <Widget>[
-      ?secondary,
-      if (primary != null) ...[
-        if (secondary != null) const SizedBox(width: 8),
-        primary,
-      ],
-    ];
+    final actionChildren = _labelMode
+        ? <Widget>[
+            _labelActions(theme, loc, mode),
+          ]
+        : <Widget>[
+            OutlinedButton.icon(
+              key: const Key('products-print-labels'),
+              onPressed: _enterLabelMode,
+              icon: Icon(
+                Icons.local_print_shop_outlined,
+                size: mode == ProductsLayoutMode.narrow ? 16 : 18,
+              ),
+              label: Text(AppStrings.t('print_labels', loc)),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: theme.colorScheme.onSurface,
+                visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.symmetric(
+                  horizontal: mode == ProductsLayoutMode.narrow ? 10 : 16,
+                  vertical: mode == ProductsLayoutMode.narrow ? 8 : 10,
+                ),
+                side: BorderSide(
+                  color: theme.colorScheme.outline.withValues(alpha: 0.45),
+                ),
+              ),
+            ),
+            if (secondary != null) const SizedBox(width: 8),
+            ?secondary,
+            if (primary != null) ...[
+              if (secondary != null) const SizedBox(width: 8),
+              primary,
+            ],
+          ];
 
     if (mode == ProductsLayoutMode.wide && actionChildren.isNotEmpty) {
       return SizedBox(
@@ -386,6 +417,114 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
           ],
         ],
       ),
+    );
+  }
+
+  // ── Barcode / price-label selection mode ─────────────────────
+  void _enterLabelMode() {
+    setState(() {
+      _labelMode = true;
+      _labelSelected.clear();
+    });
+  }
+
+  void _exitLabelMode() {
+    setState(() {
+      _labelMode = false;
+      _labelSelected.clear();
+    });
+  }
+
+  void _toggleLabel(ProductModel product) {
+    setState(() {
+      if (_labelSelected.containsKey(product.id)) {
+        _labelSelected.remove(product.id);
+      } else {
+        _labelSelected[product.id] = product;
+      }
+    });
+  }
+
+  /// Tristate for the header checkbox over the CURRENT page only:
+  /// all selected → true, none → false, mixed → null (§ selection mode).
+  bool? _pageSelectionState(List<ProductModel> items) {
+    if (items.isEmpty) return false;
+    final count = items.where((p) => _labelSelected.containsKey(p.id)).length;
+    if (count == 0) return false;
+    if (count == items.length) return true;
+    return null;
+  }
+
+  void _toggleAllOnPage(List<ProductModel> items) {
+    final clear = _pageSelectionState(items) == true;
+    setState(() {
+      for (final product in items) {
+        if (clear) {
+          _labelSelected.remove(product.id);
+        } else {
+          _labelSelected[product.id] = product;
+        }
+      }
+    });
+  }
+
+  Future<void> _openLabelDialog() async {
+    final printed = await showLabelPrintDialog(
+      context,
+      products: List<ProductModel>.of(_labelSelected.values),
+    );
+    // A confirmed print exits selection mode (§16.2 — no success toast).
+    if (printed == true && mounted) _exitLabelMode();
+  }
+
+  Widget _labelActions(ThemeData theme, String loc, ProductsLayoutMode mode) {
+    final compact = mode == ProductsLayoutMode.narrow;
+    final padding = EdgeInsets.symmetric(
+      horizontal: compact ? 10 : 16,
+      vertical: compact ? 8 : 10,
+    );
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          key: const Key('products-label-count'),
+          '${_labelSelected.length} ${AppStrings.t('labels_selected', loc)}',
+          style: theme.textTheme.bodyMedium?.copyWith(
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(width: 10),
+        OutlinedButton(
+          key: const Key('products-label-cancel'),
+          onPressed: _exitLabelMode,
+          style: OutlinedButton.styleFrom(
+            foregroundColor: theme.colorScheme.onSurface,
+            visualDensity: VisualDensity.compact,
+            padding: padding,
+            side: BorderSide(
+              color: theme.colorScheme.outline.withValues(alpha: 0.45),
+            ),
+          ),
+          child: Text(AppStrings.t('cancel', loc)),
+        ),
+        const SizedBox(width: 8),
+        FilledButton.icon(
+          key: const Key('products-print-action'),
+          onPressed: _labelSelected.isEmpty ? null : _openLabelDialog,
+          icon: Icon(
+            Icons.local_print_shop_outlined,
+            size: compact ? 16 : 18,
+          ),
+          label: Text(AppStrings.t('print', loc)),
+          style: FilledButton.styleFrom(
+            visualDensity: VisualDensity.compact,
+            padding: EdgeInsets.symmetric(
+              horizontal: compact ? 12 : 18,
+              vertical: compact ? 8 : 12,
+            ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -948,8 +1087,24 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
 
     List<Widget> headerCells() => [
           for (var i = 0; i < cols.length; i++)
-            cell(i, Text(cols[i].label, overflow: TextOverflow.ellipsis),
-                header: true),
+            if (i == 0 && _labelMode)
+              // Label mode: tristate select-all over the CURRENT page —
+              // the selection itself survives paging (§ selection mode).
+              cell(
+                i,
+                Checkbox(
+                  key: const Key('products-label-check-all'),
+                  tristate: true,
+                  value: _pageSelectionState(items),
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  visualDensity: VisualDensity.compact,
+                  onChanged: (_) => _toggleAllOnPage(items),
+                ),
+                header: true,
+              )
+            else
+              cell(i, Text(cols[i].label, overflow: TextOverflow.ellipsis),
+                  header: true),
         ];
 
     List<Widget> dataCells(ProductModel product) {
@@ -961,6 +1116,16 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
           Row(
             mainAxisSize: MainAxisSize.min,
             children: [
+              if (_labelMode) ...[
+                Checkbox(
+                  key: Key('product-label-check-${product.id}'),
+                  value: _labelSelected.containsKey(product.id),
+                  onChanged: (_) => _toggleLabel(product),
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  visualDensity: VisualDensity.compact,
+                ),
+                const SizedBox(width: 4),
+              ],
               _thumbnail(product, size: 40),
               const SizedBox(width: 10),
               Flexible(
@@ -1239,6 +1404,17 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    if (_labelMode) ...[
+                      Checkbox(
+                        key: Key('product-label-check-${product.id}'),
+                        value: _labelSelected.containsKey(product.id),
+                        onChanged: (_) => _toggleLabel(product),
+                        materialTapTargetSize:
+                            MaterialTapTargetSize.shrinkWrap,
+                        visualDensity: VisualDensity.compact,
+                      ),
+                      const SizedBox(width: 8),
+                    ],
                     _thumbnail(product, size: 44),
                     const SizedBox(width: 12),
                     Expanded(

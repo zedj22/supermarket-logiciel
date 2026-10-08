@@ -11,6 +11,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/strings.dart';
+import '../../core/widgets/page_title.dart';
+import '../../core/widgets/section_header.dart';
 import '../../l10n/locale_provider.dart';
 import '../auth/permission_helpers.dart';
 import '../clients/customer_models.dart';
@@ -86,37 +88,38 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Text(
-                AppStrings.t('dashboard', loc),
-                key: const Key('dashboard-title'),
-                style: theme.textTheme.headlineSmall,
-              ),
-              const SizedBox(width: 16),
-              Text(
-                '${AppStrings.t('label_as_of', loc)}: '
-                '${reportDateParam(ref.watch(reportFilterProvider).dateFrom)}'
-                ' → ${reportDateParam(ref.watch(reportFilterProvider).dateTo)}',
-                key: const Key('dashboard-range'),
-                style: theme.textTheme.bodyMedium,
-              ),
-              const Spacer(),
-              OutlinedButton.icon(
-                key: const Key('dashboard-reports-link'),
-                onPressed: () => context.go('/reports'),
-                icon: const Icon(Icons.summarize_outlined, size: 18),
-                label: Text(AppStrings.t('reports', loc)),
-              ),
-              const SizedBox(width: 8),
-              IconButton(
-                key: const Key('dashboard-refresh'),
-                tooltip: AppStrings.t('refresh', loc),
-                onPressed: () =>
-                    ref.read(dashboardProvider.notifier).refresh(),
-                icon: const Icon(Icons.refresh),
-              ),
-            ],
+          // One rung for the H1 across the app; actions fall under the
+          // title on a narrow window instead of overflowing.
+          PageTitle(
+            title: AppStrings.t('dashboard', loc),
+            titleKey: const Key('dashboard-title'),
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                OutlinedButton.icon(
+                  key: const Key('dashboard-reports-link'),
+                  onPressed: () => context.go('/reports'),
+                  icon: const Icon(Icons.summarize_outlined, size: 18),
+                  label: Text(AppStrings.t('reports', loc)),
+                ),
+                const SizedBox(width: 8),
+                IconButton(
+                  key: const Key('dashboard-refresh'),
+                  tooltip: AppStrings.t('refresh', loc),
+                  onPressed: () =>
+                      ref.read(dashboardProvider.notifier).refresh(),
+                  icon: const Icon(Icons.refresh),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            '${AppStrings.t('label_as_of', loc)}: '
+            '${reportDateParam(ref.watch(reportFilterProvider).dateFrom)}'
+            ' → ${reportDateParam(ref.watch(reportFilterProvider).dateTo)}',
+            key: const Key('dashboard-range'),
+            style: theme.textTheme.bodySmall,
           ),
           const SizedBox(height: 12),
           _buildPeriodBar(loc),
@@ -228,29 +231,30 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
       key: const Key('dashboard-content'),
       children: [
         ?errorBanner,
-        Wrap(
-          spacing: 10,
-          runSpacing: 10,
-          children: [
-            _kpi('kpi_today_sales', formatMoney(data.todaySales)),
-            _kpi('kpi_invoices', '${data.todayInvoices}'),
-            _kpi('kpi_today_profit', formatMoney(data.todayNetProfit)),
-            _kpi('kpi_today_expenses', formatMoney(data.todayExpenses)),
-            _kpi('kpi_total_products', '${data.totalProducts}'),
-            _kpi('kpi_total_customers', '${data.totalCustomers}'),
-            _kpi('kpi_stock_value', formatMoney(data.stockValue)),
-            _kpi('kpi_low_stock', '${data.lowStockCount}'),
-            _kpi('kpi_customers_with_debt', '${data.customersWithDebt}'),
-            _kpi('kpi_total_debt', formatMoney(data.totalDebt)),
-          ],
-        ),
-        Padding(
-          padding: const EdgeInsets.only(top: 20, bottom: 8),
-          child: Text(
-            AppStrings.t('kpi_recent_sales', loc),
-            key: const Key('dashboard-recent-title'),
-            style: theme.textTheme.titleMedium
-                ?.copyWith(fontWeight: FontWeight.w700),
+        // KPIs read as three business blocks (today / stock / customers)
+        // instead of one wall of ten equal tiles — the values and their
+        // `kpi-*` keys are exactly the server snapshot as before.
+        _kpiGroup(loc, 'kpi_group_today', [
+          _kpi('kpi_today_sales', formatMoney(data.todaySales)),
+          _kpi('kpi_invoices', '${data.todayInvoices}'),
+          _kpi('kpi_today_profit', formatMoney(data.todayNetProfit)),
+          _kpi('kpi_today_expenses', formatMoney(data.todayExpenses)),
+        ]),
+        _kpiGroup(loc, 'kpi_group_inventory', [
+          _kpi('kpi_total_products', '${data.totalProducts}'),
+          _kpi('kpi_stock_value', formatMoney(data.stockValue)),
+          _kpi('kpi_low_stock', '${data.lowStockCount}'),
+        ]),
+        _kpiGroup(loc, 'kpi_group_customers', [
+          _kpi('kpi_total_customers', '${data.totalCustomers}'),
+          _kpi('kpi_customers_with_debt', '${data.customersWithDebt}'),
+          _kpi('kpi_total_debt', formatMoney(data.totalDebt)),
+        ]),
+        KeyedSubtree(
+          key: const Key('dashboard-recent-title'),
+          child: SectionHeader(
+            title: AppStrings.t('kpi_recent_sales', loc),
+            titleKey: 'kpi_recent_sales',
           ),
         ),
         if (data.recentSales.isEmpty)
@@ -269,13 +273,11 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
               ],
             ),
           ),
-        Padding(
-          padding: const EdgeInsets.only(top: 20, bottom: 8),
-          child: Text(
-            AppStrings.t('kpi_top_products', loc),
-            key: const Key('dashboard-top-title'),
-            style: theme.textTheme.titleMedium
-                ?.copyWith(fontWeight: FontWeight.w700),
+        KeyedSubtree(
+          key: const Key('dashboard-top-title'),
+          child: SectionHeader(
+            title: AppStrings.t('kpi_top_products', loc),
+            titleKey: 'kpi_top_products',
           ),
         ),
         if (data.topProducts.isEmpty)
@@ -318,6 +320,24 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
         labelKey: labelKey,
         value: value,
         testKey: 'kpi-$labelKey',
+      );
+
+  /// A kicker + one row of KPI tiles. Same tiles, same keys — only the
+  /// grouping (and therefore the reading order) is new.
+  Widget _kpiGroup(String loc, String groupKey, List<Widget> tiles) =>
+      Padding(
+        padding: const EdgeInsets.only(top: 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SectionHeader(
+              title: AppStrings.t(groupKey, loc),
+              titleKey: groupKey,
+              dense: true,
+            ),
+            Wrap(spacing: 10, runSpacing: 10, children: tiles),
+          ],
+        ),
       );
 
   Widget _recentTile(

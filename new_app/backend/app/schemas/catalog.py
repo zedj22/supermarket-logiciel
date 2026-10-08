@@ -17,6 +17,7 @@ from pydantic import Field, field_validator
 
 from app.models.enums import ProductUnit
 from app.schemas.common import StrictBaseModel
+from app.schemas.promotion import ProductPromotionInfo
 
 # Supported image file extensions (legacy-compatible, local paths only).
 ALLOWED_IMAGE_EXTENSIONS: frozenset[str] = frozenset(
@@ -141,6 +142,11 @@ class ProductResponse(StrictBaseModel):
     wholesale_price: Decimal | None = None
     wholesale_min_qty: Decimal | None = None
     vat_rate: VatRate = 0
+    # Phase 18 promotions — the ACTIVE promotion covering this product,
+    # attached at response time (read-only: never accepted on create /
+    # update, and products.price is never rewritten by a promotion).
+    # `price` inside is the server-computed effective promo unit price.
+    promotion: ProductPromotionInfo | None = None
     expiry_date: date | None = None
     image_path: str | None = None
     category_id: UUID | None = None

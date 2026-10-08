@@ -33,6 +33,7 @@ from app.core.exceptions import (
 )
 from app.domain.unit_conversions import QTY_QUANTUM, effective_unit_price, selling_to_base, to_decimal
 from app.domain.valuation import quantize_money
+from app.domain.promotion import promotional_unit_price
 from app.domain.wholesale import resolve_wholesale_unit_price
 from app.models.catalog import Pack, Product, ProductSellingUnit, ProductVariant
 from app.models.debt import DebtLedgerEntry
@@ -45,6 +46,7 @@ from app.models.enums import (
 from app.models.inventory import InventoryMovement
 from app.models.party import Customer
 from app.models.pos import PosHold, ProductFavorite
+from app.models.promotion import Promotion, PromotionProduct
 from app.models.sale import Sale, SaleLine, SalePayment
 from app.models.user import User
 from app.repositories.catalog import (
@@ -209,6 +211,10 @@ class SaleService(BaseService):
         self.selling_units = SellingUnitRepository(db)
         self.holds = PosHoldRepository(db)
         self.favorites = ProductFavoriteRepository(db)
+        # Phase 18 — active promotion per product for THIS request
+        # (None value = "checked, no active promotion"). Filled in bulk by
+        # _prefetch_catalog; _promotion_for lazily fills any missed id.
+        self._promotion_cache: dict[uuid.UUID, Promotion | None] = {}
 
     # ------------------------------------------------------------------
     # Line resolution / validation helpers
@@ -315,7 +321,52 @@ class SaleService(BaseService):
         _load(Product, product_ids)
         _load(ProductVariant, variant_ids)
         _load(ProductSellingUnit, unit_ids)
+        self._prefetch_promotions(product_ids)
         return loaded
+
+    def _prefetch_promotions(self, product_ids: set[uuid.UUID]) -> None:
+        """Bulk-load the ACTIVE promotion of every cart product (1 query).
+
+        Same purpose as ``_prefetch_catalog``: keep a 10 000-line cart at
+        one query per request instead of one per line. The rows are kept
+        in ``self._promotion_cache`` (strong refs), and a product with no
+        active promotion is cached as None so it is never re-queried.
+        """
+        if not product_ids:
+            return
+        rows = self.db.execute(
+            select(PromotionProduct.product_id, Promotion)
+            .join(Promotion, Promotion.id == PromotionProduct.promotion_id)
+            .where(
+                PromotionProduct.product_id.in_(product_ids),
+                Promotion.is_active.is_(True),
+            )
+            .order_by(Promotion.id)
+        ).all()
+        for product_id, promotion in rows:
+            # First row wins (lowest promotion id) — mirrors the LIMIT 1
+            # ordering in _promotion_for; the overlap rule keeps this to
+            # one active promotion per product anyway.
+            self._promotion_cache.setdefault(product_id, promotion)
+        for product_id in product_ids:
+            self._promotion_cache.setdefault(product_id, None)
+
+    def _promotion_for(self, product_id: uuid.UUID) -> Promotion | None:
+        """Active promotion covering [product_id], or None (cached)."""
+        if product_id in self._promotion_cache:
+            return self._promotion_cache[product_id]
+        promotion = self.db.execute(
+            select(Promotion)
+            .join(Promotion, Promotion.id == PromotionProduct.promotion_id)
+            .where(
+                PromotionProduct.product_id == product_id,
+                Promotion.is_active.is_(True),
+            )
+            .order_by(Promotion.id)
+            .limit(1)
+        ).scalar_one_or_none()
+        self._promotion_cache[product_id] = promotion
+        return promotion
 
     def _resolve_line(self, item, index: int, *, validate_stock: bool = True) -> _ResolvedLine:
         """Load product/variant/selling unit, resolve price, convert quantity."""
@@ -390,12 +441,14 @@ class SaleService(BaseService):
                 details={"line_index": index, "quantity": str(qty)},
             )
 
-        # Phase 17 price precedence (see app/domain/wholesale.py):
+        # Phase 17/18 price precedence (see app/domain/wholesale.py and
+        # app/domain/promotion.py):
         #   selling-unit price > variant price > product retail price
-        #   (wholesale threshold may replace the retail price) > pack price.
+        #   (promotion may discount it, then the wholesale threshold may
+        #   replace the discounted price) > pack price.
         # `line_uses_product_retail` is True only when the price came from
-        # products.price on a BASE-unit line — the single case wholesale
-        # pricing may touch.
+        # products.price on a BASE-unit line — the single case promotion
+        # and wholesale pricing may touch.
         line_uses_product_retail = False
         if selling_unit is not None:
             line.quantity_line = qty
@@ -422,11 +475,25 @@ class SaleService(BaseService):
                 server_price = to_decimal(product.price)
 
         if line_uses_product_retail:
+            # Phase 18 promotion — an ACTIVE promotion may only discount
+            # the price this line takes from products.price (retail
+            # branch). products.price itself is never written, so
+            # deactivation restores retail on the next resolution.
+            promotion = self._promotion_for(product.id)
+            if promotion is not None:
+                server_price = promotional_unit_price(
+                    retail_price=server_price,
+                    promotion_type=promotion.promotion_type,
+                    value=promotion.value,
+                )
             # Wholesale threshold, measured on the line's BASE quantity
             # (product units) — always equal to qty here, because only a
-            # base-unit line reaches this branch. Disabled wholesale returns
-            # the retail price unchanged. The server computes this on its
-            # own — a client unit_price can never invent a cheaper line.
+            # base-unit line reaches this branch. It evaluates against the
+            # (possibly promoted) price, so the configured wholesale price
+            # wins at/above the threshold exactly as it does versus retail.
+            # Disabled wholesale returns the price unchanged. The server
+            # computes this on its own — a client unit_price can never
+            # invent a cheaper line.
             server_price = resolve_wholesale_unit_price(
                 retail_price=server_price,
                 wholesale_price=product.wholesale_price,

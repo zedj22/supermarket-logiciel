@@ -1,4 +1,4 @@
-﻿// Phase 13 â€” Expenses screen widget tests (list + summary, filters,
+// Phase 13 â€” Expenses screen widget tests (list + summary, filters,
 // create, cancel, RBAC).
 //
 // Harness rules from returns_screen_test.dart: catch-all GET stubs first,
@@ -11,6 +11,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:supermarket_pos/core/strings.dart';
+import 'package:supermarket_pos/features/shell/app_nav_rail.dart';
 import 'package:supermarket_pos/features/auth/auth_provider.dart';
 import 'package:supermarket_pos/features/auth/credential_storage.dart';
 import 'package:supermarket_pos/features/expenses/expenses_providers.dart';
@@ -610,7 +611,7 @@ void main() {
   List<String> railLabels(WidgetTester tester) => tester
       .widgetList<Text>(
         find.descendant(
-          of: find.byType(NavigationRail),
+          of: find.byType(AppNavRail),
           matching: find.byType(Text),
         ),
       )

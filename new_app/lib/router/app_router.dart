@@ -4,10 +4,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../core/shortcuts.dart';
 import '../core/strings.dart';
+import '../core/widgets/logo_mark.dart';
 import '../features/auth/auth_provider.dart';
 import '../features/auth/login_screen.dart';
 import '../features/auth/permission_helpers.dart';
 import '../features/auth/setup_screen.dart';
+import '../features/shell/app_nav_rail.dart';
+import '../features/shell/nav_items.dart';
 import '../features/shell/shortcuts_help_dialog.dart';
 import '../l10n/locale_provider.dart';
 import '../features/dashboard/dashboard_screen.dart';
@@ -22,6 +25,7 @@ import '../features/sales/sales_screen.dart';
 import '../features/debts/debts_screen.dart';
 import '../features/suppliers/suppliers_screen.dart';
 import '../features/expenses/expenses_screen.dart';
+import '../features/promotions/promotions_screen.dart';
 import '../features/purchases/purchases_screen.dart';
 import '../features/reports/reports_screen.dart';
 import '../features/settings/settings_screen.dart';
@@ -151,6 +155,11 @@ final routerProvider = Provider<GoRouter>((ref) {
             builder: (context, state) => const PacksScreen(),
           ),
           GoRoute(
+            path: '/promotions',
+            name: 'promotions',
+            builder: (context, state) => const PromotionsScreen(),
+          ),
+          GoRoute(
             path: '/stock',
             name: 'stock',
             builder: (context, state) => const StockScreen(),
@@ -216,55 +225,59 @@ class ScaffoldWithNav extends ConsumerWidget {
   const ScaffoldWithNav({super.key, required this.location, required this.child});
 
   /// Scope required by the backend for `GET /api/v1/users` and user CRUD.
-  static const String userManageScope = 'user_manage';
+  static const String userManageScope = NavScopes.userManage;
 
   /// Scope required to see the Products destination and screens.
-  static const String productViewScope = 'product_view';
+  static const String productViewScope = NavScopes.productView;
 
   /// Scope required to see the Stock / Inventory destination (Phase 7).
-  static const String inventoryViewScope = 'inventory_view';
+  static const String inventoryViewScope = NavScopes.inventoryView;
 
   /// Scope required to see the POS destination (Phase 8).
-  static const String posSaleScope = 'pos_sale';
+  static const String posSaleScope = NavScopes.posSale;
 
   /// Scope required to see the Clients destination (Phase 9).
-  static const String customerViewScope = 'customer_view';
+  static const String customerViewScope = NavScopes.customerView;
 
   /// Scope required to see the Suppliers destination (Phase 11).
-  static const String supplierViewScope = 'supplier_view';
+  static const String supplierViewScope = NavScopes.supplierView;
 
   /// Scope required to see the Purchases destination (Phase 11).
-  static const String purchaseViewScope = 'purchase_view';
+  static const String purchaseViewScope = NavScopes.purchaseView;
 
   /// Scope required to see the Returns destination (Phase 12).
-  static const String returnViewScope = 'pos_return';
+  static const String returnViewScope = NavScopes.returnView;
 
   /// Scope required to see the Expenses destination (Phase 13).
-  static const String expenseViewScope = 'expense_view';
+  static const String expenseViewScope = NavScopes.expenseView;
+
+  /// Scope required to see the Promotions destination (Phase 18).
+  static const String promotionViewScope = NavScopes.promotionView;
 
   /// Scope required to see the Reports destination and dashboard KPIs
   /// (Phase 14 — `report_financial`; §10: the rail entry AND the
   /// dashboard/reports content are gated on it).
-  static const String reportViewScope = 'report_financial';
+  static const String reportViewScope = NavScopes.reportFinancial;
+
+  /// One- or two-letter monogram for the header avatar. Works on UTF-16
+  /// safe boundaries (`runes`, not `substring`) so an Arabic or emoji
+  /// leading character cannot throw mid-build.
+  static String _initials(String name) {
+    final trimmed = name.trim();
+    if (trimmed.isEmpty) return '?';
+    String firstWord(String s) => String.fromCharCodes(s.runes.take(1));
+    final words = trimmed.split(RegExp(r'\s+'));
+    if (words.length >= 2) {
+      return (firstWord(words.first) + firstWord(words.last)).toUpperCase();
+    }
+    return firstWord(trimmed).toUpperCase();
+  }
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
     final loc = ref.watch(localeProvider).flutterLocale.languageCode;
     final user = ref.watch(currentUserProvider);
-    final canManageUsers = ref.watch(hasPermissionProvider(userManageScope));
-    final canViewProducts = ref.watch(hasPermissionProvider(productViewScope));
-    final canViewInventory = ref.watch(hasPermissionProvider(inventoryViewScope));
-    final canSell = ref.watch(hasPermissionProvider(posSaleScope));
-    final canViewCustomers = ref.watch(hasPermissionProvider(customerViewScope));
-    final canViewSuppliers = ref.watch(hasPermissionProvider(supplierViewScope));
-    final canViewPurchases = ref.watch(hasPermissionProvider(purchaseViewScope));
-    final canViewReturns = ref.watch(hasPermissionProvider(returnViewScope));
-    final canViewExpenses = ref.watch(hasPermissionProvider(expenseViewScope));
-    final canViewReports = ref.watch(hasPermissionProvider(reportViewScope));
-    // Phase 16 §17: only admins see the device registry.
-    final canManageDevices =
-        ref.watch(hasPermissionProvider(deviceManageScope));
 
     // Phase 16 (§14 / §23.1): the reconnect modal is a BOOT-TIME prompt and
     // happens at most once per run. `connecting` is only ever entered from
@@ -293,220 +306,48 @@ class ScaffoldWithNav extends ConsumerWidget {
       });
     });
 
-    final destinations = <NavigationRailDestination>[
-      NavigationRailDestination(
-        icon: const Icon(Icons.dashboard_outlined),
-        selectedIcon: const Icon(Icons.dashboard),
-        label: Text(AppStrings.t('dashboard', loc)),
-      ),
-      if (canSell)
-        NavigationRailDestination(
-          icon: const Icon(Icons.point_of_sale_outlined),
-          selectedIcon: const Icon(Icons.point_of_sale),
-          label: Text(AppStrings.t('pos', loc)),
-        ),
-      if (canViewReturns)
-        NavigationRailDestination(
-          icon: const Icon(Icons.undo_outlined),
-          selectedIcon: const Icon(Icons.undo),
-          label: Text(AppStrings.t('returns_history', loc)),
-        ),
-      if (canViewExpenses)
-        NavigationRailDestination(
-          icon: const Icon(Icons.payments_outlined),
-          selectedIcon: const Icon(Icons.payments),
-          label: Text(AppStrings.t('expenses', loc)),
-        ),
-      if (canViewProducts) ...[
-        NavigationRailDestination(
-          icon: const Icon(Icons.inventory_2_outlined),
-          selectedIcon: const Icon(Icons.inventory_2),
-          label: Text(AppStrings.t('products', loc)),
-        ),
-        NavigationRailDestination(
-          icon: const Icon(Icons.local_offer_outlined),
-          selectedIcon: const Icon(Icons.local_offer),
-          label: Text(AppStrings.t('packs', loc)),
-        ),
-      ],
-      if (canViewInventory)
-        NavigationRailDestination(
-          icon: const Icon(Icons.warehouse_outlined),
-          selectedIcon: const Icon(Icons.warehouse),
-          label: Text(AppStrings.t('stock', loc)),
-        ),
-      if (canViewCustomers) ...[
-        NavigationRailDestination(
-          icon: const Icon(Icons.contact_phone_outlined),
-          selectedIcon: const Icon(Icons.contact_phone),
-          label: Text(AppStrings.t('clients', loc)),
-        ),
-        NavigationRailDestination(
-          icon: const Icon(Icons.receipt_long_outlined),
-          selectedIcon: const Icon(Icons.receipt_long),
-          label: Text(AppStrings.t('debts', loc)),
-        ),
-      ],
-      if (canViewSuppliers)
-        NavigationRailDestination(
-          icon: const Icon(Icons.factory_outlined),
-          selectedIcon: const Icon(Icons.factory),
-          label: Text(AppStrings.t('suppliers', loc)),
-        ),
-      if (canViewPurchases)
-        NavigationRailDestination(
-          icon: const Icon(Icons.shopping_cart_outlined),
-          selectedIcon: const Icon(Icons.shopping_cart),
-          label: Text(AppStrings.t('purchases', loc)),
-        ),
-      if (canManageUsers)
-        NavigationRailDestination(
-          icon: const Icon(Icons.people_outline),
-          selectedIcon: const Icon(Icons.people),
-          label: Text(AppStrings.t('user_list', loc)),
-        ),
-      if (canViewReports)
-        NavigationRailDestination(
-          icon: const Icon(Icons.summarize_outlined),
-          selectedIcon: const Icon(Icons.summarize),
-          label: Text(AppStrings.t('reports', loc)),
-        ),
-      if (canManageDevices)
-        NavigationRailDestination(
-          icon: const Icon(Icons.devices_outlined),
-          selectedIcon: const Icon(Icons.devices),
-          label: Text(AppStrings.t('lan_devices_title', loc)),
-        ),
-      NavigationRailDestination(
-        icon: const Icon(Icons.settings_outlined),
-        selectedIcon: const Icon(Icons.settings),
-        label: Text(AppStrings.t('settings', loc)),
-      ),
-    ];
+    // ONE list drives the tiles, the selection and the taps — the shell
+    // only decides *who may see what* (buildNavGroups answers each scope
+    // once, through the same permission provider as before).
+    final groups = buildNavGroups(
+      can: (scope) => ref.watch(hasPermissionProvider(scope)),
+    );
 
-    int? selectedIndex;
-    var index = 0;
-    if (location == '/') {
-      selectedIndex = index;
-    }
-    if (canSell) {
-      index += 1;
-      if (location == '/pos') selectedIndex = index;
-    }
-    if (canViewReturns) {
-      index += 1;
-      if (location == '/returns') selectedIndex = index;
-    }
-    if (canViewExpenses) {
-      index += 1;
-      if (location == '/expenses') selectedIndex = index;
-    }
-    if (canViewProducts) {
-      index += 1;
-      if (location == '/products') selectedIndex = index;
-      index += 1;
-      if (location == '/packs') selectedIndex = index;
-    }
-    if (canViewInventory) {
-      index += 1;
-      if (location == '/stock') selectedIndex = index;
-    }
-    if (canViewCustomers) {
-      index += 1;
-      if (location == '/clients') selectedIndex = index;
-      index += 1;
-      if (location == '/debts') selectedIndex = index;
-    }
-    if (canViewSuppliers) {
-      index += 1;
-      if (location == '/suppliers') selectedIndex = index;
-    }
-    if (canViewPurchases) {
-      index += 1;
-      if (location == '/purchases') selectedIndex = index;
-    }
-    if (canManageUsers) {
-      index += 1;
-      if (location == '/users') selectedIndex = index;
-    }
-    if (canViewReports) {
-      index += 1;
-      if (location == '/reports') selectedIndex = index;
-    }
-    if (canManageDevices) {
-      index += 1;
-      if (location == '/devices') selectedIndex = index;
-    }
-    index += 1;
-    if (location == '/settings') selectedIndex = index;
-
-    void onDestinationSelected(int target) {
-      var i = 0;
-      if (i++ == target) {
-        context.go('/');
-        return;
-      }
-      if (canSell && i++ == target) {
-        context.go('/pos');
-        return;
-      }
-      if (canViewReturns && i++ == target) {
-        context.go('/returns');
-        return;
-      }
-      if (canViewExpenses && i++ == target) {
-        context.go('/expenses');
-        return;
-      }
-      if (canViewProducts && i++ == target) {
-        context.go('/products');
-        return;
-      }
-      if (canViewProducts && i++ == target) {
-        context.go('/packs');
-        return;
-      }
-      if (canViewInventory && i++ == target) {
-        context.go('/stock');
-        return;
-      }
-      if (canViewCustomers && i++ == target) {
-        context.go('/clients');
-        return;
-      }
-      if (canViewCustomers && i++ == target) {
-        context.go('/debts');
-        return;
-      }
-      if (canViewSuppliers && i++ == target) {
-        context.go('/suppliers');
-        return;
-      }
-      if (canViewPurchases && i++ == target) {
-        context.go('/purchases');
-        return;
-      }
-      if (canManageUsers && i++ == target) {
-        context.go('/users');
-        return;
-      }
-      if (canViewReports && i++ == target) {
-        context.go('/reports');
-        return;
-      }
-      if (canManageDevices && i++ == target) {
-        context.go('/devices');
-        return;
-      }
-      if (i++ == target) {
-        context.go('/settings');
-      }
-    }
+    // Below ~760px the identity caption goes and the monogram avatar
+    // carries the operator alone — otherwise the actions eat the bar and
+    // squeeze the wordmark to nothing on a short window.
+    final headerCompact = MediaQuery.sizeOf(context).width < 760;
 
     return AppShortcuts(
       child: Scaffold(
         appBar: AppBar(
-          title: Text(AppStrings.t('app_name', loc)),
+          automaticallyImplyLeading: false,
+          titleSpacing: 16,
+          // Brand block: the drawn logo mark + the one wordmark Text the
+          // shell has always shown (`app_name`, found exactly once). The
+          // bar hands this Row only what the actions left over, so the
+          // logo steps aside before the wordmark can overflow.
+          title: LayoutBuilder(
+            builder: (context, box) {
+              final showLogo = box.maxWidth >= 140;
+              return Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (showLogo) ...[
+                    const AppLogoMark(size: 28),
+                    const SizedBox(width: 10),
+                  ],
+                  Flexible(
+                    child: Text(
+                      AppStrings.t('app_name', loc),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
           actions: [
             // Phase 17 §18 — the keyboard map needs a single, always
             // reachable entry point, whatever screen is on top.
@@ -525,26 +366,60 @@ class ScaffoldWithNav extends ConsumerWidget {
             if (user != null) ...[
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 8),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.end,
+                child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text(
-                      user.fullName,
-                      key: const Key('shell-user-name'),
-                      style: theme.textTheme.titleSmall,
-                    ),
-                    Text(
-                      user.roles
-                          .map((r) => AppStrings.t(r, loc))
-                          .join(', '),
-                      key: const Key('shell-user-roles'),
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color:
-                            theme.colorScheme.onSurface.withValues(alpha: 0.8),
+                    // Monogram avatar: initials off the operator's own
+                    // name, so two tills on the counter are told apart at
+                    // a glance without reading the caption. The tooltip
+                    // keeps the full name reachable when the compact
+                    // header drops the caption.
+                    Tooltip(
+                      message: user.fullName,
+                      child: Container(
+                        width: 32,
+                        height: 32,
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          color: theme.colorScheme.primary.withValues(
+                            alpha: 0.14,
+                          ),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Text(
+                          _initials(user.fullName),
+                          key: const Key('shell-user-avatar'),
+                          style: theme.textTheme.labelMedium?.copyWith(
+                            fontWeight: FontWeight.w700,
+                            color: theme.colorScheme.primary,
+                          ),
+                        ),
                       ),
                     ),
+                    const SizedBox(width: 10),
+                    if (!headerCompact)
+                      Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            user.fullName,
+                            key: const Key('shell-user-name'),
+                            style: theme.textTheme.titleSmall,
+                          ),
+                          Text(
+                            user.roles
+                                .map((r) => AppStrings.t(r, loc))
+                                .join(', '),
+                            key: const Key('shell-user-roles'),
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: theme.colorScheme.onSurface
+                                  .withValues(alpha: 0.8),
+                            ),
+                          ),
+                        ],
+                      ),
                   ],
                 ),
               ),
@@ -562,19 +437,11 @@ class ScaffoldWithNav extends ConsumerWidget {
         ),
         body: Row(
           children: [
-            if (destinations.isNotEmpty) ...[
-              NavigationRail(
-                // QA fix round (Bug 2): with all destinations + labels the
-                // rail's internal destination Column overflows on short
-                // windows. `scrollable: true` wraps it in the framework's
-                // own scroll view — no destination is hidden or removed,
-                // tall-window layout is unchanged (content still sizes to
-                // its intrinsic height and is aligned as before).
-                scrollable: true,
-                selectedIndex: selectedIndex,
-                labelType: NavigationRailLabelType.all,
-                onDestinationSelected: onDestinationSelected,
-                destinations: destinations,
+            if (groups.isNotEmpty) ...[
+              AppNavRail(
+                location: location,
+                groups: groups,
+                onNavigate: context.go,
               ),
               const VerticalDivider(width: 1),
             ],

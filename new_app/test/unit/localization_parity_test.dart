@@ -99,10 +99,15 @@ void main() {
       // `quantity_readonly` and `product_stock_reason` (863); §18 added the
       // keyboard-shortcuts help surface — 41 keys (`shortcuts_*` + the
       // `sc_a_*` / `sc_d_*` action/description pairs, 904); Phase 17 pricing
-      // added the wholesale / TVA / margin labels — 5 keys (909).  Update
-      // this deliberately when a subphase adds strings — an unexplained
-      // drop means keys were deleted from one map only.
-      expect(_map('en').keys.length, 909);
+      // added the wholesale / TVA / margin labels — 5 keys (909); Phase 18
+      // added the promotions surface — 31 keys (940); the UI/UX redesign
+      // added the nav/dashboard KPI groups and the LAN store-address +
+      // wizard-step surfaces — 20 keys (960); the barcode-label subphase
+      // added the print-labels / sheet-layout surface — 15 keys (975).
+      // Update this
+      // deliberately when a subphase adds strings — an unexplained drop
+      // means keys were deleted from one map only.
+      expect(_map('en').keys.length, 975);
       expect(_map('ar').keys.length, _map('en').keys.length);
       expect(_map('fr').keys.length, _map('en').keys.length);
     });

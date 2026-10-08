@@ -7,6 +7,7 @@
 /// `lib/theme/app_theme.dart`.
 library;
 
+export 'logo_mark.dart';
 export 'page_title.dart';
 export 'section_header.dart';
 export 'state_views.dart';

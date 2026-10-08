@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:supermarket_pos/core/strings.dart';
+import 'package:supermarket_pos/features/shell/app_nav_rail.dart';
 import 'package:supermarket_pos/features/auth/auth_provider.dart';
 import 'package:supermarket_pos/features/auth/credential_storage.dart';
 import 'package:supermarket_pos/features/auth/login_screen.dart';
@@ -295,7 +296,7 @@ void main() {
         AppStrings.t('admin', 'ar'),
       );
       expect(find.byKey(const Key('logout-button')), findsOneWidget);
-      expect(find.byType(NavigationRail), findsOneWidget);
+      expect(find.byType(AppNavRail), findsOneWidget);
       expect(find.byType(DashboardScreen), findsOneWidget);
       expect(container.read(currentUserProvider)?.fullName, 'Admin');
       expect(tester.takeException(), isNull);

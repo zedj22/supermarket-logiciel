@@ -4,13 +4,18 @@ class AppColors {
   AppColors._();
 
   // Dark theme
+  //
+  // The accent is an azure with a lifted blue channel (0xFF3B82F6) so the
+  // dark mode reads as its own brand instead of a dimmed copy of the light
+  // one: 3.68:1 against white button labels and 5.09:1 against the #121212
+  // scaffold — both clear of the WCAG floors the theme test enforces.
   static const Color darkBackground = Color(0xFF121212);
   static const Color darkSurface = Color(0xFF1E1E1E);
   static const Color darkCard = Color(0xFF2D2D2D);
   static const Color darkBorder = Color(0xFF404040);
   static const Color darkTextPrimary = Color(0xFFE0E0E0);
   static const Color darkTextSecondary = Color(0xFF9E9E9E);
-  static const Color darkAccent = Color(0xFF2196F3);
+  static const Color darkAccent = Color(0xFF3B82F6);
 
   // Light theme
   //
@@ -24,7 +29,11 @@ class AppColors {
   static const Color lightBorder = Color(0xFFE0E0E0);
   static const Color lightTextPrimary = Color(0xFF212121);
   static const Color lightTextSecondary = Color(0xFF6E6E6E);
-  static const Color lightAccent = Color(0xFF1976D2);
+
+  // Deep indigo-blue: 6.66:1 against white button labels and 6.06:1 on the
+  // #F5F5F5 scaffold, so it stays a *brand* colour that is still a safe
+  // fill for anything a cashier clicks without looking at it twice.
+  static const Color lightAccent = Color(0xFF1D4ED8);
 
   // Grey theme
   //
@@ -38,7 +47,11 @@ class AppColors {
   static const Color greyBorder = Color(0xFF4A4A4A);
   static const Color greyTextPrimary = Color(0xFFD0D0D0);
   static const Color greyTextSecondary = Color(0xFF9E9E9E);
-  static const Color greyAccent = Color(0xFF607D8B);
+
+  // Slate: the grey mode's accent must not read as "the blue theme, but
+  // washed out" — 4.76:1 under white labels, 3.64:1 on the #1A1A1A
+  // scaffold, and clearly its own hue next to dark/light.
+  static const Color greyAccent = Color(0xFF64748B);
 
   // Semantic colors
   static const Color success = Color(0xFF4CAF50);

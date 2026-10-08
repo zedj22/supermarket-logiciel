@@ -16,12 +16,16 @@ Future<VariantModel?> showVariantPicker(
   BuildContext context, {
   required String productId,
   String? productPrice,
+  // Phase 18 — display only: shown for a variant WITHOUT its own price
+  // (it falls back to the product retail price, which may be promoted).
+  String? productPromoPrice,
 }) {
   return showDialog<VariantModel>(
     context: context,
     builder: (_) => VariantPicker(
       productId: productId,
       productPrice: productPrice,
+      productPromoPrice: productPromoPrice,
     ),
   );
 }
@@ -29,11 +33,13 @@ Future<VariantModel?> showVariantPicker(
 class VariantPicker extends ConsumerStatefulWidget {
   final String productId;
   final String? productPrice;
+  final String? productPromoPrice;
 
   const VariantPicker({
     super.key,
     required this.productId,
     this.productPrice,
+    this.productPromoPrice,
   });
 
   @override
@@ -115,7 +121,9 @@ class _VariantPickerState extends ConsumerState<VariantPicker> {
         PosOptionCard(
           optionKey: 'variant-${v.id}',
           title: v.name,
-          price: v.price ?? widget.productPrice,
+          price: v.price ??
+              widget.productPromoPrice ??
+              widget.productPrice,
           secondary: (double.tryParse(v.quantity) ?? 0) <= 0
               ? AppStrings.t('out_of_stock', loc)
               : v.barcode,

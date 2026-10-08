@@ -114,6 +114,7 @@ LABELS: dict[str, tuple[str, str, str]] = {
     "label_period": ("الفترة", "Période", "Period"),
     "label_snapshot": ("لقطة", "Instantané", "Snapshot"),
     "label_percent": ("النسبة المئوية", "Pourcentage", "Percent"),
+    "label_off": ("خصم", "Remise", "OFF"),
     "filter_status": ("الحالة", "Statut", "Status"),
     "filter_device": ("الجهاز", "Appareil", "Device"),
     "filter_sort": ("ترتيب حسب", "Trier par", "Sort by"),
@@ -162,6 +163,18 @@ LABELS: dict[str, tuple[str, str, str]] = {
     "no_data": ("لا توجد بيانات", "Aucune donnée", "No data"),
     "page": ("صفحة", "Page", "Page"),
     "supplier": ("المورد", "Fournisseur", "Supplier"),
+    # ---- unit labels (client keys via `unitLabel`, strings.dart) ----
+    # Printed as the price suffix on a label when unit != piece
+    # (`100.00 DA / kg`).
+    "unit_piece": ("قطعة", "Pièce", "Piece"),
+    "unit_box": ("علبة", "Boîte", "Box"),
+    "unit_carton": ("كرتون", "Carton", "Carton"),
+    "unit_kg": ("كغ", "kg", "kg"),
+    "unit_gram": ("غرام", "Gramme", "Gram"),
+    "unit_liter": ("لتر", "Litre", "Liter"),
+    "unit_milliliter": ("مل", "Millilitre", "Milliliter"),
+    "unit_meter": ("متر", "Mètre", "Meter"),
+    "unit_pack": ("حزمة", "Paquet", "Pack"),
 }
 
 # keys whose values are (ar, fr, en) tuples — index per locale

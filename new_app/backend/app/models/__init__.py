@@ -70,6 +70,9 @@ from app.models.supplier_ledger import SupplierLedgerEntry  # noqa: F401
 # Expenses
 from app.models.expense import Expense  # noqa: F401
 
+# Promotions (Phase 18)
+from app.models.promotion import Promotion, PromotionProduct  # noqa: F401
+
 # Inventory
 from app.models.inventory import InventoryMovement  # noqa: F401
 
@@ -135,6 +138,9 @@ __all__ = [
     "SupplierLedgerEntry",
     # Expenses
     "Expense",
+    # Promotions (Phase 18)
+    "Promotion",
+    "PromotionProduct",
     # Inventory
     "InventoryMovement",
     # Audit

@@ -18,6 +18,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../core/strings.dart';
+import '../../../core/widgets/logo_mark.dart';
+import '../../../core/widgets/state_views.dart';
 import '../../../l10n/locale_provider.dart';
 import 'connection_provider.dart';
 import 'device_identity.dart';
@@ -225,7 +227,16 @@ class _SetupWizardScreenState extends ConsumerState<SetupWizardScreen> {
             constraints: const BoxConstraints(maxWidth: 560),
             child: Padding(
               padding: const EdgeInsets.all(24),
-              child: SingleChildScrollView(child: body),
+              child: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _stepBar(loc),
+                    const SizedBox(height: 16),
+                    body,
+                  ],
+                ),
+              ),
             ),
           ),
         ),
@@ -233,10 +244,89 @@ class _SetupWizardScreenState extends ConsumerState<SetupWizardScreen> {
     );
   }
 
+  // -- step indicator (§ PART 12) -----------------------------------------
+
+  /// Pill strip of the five pairing stages, shown above every step so the
+  /// worker always knows how far along the setup is. `Wrap` (not `Row`) so
+  /// the longer French/Arabic labels flow onto a second line on a 560px
+  /// column instead of overflowing; the failed step highlights its origin
+  /// (the pairing code), not a phantom stage.
+  Widget _stepBar(String loc) {
+    const steps = <(WizardStep, String)>[
+      (WizardStep.role, 'lan_step_role'),
+      (WizardStep.searching, 'lan_step_search'),
+      (WizardStep.confirm, 'lan_step_confirm'),
+      (WizardStep.code, 'lan_step_code'),
+      (WizardStep.waiting, 'lan_step_approve'),
+    ];
+    final active = switch (_step) {
+      WizardStep.role => 0,
+      WizardStep.searching => 1,
+      WizardStep.confirm => 2,
+      WizardStep.code || WizardStep.failed => 3,
+      WizardStep.waiting => 4,
+    };
+    final theme = Theme.of(context);
+    final accent = theme.colorScheme.primary;
+    return Wrap(
+      key: const Key('wizard-step-bar'),
+      alignment: WrapAlignment.center,
+      spacing: 6,
+      runSpacing: 6,
+      children: [
+        for (var i = 0; i < steps.length; i++)
+          Container(
+            key: Key('wizard-step-$i'),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+            decoration: BoxDecoration(
+              color: i == active
+                  ? accent
+                  : i < active
+                      ? accent.withValues(alpha: 0.12)
+                      : theme.dividerColor.withValues(alpha: 0.45),
+              borderRadius: BorderRadius.circular(999),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (i < active)
+                  Icon(Icons.check, size: 13, color: accent)
+                else
+                  Text(
+                    '${i + 1}',
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      fontWeight: FontWeight.w700,
+                      color: i == active
+                          ? theme.colorScheme.onPrimary
+                          : theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                const SizedBox(width: 5),
+                Text(
+                  AppStrings.t(steps[i].$2, loc),
+                  key: Key('wizard-step-label-$i'),
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    fontWeight: FontWeight.w700,
+                    color: i == active
+                        ? theme.colorScheme.onPrimary
+                        : i < active
+                            ? accent
+                            : theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+
   Widget _buildRole(String loc) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        Center(child: AppLogoMark(size: 44)),
+        const SizedBox(height: 16),
         Text(
           AppStrings.t('lan_wizard_title', loc),
           key: const Key('wizard-title'),
@@ -288,11 +378,14 @@ class _SetupWizardScreenState extends ConsumerState<SetupWizardScreen> {
         if (timedOut)
           Padding(
             padding: const EdgeInsets.only(top: 8),
-            child: Text(
-              AppStrings.t('lan_search_timeout', loc),
-              key: const Key('wizard-timeout'),
-              textAlign: TextAlign.center,
-              style: TextStyle(color: Theme.of(context).colorScheme.error),
+            // Friendly dead-end state: icon + copy instead of a bare red
+            // line — the manual entry below it is the way out.
+            child: EmptyState(
+              message: AppStrings.t('lan_search_timeout', loc),
+              messageKey: const Key('wizard-timeout'),
+              icon: Icons.wifi_off_outlined,
+              accent: Theme.of(context).colorScheme.error,
+              compact: true,
             ),
           ),
         const SizedBox(height: 16),

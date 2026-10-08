@@ -11,6 +11,9 @@ This creates:
 - Cashier gets basic POS permissions
 - Every role (admin/manager/cashier) gets expense_view, expense_create
   and expense_cancel — Phase 13 GATE 7/8/9 product-owner decision.
+- Promotions (Phase 18) — promotion_view/create/update go to admin and
+  manager only; the cashier POS reads promotion prices through
+  product_view (they ride on the product response).
 
 NOT executed at application startup: run ``python -m app.core.seed``
 after deploying a revision that adds permission scopes (decision record
@@ -65,6 +68,12 @@ ROLE_PERMISSIONS: dict[str, list[PermissionScope]] = {
         PermissionScope.EXPENSE_VIEW,
         PermissionScope.EXPENSE_CREATE,
         PermissionScope.EXPENSE_CANCEL,
+        # Promotions (Phase 18) — pricing management is admin + manager;
+        # a cashier never manages promotions (POS reads them through
+        # product_view on the product response).
+        PermissionScope.PROMOTION_VIEW,
+        PermissionScope.PROMOTION_CREATE,
+        PermissionScope.PROMOTION_UPDATE,
         # Financial
         PermissionScope.REPORT_FINANCIAL,
         PermissionScope.EXPORT_DATA,

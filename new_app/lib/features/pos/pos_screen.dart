@@ -492,6 +492,9 @@ class _PosScreenState extends ConsumerState<PosScreen> {
         context,
         productId: product.id,
         productPrice: product.price,
+        // Phase 18 — display only (a variant without its own price falls
+        // back to the retail card, which may show the promotion price).
+        productPromoPrice: product.promotion?.price,
       );
       // Restore barcode/search focus after dialog closes (keyboard-first).
       if (mounted) _searchFocusNode.requestFocus();
@@ -522,6 +525,15 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     final name = variant == null
         ? product.name
         : '${product.name} · ${variant.name}';
+    // Phase 18 promotion — the gate mirrors the backend's
+    // `line_uses_product_retail` (app/services/sale.py): a promotion may
+    // only discount a line whose price comes from `products.price`. An
+    // explicit variant price (or a custom selling unit below) is never
+    // promoted. [promoPrice] is the SERVER-computed effective promo unit
+    // price already attached to the product response.
+    final promoPrice = price == product.price
+        ? product.promotion?.price
+        : null;
 
     if (units.isEmpty) {
       // No selling-unit choice → direct add (qty 1, base unit, catalog price).
@@ -532,7 +544,9 @@ class _PosScreenState extends ConsumerState<PosScreen> {
         variantName: variant?.name,
         unitName: product.unit,
         quantity: '1',
-        unitPrice: price,
+        // Phase 18 — the promotion price replaces retail on this line;
+        // retailPrice below still stamps the ORIGINAL retail price.
+        unitPrice: promoPrice ?? price,
         barcode: product.barcode,
         productUnit: product.unit,
         availableStock: stock,
@@ -541,6 +555,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
         retailPrice: _retailPriceOf(product, price),
         wholesalePrice: product.wholesalePrice,
         wholesaleMinQty: product.wholesaleMinQty,
+        promotionPrice: promoPrice,
       );
       return;
     }
@@ -555,10 +570,21 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       productQuantity: stock,
       productUnit: product.unit,
       productPrice: price,
+      // Phase 18 — display only: the base-unit card shows the promo price
+      // while the pick result keeps the RETAIL price (the promotion is
+      // applied here, where the retail-branch gate can be evaluated).
+      productPromoPrice: product.promotion?.price,
     );
     // Restore barcode/search focus after dialog closes (keyboard-first).
     if (mounted) _searchFocusNode.requestFocus();
     if (pick == null) return;
+    // Phase 18 gate — promotion only when the BASE unit was chosen with no
+    // explicit selling price and the line prices off `products.price`.
+    final pickPromoPrice = pick.isBaseUnit &&
+            !pick.hasExplicitPrice &&
+            pick.unitPrice == product.price
+        ? product.promotion?.price
+        : null;
     _addCartLine(
       productId: product.id,
       variantId: variant?.id,
@@ -567,7 +593,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       variantName: variant?.name,
       unitName: pick.isBaseUnit ? product.unit : pick.unitName,
       quantity: pick.quantity,
-      unitPrice: pick.unitPrice,
+      unitPrice: pickPromoPrice ?? pick.unitPrice,
       barcode: product.barcode,
       productUnit: product.unit,
       availableStock: stock,
@@ -583,6 +609,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
           : null,
       wholesalePrice: product.wholesalePrice,
       wholesaleMinQty: product.wholesaleMinQty,
+      promotionPrice: pickPromoPrice,
     );
   }
 
@@ -671,17 +698,20 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     }
   }
 
-  /// Phase 17 pricing — the retail price to stamp on a line, or null when
-  /// the line must NEVER be wholesale-priced.
+  /// Phase 17/18 pricing — the retail price to stamp on a line, or null
+  /// when the line must NEVER be wholesale- or promotion-priced.
   ///
-  /// [linePrice] is the unit price the line is added at. Wholesale may only
-  /// replace a price that came from `products.price` — the precedence in
-  /// `app/domain/wholesale.py` is explicit selling-unit price > explicit
-  /// variant price > product retail price > pack price. Stamping the
-  /// snapshot only when it equals [linePrice] keeps the invariant
-  /// `CartLine.retailPrice == CartLine.unitPrice` at construction, so
-  /// re-pricing a quantity change can only switch retail ↔ wholesale and
-  /// can never rewrite a variant / selling-unit / pack price.
+  /// [linePrice] is the CATALOG price the line's price came from (the
+  /// pre-promotion price passed by [_addProduct]). Wholesale/promotion may
+  /// only touch a price that came from `products.price` — the precedence
+  /// in `app/domain/wholesale.py` is explicit selling-unit price >
+  /// explicit variant price > product retail price > pack price.
+  /// Stamping the snapshot only when it equals [linePrice] keeps the
+  /// invariant `CartLine.retailPrice` == the catalog price the line was
+  /// priced from at construction (with Phase 18, `unitPrice` may be the
+  /// PROMOTION price while `retailPrice` keeps the original retail), so
+  /// re-pricing a quantity change can only switch retail → promotion →
+  /// wholesale and can never rewrite a variant / selling-unit / pack price.
   ///
   /// Callers additionally pass null for a CUSTOM selling-unit line (see the
   /// picker call site): even when that unit falls back to the retail price,
@@ -712,6 +742,10 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     String? retailPrice,
     String? wholesalePrice,
     String? wholesaleMinQty,
+    // Phase 18 promotion — effective promo unit price snapshot (null when
+    // the line is not promoted). Set together with retailPrice, which then
+    // keeps the ORIGINAL retail price.
+    String? promotionPrice,
   }) {
     final loc = ref.read(localeProvider).flutterLocale.languageCode;
     // Merge + stock guard in one place (UX FIX #12 — FIX #6): adding a
@@ -737,6 +771,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       retailPrice: retailPrice,
       wholesalePrice: wholesalePrice,
       wholesaleMinQty: wholesaleMinQty,
+      promotionPrice: promotionPrice,
     );
     final applied = applyAddingLine(
       notifier: ref.read(posCartProvider.notifier),
@@ -1611,14 +1646,69 @@ class _ProductCatalog extends StatelessWidget {
     );
   }
 
+  /// Catalog price, shared by the grid card and the list tile. With an
+  /// active promotion it shows the Phase 18 treatment — retail struck
+  /// through, effective promo price, percent badge (`~~200~~ 160 -20%`)
+  /// — otherwise the plain retail price (keys unchanged).
   Widget _price(BuildContext context, ProductModel product) {
-    return Text(
-      product.price,
-      key: Key('pos-product-price-${product.id}'),
-      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-            color: Theme.of(context).colorScheme.primary,
+    final theme = Theme.of(context);
+    final promo = product.promotion;
+    final badge = promo == null ? '' : promo.discountBadgeFor(product.price);
+    if (promo == null || badge.isEmpty) {
+      return Text(
+        product.price,
+        key: Key('pos-product-price-${product.id}'),
+        style: theme.textTheme.titleMedium?.copyWith(
+          color: theme.colorScheme.primary,
+          fontWeight: FontWeight.bold,
+        ),
+      );
+    }
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.baseline,
+      textBaseline: TextBaseline.alphabetic,
+      children: [
+        // Regression fix: inside a narrow grid card this Row gets a TIGHT
+        // width, and the three texts together can exceed it. The retail
+        // price and the badge are secondary, so they yield (loose flex =
+        // they keep their natural size while there is room, ellipsize only
+        // when there is not); the effective promo price never yields.
+        Flexible(
+          child: Text(
+            product.price,
+            key: Key('pos-product-retail-price-${product.id}'),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: theme.textTheme.titleMedium?.copyWith(
+              decoration: TextDecoration.lineThrough,
+              color: theme.colorScheme.onSurface.withValues(alpha: 0.55),
+            ),
+          ),
+        ),
+        const SizedBox(width: 4),
+        Text(
+          promo.price,
+          key: Key('pos-product-price-${product.id}'),
+          style: theme.textTheme.titleMedium?.copyWith(
+            color: theme.colorScheme.primary,
             fontWeight: FontWeight.bold,
           ),
+        ),
+        const SizedBox(width: 4),
+        Flexible(
+          child: Text(
+            badge,
+            key: Key('pos-product-promo-${product.id}'),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.tertiary,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -2987,6 +3077,33 @@ class _CartLineTileState extends State<_CartLineTile> {
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                         ),
+                        if (line.promotionApplied)
+                          // Phase 18 — the line is charging the promotion
+                          // price; the original retail is struck through
+                          // (display only, server recomputes at checkout).
+                          Text.rich(
+                            TextSpan(
+                              text: AppStrings.t('promotion', loc),
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w700,
+                                color: theme.colorScheme.tertiary,
+                              ),
+                              children: [
+                                if (line.retailPrice != null)
+                                  TextSpan(
+                                    text: ' · ${line.retailPrice}',
+                                    style: TextStyle(
+                                      decoration: TextDecoration.lineThrough,
+                                      fontWeight: FontWeight.w500,
+                                      color: theme.colorScheme.onSurface
+                                          .withValues(alpha: 0.6),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                            key: Key('cart-line-promotion-${line.key}'),
+                          ),
                         if (line.wholesaleApplied)
                           // Phase 17 pricing — the line crossed the whole-
                           // sale threshold (base quantity) and is charging

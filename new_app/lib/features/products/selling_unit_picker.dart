@@ -64,6 +64,10 @@ Future<SellingUnitPickResult?> showSellingUnitPicker(
   String productQuantity = '0',
   String? productUnit,
   String? productPrice,
+  // Phase 18 — display only: the promotion price shown on the BASE-unit
+  // card (the pick result keeps the RETAIL price; the caller applies the
+  // promotion where the retail-branch gate can be evaluated).
+  String? productPromoPrice,
 }) {
   return showDialog<SellingUnitPickResult>(
     context: context,
@@ -72,6 +76,7 @@ Future<SellingUnitPickResult?> showSellingUnitPicker(
       productQuantity: productQuantity,
       productUnit: productUnit,
       productPrice: productPrice,
+      productPromoPrice: productPromoPrice,
     ),
   );
 }
@@ -81,6 +86,7 @@ class SellingUnitPicker extends ConsumerStatefulWidget {
   final String productQuantity;
   final String? productUnit;
   final String? productPrice;
+  final String? productPromoPrice;
 
   const SellingUnitPicker({
     super.key,
@@ -88,6 +94,7 @@ class SellingUnitPicker extends ConsumerStatefulWidget {
     this.productQuantity = '0',
     this.productUnit,
     this.productPrice,
+    this.productPromoPrice,
   });
 
   @override
@@ -106,6 +113,10 @@ class _SellingUnitPickerState extends ConsumerState<SellingUnitPicker> {
   /// Synthetic base-unit model for the quantity dialog only — never
   /// persisted, never sent as selling_unit_id.
   SellingUnitModel _baseUnitModel(String name) {
+    // Phase 18 — display: the quantity dialog shows the promotion price
+    // when one applies (the pick RESULT still returns the retail price;
+    // see showSellingUnitPicker).
+    final shownPrice = widget.productPromoPrice ?? widget.productPrice;
     return SellingUnitModel(
       id: kSellingUnitBaseKey,
       productId: widget.productId,
@@ -113,8 +124,8 @@ class _SellingUnitPickerState extends ConsumerState<SellingUnitPicker> {
       unitType: widget.productUnit ?? 'piece',
       multiplier: '1',
       isBaseUnit: true,
-      sellingPrice: widget.productPrice,
-      effectivePrice: widget.productPrice,
+      sellingPrice: shownPrice,
+      effectivePrice: shownPrice,
       availableBaseQty: widget.productQuantity,
       availableSellingQty: widget.productQuantity,
     );
@@ -245,7 +256,7 @@ class _SellingUnitPickerState extends ConsumerState<SellingUnitPicker> {
       );
     }
 
-    final basePrice = widget.productPrice ?? '0';
+    final basePrice = widget.productPromoPrice ?? widget.productPrice ?? '0';
     final cards = <PosOptionCard>[
       if (canShowBase)
         PosOptionCard(

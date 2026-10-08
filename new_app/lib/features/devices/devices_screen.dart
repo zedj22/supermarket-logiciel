@@ -9,13 +9,19 @@
 // gated the same way (§17).
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/colors.dart';
 import '../../core/strings.dart';
+import '../../core/widgets/page_title.dart';
+import '../../core/widgets/section_header.dart';
+import '../../core/widgets/status_chip.dart';
 import '../../l10n/locale_provider.dart';
 import '../../network/api_client.dart';
 import '../auth/auth_provider.dart';
 import '../auth/permission_helpers.dart';
+import 'local_addresses.dart';
 
 /// Scope required by the backend for the whole `/api/v1/devices` admin API.
 const String deviceManageScope = 'device_manage';
@@ -34,10 +40,30 @@ class _DevicesScreenState extends ConsumerState<DevicesScreen> {
   String? _code;
   bool _codeBusy = false;
 
+  /// This machine's LAN addresses — the "type this on the till" card
+  /// (§ PART 12). Empty until resolved, and empty forever if the OS
+  /// hands back nothing usable (the localized notice covers that).
+  List<String> _serverUrls = const [];
+
   @override
   void initState() {
     super.initState();
     _load();
+    _loadServerUrls();
+  }
+
+  Future<void> _loadServerUrls() async {
+    final urls = await storeServerUrls();
+    if (!mounted) return;
+    setState(() => _serverUrls = urls);
+  }
+
+  Future<void> _copyAddress(String url) async {
+    await Clipboard.setData(ClipboardData(text: url));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(AppStrings.t('lan_address_copied', _loc()))),
+    );
   }
 
   String _t(String key) =>
@@ -186,71 +212,152 @@ class _DevicesScreenState extends ConsumerState<DevicesScreen> {
 
     return RefreshIndicator(
       onRefresh: _load,
-      child: ListView(
+      // Not a sliver ListView: the roster is a handful of cards and every
+      // row should exist up front — a lazy list leaves the last device
+      // unbuilt below the fold on a short window.
+      child: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
-        children: [
-          Text(
-            AppStrings.t('lan_devices_title', loc),
-            key: const Key('devices-title'),
-            style: Theme.of(context).textTheme.headlineSmall,
-          ),
-          const SizedBox(height: 16),
-          _buildCodeCard(loc),
-          const SizedBox(height: 24),
-          _sectionHeader(AppStrings.t('lan_pending_devices', loc)),
-          if (_error != null)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: Text(
-                _error!,
-                key: const Key('devices-error'),
-                style: TextStyle(color: Theme.of(context).colorScheme.error),
-              ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            PageTitle(
+              title: AppStrings.t('lan_devices_title', loc),
+              titleKey: const Key('devices-title'),
             ),
-          if (_loading)
-            const Padding(
-              padding: EdgeInsets.all(24),
-              child: Center(child: CircularProgressIndicator()),
-            )
-          else if (pending.isEmpty)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 12),
-              child: Text(
-                AppStrings.t('lan_no_pending', loc),
-                key: const Key('no-pending'),
-                style: Theme.of(context).textTheme.bodyMedium,
+            const SizedBox(height: 16),
+            _buildCodeCard(loc),
+            const SizedBox(height: 16),
+            // PART 12: the Main PC's own address, so a worker can pair even
+            // when broadcast discovery never reaches their till.
+            _buildAddressCard(loc),
+            const SizedBox(height: 24),
+            SectionHeader(
+              title: AppStrings.t('lan_pending_devices', loc),
+              titleKey: 'lan_pending_devices',
+              icon: Icons.hourglass_top,
+            ),
+            if (_error != null)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Text(
+                  _error!,
+                  key: const Key('devices-error'),
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
               ),
-            )
-          else
-            for (final device in pending) _pendingTile(device, loc),
-          const SizedBox(height: 24),
-          _sectionHeader(AppStrings.t('lan_registered_devices', loc)),
-          if (registered.isEmpty)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 12),
-              child: Text(
-                AppStrings.t('lan_no_registered', loc),
-                style: Theme.of(context).textTheme.bodyMedium,
-              ),
-            )
-          else
-            for (final device in registered) _registeredTile(device, loc),
-          const SizedBox(height: 32),
-          OutlinedButton.icon(
-            key: const Key('devices-refresh'),
-            onPressed: _load,
-            icon: const Icon(Icons.refresh),
-            label: Text(AppStrings.t('refresh', loc)),
-          ),
-        ],
+            if (_loading)
+              const Padding(
+                padding: EdgeInsets.all(24),
+                child: Center(child: CircularProgressIndicator()),
+              )
+            else if (pending.isEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                child: Text(
+                  AppStrings.t('lan_no_pending', loc),
+                  key: const Key('no-pending'),
+                  style: Theme.of(context).textTheme.bodyMedium,
+                ),
+              )
+            else
+              for (final device in pending) _pendingTile(device, loc),
+            const SizedBox(height: 24),
+            SectionHeader(
+              title: AppStrings.t('lan_registered_devices', loc),
+              titleKey: 'lan_registered_devices',
+              icon: Icons.devices_outlined,
+            ),
+            if (registered.isEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                child: Text(
+                  AppStrings.t('lan_no_registered', loc),
+                  style: Theme.of(context).textTheme.bodyMedium,
+                ),
+              )
+            else
+              for (final device in registered) _registeredTile(device, loc),
+            const SizedBox(height: 32),
+            OutlinedButton.icon(
+              key: const Key('devices-refresh'),
+              onPressed: _load,
+              icon: const Icon(Icons.refresh),
+              label: Text(AppStrings.t('refresh', loc)),
+            ),
+          ],
+        ),
       ),
     );
   }
 
-  Widget _sectionHeader(String text) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Text(text, style: Theme.of(context).textTheme.titleMedium),
+  /// "This is the store server" card: every LAN address of this machine,
+  /// one tap from the clipboard. The addresses are pinned LTR (they are
+  /// numbers, not prose) and never re-flow under Arabic.
+  Widget _buildAddressCard(String loc) {
+    final theme = Theme.of(context);
+    return Card(
+      key: const Key('store-address-card'),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.lan_outlined, size: 18, color: theme.colorScheme.primary),
+                const SizedBox(width: 8),
+                Text(
+                  AppStrings.t('lan_store_address', loc),
+                  key: const Key('store-address-title'),
+                  style: theme.textTheme.titleMedium,
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              AppStrings.t('lan_store_address_hint', loc),
+              style: theme.textTheme.bodySmall,
+            ),
+            const SizedBox(height: 10),
+            if (_serverUrls.isEmpty)
+              Text(
+                AppStrings.t('lan_no_address', loc),
+                key: const Key('store-address-empty'),
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.error,
+                ),
+              )
+            else
+              for (var i = 0; i < _serverUrls.length; i++)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          _serverUrls[i],
+                          key: Key('store-address-$i'),
+                          textDirection: TextDirection.ltr,
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            fontWeight: FontWeight.w600,
+                            fontFeatures: const [FontFeature.tabularFigures()],
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        key: Key('copy-address-$i'),
+                        tooltip: AppStrings.t('lan_copy_address', loc),
+                        visualDensity: VisualDensity.compact,
+                        iconSize: 18,
+                        onPressed: () => _copyAddress(_serverUrls[i]),
+                        icon: const Icon(Icons.copy_outlined),
+                      ),
+                    ],
+                  ),
+                ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -332,30 +439,41 @@ class _DevicesScreenState extends ConsumerState<DevicesScreen> {
 
   Widget _registeredTile(Map<String, dynamic> device, String loc) {
     final status = (device['status'] as String?) ?? 'pending';
-    final (color, key) = switch (status) {
-      'approved' => (Colors.green, 'lan_status_approved'),
-      'rejected' => (Colors.red, 'lan_status_rejected'),
-      'revoked' => (Colors.red, 'lan_status_revoked'),
-      _ => (Colors.amber, 'lan_status_pending'),
+    final (color, tone, labelKey) = switch (status) {
+      'approved' => (
+          AppColors.success,
+          StatusTone.success,
+          'lan_status_approved',
+        ),
+      'rejected' => (AppColors.error, StatusTone.error, 'lan_status_rejected'),
+      'revoked' => (AppColors.error, StatusTone.error, 'lan_status_revoked'),
+      _ => (AppColors.warning, StatusTone.warning, 'lan_status_pending'),
     };
     return Card(
       key: Key('device-${device['device_id']}'),
       child: ListTile(
-        leading: Icon(Icons.circle, color: color, size: 14),
+        leading: StatusDot(color: color),
         title: Text('${device['display_name'] ?? ''}'),
         subtitle: Text(_subtitle(device, loc)),
         isThreeLine: true,
-        trailing: status == 'approved'
-            ? IconButton(
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (status == 'approved')
+              IconButton(
                 key: Key('revoke-${device['device_id']}'),
                 tooltip: AppStrings.t('lan_revoke', loc),
-                icon: const Icon(Icons.block, color: Colors.red),
+                icon: const Icon(Icons.block, color: AppColors.error),
                 onPressed: () => _revokeWithConfirm(device),
-              )
-            : Text(
-                AppStrings.t(key, loc),
-                style: TextStyle(color: color),
               ),
+            StatusChip(
+              label: AppStrings.t(labelKey, loc),
+              tone: tone,
+              dense: true,
+              testKey: Key('device-status-${device['device_id']}'),
+            ),
+          ],
+        ),
       ),
     );
   }

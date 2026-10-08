@@ -111,6 +111,26 @@ class AppTheme {
         fontFeatures: const [FontFeature.tabularFigures()],
       );
 
+  /// The section kicker above a nav group: small, bold, tracked out, and
+  /// never a sentence — it names a block, it does not talk. Sits on the
+  /// documented 12px floor like every other rung.
+  static TextStyle navGroupLabel(ThemeData theme) =>
+      (theme.textTheme.labelSmall ?? const TextStyle()).copyWith(
+        fontSize: 12,
+        fontWeight: FontWeight.w700,
+        height: 1.2,
+        letterSpacing: 0.8,
+      );
+
+  /// One nav destination label. w500 at rest so a rail of sixteen items
+  /// reads as one calm list; the selected tile promotes itself to w700 at
+  /// the call site instead of inventing another rung.
+  static TextStyle navItemLabel(ThemeData theme) =>
+      (theme.textTheme.bodyMedium ?? const TextStyle()).copyWith(
+        fontWeight: FontWeight.w500,
+        height: 1.2,
+      );
+
   static ThemeData dark() => _build(
         brightness: Brightness.dark,
         background: AppColors.darkBackground,
@@ -205,15 +225,65 @@ class AppTheme {
         backgroundColor: surface,
         foregroundColor: textPrimary,
         elevation: 0,
-        centerTitle: true,
+        scrolledUnderElevation: 0,
+        centerTitle: false,
         titleTextStyle: textTheme.titleLarge,
+        // A hairline under the bar instead of a shadow: the header reads
+        // as part of the window chrome, and the rail below it aligns to
+        // the same rule.
+        shape: Border(
+          bottom: BorderSide(color: border, width: 1),
+        ),
       ),
       cardTheme: CardThemeData(
         color: card,
-        elevation: 2,
-        shadowColor: Colors.black.withValues(alpha: isLight ? 0.10 : 0.45),
+        elevation: 0,
         surfaceTintColor: Colors.transparent,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        // Bordered, not floating: cards butt against each other in lists,
+        // and a stack of drop shadows reads as noise at 1366×768.
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(10),
+          side: BorderSide(color: border),
+        ),
+      ),
+      dialogTheme: DialogThemeData(
+        backgroundColor: card,
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(color: border),
+        ),
+        titleTextStyle: textTheme.titleLarge,
+        contentTextStyle: textTheme.bodyMedium,
+      ),
+      snackBarTheme: SnackBarThemeData(
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: colorScheme.inverseSurface,
+        contentTextStyle: textTheme.bodyMedium
+            ?.copyWith(color: colorScheme.onInverseSurface),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      ),
+      listTileTheme: ListTileThemeData(
+        iconColor: textSecondary,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+      ),
+      popupMenuTheme: PopupMenuThemeData(
+        color: card,
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: BorderSide(color: border),
+        ),
+        textStyle: textTheme.bodyMedium,
+      ),
+      tooltipTheme: TooltipThemeData(
+        decoration: BoxDecoration(
+          color: textPrimary,
+          borderRadius: BorderRadius.circular(6),
+        ),
+        textStyle: textTheme.labelSmall?.copyWith(color: background),
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
@@ -248,6 +318,49 @@ class AppTheme {
           textStyle: textTheme.labelLarge,
           side: BorderSide(color: border),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        ),
+      ),
+      filledButtonTheme: FilledButtonThemeData(
+        style: FilledButton.styleFrom(
+          backgroundColor: accent,
+          foregroundColor: Colors.white,
+          textStyle: textTheme.labelLarge,
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        ),
+      ),
+      textButtonTheme: TextButtonThemeData(
+        style: TextButton.styleFrom(
+          foregroundColor: accent,
+          textStyle: textTheme.labelLarge,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        ),
+      ),
+      // Toggles: one checked-state language for every checkbox, radio and
+      // switch in the app (forms, filters, the row switches on Promotions).
+      checkboxTheme: CheckboxThemeData(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+        side: BorderSide(color: border),
+        fillColor: WidgetStateProperty.resolveWith(
+          (states) => states.contains(WidgetState.selected)
+              ? accent
+              : Colors.transparent,
+        ),
+      ),
+      radioTheme: RadioThemeData(
+        fillColor: WidgetStateProperty.resolveWith(
+          (states) => states.contains(WidgetState.selected)
+              ? accent
+              : textSecondary,
+        ),
+      ),
+      switchTheme: SwitchThemeData(
+        trackOutlineColor: WidgetStatePropertyAll(border),
+        thumbColor: WidgetStatePropertyAll(Colors.white),
+        trackColor: WidgetStateProperty.resolveWith(
+          (states) => states.contains(WidgetState.selected)
+              ? accent
+              : border,
         ),
       ),
       // `DataTable` (every report table) picks its header/body typography

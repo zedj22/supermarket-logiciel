@@ -43,12 +43,17 @@ class TestPermissionScope:
         assert PermissionScope.AUDIT_VIEW.value == "audit_view"
 
     def test_member_count(self):
-        assert len(PermissionScope) == 30
+        assert len(PermissionScope) == 33  # 30 + Phase 18 promotion scopes
 
     def test_expense_scopes_exist(self):
         assert PermissionScope.EXPENSE_VIEW.value == "expense_view"
         assert PermissionScope.EXPENSE_CREATE.value == "expense_create"
         assert PermissionScope.EXPENSE_CANCEL.value == "expense_cancel"
+
+    def test_promotion_scopes_exist(self):
+        assert PermissionScope.PROMOTION_VIEW.value == "promotion_view"
+        assert PermissionScope.PROMOTION_CREATE.value == "promotion_create"
+        assert PermissionScope.PROMOTION_UPDATE.value == "promotion_update"
 
 
 class TestProductUnit:
