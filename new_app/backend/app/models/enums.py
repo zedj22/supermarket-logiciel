@@ -238,3 +238,37 @@ class AuditAction(str, enum.Enum):
     DEVICE_APPROVE = "device_approve"
     DEVICE_REJECT = "device_reject"
     DEVICE_REVOKE = "device_revoke"
+
+
+# ── Facturation (Phase 2 — invoices) ───────────────────────────────────
+
+
+class InvoiceDocType(str, enum.Enum):
+    """Facturation document types.
+
+    Mirrors ``app.domain.facturation.DOC_TYPES`` (Phase 1 remains the
+    validation authority).  Values are UPPERCASE on purpose — the
+    factura_simple contract is ``FAC`` / ``DEV`` / ``PRO`` / ``BC`` / ``BL``
+    and the document number embeds them (``FAC-2026-0001``), so the usual
+    lowercase-enum convention does not apply here.
+    """
+
+    FAC = "FAC"
+    DEV = "DEV"
+    PRO = "PRO"
+    BC = "BC"
+    BL = "BL"
+
+
+class InvoicePaymentMethod(str, enum.Enum):
+    """Facturation payment methods.
+
+    Mirrors ``app.domain.facturation.PAYMENT_METHODS`` (cash / transfer /
+    cheque).  DISTINCT from the POS :class:`PaymentMethod` enum (cash /
+    card / credit / partial) — the two vocabularies serve different
+    document domains and must never be merged.
+    """
+
+    CASH = "cash"
+    TRANSFER = "transfer"
+    CHEQUE = "cheque"

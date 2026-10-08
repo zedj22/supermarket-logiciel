@@ -14,6 +14,8 @@ from app.models.enums import (  # noqa: F401
     AuditAction,
     DeviceStatus,
     ExpenseCategory,
+    InvoiceDocType,
+    InvoicePaymentMethod,
     PaymentMethod,
     PermissionScope,
     PurchaseStatus,
@@ -85,6 +87,14 @@ from app.models.device import Device  # noqa: F401
 # Store/application settings (Phase 17)
 from app.models.settings import AppSetting  # noqa: F401
 
+# Facturation (Phase 2): invoice document domain — isolated from POS/Sales
+from app.models.facturation import (  # noqa: F401
+    InvoiceClient,
+    InvoiceDocument,
+    InvoiceDocumentCounter,
+    InvoiceDocumentLine,
+)
+
 # Base (re-export for convenience)
 from app.db.base import Base, BaseModel, DocumentModel, MasterModel  # noqa: F401
 
@@ -93,6 +103,8 @@ __all__ = [
     "AuditAction",
     "DeviceStatus",
     "ExpenseCategory",
+    "InvoiceDocType",
+    "InvoicePaymentMethod",
     "PaymentMethod",
     "PermissionScope",
     "ProductUnit",
@@ -147,6 +159,11 @@ __all__ = [
     "AuditLog",
     # Store/application settings (Phase 17)
     "AppSetting",
+    # Facturation (Phase 2)
+    "InvoiceClient",
+    "InvoiceDocument",
+    "InvoiceDocumentLine",
+    "InvoiceDocumentCounter",
     # Base
     "Base",
     "BaseModel",
