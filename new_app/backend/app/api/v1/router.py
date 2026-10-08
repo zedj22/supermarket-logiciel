@@ -25,6 +25,7 @@ from app.api.v1.debts import router as debts_router
 from app.api.v1.devices import router as devices_router
 from app.api.v1.expenses import router as expenses_router
 from app.api.v1.exports import router as exports_router
+from app.api.v1.factures import router as factures_router
 from app.api.v1.health import router as health_router
 from app.api.v1.inventory import router as inventory_router
 from app.api.v1.packs import router as packs_router
@@ -41,9 +42,7 @@ from app.api.v1.system import router as system_router
 from app.api.v1.users import router as users_router
 from app.core.rate_limit import api_rate_guard
 
-api_router = APIRouter(
-    dependencies=[Depends(api_rate_guard), Depends(device_guard)]
-)
+api_router = APIRouter(dependencies=[Depends(api_rate_guard), Depends(device_guard)])
 
 api_router.include_router(health_router, tags=["health"])
 api_router.include_router(system_router, tags=["system"])
@@ -56,9 +55,8 @@ api_router.include_router(categories_router, prefix="/categories", tags=["catego
 api_router.include_router(customers_router, prefix="/customers", tags=["customers"])
 api_router.include_router(suppliers_router, prefix="/suppliers", tags=["suppliers"])
 api_router.include_router(debts_router, prefix="/debts", tags=["debts"])
-api_router.include_router(
-    expenses_router, prefix="/expenses", tags=["expenses"]
-)
+api_router.include_router(factures_router, prefix="/factures", tags=["factures"])
+api_router.include_router(expenses_router, prefix="/expenses", tags=["expenses"])
 api_router.include_router(inventory_router, prefix="/inventory", tags=["inventory"])
 api_router.include_router(sales_router, prefix="/sales", tags=["sales"])
 api_router.include_router(purchases_router, prefix="/purchases", tags=["purchases"])
