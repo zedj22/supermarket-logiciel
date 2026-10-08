@@ -42,12 +42,31 @@ Transactions and audit follow CustomerService: the service owns the
 transaction (``BaseService.transaction``) and every mutation appends one
 ``audit_logs`` row in the same transaction (entity_type
 ``invoice_client``).
+
+Product integration (Phase 4)
+-----------------------------
+``InvoiceProductService`` resolves existing Supermarket Pro products for
+invoice-line prefill — ``products`` stays the SINGLE product catalog (no
+``invoice_products`` table ever exists). ``get_product_for_invoice``
+reuses the existing ``ProductService`` read (structured 404) and returns
+a frozen ``InvoiceLinePrefill(product_id, description, unit_price_ht,
+tva_rate)`` built purely from ``products.price`` (the initial HT unit
+price) and ``products.vat_rate`` (authoritative Phase 17 metadata, the
+strict {0, 9, 19} set Phase 1 also supports). Promotion / wholesale /
+selling-unit / pack / variant / inventory pricing is NEVER consulted,
+the product row is never mutated, and stock is never touched. The
+archived-product gate mirrors ``SaleService._get_product``: archived
+products cannot be selected for NEW invoice lines, while historical
+lines never re-resolve the product and stay valid regardless of the
+product's current state.
 """
 
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Any
 
 import structlog
@@ -55,11 +74,14 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import BusinessRuleError, ValidationError
+from app.domain.unit_conversions import to_decimal
 from app.models.audit import AuditLog
+from app.models.catalog import Product
 from app.models.enums import AuditAction
 from app.models.facturation import InvoiceClient, InvoiceDocument
 from app.repositories.facturation import InvoiceClientRepository
 from app.services.base import BaseService
+from app.services.catalog import ProductService
 
 logger = structlog.get_logger(__name__)
 
@@ -358,3 +380,75 @@ class InvoiceClientService(BaseService):
                 details=details,
             )
         )
+
+
+@dataclass(frozen=True)
+class InvoiceLinePrefill:
+    """Product snapshot for prefilling one invoice line (Phase 4).
+
+    Exactly the authoritative fields the future document workflow copies
+    into ``invoice_document_lines``: ``product_id`` (traceability only),
+    ``description`` (product-name snapshot), ``unit_price_ht`` (the
+    ``products.price`` snapshot) and ``tva_rate`` (the
+    ``products.vat_rate`` snapshot). Nothing else — wholesale /
+    promotion / selling-unit prices, stock and catalog metadata are
+    deliberately absent so no caller can leak them into a facturation
+    line.
+    """
+
+    product_id: uuid.UUID
+    description: str
+    unit_price_ht: Decimal
+    tva_rate: Decimal
+
+
+def product_line_prefill(product: Product) -> InvoiceLinePrefill:
+    """Pure Product → invoice-line prefill conversion.
+
+    Deterministic and DB-free: the HT unit price is ALWAYS
+    ``products.price`` and the TVA rate is ALWAYS the product's
+    authoritative ``vat_rate`` metadata. No promotion, wholesale or
+    selling-unit domain is consulted, and the product is never mutated.
+    """
+    return InvoiceLinePrefill(
+        product_id=product.id,
+        description=product.name,
+        unit_price_ht=to_decimal(product.price),
+        tva_rate=to_decimal(product.vat_rate),
+    )
+
+
+class InvoiceProductService(BaseService):
+    """Resolves existing Supermarket Pro products for invoice use (V1).
+
+    Product selection is PRODUCT-ROW based: one lookup reuses the
+    existing ``ProductService.get`` read (structured 404 via
+    ``BaseRepository.get_by_id_or_none``) and applies the established
+    archived-product gate (SaleService / pack / purchase parity). There
+    is no second product repository or catalog — ``products`` is the
+    single source of truth, and this service never reads promotion
+    state, wholesale fields, selling units, packs, variants or
+    inventory, never mutates the product, and never touches stock.
+    """
+
+    def __init__(self, db: Session):
+        super().__init__(db)
+        self.products = ProductService(db)
+
+    def get_product_for_invoice(self, product_id: uuid.UUID) -> InvoiceLinePrefill:
+        """Load a product and return the invoice-line prefill snapshot.
+
+        Raises structured 404 for an unknown id (the existing
+        ProductService read) and 422 ``BUSINESS_RULE_ERROR`` for an
+        archived product — the established rule for NEW transactions
+        (SaleService: "Archived product cannot be sold"). Historical
+        lines never re-resolve the product, so archiving or deleting a
+        product never invalidates a stored snapshot.
+        """
+        product = self.products.get(product_id)
+        if product.archived_at is not None:
+            raise BusinessRuleError(
+                message="Archived product cannot be used for new invoice lines",
+                details={"product_id": str(product.id)},
+            )
+        return product_line_prefill(product)
