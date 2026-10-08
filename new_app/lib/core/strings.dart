@@ -1081,6 +1081,18 @@ class AppStrings {
   'label_columns': 'الأعمدة',
   'label_rows': 'الصفوف',
   'labels_auto': 'تلقائي',
+  'label_paper_type': 'نوع الورق',
+  'label_paper_a4': 'ملصقات A4',
+  'label_paper_roll': 'ملصقات رول',
+  'label_roll_settings': 'إعدادات الرول',
+  'label_roll_width': 'عرض الرول (مم)',
+  'label_margin_left': 'الهامش الأيسر (مم)',
+  'label_margin_right': 'الهامش الأيمن (مم)',
+  'label_margin_top': 'الهامش العلوي (مم)',
+  'label_roll_fit': 'أبعاد الرول غير صالحة',
+  'label_preset_small': 'صغير',
+  'label_preset_medium': 'متوسط',
+  'label_preset_large': 'كبير',
   };
 
   static const Map<String, String> _french = {
@@ -2139,6 +2151,18 @@ class AppStrings {
   'label_columns': 'Colonnes',
   'label_rows': 'Lignes',
   'labels_auto': 'Auto',
+  'label_paper_type': 'Type de papier',
+  'label_paper_a4': 'Étiquettes A4',
+  'label_paper_roll': 'Étiquettes rouleau',
+  'label_roll_settings': 'Réglages du rouleau',
+  'label_roll_width': 'Largeur du rouleau (mm)',
+  'label_margin_left': 'Marge gauche (mm)',
+  'label_margin_right': 'Marge droite (mm)',
+  'label_margin_top': 'Marge haute (mm)',
+  'label_roll_fit': 'Dimensions du rouleau invalides',
+  'label_preset_small': 'Petit',
+  'label_preset_medium': 'Moyen',
+  'label_preset_large': 'Grand',
   };
 
   static const Map<String, String> _english = {
@@ -3190,5 +3214,17 @@ class AppStrings {
   'label_columns': 'Columns',
   'label_rows': 'Rows',
   'labels_auto': 'Auto',
+  'label_paper_type': 'Paper type',
+  'label_paper_a4': 'A4 Labels',
+  'label_paper_roll': 'Roll Labels',
+  'label_roll_settings': 'Roll settings',
+  'label_roll_width': 'Roll width (mm)',
+  'label_margin_left': 'Left margin (mm)',
+  'label_margin_right': 'Right margin (mm)',
+  'label_margin_top': 'Top margin (mm)',
+  'label_roll_fit': 'Invalid roll dimensions',
+  'label_preset_small': 'Small',
+  'label_preset_medium': 'Medium',
+  'label_preset_large': 'Large',
   };
 }

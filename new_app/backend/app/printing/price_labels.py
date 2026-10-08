@@ -1,11 +1,13 @@
 """Product price / barcode label rendering (barcode-label subphase).
 
-A physical grid of adhesive labels on an A4 sheet (or an 80 mm roll
-segment): store identity, product name, the EFFECTIVE price (promotion
-price when an active promotion applies, retail otherwise — resolved by
-the caller) and the product's own Code128 barcode printed VERBATIM with
-its human-readable value underneath. A product without a barcode simply
-gets no barcode block — a barcode is never invented.
+A physical grid of adhesive labels on an A4 sheet, an 80 mm roll
+segment or an adhesive roll (`paper="roll"`: one label across the
+media, stacked top-down with the configured gap, the document exactly
+as tall as the job): store identity, product name, the EFFECTIVE price
+(promotion price when an active promotion applies, retail otherwise —
+resolved by the caller) and the product's own Code128 barcode printed
+VERBATIM with its human-readable value underneath. A product without a
+barcode simply gets no barcode block — a barcode is never invented.
 
 Retail hierarchy per label (top -> bottom): tiny store line, product
 name (max 2 lines, ellipsized), price block, barcode. A promotional
@@ -196,9 +198,14 @@ def _fit(extent: float, margin: float, size: float, gap: float) -> int:
     return max(1, int((usable + gap) // (size + gap)))
 
 
-def compute_sheet(layout, paper: str) -> LabelSheet:  # noqa: ANN001 - LabelLayout
+def compute_sheet(layout, paper: str, label_count: int = 1) -> LabelSheet:  # noqa: ANN001 - LabelLayout
     """Resolve auto cols/rows against the chosen paper (schema already
-    validated every explicit value, so the auto-fit is always >= 1)."""
+    validated every explicit value, so the auto-fit is always >= 1).
+
+    `label_count` is only consulted for the adhesive roll paper: the
+    roll document is exactly one label across and as tall as the job
+    (labels + gaps + top margin), with no fixed page boundaries.
+    """
     label_w = layout.label_width_mm * mm
     label_h = layout.label_height_mm * mm
     gap_x = layout.gap_x_mm * mm
@@ -209,6 +216,29 @@ def compute_sheet(layout, paper: str) -> LabelSheet:  # noqa: ANN001 - LabelLayo
     if paper == "A4":
         page_w = A4_WIDTH_MM * mm
         page_h = A4_HEIGHT_MM * mm
+    elif paper == "roll":
+        # Adhesive roll labels: ONE label across the media, stacked
+        # top-down with the configured vertical gap. The page IS the
+        # roll content — width = media width, height = top margin +
+        # every label + every gap (schema validated margins + label
+        # fit the width). columns/rows never apply here.
+        rows = max(1, label_count)
+        return LabelSheet(
+            page_width=layout.roll_width_mm * mm,
+            page_height=(
+                layout.margin_top_mm * mm
+                + rows * label_h
+                + max(0, rows - 1) * gap_y
+            ),
+            cols=1,
+            rows=rows,
+            label_w=label_w,
+            label_h=label_h,
+            gap_x=gap_x,
+            gap_y=gap_y,
+            margin_x=layout.margin_left_mm * mm,
+            margin_y=layout.margin_top_mm * mm,
+        )
     else:
         # 80 mm roll: width is the media, height is either pinned by the
         # requested row count (page breaks every `rows`) or defaults to
@@ -558,9 +588,14 @@ def render_price_labels(
     *,
     compress: bool = True,
 ) -> bytes:
-    """Render one PDF with `labels` laid out on the computed grid."""
+    """Render one PDF with `labels` laid out on the computed grid.
+
+    For `paper="roll"` the grid is a single vertical column and the
+    page is exactly the roll content (one physical label per entry,
+    gaps between — no A4 pagination).
+    """
     register_fonts()
-    sheet = compute_sheet(layout, paper)
+    sheet = compute_sheet(layout, paper, label_count=len(labels))
     rtl = is_rtl(locale)
     buffer = io.BytesIO()
     c = canvas.Canvas(

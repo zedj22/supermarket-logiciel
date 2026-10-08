@@ -823,4 +823,260 @@ void main() {
       expect(tester.takeException(), isNull);
     });
   });
+
+  group('Roll label mode', () {
+    Future<void> openDialog(WidgetTester tester, MockDio dio) async {
+      _stub(dio);
+      await _pumpApp(tester, dio);
+      await _enterLabelMode(tester);
+      await tester.ensureVisible(
+        find.byKey(const Key('product-label-check-$_p1')),
+      );
+      await tester.tap(find.byKey(const Key('product-label-check-$_p1')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('products-print-action')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('label-print-dialog')), findsOneWidget);
+    }
+
+    Future<void> selectPaper(WidgetTester tester, String valueLabel) async {
+      await tester.tap(find.byKey(const Key('label-paper-type')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(valueLabel));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('paper type switch shows/hides roll fields '
+        '(A4 -> Roll -> A4)', (tester) async {
+      final dio = MockDio();
+      await openDialog(tester, dio);
+
+      // A4 default: grid fields, no roll geometry.
+      expect(find.byKey(const Key('label-field-width')), findsOneWidget);
+      expect(find.byKey(const Key('label-field-columns')), findsOneWidget);
+      expect(find.byKey(const Key('label-field-gap-x')), findsOneWidget);
+      expect(find.byKey(const Key('label-field-roll-width')), findsNothing);
+      expect(find.byKey(const Key('label-field-margin-left')), findsNothing);
+      expect(find.byKey(const Key('label-roll-presets')), findsNothing);
+
+      await selectPaper(tester, AppStrings.t('label_paper_roll', 'ar'));
+
+      // Roll: media + margins + presets, grid-only fields hidden.
+      expect(find.byKey(const Key('label-field-roll-width')), findsOneWidget);
+      expect(find.byKey(const Key('label-field-margin-left')), findsOneWidget);
+      expect(find.byKey(const Key('label-field-margin-right')), findsOneWidget);
+      expect(find.byKey(const Key('label-field-margin-top')), findsOneWidget);
+      expect(find.byKey(const Key('label-roll-presets')), findsOneWidget);
+      expect(find.byKey(const Key('label-field-columns')), findsNothing);
+      expect(find.byKey(const Key('label-field-gap-x')), findsNothing);
+      expect(find.byKey(const Key('label-field-margin-x')), findsNothing);
+      // Shared fields survive the switch (same defaults).
+      expect(find.byKey(const Key('label-field-width')), findsOneWidget);
+      expect(find.byKey(const Key('label-field-gap-y')), findsOneWidget);
+
+      await selectPaper(tester, AppStrings.t('label_paper_a4', 'ar'));
+
+      expect(find.byKey(const Key('label-field-columns')), findsOneWidget);
+      expect(find.byKey(const Key('label-field-roll-width')), findsNothing);
+      expect(find.byKey(const Key('label-roll-presets')), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('roll payload carries the mode + media geometry; '
+        'preview and print use paper=roll; quantities kept',
+        (tester) async {
+      final dio = MockDio();
+      late Map<String, dynamic> sent;
+      _stub(
+        dio,
+        labelsHandler: (path, data) {
+          sent = data;
+          return _bytes(path, <int>[37, 80, 68, 70], 'labels_2026.pdf');
+        },
+      );
+      final preview = _FakePdfPreview();
+      final printer = _FakePrintService();
+      await _pumpApp(tester, dio, preview: preview, printer: printer);
+      await _enterLabelMode(tester);
+      await tester.ensureVisible(
+        find.byKey(const Key('product-label-check-$_p1')),
+      );
+      await tester.tap(find.byKey(const Key('product-label-check-$_p1')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('products-print-action')));
+      await tester.pumpAndSettle();
+
+      // 3 labels for the selected product.
+      await tester.tap(find.byKey(const Key('label-qty-inc-$_p1')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('label-qty-inc-$_p1')));
+      await tester.pumpAndSettle();
+      await selectPaper(tester, AppStrings.t('label_paper_roll', 'ar'));
+
+      // Total still tracks the per-product quantities.
+      expect(
+        tester
+            .widget<Text>(find.byKey(const Key('label-total-count')))
+            .data,
+        contains(': 3'),
+      );
+
+      await tester.tap(find.byKey(const Key('label-dialog-print')));
+      await tester.pumpAndSettle();
+
+      expect(sent['paper'], 'roll');
+      expect(sent['locale'], 'ar');
+      final items = (sent['items'] as List).cast<Map<String, dynamic>>();
+      expect(items.single['quantity'], 3);
+      expect(items.single.containsKey('price'), isFalse);
+      final layout = sent['layout'] as Map<String, dynamic>;
+      expect(layout['roll_width_mm'], 58.0);
+      expect(layout['label_width_mm'], 50.0);
+      expect(layout['label_height_mm'], 30.0);
+      expect(layout['gap_y_mm'], 2.0);
+      expect(layout['margin_left_mm'], 0.0);
+      expect(layout['margin_right_mm'], 0.0);
+      expect(layout['margin_top_mm'], 0.0);
+      // Grid-only fields never ride along in roll mode.
+      expect(layout.containsKey('gap_x_mm'), isFalse);
+      expect(layout.containsKey('margin_x_mm'), isFalse);
+      expect(layout.containsKey('margin_y_mm'), isFalse);
+      expect(layout.containsKey('columns'), isFalse);
+      expect(layout.containsKey('rows'), isFalse);
+
+      // Preview rasterizes the fetched bytes for `roll`; the receipt
+      // paper toggle is hidden (roll is the only paper for this job).
+      expect(preview.papers, ['roll']);
+      expect(find.byKey(const Key('print-preview-dialog')), findsOneWidget);
+      expect(find.byKey(const Key('print-paper-toggle')), findsNothing);
+      expect(find.textContaining('labels_2026.pdf'), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('print-preview-confirm')));
+      await tester.pumpAndSettle();
+
+      expect(printer.printedPdfs, hasLength(1));
+      expect(printer.printedPapers, ['roll']);
+      expect(printer.printedPdfs.single, preview.received.single);
+      // Pop(true) -> selection mode cleared (same as A4 flow).
+      expect(find.byKey(const Key('label-print-dialog')), findsNothing);
+      expect(find.byKey(const Key('products-label-count')), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('impossible roll geometry -> inline label_roll_fit, '
+        'no POST', (tester) async {
+      final dio = MockDio();
+      await openDialog(tester, dio);
+      await selectPaper(tester, AppStrings.t('label_paper_roll', 'ar'));
+
+      // 60 mm label on a 58 mm media with 0 margins cannot fit.
+      await tester.enterText(
+        find.byKey(const Key('label-field-width')),
+        '60',
+      );
+      await tester.tap(find.byKey(const Key('label-dialog-print')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('label-print-error')), findsOneWidget);
+      expect(
+        find.text(AppStrings.t('label_roll_fit', 'ar')),
+        findsOneWidget,
+      );
+      verifyNever(
+        () => dio.post<Uint8List>(
+          any(),
+          data: any(named: 'data'),
+          options: any(named: 'options'),
+        ),
+      );
+      expect(find.byKey(const Key('label-print-dialog')), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('non-numeric roll field -> inline validation_error, '
+        'no POST', (tester) async {
+      final dio = MockDio();
+      await openDialog(tester, dio);
+      await selectPaper(tester, AppStrings.t('label_paper_roll', 'ar'));
+
+      await tester.enterText(
+        find.byKey(const Key('label-field-roll-width')),
+        'abc',
+      );
+      await tester.tap(find.byKey(const Key('label-dialog-print')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('label-print-error')), findsOneWidget);
+      expect(
+        find.text(AppStrings.t('validation_error', 'ar')),
+        findsOneWidget,
+      );
+      verifyNever(
+        () => dio.post<Uint8List>(
+          any(),
+          data: any(named: 'data'),
+          options: any(named: 'options'),
+        ),
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('preset sets the label size and keeps the media valid',
+        (tester) async {
+      final dio = MockDio();
+      late Map<String, dynamic> sent;
+      _stub(
+        dio,
+        labelsHandler: (path, data) {
+          sent = data;
+          return _bytes(path, <int>[37, 80, 68, 70], 'labels_2026.pdf');
+        },
+      );
+      await _pumpApp(tester, dio);
+      await _enterLabelMode(tester);
+      await tester.ensureVisible(
+        find.byKey(const Key('product-label-check-$_p1')),
+      );
+      await tester.tap(find.byKey(const Key('product-label-check-$_p1')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('products-print-action')));
+      await tester.pumpAndSettle();
+      await selectPaper(tester, AppStrings.t('label_paper_roll', 'ar'));
+
+      // Large = 60x40: the stock 58 mm media is too narrow -> widened.
+      await tester.tap(find.byKey(const Key('label-preset-large')));
+      await tester.pumpAndSettle();
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const Key('label-field-width')))
+            .controller!
+            .text,
+        '60',
+      );
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const Key('label-field-height')))
+            .controller!
+            .text,
+        '40',
+      );
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const Key('label-field-roll-width')))
+            .controller!
+            .text,
+        '60',
+      );
+
+      await tester.tap(find.byKey(const Key('label-dialog-print')));
+      await tester.pumpAndSettle();
+
+      final layout = sent['layout'] as Map<String, dynamic>;
+      expect(layout['label_width_mm'], 60.0);
+      expect(layout['label_height_mm'], 40.0);
+      expect(layout['roll_width_mm'], 60.0);
+      expect(sent['paper'], 'roll');
+      expect(tester.takeException(), isNull);
+    });
+  });
 }

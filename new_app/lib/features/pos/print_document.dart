@@ -25,7 +25,7 @@ class PrintDocument {
   final Uint8List bytes;
   final String filename;
 
-  /// `80mm` | `A4` — the paper the bytes were rendered for.
+  /// `80mm` | `A4` | `roll` — the paper the bytes were rendered for.
   final String paper;
 }
 

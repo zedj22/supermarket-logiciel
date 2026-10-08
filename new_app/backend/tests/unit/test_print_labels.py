@@ -24,6 +24,12 @@ Covers:
     identical copies draw identical text, the percent badge prints
     the DECLARED promotion value (percentage only, shaped in RTL)
     and a fixed-price promotion prints prices without a badge.
+9.  Roll labels (`paper="roll"`) — exact content geometry (media
+    width + labels + gaps, mathematically verified), single-column
+    stacking with the configured gap, ordered multi-copy runs,
+    margins honored, schema rejects impossible media geometry (422),
+    A4 ignores roll fields (back-compat), and the roll path touches
+    no inventory / no sales (same DB-free contract as A4).
 """
 
 from __future__ import annotations
@@ -33,6 +39,7 @@ import re
 import sys
 import time
 import uuid
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -45,9 +52,17 @@ from app.db.base import Base
 from app.db.session import get_db
 from app.main import app
 from app.models.audit import AuditLog
+from app.models.inventory import InventoryMovement
+from app.models.sale import Sale
 from app.printing.fonts import FONT_BOLD, register_fonts
-from app.printing.price_labels import _measure, _wrap
+from app.printing.price_labels import (
+    PriceLabel,
+    _measure,
+    _wrap,
+    render_price_labels,
+)
 from app.printing.text import shape_text
+from app.schemas.export import LabelLayout
 from app.services.auth import AuthService
 
 # ── Fixtures (same harness as test_print_export.py) ──────────────────────
@@ -703,3 +718,279 @@ def test_labels_1000_render_within_budget(client, admin_headers):
     assert resp.status_code == 200, resp.text
     assert _page_count(resp.content) == 38  # ceil(1000 / 27)
     assert elapsed < 10.0, f"1000 labels took {elapsed:.2f}s"
+
+# -- Roll labels (adhesive media, paper="roll") --------------------------
+
+_MM = 2.8346456693  # mm -> pt
+
+
+def _roll_layout(**overrides) -> dict:
+    """Stock roll geometry: 58 mm media, 50x30 label, 2 mm gap, flush."""
+    layout = {"roll_width_mm": 58.0, "label_width_mm": 50.0, "label_height_mm": 30.0, "gap_y_mm": 2.0}
+    layout.update(overrides)
+    return layout
+
+
+def _tm_pairs(pdf: bytes) -> list[tuple[float, float]]:
+    """All text positions (x, y) from the (uncompressed) content stream."""
+    return [
+        (float(x), float(y))
+        for x, y in re.findall(rb"([\d.-]+) ([\d.-]+) Tm", pdf)
+    ]
+
+
+def _price_row(name: str, barcode: str, *, promo: bool = False) -> PriceLabel:
+    return PriceLabel(
+        name=name,
+        barcode=barcode,
+        retail=Decimal("200.000"),
+        price=Decimal("160.000" if promo else "200.000"),
+        promo=promo,
+        unit="piece",
+        store_name="Roll Store",
+        discount_percent="20" if promo else None,
+    )
+
+
+def test_labels_roll_renders_exact_content_geometry(client, admin_headers):
+    product = _product(client, admin_headers, name="Roll Product", barcode="ROLL001")
+    resp = _labels(
+        client,
+        admin_headers,
+        [{"product_id": product["id"], "quantity": 3}],
+        paper="roll",
+        locale="en",
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.content[:5] == b"%PDF-"
+    assert b"/FontFile2" in resp.content
+    width, height = _media_box(resp.content)
+    assert width == pytest.approx(58 * _MM, abs=0.01)  # media width
+    # 3*30 label + 2*2 gap + 0 top margin = 94 mm (spec example)
+    assert height == pytest.approx(94 * _MM, abs=0.01)
+    assert _page_count(resp.content) == 1  # one continuous strip
+
+
+def test_labels_roll_stacks_labels_with_exact_vertical_gap():
+    row = _price_row("Gap Probe", "GAP1", promo=True)
+    layout = LabelLayout(**_roll_layout(margin_left_mm=4.0))
+    pdf = render_price_labels([row] * 3, layout, "roll", "en", compress=False)
+
+    pairs = _tm_pairs(pdf)
+    assert len(pairs) >= 3 and len(pairs) % 3 == 0, pairs
+    group = len(pairs) // 3
+    step = (30.0 + 2.0) * _MM  # label height + gap, in pt
+    first, second, third = pairs[:group], pairs[group : 2 * group], pairs[2 * group :]
+    for (x1, y1), (x2, y2), (x3, y3) in zip(first, second, third):
+        assert x1 == pytest.approx(x2) == pytest.approx(x3)  # same column
+        assert y1 - y2 == pytest.approx(step, abs=0.01)  # label + gap
+        assert y1 - y3 == pytest.approx(2 * step, abs=0.01)
+
+
+def test_labels_roll_margins_keep_text_inside_media():
+    row = _price_row("Margin Probe", "MRG1")
+    layout = LabelLayout(
+        **_roll_layout(margin_top_mm=5.0, margin_left_mm=4.0, margin_right_mm=4.0)
+    )
+    pdf = render_price_labels([row] * 2, layout, "roll", "en", compress=False)
+    width, height = _media_box(pdf)
+    assert width == pytest.approx(58 * _MM, abs=0.01)
+    assert height == pytest.approx(67 * _MM, abs=0.01)  # 5 top + 2*30 + 1*2
+
+    left_pt = 4.0 * _MM
+    top_limit = height - 5.0 * _MM  # text never enters the top margin
+    for x, y in _tm_pairs(pdf):
+        assert left_pt <= x <= width  # never left of the left margin
+        assert 0.0 <= y <= top_limit  # inside the strip, below the top margin
+
+
+def test_labels_roll_multiple_copies_stack_in_order(client, admin_headers):
+    a = _product(client, admin_headers, name="Roll Alpha", barcode="RAL001")
+    b = _product(client, admin_headers, name="Roll Beta", barcode="RBE001")
+    resp = _labels(
+        client,
+        admin_headers,
+        [
+            {"product_id": a["id"], "quantity": 3},
+            {"product_id": b["id"], "quantity": 5},
+        ],
+        paper="roll",
+        locale="en",
+    )
+    assert resp.status_code == 200, resp.text
+    width, height = _media_box(resp.content)
+    assert width == pytest.approx(58 * _MM, abs=0.01)
+    # 8 labels + 7 gaps = 8*30 + 7*2 = 254 mm
+    assert height == pytest.approx(254 * _MM, abs=0.01)
+    assert _page_count(resp.content) == 1
+    text = _text(resp.content)
+    assert text.count("Roll Alpha") == 3  # A A A B B B B B, in order
+    assert text.count("Roll Beta") == 5
+    assert text.index("Roll Alpha") < text.index("Roll Beta")  # first block
+
+
+def test_labels_roll_ignores_columns_and_rows(client, admin_headers):
+    product = _product(client, admin_headers, name="Single Column", barcode="SC001")
+    resp = _labels(
+        client,
+        admin_headers,
+        [{"product_id": product["id"], "quantity": 2}],
+        paper="roll",
+        layout={"columns": 2, "rows": 5},
+        locale="en",
+    )
+    assert resp.status_code == 200, resp.text
+    width, height = _media_box(resp.content)
+    assert width == pytest.approx(58 * _MM, abs=0.01)  # always one across
+    assert height == pytest.approx(62 * _MM, abs=0.01)  # derived: 2*30+2
+    assert _page_count(resp.content) == 1  # rows never paginate a roll
+
+
+def test_labels_roll_promotion_matches_a4_presentation(client, admin_headers):
+    product = _product(client, admin_headers, name="Cola", barcode="COC500")
+    _promo(client, admin_headers, product["id"])
+    resp = _labels(
+        client,
+        admin_headers,
+        [{"product_id": product["id"]}],
+        paper="roll",
+        locale="en",
+    )
+    assert resp.status_code == 200, resp.text
+    text = _text(resp.content)
+    assert "Cola" in text
+    assert "80.00 DA" in text  # server effective promo price
+    assert "100.00 DA" in text  # untouched retail struck through
+    assert "20% OFF" in text  # declared percent badge
+
+
+def test_labels_roll_arabic_product_is_drawn_shaped(client, admin_headers):
+    name = "عصير التفاح الطازج"
+    product = _product(client, admin_headers, name=name, barcode="ARROLL")
+    resp = _labels(
+        client, admin_headers, [{"product_id": product["id"]}], paper="roll", locale="ar"
+    )
+    assert resp.status_code == 200, resp.text
+    blocks = _blocks(resp.content)
+    shaped = shape_text(name)
+    assert any(shaped == b or shaped in b for b in blocks), blocks
+
+
+def test_labels_roll_long_name_ellipsized_keeps_barcode(client, admin_headers):
+    name = (
+        "Premium Organic Wholegrain Breakfast Cereal With Raisins Honey "
+        "Almonds And Dark Chocolate 500g Resealable Family Pack"
+    )
+    product = _product(client, admin_headers, name=name, barcode="1234567890128")
+    resp = _labels(
+        client,
+        admin_headers,
+        [{"product_id": product["id"]}],
+        paper="roll",
+        layout=_roll_layout(),
+        locale="en",
+    )
+    assert resp.status_code == 200, resp.text
+    text = _text(resp.content)
+    assert "…" in text
+    assert name not in text
+    assert "1234567890128" in text  # verbatim Code128 + digits
+    assert "100.00 DA" in text
+
+
+def test_labels_roll_barcode_verbatim_and_human_readable(client, admin_headers):
+    product = _product(
+        client, admin_headers, name="Barcode Roll", barcode="4006381333931"
+    )
+    resp = _labels(
+        client, admin_headers, [{"product_id": product["id"]}], paper="roll", locale="en"
+    )
+    assert resp.status_code == 200, resp.text
+    assert "4006381333931" in _text(resp.content)  # digits line under the bars
+
+
+def test_labels_roll_touches_no_inventory_or_sales(client, admin_headers, db):
+    product = _product(client, admin_headers, name="ReadOnly Roll", barcode="RO500")
+    qty_before = client.get(
+        f"/api/v1/products/{product['id']}", headers=admin_headers
+    ).json()["quantity"]
+    moves_before = len(db.execute(select(InventoryMovement)).scalars().all())
+    sales_before = len(db.execute(select(Sale)).scalars().all())
+
+    resp = _labels(
+        client,
+        admin_headers,
+        [{"product_id": product["id"], "quantity": 4}],
+        paper="roll",
+        locale="en",
+    )
+    assert resp.status_code == 200, resp.text
+    db.expire_all()
+    qty_after = client.get(
+        f"/api/v1/products/{product['id']}", headers=admin_headers
+    ).json()["quantity"]
+    assert qty_after == qty_before  # printing never decrements stock
+    assert len(db.execute(select(InventoryMovement)).scalars().all()) == moves_before
+    assert len(db.execute(select(Sale)).scalars().all()) == sales_before
+
+
+def test_labels_a4_ignores_roll_fields(client, admin_headers):
+    """Back-compat: roll-only fields never perturb the A4 sheet."""
+    product = _product(client, admin_headers, name="A4 Rollback", barcode="A4R001")
+    resp = _labels(
+        client,
+        admin_headers,
+        [{"product_id": product["id"]}],
+        paper="A4",
+        layout={"roll_width_mm": 30.0, "margin_left_mm": 40.0, "margin_top_mm": 40.0},
+        locale="en",
+    )
+    assert resp.status_code == 200, resp.text
+    width, height = _media_box(resp.content)
+    assert width == pytest.approx(210 * _MM, abs=0.01)
+    assert height == pytest.approx(297 * _MM, abs=0.01)
+
+
+@pytest.mark.parametrize(
+    "layout",
+    [
+        {"roll_width_mm": 5.0},  # media below the minimum
+        {"roll_width_mm": 200.0},  # media above the maximum
+        {"label_width_mm": 20.0},  # label below the minimum
+        {"label_width_mm": 120.0},  # label above the maximum
+        {"label_height_mm": 15.0},  # label shorter than the minimum
+        {"label_height_mm": 150.0},  # label taller than the maximum
+        {"gap_y_mm": -1.0},  # negative gap
+        {"gap_y_mm": 25.0},  # gap above the maximum
+        {"margin_left_mm": 60.0},  # margin above the maximum
+        {"margin_right_mm": -0.5},  # negative margin
+        {"margin_top_mm": 60.0},  # margin above the maximum
+        # cross-check: 5 + 50 + 4 = 59 mm > 58 mm media
+        {"margin_left_mm": 5.0, "label_width_mm": 50.0, "margin_right_mm": 4.0},
+    ],
+    ids=[
+        "roll_width_too_small",
+        "roll_width_too_large",
+        "label_width_too_small",
+        "label_width_too_large",
+        "label_height_too_small",
+        "label_height_too_large",
+        "gap_negative",
+        "gap_too_large",
+        "left_margin_too_large",
+        "right_margin_negative",
+        "top_margin_too_large",
+        "margins_plus_label_exceed_media",
+    ],
+)
+def test_labels_roll_invalid_geometry_422(client, admin_headers, db, layout):
+    before = len(_audit_rows(db, "print"))
+    body = {
+        "items": [{"product_id": str(uuid.uuid4())}],
+        "paper": "roll",
+        "layout": layout,
+    }
+    resp = client.post("/api/v1/print/labels", json=body, headers=admin_headers)
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["error"]["code"] == "VALIDATION_ERROR"
+    assert len(_audit_rows(db, "print")) == before  # rejected pre-service

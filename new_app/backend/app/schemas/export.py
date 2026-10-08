@@ -39,6 +39,12 @@ ROLL_WIDTH_MM = 80.0
 # Default roll segment length when rows are not pinned (≈ one A4 sheet).
 ROLL_DEFAULT_HEIGHT_MM = 297.0
 
+# Adhesive roll-label media bounds (paper="roll") — from ~1" up to a
+# wide 6" desktop label roll. Cross-checks (margins + label <= media
+# width) run in `LabelPrintRequest` below.
+ROLL_MEDIA_MIN_MM = 20.0
+ROLL_MEDIA_MAX_MM = 150.0
+
 
 class ExportRequest(StrictBaseModel):
     """POST /api/v1/exports — render one report as XLSX or PDF."""
@@ -81,12 +87,19 @@ class LabelItem(StrictBaseModel):
 
 
 class LabelLayout(StrictBaseModel):
-    """Physical label sheet geometry (mm) — all optional, sane defaults.
+    """Physical label geometry (mm) — all optional, sane defaults.
 
     ``columns`` / ``rows`` of ``None`` mean "auto-fit": the renderer
     computes how many labels fit on the chosen paper. An explicit value
     that does not fit the paper is rejected here (422) — never silently
     clipped.
+
+    Roll-label mode (``paper="roll"``) reuses ``label_width_mm`` /
+    ``label_height_mm`` / ``gap_y_mm`` for the label itself and the four
+    roll-only fields below for the media. The adhesive roll is ALWAYS one
+    label across (``columns`` / ``rows`` are ignored there — the renderer
+    stacks every label vertically and derives the document height from
+    the job). A4 and 80 mm papers ignore the roll-only fields entirely.
     """
 
     label_width_mm: float = Field(default=50.0, ge=30.0, le=100.0)
@@ -97,6 +110,15 @@ class LabelLayout(StrictBaseModel):
     margin_y_mm: float = Field(default=5.0, ge=0.0, le=50.0)
     columns: int | None = Field(default=None, ge=1, le=30)
     rows: int | None = Field(default=None, ge=1, le=100)
+    # Roll-label media (paper="roll" only) — width of the liner web and
+    # the left / right / top margins inside it. Defaults are the stock
+    # 58 mm media with the label flush to the top-left corner.
+    roll_width_mm: float = Field(
+        default=58.0, ge=ROLL_MEDIA_MIN_MM, le=ROLL_MEDIA_MAX_MM
+    )
+    margin_left_mm: float = Field(default=0.0, ge=0.0, le=50.0)
+    margin_right_mm: float = Field(default=0.0, ge=0.0, le=50.0)
+    margin_top_mm: float = Field(default=0.0, ge=0.0, le=50.0)
 
 
 class LabelPrintRequest(StrictBaseModel):
@@ -107,11 +129,19 @@ class LabelPrintRequest(StrictBaseModel):
     client never sends prices. Barcodes are printed verbatim from
     ``products.barcode``; a product without a barcode still gets a price
     label (no barcode block), never an invented one.
+
+    ``paper="roll"`` selects the adhesive roll-label mode: geometry is
+    checked against the configured media width (margins + label width)
+    instead of a fixed page, and the renderer derives the document
+    height from the label count.
     """
 
     items: list[LabelItem] = Field(..., min_length=1, max_length=LABEL_MAX_ITEMS)
     layout: LabelLayout = Field(default_factory=LabelLayout)
-    paper: Literal["80mm", "A4"] = "A4"
+    # ``roll`` = adhesive roll labels (vertical single-column stack, §
+    # roll). Existing literals are untouched — old clients keep their
+    # exact A4 / 80 mm behavior.
+    paper: Literal["80mm", "A4", "roll"] = "A4"
     locale: ExportLocale = "ar"
     device_id: str | None = Field(default=None, max_length=100)
 
@@ -128,6 +158,22 @@ class LabelPrintRequest(StrictBaseModel):
             )
 
         layout = self.layout
+        if self.paper == "roll":
+            # Adhesive roll: the label sits between the left and right
+            # margins on the media web (always exactly one label across,
+            # so the vertical extent is derived by the renderer from the
+            # label count — nothing fixed-height to fit here).
+            used = (
+                layout.margin_left_mm
+                + layout.label_width_mm
+                + layout.margin_right_mm
+            )
+            if used > layout.roll_width_mm + 1e-9:
+                raise ValueError(
+                    "margins + label_width_mm do not fit the roll width"
+                )
+            return self
+
         paper_w = A4_WIDTH_MM if self.paper == "A4" else ROLL_WIDTH_MM
         paper_h = A4_HEIGHT_MM if self.paper == "A4" else None
 

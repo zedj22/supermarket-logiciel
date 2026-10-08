@@ -78,6 +78,7 @@ Future<PrintPreviewResult?> showPrintPreviewDialog(
   String? documentId,
   PrintDocumentFetcher? fetcher,
   String initialPaper = '80mm',
+  List<String>? papers,
   String? deviceId,
 }) {
   assert(
@@ -91,6 +92,7 @@ Future<PrintPreviewResult?> showPrintPreviewDialog(
       documentId: documentId,
       fetcher: fetcher,
       initialPaper: initialPaper,
+      papers: papers,
       deviceId: deviceId,
     ),
   );
@@ -103,6 +105,7 @@ class PrintPreviewDialog extends ConsumerStatefulWidget {
     this.documentId,
     this.fetcher,
     this.initialPaper = '80mm',
+    this.papers,
     this.deviceId,
   }) : assert(
          fetcher != null || (documentType != null && documentId != null),
@@ -113,6 +116,12 @@ class PrintPreviewDialog extends ConsumerStatefulWidget {
   final String? documentId;
   final PrintDocumentFetcher? fetcher;
   final String initialPaper;
+
+  /// Paper codes the toggle offers — defaults to the receipt papers.
+  /// Label printing narrows this to the paper chosen in the label
+  /// dialog (a roll job previews as `roll`, never as a receipt paper);
+  /// a single-entry list hides the toggle entirely.
+  final List<String>? papers;
   final String? deviceId;
 
   @override
@@ -121,6 +130,7 @@ class PrintPreviewDialog extends ConsumerStatefulWidget {
 
 class _PrintPreviewDialogState extends ConsumerState<PrintPreviewDialog> {
   String _paper = '80mm';
+  late final List<String> _papers;
   PrintDocument? _doc;
   bool _loading = true;
   String? _error;
@@ -130,11 +140,24 @@ class _PrintPreviewDialogState extends ConsumerState<PrintPreviewDialog> {
   @override
   void initState() {
     super.initState();
+    _papers = List.unmodifiable(widget.papers ?? const ['80mm', 'A4']);
+    assert(_papers.contains(widget.initialPaper));
     _paper = widget.initialPaper;
     Future.microtask(() => _fetch(_paper));
   }
 
   String get _loc => ref.read(localeProvider).flutterLocale.languageCode;
+
+  static String _paperLabel(String paper, String loc) {
+    switch (paper) {
+      case '80mm':
+        return AppStrings.t('paper_80mm', loc);
+      case 'A4':
+        return AppStrings.t('paper_a4', loc);
+      default: // 'roll' — adhesive roll labels
+        return AppStrings.t('label_paper_roll', loc);
+    }
+  }
 
   Future<void> _fetch(String paper) async {
     final requestId = ++_requestId;
@@ -238,25 +261,23 @@ class _PrintPreviewDialogState extends ConsumerState<PrintPreviewDialog> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            SegmentedButton<String>(
-              key: const Key('print-paper-toggle'),
-              segments: <ButtonSegment<String>>[
-                ButtonSegment<String>(
-                  value: '80mm',
-                  label: Text(AppStrings.t('paper_80mm', loc)),
-                ),
-                ButtonSegment<String>(
-                  value: 'A4',
-                  label: Text(AppStrings.t('paper_a4', loc)),
-                ),
-              ],
-              selected: <String>{_paper},
-              showSelectedIcon: false,
-              onSelectionChanged: (selection) {
-                final next = selection.first;
-                if (next != _paper) _fetch(next);
-              },
-            ),
+            if (_papers.length > 1)
+              SegmentedButton<String>(
+                key: const Key('print-paper-toggle'),
+                segments: <ButtonSegment<String>>[
+                  for (final paper in _papers)
+                    ButtonSegment<String>(
+                      value: paper,
+                      label: Text(_paperLabel(paper, loc)),
+                    ),
+                ],
+                selected: <String>{_paper},
+                showSelectedIcon: false,
+                onSelectionChanged: (selection) {
+                  final next = selection.first;
+                  if (next != _paper) _fetch(next);
+                },
+              ),
             const SizedBox(height: 8),
             Expanded(
               child: _loading

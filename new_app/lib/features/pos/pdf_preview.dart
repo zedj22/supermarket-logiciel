@@ -12,7 +12,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:pdf/pdf.dart';
 import 'package:printing/printing.dart';
 
-/// Page format for a `paper` code (`80mm` | `A4`).
+/// Page format for a `paper` code (`80mm` | `A4` | `roll`).
+///
+/// Purely an initial viewport hint — the rasterized pages come from the
+/// actual PDF bytes, so a `roll` document previews at its true media
+/// size (the narrow roll80 hint is the closest built-in format).
 PdfPageFormat pdfPageFormatFor(String paper) =>
     paper == 'A4' ? PdfPageFormat.a4 : PdfPageFormat.roll80;
 
