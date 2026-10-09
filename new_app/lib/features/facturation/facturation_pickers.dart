@@ -10,10 +10,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/strings.dart';
-import '../../network/api_client.dart';
 import '../auth/auth_provider.dart';
+import '../facturation/facturation_error.dart';
 import '../facturation/facturation_models.dart';
 import '../facturation/facturation_providers.dart' show kInvoiceClientsPath;
+import '../invoice_clients/invoice_clients_error.dart';
 import '../products/models.dart';
 
 const Duration kFacturationPickerDebounce = Duration(milliseconds: 300);
@@ -44,6 +45,7 @@ class _InvoiceClientPickerState extends ConsumerState<InvoiceClientPicker> {
   List<InvoiceClientModel> _items = const [];
   bool _loading = false;
   String? _error;
+  String? _errorDetail;
 
   @override
   void initState() {
@@ -68,6 +70,7 @@ class _InvoiceClientPickerState extends ConsumerState<InvoiceClientPicker> {
     setState(() {
       _loading = true;
       _error = null;
+      _errorDetail = null;
     });
     final dio = ref.read(apiClientProvider).dio;
     try {
@@ -91,11 +94,11 @@ class _InvoiceClientPickerState extends ConsumerState<InvoiceClientPicker> {
       });
     } on DioException catch (e) {
       if (requestId != _requestId || !mounted) return;
+      final mapped = invoiceClientsApiError(e, _loc);
       setState(() {
         _loading = false;
-        _error = isConnectionError(e)
-            ? AppStrings.t('network_error_retry', _loc)
-            : (backendErrorMessage(e) ?? AppStrings.t('api_error_retry', _loc));
+        _error = mapped.message;
+        _errorDetail = mapped.detail;
       });
     }
   }
@@ -133,10 +136,24 @@ class _InvoiceClientPickerState extends ConsumerState<InvoiceClientPicker> {
               child: _loading
                   ? const Center(child: CircularProgressIndicator())
                   : _error != null
-                      ? Text(
-                          _error!,
-                          key: const Key('invoice-client-picker-error'),
-                          style: TextStyle(color: theme.colorScheme.error),
+                      ? Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Text(
+                              _error!,
+                              key: const Key('invoice-client-picker-error'),
+                              style: TextStyle(color: theme.colorScheme.error),
+                            ),
+                            if (_errorDetail != null &&
+                                _errorDetail!.isNotEmpty)
+                              Text(
+                                _errorDetail!,
+                                key: const Key(
+                                  'invoice-client-picker-error-detail',
+                                ),
+                                style: theme.textTheme.bodySmall,
+                              ),
+                          ],
                         )
                       : _items.isEmpty
                           ? Text(
@@ -211,6 +228,7 @@ class _FacturationProductPickerState
   List<ProductModel> _items = const [];
   bool _loading = false;
   String? _error;
+  String? _errorDetail;
 
   @override
   void initState() {
@@ -235,6 +253,7 @@ class _FacturationProductPickerState
     setState(() {
       _loading = true;
       _error = null;
+      _errorDetail = null;
     });
     final dio = ref.read(apiClientProvider).dio;
     try {
@@ -256,11 +275,11 @@ class _FacturationProductPickerState
       });
     } on DioException catch (e) {
       if (requestId != _requestId || !mounted) return;
+      final mapped = facturationApiError(e, _loc);
       setState(() {
         _loading = false;
-        _error = isConnectionError(e)
-            ? AppStrings.t('network_error_retry', _loc)
-            : (backendErrorMessage(e) ?? AppStrings.t('api_error_retry', _loc));
+        _error = mapped.message;
+        _errorDetail = mapped.detail;
       });
     }
   }
@@ -298,10 +317,24 @@ class _FacturationProductPickerState
               child: _loading
                   ? const Center(child: CircularProgressIndicator())
                   : _error != null
-                      ? Text(
-                          _error!,
-                          key: const Key('facturation-product-picker-error'),
-                          style: TextStyle(color: theme.colorScheme.error),
+                      ? Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Text(
+                              _error!,
+                              key: const Key('facturation-product-picker-error'),
+                              style: TextStyle(color: theme.colorScheme.error),
+                            ),
+                            if (_errorDetail != null &&
+                                _errorDetail!.isNotEmpty)
+                              Text(
+                                _errorDetail!,
+                                key: const Key(
+                                  'facturation-product-picker-error-detail',
+                                ),
+                                style: theme.textTheme.bodySmall,
+                              ),
+                          ],
                         )
                       : _items.isEmpty
                           ? Text(
