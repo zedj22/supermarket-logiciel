@@ -14,6 +14,13 @@ Owns the store/application settings contract:
 ``store_name`` defaults to ``settings.STORE_NAME`` (the ``.env`` value) so a
 fresh install keeps behaving exactly as it does today — Phase 15 renders
 that name on receipts until an owner saves a different one here.
+
+One settings system, no duplication (Phase 6): the company/fiscal identity
+Facturation needs for document rendering lives in this SAME row
+(``store_wilaya`` / ``store_email`` / ``store_nif`` / ``store_nis`` /
+``store_rc`` / ``store_ai`` / ``store_rib``); the facturation domain only
+READS it through ``app.services.facturation.get_facturation_company_settings``
+and never writes, so persistence and audit stay exactly here.
 """
 
 from __future__ import annotations
@@ -107,6 +114,16 @@ class SettingsService(BaseService):
             "store_phone": "",
             "store_address": "",
             "invoice_footer": "",
+            # Phase 6 — company/fiscal identity (factura_simple Company):
+            # every field defaults to '' exactly like the source, so a fresh
+            # install renders no fiscal line until an owner fills it in.
+            "store_wilaya": "",
+            "store_email": "",
+            "store_nif": "",
+            "store_nis": "",
+            "store_rc": "",
+            "store_ai": "",
+            "store_rib": "",
             "default_paper": DEFAULT_PAPER,
             "ask_before_print": False,
             "auto_print_invoice": False,

@@ -10,6 +10,12 @@
 Language and theme are intentionally absent: they are user/session
 preferences owned by the Flutter client (``app_locale`` /
 ``app_theme_mode``), not the server.
+
+Phase 6 (facturation company/fiscal identity) deliberately adds NO new
+endpoint and NO new permission: ``store_wilaya`` / ``store_email`` /
+``store_nif`` / ``store_nis`` / ``store_rc`` / ``store_ai`` /
+``store_rib`` ride these same two routes with these same auth rules
+(read = any authenticated user, write = ``settings_manage``).
 """
 
 from __future__ import annotations
@@ -39,6 +45,13 @@ def to_settings_response(row: AppSetting) -> SettingsResponse:
         store_phone=row.store_phone,
         store_address=row.store_address,
         invoice_footer=row.invoice_footer,
+        store_wilaya=row.store_wilaya,
+        store_email=row.store_email,
+        store_nif=row.store_nif,
+        store_nis=row.store_nis,
+        store_rc=row.store_rc,
+        store_ai=row.store_ai,
+        store_rib=row.store_rib,
         default_paper=row.default_paper,
         ask_before_print=row.ask_before_print,
         auto_print_invoice=row.auto_print_invoice,

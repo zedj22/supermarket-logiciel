@@ -11,6 +11,14 @@ Ownership split (deliberate — one settings system, no duplication):
   ``low_stock_threshold``).  These are exactly the fields Phase 15 deferred
   (``PHASE_15_PRINTING_EXPORTS_ANALYSIS.md`` Q3/Q6) and the Phase 0
   blueprint's ``GET/PUT /api/v1/settings`` payload.
+* **Facturation shares this row** (Phase 6): the company/fiscal identity a
+  future invoice header renders (wilaya / email / NIF / NIS / RC / AI /
+  RIB) is added HERE instead of in a second ``CompanySettings`` /
+  ``FiscalSettings`` table.  ``store_name`` / ``store_address`` /
+  ``store_phone`` above ARE the legacy ``Company`` name/address/phone —
+  Facturation reads the same columns rather than duplicating them
+  (``app.services.facturation.get_facturation_company_settings`` is the
+  read abstraction; no other persistence exists).
 * **The client owns** user/session preferences — language and theme —
   which stay in Flutter SharedPreferences exactly as they are today
   (``app_locale`` / ``app_theme_mode``).  Mirroring them here would create a
@@ -72,6 +80,27 @@ class AppSetting(Base, TimestampMixin):
     invoice_footer: Mapped[str] = mapped_column(
         String(255), nullable=False, default=""
     )
+
+    # -- company / fiscal identity (Phase 6 facturation) ------------------
+    # factura_simple ``Company`` (singleton) fields the document header
+    # renders (docx_export.build_docx / pdf_invoice.dart): wilaya, e-mail
+    # and the fiscal/legal identifiers.  Name / address / phone are the
+    # store_* columns above — never repeated here.  All optional in the
+    # source (``str = ""``), so every default is '' and every value is
+    # free text: no Algerian NIF/RC regex is invented (the legacy project
+    # defines none, and ``invoice_clients`` stores its identifiers the
+    # same plain way).  Lengths mirror the closest existing columns
+    # (wilaya 100 / email 100 like suppliers.email / identifiers 30 like
+    # invoice_clients.nif).
+    store_wilaya: Mapped[str] = mapped_column(
+        String(100), nullable=False, default=""
+    )
+    store_email: Mapped[str] = mapped_column(String(100), nullable=False, default="")
+    store_nif: Mapped[str] = mapped_column(String(30), nullable=False, default="")
+    store_nis: Mapped[str] = mapped_column(String(30), nullable=False, default="")
+    store_rc: Mapped[str] = mapped_column(String(30), nullable=False, default="")
+    store_ai: Mapped[str] = mapped_column(String(30), nullable=False, default="")
+    store_rib: Mapped[str] = mapped_column(String(30), nullable=False, default="")
 
     # -- printing (Phase 15 deferral, §17.6) -------------------------------
     default_paper: Mapped[str] = mapped_column(

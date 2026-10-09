@@ -97,6 +97,23 @@ factura_simple parity re-verified against ``backend/main.py``:
   allocates nothing (``peek_next_number`` is a read-only proposal).
 - AUDIT: entity_type ``invoice_document``, AuditAction.CREATE/UPDATE,
   actor from the API layer, same transaction (no new enum values).
+
+Company / fiscal settings (Phase 6)
+------------------------------------
+``get_facturation_company_settings(db)`` is the ONE read path future
+rendering (PDF / DOCX / print) uses for the seller identity.  It is a
+thin, non-persisting view over the existing ``app_settings`` row — no
+``CompanySettings`` / ``FiscalSettings`` table and no second settings
+API exist: ``name`` / ``address`` / ``phone`` are literally the
+``store_name`` / ``store_address`` / ``store_phone`` columns the rest of
+Supermarket Pro already edits through ``GET/PUT /api/v1/settings``.
+
+Settings NEVER touch money: Phase 1 (``app.domain.facturation``) stays
+the sole owner of TVA membership {0, 9, 19}, ROUND_HALF_UP centime
+rounding, line/document totals, the Timbre Fiscal thresholds and the
+cash-only rule.  Nothing in this phase reads a setting inside a
+calculation, and Phase 5's ``calculate_document_result`` path is
+untouched.
 """
 
 from __future__ import annotations
@@ -145,6 +162,7 @@ from app.schemas.facturation import (
 )
 from app.services.base import BaseService
 from app.services.catalog import ProductService
+from app.services.settings import SettingsService
 
 logger = structlog.get_logger(__name__)
 
@@ -916,3 +934,61 @@ class InvoiceDocumentService(BaseService):
                 details=details,
             )
         )
+
+
+# =========================================================================
+# Phase 6 — company / fiscal identity (read-only settings abstraction)
+# =========================================================================
+
+
+@dataclass(frozen=True)
+class FacturationCompanySettings:
+    """Seller identity a facturation document header renders.
+
+    A READ VIEW over the existing ``app_settings`` singleton row, not a
+    second settings system: ``name`` / ``address`` / ``phone`` ARE the
+    ``store_name`` / ``store_address`` / ``store_phone`` columns every
+    other feature already edits, and the remaining fields are the Phase 6
+    company/fiscal columns (``store_wilaya`` / ``store_email`` /
+    ``store_nif`` / ``store_nis`` / ``store_rc`` / ``store_ai`` /
+    ``store_rib``).
+
+    Values come back exactly as stored (``""`` when unset) so a future
+    renderer can skip blank lines the way factura_simple does: ``_id_line``
+    hides non-existent ids and PDF export refuses with ``companyMissing``
+    when the company name is empty.
+    """
+
+    name: str
+    address: str
+    wilaya: str
+    phone: str
+    email: str
+    nif: str
+    nis: str
+    rc: str
+    ai: str
+    rib: str
+
+
+def get_facturation_company_settings(db: Session) -> FacturationCompanySettings:
+    """Current company/fiscal identity for document rendering (Phase 6).
+
+    Reads through :class:`SettingsService` — the single source of truth
+    for settings: nothing is written here, a fresh install returns the
+    documented defaults (``store_name`` from ``.env``), and the audited
+    write path stays exactly where it is (``PUT /api/v1/settings``).
+    """
+    row = SettingsService(db).get()
+    return FacturationCompanySettings(
+        name=row.store_name,
+        address=row.store_address,
+        wilaya=row.store_wilaya,
+        phone=row.store_phone,
+        email=row.store_email,
+        nif=row.store_nif,
+        nis=row.store_nis,
+        rc=row.store_rc,
+        ai=row.store_ai,
+        rib=row.store_rib,
+    )

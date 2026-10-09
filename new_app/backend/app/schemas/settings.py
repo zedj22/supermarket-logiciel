@@ -25,6 +25,16 @@ class SettingsResponse(StrictBaseModel):
     store_phone: str = Field(max_length=40)
     store_address: str = Field(max_length=255)
     invoice_footer: str = Field(max_length=255)
+    # Phase 6 — company/fiscal identity (factura_simple ``Company``): the
+    # document header source of truth. Name/address/phone are the three
+    # store_* fields above; these are the remaining legacy fields.
+    store_wilaya: str = Field(max_length=100)
+    store_email: str = Field(max_length=100)
+    store_nif: str = Field(max_length=30)
+    store_nis: str = Field(max_length=30)
+    store_rc: str = Field(max_length=30)
+    store_ai: str = Field(max_length=30)
+    store_rib: str = Field(max_length=30)
     default_paper: PaperSize
     ask_before_print: bool
     auto_print_invoice: bool
@@ -39,6 +49,17 @@ class SettingsUpdateRequest(StrictBaseModel):
     store_phone: str | None = Field(None, max_length=40)
     store_address: str | None = Field(None, max_length=255)
     invoice_footer: str | None = Field(None, max_length=255)
+    # Phase 6 fiscal/company identity: optional like every other text
+    # setting, blank allowed (``""`` clears it — the source stores "" too),
+    # only the column length is enforced. No NIF/RC format rules: neither
+    # factura_simple nor this project defines any.
+    store_wilaya: str | None = Field(None, max_length=100)
+    store_email: str | None = Field(None, max_length=100)
+    store_nif: str | None = Field(None, max_length=30)
+    store_nis: str | None = Field(None, max_length=30)
+    store_rc: str | None = Field(None, max_length=30)
+    store_ai: str | None = Field(None, max_length=30)
+    store_rib: str | None = Field(None, max_length=30)
     default_paper: PaperSize | None = None
     ask_before_print: bool | None = None
     auto_print_invoice: bool | None = None
