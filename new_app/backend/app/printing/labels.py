@@ -163,6 +163,37 @@ LABELS: dict[str, tuple[str, str, str]] = {
     "no_data": ("لا توجد بيانات", "Aucune donnée", "No data"),
     "page": ("صفحة", "Page", "Page"),
     "supplier": ("المورد", "Fournisseur", "Supplier"),
+    # ---- facturation documents (Phase 7 — factura_simple pdf_invoice) ----
+    # Doc titles: legacy `_titles` (French only) localized for SP; the code
+    # (FAC / DEV / PRO / BC / BL) is printed separately and never translated.
+    "doc_facture": ("فاتورة", "FACTURE", "INVOICE"),
+    "doc_devis": ("عرض السعر", "DEVIS", "QUOTE"),
+    "doc_proforma": ("فاتورة مؤقتة", "FACTURE PROFORMA", "PROFORMA INVOICE"),
+    "doc_bon_commande": ("أمر الشراء", "BON DE COMMANDE", "PURCHASE ORDER"),
+    "doc_bon_livraison": ("وصل التسليم", "BON DE LIVRAISON", "DELIVERY NOTE"),
+    # Fiscal identity lines (legacy `_id` labels — skipped when unset).
+    "fiscal_nif": ("رقم التعريف الجبائي", "NIF", "NIF"),
+    "fiscal_nis": ("رقم التعريف الإحصائي", "NIS", "NIS"),
+    "fiscal_rc": ("السجل التجاري", "RC", "RC"),
+    "fiscal_ai": ("التسجيل الجبائي", "AI", "AI"),
+    "fiscal_rib": ("الحساب البنكي", "RIB/CCP", "RIB/CCP"),
+    "fiscal_wilaya": ("الولاية", "Wilaya", "Wilaya"),
+    "fiscal_email": ("البريد الإلكتروني", "E-mail", "Email"),
+    "phone": ("الهاتف", "Tél", "Phone"),
+    # Item table + totals (legacy French headers).
+    "col_description": ("البيان", "Désignation", "Description"),
+    "col_unit_price_ht": ("السعر دون الرسم", "P.U. HT", "Unit price excl. tax"),
+    "col_remise_pct": ("الخصم %", "Remise %", "Discount %"),
+    "col_tva_rate": ("الرسم %", "TVA %", "VAT %"),
+    "col_ht": ("الجملة دون الرسم", "Total HT", "Total excl. tax"),
+    "col_ttc": ("الجملة بالرسم", "Total TTC", "Total incl. tax"),
+    "col_total_tva": ("مجموع الرسم", "Total TVA", "Total VAT"),
+    "col_timbre": ("حقوق الطابع", "Droit de timbre", "Stamp duty"),
+    "col_net_a_payer": ("الصافي المطلوب", "Net à payer", "Net payable"),
+    "signature": ("التوقيع", "Signature", "Signature"),
+    # Facturation payment methods (legacy `_payLabels`: cash/transfer/cheque).
+    "label_transfer": ("تحويل بنكي", "Virement", "Transfer"),
+    "label_cheque": ("شيك", "Chèque", "Cheque"),
     # ---- unit labels (client keys via `unitLabel`, strings.dart) ----
     # Printed as the price suffix on a label when unit != piece
     # (`100.00 DA / kg`).

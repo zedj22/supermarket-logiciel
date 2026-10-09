@@ -18,9 +18,10 @@ from reportlab.pdfgen import canvas
 from reportlab.platypus import BaseDocTemplate, Frame, PageTemplate, SimpleDocTemplate
 
 from app.printing.document_data import DocumentData
+from app.printing.facture_data import FactureData
 from app.printing.fonts import register_fonts
 from app.printing.labels import is_rtl, label
-from app.printing.templates import invoice_80mm, invoice_a4, report_table
+from app.printing.templates import facture_a4, invoice_80mm, invoice_a4, report_table
 from app.printing.templates.report_table import ReportTableInput
 from app.printing.text import shape_text
 
@@ -132,6 +133,41 @@ def render_invoice(data: DocumentData, paper: Paper, *, compress: bool = True) -
             page_label=label("page", locale),
             page_rtl=is_rtl(locale),
             footer_prefix=data.store.name,
+            **kwargs,
+        ),
+    )
+    return buffer.getvalue()
+
+
+def render_facture(data: FactureData, *, compress: bool = True) -> bytes:
+    """Render one facturation document (FAC/DEV/PRO/BC/BL) as A4 bytes.
+
+    Fiscal documents are A4-only (legacy ``pdf_invoice.dart`` and the
+    Algeria paper format) — there is deliberately no 80 mm path. The
+    ``compress`` flag is the same test profile ``render_invoice`` /
+    ``render_report_pdf`` expose: uncompressed streams let tests assert
+    the drawn text byte-for-byte.
+    """
+    register_fonts()
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        leftMargin=MARGIN_LR_A4,
+        rightMargin=MARGIN_LR_A4,
+        topMargin=MARGIN_TB_A4,
+        bottomMargin=MARGIN_TB_A4,
+        title=f"{data.number} - {data.company.name}",
+        author="Supermarket POS",
+    )
+    doc.pageCompression = 1 if compress else 0
+    doc.build(
+        facture_a4.build_flowables(data),
+        canvasmaker=lambda *args, **kwargs: NumberedCanvas(
+            *args,
+            page_label=label("page", data.locale),
+            page_rtl=data.rtl,
+            footer_prefix=data.company.name,
             **kwargs,
         ),
     )

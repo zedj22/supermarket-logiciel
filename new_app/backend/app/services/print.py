@@ -14,6 +14,13 @@ hands a list of ``PriceLabel`` rows to the DB-free renderer. Audit keeps
 its one-row-per-attempt contract for both paths; the label row uses
 ``entity_type="product_label"``.
 
+Facturation documents (Phase 7): ``render_facturation`` loads one
+FAC / DEV / PRO / BC / BL, builds the API's own detail payload
+(``build_document_response`` — the printed document can never disagree
+with ``GET /factures/{id}``), stamps the Phase 6 seller identity and
+hands it to the A4 facture renderer. Same audit contract, third row
+kind: ``entity_type="invoice_document"``.
+
 Audit (§12.2): exactly one ``print`` row per attempt with paper, locale,
 bytes, duration and the result/error code. The service returns bytes +
 filename; the endpoint owns the HTTP ``Response``.
@@ -46,12 +53,21 @@ from app.printing.document_data import (
     build_return_document,
     build_sale_document,
 )
+from app.printing.facture_data import (
+    CompanyIdentity,
+    build_facture_document,
+)
 from app.printing.price_labels import PriceLabel, render_price_labels
-from app.printing.render import render_invoice
+from app.printing.render import render_facture, render_invoice
 from app.schemas.export import LabelPrintRequest, PrintRequest
 from app.schemas.returns import ReturnResponse
 from app.schemas.sale import SaleResponse
 from app.services.base import BaseService
+from app.services.facturation import (
+    InvoiceDocumentService,
+    build_document_response,
+    get_facturation_company_settings,
+)
 from app.services.promotions import PromotionService
 from app.services.returns import ReturnService
 from app.services.sale import SaleService
@@ -451,6 +467,173 @@ class PrintService(BaseService):
             details=details,
         )
 
+    # ------------------------------------------------------------------
+    # Facturation documents (Phase 7)
+    # ------------------------------------------------------------------
+
+    def render_facturation(
+        self,
+        document_id: uuid.UUID,
+        *,
+        locale: str = "ar",
+        user_id: uuid.UUID | None,
+        ip_address: str | None = None,
+        device_id: str | None = None,
+    ) -> PrintResult:
+        """Render one FAC / DEV / PRO / BC / BL as A4 PDF bytes (Phase 7).
+
+        Same contract as ``render`` / ``render_labels``: build → guarded
+        render → filename → exactly ONE ``print`` audit row per attempt.
+
+        * Payload: ``build_document_response`` — the API's own detail
+          mapper, so the PDF can never disagree with
+          ``GET /factures/{id}`` (totals and the amount in words ride the
+          Phase 1 ``calculate_document_result`` path untouched).
+        * Seller identity: the Phase 6 read view
+          ``get_facturation_company_settings`` — no settings write and no
+          second settings source.
+        * Empty company name → ``COMPANY_MISSING`` (422) BEFORE any
+          render: a fiscal document without a seller name is not
+          printable (legacy ``companyMissing``). ``PUT /settings``
+          forbids a blank ``store_name`` (min_length 1), so only a direct
+          database edit can reach this branch.
+        """
+        started = time.perf_counter()
+        doc_type = ""
+        document_number = ""
+        try:
+            document = InvoiceDocumentService(self.db).get(document_id)
+            doc_type = document.doc_type
+            document_number = document.number
+            payload = build_document_response(document)
+            company_settings = get_facturation_company_settings(self.db)
+            if not company_settings.name.strip():
+                raise AppError(
+                    "Company name is empty — configure it in Settings",
+                    {"field": "store_name"},
+                    code="COMPANY_MISSING",
+                    status_code=422,
+                    message_key="company_missing",
+                )
+            data = build_facture_document(
+                payload,
+                CompanyIdentity(
+                    name=company_settings.name,
+                    address=company_settings.address,
+                    wilaya=company_settings.wilaya,
+                    phone=company_settings.phone,
+                    email=company_settings.email,
+                    nif=company_settings.nif,
+                    nis=company_settings.nis,
+                    rc=company_settings.rc,
+                    ai=company_settings.ai,
+                    rib=company_settings.rib,
+                ),
+                locale=locale,
+            )
+            pdf = self._guard_render(lambda: render_facture(data))
+            if not pdf:
+                raise AppError(
+                    "Print rendering produced no output",
+                    {"document_type": doc_type},
+                    code="PRINT_RENDER_FAILED",
+                    status_code=500,
+                    message_key="print_render_failed",
+                )
+            filename = _facture_filename(document_number)
+        except AppError as exc:
+            self._facture_audit(
+                document_id=document_id,
+                doc_type=doc_type,
+                document_number=document_number,
+                locale=locale,
+                user_id=user_id,
+                ip_address=ip_address,
+                device_id=device_id,
+                result="failure",
+                error_code=exc.code,
+                duration_ms=_ms(started),
+                size=0,
+                filename=None,
+            )
+            raise
+        except Exception:
+            self._facture_audit(
+                document_id=document_id,
+                doc_type=doc_type,
+                document_number=document_number,
+                locale=locale,
+                user_id=user_id,
+                ip_address=ip_address,
+                device_id=device_id,
+                result="failure",
+                error_code="INTERNAL_ERROR",
+                duration_ms=_ms(started),
+                size=0,
+                filename=None,
+            )
+            raise
+
+        duration_ms = _ms(started)
+        self._facture_audit(
+            document_id=document_id,
+            doc_type=doc_type,
+            document_number=document_number,
+            locale=locale,
+            user_id=user_id,
+            ip_address=ip_address,
+            device_id=device_id,
+            result="success",
+            error_code=None,
+            duration_ms=duration_ms,
+            size=len(pdf),
+            filename=filename,
+        )
+        return PrintResult(
+            filename=filename,
+            media_type="application/pdf",
+            data=pdf,
+            document_number=document_number,
+            duration_ms=duration_ms,
+        )
+
+    def _facture_audit(
+        self,
+        *,
+        document_id: uuid.UUID,
+        doc_type: str,
+        document_number: str,
+        locale: str,
+        user_id: uuid.UUID | None,
+        ip_address: str | None,
+        device_id: str | None,
+        result: str,
+        error_code: str | None,
+        duration_ms: int,
+        size: int,
+        filename: str | None,
+    ) -> None:
+        """One ``print`` row for a facturation attempt (paper is always A4)."""
+        details = {
+            "document_type": doc_type,
+            "document_number": document_number,
+            "paper": "A4",
+            "locale": locale,
+            "bytes": size,
+            "duration_ms": duration_ms,
+            "filename": filename,
+            "result": result,
+            "error_code": error_code,
+        }
+        self._write_audit(
+            user_id=user_id,
+            ip_address=ip_address,
+            device_id=device_id,
+            entity_type="invoice_document",
+            entity_id=document_id,
+            details=details,
+        )
+
     def _write_audit(
         self,
         *,
@@ -485,6 +668,12 @@ class PrintService(BaseService):
                 )
             else:
                 raise
+
+
+def _facture_filename(document_number: str) -> str:
+    """`facture_FAC-2026-000123_2026-10-09-103000.pdf` (sanitized)."""
+    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d-%H%M%S")
+    return sanitize_filename(f"facture_{document_number}_{stamp}.pdf")
 
 
 def _ms(started: float) -> int:

@@ -156,9 +156,13 @@ from app.repositories.facturation import (
     InvoiceDocumentRepository,
 )
 from app.schemas.facturation import (
+    InvoiceClientRefResponse,
     InvoiceDocumentCreateRequest,
+    InvoiceDocumentResponse,
+    InvoiceDocumentTotalsResponse,
     InvoiceDocumentUpdateRequest,
     InvoiceLineRequest,
+    InvoiceLineResponse,
 )
 from app.services.base import BaseService
 from app.services.catalog import ProductService
@@ -625,6 +629,108 @@ def calculate_document_result(
         totals=totals,
         line_totals=line_totals,
         amount_in_words=amount_in_words(totals.net_a_payer, doc_type),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Detail payload builders (Phase 7: ONE mapper for the API and the PDF)
+# ---------------------------------------------------------------------------
+
+
+def build_client_ref(client: InvoiceClient | None) -> InvoiceClientRefResponse | None:
+    """``invoice_clients`` row → the embedded client reference payload."""
+    if client is None:
+        return None
+    return InvoiceClientRefResponse(
+        id=client.id,
+        name=client.name,
+        address=client.address,
+        wilaya=client.wilaya,
+        phone=client.phone,
+        nif=client.nif,
+        rc=client.rc,
+        ai=client.ai,
+        nis=client.nis,
+        is_archived=client.archived_at is not None,
+        created_at=client.created_at,
+        updated_at=client.updated_at,
+    )
+
+
+def build_totals_response(totals: DocumentTotals) -> InvoiceDocumentTotalsResponse:
+    """Phase 1 ``DocumentTotals`` → response (centime Decimals as-is)."""
+    return InvoiceDocumentTotalsResponse(
+        total_ht=totals.total_ht,
+        total_tva=totals.total_tva,
+        total_ttc=totals.total_ttc,
+        timbre=totals.timbre,
+        net_a_payer=totals.net_a_payer,
+    )
+
+
+def build_line_fields(line: InvoiceDocumentLine) -> dict[str, Any]:
+    """The Phase 2 line snapshot (shared by detail and preview lines)."""
+    return {
+        "product_id": line.product_id,
+        "description": line.description,
+        "quantity": to_decimal(line.quantity),
+        "unit_price_ht": to_decimal(line.unit_price_ht),
+        "tva_rate": to_decimal(line.tva_rate),
+        "discount_pct": to_decimal(line.discount_pct),
+        "position": line.position,
+    }
+
+
+def build_line_response(
+    line: InvoiceDocumentLine, line_totals: LineTotals
+) -> InvoiceLineResponse:
+    """Persisted line + its Phase 1 totals (position order supplied by caller)."""
+    return InvoiceLineResponse(
+        id=line.id,
+        total_ht=line_totals.net_ht,
+        total_tva=line_totals.tva,
+        **build_line_fields(line),
+    )
+
+
+def build_document_response(document: InvoiceDocument) -> InvoiceDocumentResponse:
+    """Full document + the shared Phase 1 calculation (single path).
+
+    The ONE detail mapper: ``GET /factures/{id}``, the create and update
+    responses AND the Phase 7 PDF printer all consume this payload, so a
+    printed document can never disagree with the API it came from.
+    """
+    calculation = calculate_document_result(
+        document.doc_type,
+        document.payment_method,
+        document.show_timbre,
+        document.lines,
+    )
+    ordered = sorted(document.lines, key=lambda line: line.position)
+    lines = [
+        build_line_response(line, line_totals)
+        for line, line_totals in zip(ordered, calculation.line_totals)
+    ]
+    return InvoiceDocumentResponse(
+        id=document.id,
+        doc_type=document.doc_type,
+        year=document.year,
+        number=document.number,
+        document_date=document.document_date,
+        client_id=document.client_id,
+        client=build_client_ref(document.client),
+        payment_method=document.payment_method,
+        notes=document.notes,
+        show_discount=document.show_discount,
+        show_tva=document.show_tva,
+        show_timbre=document.show_timbre,
+        show_payment_method=document.show_payment_method,
+        show_amount_words=document.show_amount_words,
+        lines=lines,
+        totals=build_totals_response(calculation.totals),
+        amount_in_words=calculation.amount_in_words,
+        created_at=document.created_at,
+        updated_at=document.updated_at,
     )
 
 

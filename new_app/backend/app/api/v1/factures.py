@@ -13,16 +13,22 @@ schema / pagination conventions):
   amount in words)
 - PUT    /api/v1/factures/{id}      — partial update (immutable: id,
   doc_type, year, number, document_date)
+- POST   /api/v1/factures/{id}/pdf  — render that document as A4 PDF
+  bytes (Phase 7; declared after the ``/{document_id}`` routes)
 
 There is deliberately NO DELETE endpoint — historical fiscal documents
-are never deleted by the application — and no PDF/DOCX/print route.
+are never deleted by the application — and no DOCX export.
 
 RBAC: every endpoint requires an authenticated user
 (``get_current_user``). NO new PermissionScope is invented here —
 facturation permission scopes belong to the later permissions phase
 (precedent: backups / print / settings endpoints authenticate without a
-scope). Router-level rate-limit + device guards from ``api_router``
+scope), and the PDF route follows the same authenticated-only contract
+by design. Router-level rate-limit + device guards from ``api_router``
 apply as on every other route.
+
+The detail payload is built by ``build_document_response`` (service
+layer) so the PDF prints exactly what ``GET /factures/{id}`` returns.
 """
 
 from __future__ import annotations
@@ -31,32 +37,33 @@ import math
 import uuid
 from datetime import date
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Header, Query, Request, Response
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_current_user
 from app.core.constants import MAX_PAGE_SIZE
 from app.db.session import get_db
-from app.domain.unit_conversions import to_decimal
-from app.models.facturation import InvoiceClient, InvoiceDocument, InvoiceDocumentLine
+from app.models.facturation import InvoiceDocument, InvoiceDocumentLine
 from app.models.user import User
+from app.schemas.export import ExportLocale
 from app.schemas.facturation import (
-    InvoiceClientRefResponse,
     InvoiceDocumentCreateRequest,
     InvoiceDocumentListResponse,
     InvoiceDocumentPreviewResponse,
     InvoiceDocumentResponse,
     InvoiceDocumentSummaryResponse,
-    InvoiceDocumentTotalsResponse,
     InvoiceDocumentUpdateRequest,
     InvoiceLinePreviewResponse,
-    InvoiceLineResponse,
 )
 from app.services.facturation import (
     DocumentPreviewResult,
     InvoiceDocumentService,
-    calculate_document_result,
+    build_client_ref,
+    build_document_response,
+    build_line_fields,
+    build_totals_response,
 )
+from app.services.print import PrintService
 
 router = APIRouter()
 
@@ -70,101 +77,22 @@ def _get_document_service(db: Session = Depends(get_db)) -> InvoiceDocumentServi
     return InvoiceDocumentService(db)
 
 
+def _get_print_service(db: Session = Depends(get_db)) -> PrintService:
+    return PrintService(db)
+
+
+def _client_ip(request: Request) -> str | None:
+    return request.client.host if request.client else None
+
+
 # ── Mappers ─────────────────────────────────────────────────────────────
-
-
-def _to_client_ref(client: InvoiceClient | None) -> InvoiceClientRefResponse | None:
-    if client is None:
-        return None
-    return InvoiceClientRefResponse(
-        id=client.id,
-        name=client.name,
-        address=client.address,
-        wilaya=client.wilaya,
-        phone=client.phone,
-        nif=client.nif,
-        rc=client.rc,
-        ai=client.ai,
-        nis=client.nis,
-        is_archived=client.archived_at is not None,
-        created_at=client.created_at,
-        updated_at=client.updated_at,
-    )
-
-
-def _to_totals(totals) -> InvoiceDocumentTotalsResponse:
-    """Phase 1 ``DocumentTotals`` → response (centime Decimals as-is)."""
-    return InvoiceDocumentTotalsResponse(
-        total_ht=totals.total_ht,
-        total_tva=totals.total_tva,
-        total_ttc=totals.total_ttc,
-        timbre=totals.timbre,
-        net_a_payer=totals.net_a_payer,
-    )
-
-
-def _line_fields(line: InvoiceDocumentLine) -> dict:
-    return {
-        "product_id": line.product_id,
-        "description": line.description,
-        "quantity": to_decimal(line.quantity),
-        "unit_price_ht": to_decimal(line.unit_price_ht),
-        "tva_rate": to_decimal(line.tva_rate),
-        "discount_pct": to_decimal(line.discount_pct),
-        "position": line.position,
-    }
-
-
-def _to_line_response(line: InvoiceDocumentLine, line_totals) -> InvoiceLineResponse:
-    return InvoiceLineResponse(
-        id=line.id,
-        total_ht=line_totals.net_ht,
-        total_tva=line_totals.tva,
-        **_line_fields(line),
-    )
 
 
 def _to_preview_line(line: InvoiceDocumentLine, line_totals) -> InvoiceLinePreviewResponse:
     return InvoiceLinePreviewResponse(
         total_ht=line_totals.net_ht,
         total_tva=line_totals.tva,
-        **_line_fields(line),
-    )
-
-
-def _to_detail(document: InvoiceDocument) -> InvoiceDocumentResponse:
-    """Full document + the shared Phase 1 calculation (single path)."""
-    calculation = calculate_document_result(
-        document.doc_type,
-        document.payment_method,
-        document.show_timbre,
-        document.lines,
-    )
-    ordered = sorted(document.lines, key=lambda line: line.position)
-    lines = [
-        _to_line_response(line, line_totals)
-        for line, line_totals in zip(ordered, calculation.line_totals)
-    ]
-    return InvoiceDocumentResponse(
-        id=document.id,
-        doc_type=document.doc_type,
-        year=document.year,
-        number=document.number,
-        document_date=document.document_date,
-        client_id=document.client_id,
-        client=_to_client_ref(document.client),
-        payment_method=document.payment_method,
-        notes=document.notes,
-        show_discount=document.show_discount,
-        show_tva=document.show_tva,
-        show_timbre=document.show_timbre,
-        show_payment_method=document.show_payment_method,
-        show_amount_words=document.show_amount_words,
-        lines=lines,
-        totals=_to_totals(calculation.totals),
-        amount_in_words=calculation.amount_in_words,
-        created_at=document.created_at,
-        updated_at=document.updated_at,
+        **build_line_fields(line),
     )
 
 
@@ -177,7 +105,7 @@ def _to_summary(document: InvoiceDocument) -> InvoiceDocumentSummaryResponse:
         number=document.number,
         document_date=document.document_date,
         client_id=document.client_id,
-        client=_to_client_ref(document.client),
+        client=build_client_ref(document.client),
         payment_method=document.payment_method,
         notes=document.notes,
         created_at=document.created_at,
@@ -195,9 +123,9 @@ def _to_preview(result: DocumentPreviewResult) -> InvoiceDocumentPreviewResponse
         year=result.year,
         number=result.proposed_number,
         client_id=result.client.id,
-        client=_to_client_ref(result.client),
+        client=build_client_ref(result.client),
         lines=lines,
-        totals=_to_totals(result.calculation.totals),
+        totals=build_totals_response(result.calculation.totals),
         amount_in_words=result.calculation.amount_in_words,
     )
 
@@ -228,7 +156,7 @@ def create_document(
     commit together (failed creation never consumes a number).
     """
     document = service.create(request, actor_id=user.id)
-    return _to_detail(document)
+    return build_document_response(document)
 
 
 @router.post(
@@ -312,8 +240,8 @@ def get_document(
     service: InvoiceDocumentService = Depends(_get_document_service),
 ) -> InvoiceDocumentResponse:
     """Document detail: snapshot lines (position order) + Phase 1 totals
-    + amount in words. Never renders PDF here."""
-    return _to_detail(service.get(document_id))
+    + amount in words. Rendering happens on ``POST /{id}/pdf``."""
+    return build_document_response(service.get(document_id))
 
 
 @router.put(
@@ -336,4 +264,46 @@ def update_document(
     re-allocates a number. No DELETE exists.
     """
     document = service.update(document_id, request, actor_id=user.id)
-    return _to_detail(document)
+    return build_document_response(document)
+
+
+# ── PDF (Phase 7) ───────────────────────────────────────────────────────
+
+
+@router.post(
+    "/{document_id}/pdf",
+    summary="Render facturation document as PDF",
+    tags=["factures"],
+    response_class=Response,
+)
+def print_document_pdf(
+    document_id: uuid.UUID,
+    request: Request,
+    locale: ExportLocale = Query("ar"),
+    user: User = Depends(get_current_user),
+    service: PrintService = Depends(_get_print_service),
+    x_device_id: str | None = Header(default=None, alias="X-Device-ID"),
+) -> Response:
+    """A4 PDF bytes for one FAC / DEV / PRO / BC / BL (Phase 7).
+
+    Authenticated-only like every other facturation route (facturation
+    has no PermissionScope yet — same precedent as backups / print /
+    settings), so a role-less guest may print a document it can read.
+    ``locale`` is allowlisted to ar / fr / en: anything else is a 422
+    VALIDATION_ERROR before any DB read or render. The printed date is
+    the STORED ``document_date`` (never "today") and the amount in words
+    stays the Phase 1 French sentence in every locale. The service writes
+    exactly one ``print`` audit row per attempt (success or failure).
+    """
+    result = service.render_facturation(
+        document_id,
+        locale=locale,
+        user_id=user.id,
+        ip_address=_client_ip(request),
+        device_id=x_device_id,
+    )
+    return Response(
+        content=result.data,
+        media_type=result.media_type,
+        headers={"Content-Disposition": f'attachment; filename="{result.filename}"'},
+    )
