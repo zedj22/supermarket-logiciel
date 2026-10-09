@@ -28,6 +28,7 @@ from app.api.v1.exports import router as exports_router
 from app.api.v1.factures import router as factures_router
 from app.api.v1.health import router as health_router
 from app.api.v1.inventory import router as inventory_router
+from app.api.v1.invoice_clients import router as invoice_clients_router
 from app.api.v1.packs import router as packs_router
 from app.api.v1.pos import pos_router, sales_router
 from app.api.v1.print import router as print_router
@@ -56,6 +57,9 @@ api_router.include_router(customers_router, prefix="/customers", tags=["customer
 api_router.include_router(suppliers_router, prefix="/suppliers", tags=["suppliers"])
 api_router.include_router(debts_router, prefix="/debts", tags=["debts"])
 api_router.include_router(factures_router, prefix="/factures", tags=["factures"])
+api_router.include_router(
+    invoice_clients_router, prefix="/invoice-clients", tags=["invoice-clients"]
+)
 api_router.include_router(expenses_router, prefix="/expenses", tags=["expenses"])
 api_router.include_router(inventory_router, prefix="/inventory", tags=["inventory"])
 api_router.include_router(sales_router, prefix="/sales", tags=["sales"])

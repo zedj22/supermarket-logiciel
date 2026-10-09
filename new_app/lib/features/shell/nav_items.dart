@@ -173,6 +173,20 @@ List<NavGroup> buildNavGroups({required bool Function(String scope) can}) {
             scope: NavScopes.customerView,
           ),
         ],
+        // Phase 8 facturation: authenticated-only (scope null = always
+        // visible for any logged-in user; backend has no PermissionScope).
+        const NavItem(
+          path: '/facturation',
+          labelKey: 'facturation',
+          icon: Icons.description_outlined,
+          selectedIcon: Icons.description,
+        ),
+        const NavItem(
+          path: '/invoice-clients',
+          labelKey: 'invoice_clients',
+          icon: Icons.badge_outlined,
+          selectedIcon: Icons.badge,
+        ),
         if (can(NavScopes.userManage))
           const NavItem(
             path: '/users',

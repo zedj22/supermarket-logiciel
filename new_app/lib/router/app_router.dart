@@ -30,6 +30,8 @@ import '../features/purchases/purchases_screen.dart';
 import '../features/reports/reports_screen.dart';
 import '../features/settings/settings_screen.dart';
 import '../features/users/users_screen.dart';
+import '../features/facturation/facturation_screen.dart';
+import '../features/invoice_clients/invoice_clients_screen.dart';
 import '../features/devices/device_identity.dart';
 import '../features/devices/connection_provider.dart';
 import '../features/devices/devices_screen.dart';
@@ -183,6 +185,16 @@ final routerProvider = Provider<GoRouter>((ref) {
             path: '/purchases',
             name: 'purchases',
             builder: (context, state) => const PurchasesScreen(),
+          ),
+          GoRoute(
+            path: '/facturation',
+            name: 'facturation',
+            builder: (context, state) => const FacturationScreen(),
+          ),
+          GoRoute(
+            path: '/invoice-clients',
+            name: 'invoice-clients',
+            builder: (context, state) => const InvoiceClientsScreen(),
           ),
           GoRoute(
             path: '/reports',

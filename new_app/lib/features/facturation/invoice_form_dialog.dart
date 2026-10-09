@@ -1,0 +1,753 @@
+// Invoice (facturation) editor dialog (Phase 8): create a new document
+// or edit an existing one's mutable fields.
+//
+// Editor owns the draft state: invoice-client picker, doc-type / date /
+// payment-method / show-flags, staged lines (each via the line dialog),
+// and a server-side preview summary. Fiscal totals ALWAYS come from
+// POST /factures/preview — Flutter never computes HT / TVA / TTC /
+// timbre / net à payer authority; the live total row is display-only
+// integer milli math until the preview response lands.
+//
+// Immutable after create: doc_type / year / number / document_date
+// (the form locks them in edit mode; the server rejects changes).
+// No DELETE exists — historical fiscal documents are never deleted.
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../../core/strings.dart';
+import '../../l10n/locale_provider.dart';
+import '../pos/pos_toast.dart';
+import 'facturation_models.dart';
+import 'facturation_pickers.dart';
+import 'facturation_providers.dart';
+import 'invoice_line_dialog.dart';
+
+Future<void> showInvoiceFormDialog(
+  BuildContext context, {
+  InvoiceDocumentModel? document,
+}) {
+  return showDialog(
+    context: context,
+    builder: (_) => InvoiceFormDialog(document: document),
+  );
+}
+
+class InvoiceFormDialog extends ConsumerStatefulWidget {
+  final InvoiceDocumentModel? document;
+
+  const InvoiceFormDialog({super.key, this.document});
+
+  @override
+  ConsumerState<InvoiceFormDialog> createState() => _InvoiceFormDialogState();
+}
+
+class _InvoiceFormDialogState extends ConsumerState<InvoiceFormDialog> {
+  String? _clientId;
+  String? _clientName;
+  String _docType = DocTypeValue.fac;
+  DateTime? _documentDate;
+  String _paymentMethod = PaymentMethodValue.cash;
+  final List<DraftInvoiceLine> _lines = [];
+
+  late final TextEditingController _notes;
+
+  bool _showDiscount = true;
+  bool _showTva = true;
+  bool _showTimbre = true;
+  bool _showPaymentMethod = true;
+  bool _showAmountWords = true;
+
+  bool _saving = false;
+  bool _previewing = false;
+  String? _error;
+  String? _errorDetail;
+
+  InvoiceDocumentPreviewModel? _preview;
+
+  bool get _isEdit => widget.document != null;
+
+  @override
+  void initState() {
+    super.initState();
+    final doc = widget.document;
+    _clientId = doc?.clientId;
+    _clientName = doc?.client?.name;
+    _docType = doc?.docType ?? DocTypeValue.fac;
+    _documentDate = doc == null ? null : DateTime.tryParse(doc.documentDate);
+    _paymentMethod = doc?.paymentMethod ?? PaymentMethodValue.cash;
+    _notes = TextEditingController(text: doc?.notes ?? '');
+    if (doc != null) {
+      _showDiscount = doc.showDiscount;
+      _showTva = doc.showTva;
+      _showTimbre = doc.showTimbre;
+      _showPaymentMethod = doc.showPaymentMethod;
+      _showAmountWords = doc.showAmountWords;
+      _lines.addAll(
+        doc.lines.map(
+          (l) => DraftInvoiceLine(
+            productId: l.productId,
+            description: l.description,
+            quantity: l.quantity,
+            unitPriceHt: l.unitPriceHt,
+            tvaRate: int.tryParse(l.tvaRate.split('.').first) ?? 0,
+            discountPct: l.discountPct,
+          ),
+        ),
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    _notes.dispose();
+    super.dispose();
+  }
+
+  // ── Display-only totals (integer milli math, never fiscal authority) ──
+
+  int get _subtotalHtMilli {
+    var sum = 0;
+    for (final line in _lines) {
+      sum += line.lineHtMilli;
+    }
+    return sum;
+  }
+
+  int get _subtotalTvaMilli {
+    var sum = 0;
+    for (final line in _lines) {
+      sum += line.lineTvaMilli;
+    }
+    return sum;
+  }
+
+  // ── Validation ───────────────────────────────────────────────────────
+
+  String? _validate(String loc) {
+    if (_clientId == null || _clientId!.isEmpty) {
+      return AppStrings.t('select_invoice_client', loc);
+    }
+    if (_lines.isEmpty) return AppStrings.t('purchase_requires_lines', loc);
+    for (final line in _lines) {
+      final qty = qtyToMilli(line.quantity);
+      if (qty == null || qty <= 0) return AppStrings.t('invalid_qty', loc);
+      if (line.isFreeText) {
+        if (line.description.trim().isEmpty) {
+          return AppStrings.t('field_required', loc);
+        }
+        if (moneyToMilli(line.unitPriceHt) == null) {
+          return AppStrings.t('invalid_amount', loc);
+        }
+        if (line.tvaRate == null) return AppStrings.t('tva_rate', loc);
+      } else if (line.unitPriceHt.trim().isNotEmpty &&
+          moneyToMilli(line.unitPriceHt) == null) {
+        return AppStrings.t('invalid_amount', loc);
+      }
+    }
+    return null;
+  }
+
+  // ── Payloads ─────────────────────────────────────────────────────────
+
+  /// Full create body (POST /factures).
+  Map<String, dynamic> _createPayload() {
+    final notes = _notes.text.trim();
+    return {
+      'doc_type': _docType,
+      'client_id': _clientId,
+      if (_documentDate != null)
+        'document_date':
+            '${_documentDate!.year.toString().padLeft(4, '0')}-'
+            '${_documentDate!.month.toString().padLeft(2, '0')}-'
+            '${_documentDate!.day.toString().padLeft(2, '0')}',
+      'payment_method': _paymentMethod,
+      if (notes.isNotEmpty) 'notes': notes,
+      'show_discount': _showDiscount,
+      'show_tva': _showTva,
+      'show_timbre': _showTimbre,
+      'show_payment_method': _showPaymentMethod,
+      'show_amount_words': _showAmountWords,
+      'lines': [for (final line in _lines) line.toPayload()],
+    };
+  }
+
+  /// Partial update body (PUT /factures/{id}) — immutable identity and
+  /// document_date are NEVER sent.
+  Map<String, dynamic> _updatePayload() {
+    final notes = _notes.text.trim();
+    return {
+      'client_id': _clientId,
+      'payment_method': _paymentMethod,
+      'notes': notes.isEmpty ? null : notes,
+      'show_discount': _showDiscount,
+      'show_tva': _showTva,
+      'show_timbre': _showTimbre,
+      'show_payment_method': _showPaymentMethod,
+      'show_amount_words': _showAmountWords,
+      'lines': [for (final line in _lines) line.toPayload()],
+    };
+  }
+
+  // ── Actions ──────────────────────────────────────────────────────────
+
+  Future<void> _pickClient() async {
+    final client = await showInvoiceClientPicker(context);
+    if (client == null || !mounted) return;
+    setState(() {
+      _clientId = client.id;
+      _clientName = client.name;
+      _error = null;
+      _errorDetail = null;
+      _preview = null;
+    });
+  }
+
+  Future<void> _addLine() async {
+    final line = await showInvoiceLineDialog(context);
+    if (line == null || !mounted) return;
+    setState(() {
+      _lines.add(line);
+      _error = null;
+      _errorDetail = null;
+      _preview = null;
+    });
+  }
+
+  Future<void> _editLine(int index) async {
+    final line = await showInvoiceLineDialog(context, initial: _lines[index]);
+    if (line == null || !mounted) return;
+    setState(() {
+      _lines[index] = line;
+      _error = null;
+      _errorDetail = null;
+      _preview = null;
+    });
+  }
+
+  void _removeLine(int index) {
+    setState(() {
+      _lines.removeAt(index);
+      _error = null;
+      _errorDetail = null;
+      _preview = null;
+    });
+  }
+
+  Future<void> _pickDate() async {
+    final now = DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _documentDate ?? now,
+      firstDate: DateTime(now.year - 5),
+      lastDate: DateTime(now.year + 5),
+    );
+    if (picked == null || !mounted) return;
+    setState(() {
+      _documentDate = picked;
+      _error = null;
+      _preview = null;
+    });
+  }
+
+  Future<void> _runPreview() async {
+    if (_saving) return;
+    final loc = ref.read(localeProvider).flutterLocale.languageCode;
+    final validation = _validate(loc);
+    if (validation != null) {
+      setState(() {
+        _error = validation;
+        _errorDetail = null;
+      });
+      return;
+    }
+    setState(() {
+      _previewing = true;
+      _error = null;
+      _errorDetail = null;
+    });
+    final (preview, error) = await ref
+        .read(facturationDocumentProvider)
+        .preview(_createPayload());
+    if (!mounted) return;
+    setState(() {
+      _previewing = false;
+      if (error != null) {
+        _error = error.message;
+        _errorDetail = error.detail;
+        _preview = null;
+      } else {
+        _preview = preview;
+      }
+    });
+  }
+
+  Future<void> _submit() async {
+    if (_saving) return;
+    final loc = ref.read(localeProvider).flutterLocale.languageCode;
+    final validation = _validate(loc);
+    if (validation != null) {
+      setState(() {
+        _error = validation;
+        _errorDetail = null;
+      });
+      return;
+    }
+    setState(() {
+      _saving = true;
+      _error = null;
+      _errorDetail = null;
+    });
+
+    final notifier = ref.read(facturationDocumentProvider);
+    final (doc, error) = _isEdit
+        ? await notifier.update(widget.document!.id, _updatePayload())
+        : await notifier.create(_createPayload());
+
+    if (!mounted) return;
+    if (error == null) {
+      Navigator.pop(context);
+      ref.read(facturationProvider.notifier).refresh();
+      showPosToast(
+        context,
+        message: AppStrings.t(
+          _isEdit ? 'document_updated' : 'document_created',
+          loc,
+        ),
+        detail: doc?.number,
+        kind: PosToastKind.success,
+        key: const Key('invoice-form-success-toast'),
+      );
+    } else {
+      setState(() {
+        _saving = false;
+        _error = error.message;
+        _errorDetail = error.detail;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final loc = ref.watch(localeProvider).flutterLocale.languageCode;
+    final theme = Theme.of(context);
+    final totals = _preview?.totals;
+
+    return AlertDialog(
+      key: const Key('invoice-form-dialog'),
+      title: Text(
+        AppStrings.t(_isEdit ? 'edit_document' : 'new_document', loc),
+        key: const Key('invoice-form-title'),
+      ),
+      content: SizedBox(
+        width: 720,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // ── Client ───────────────────────────────────────────
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      _clientName ?? AppStrings.t('select_invoice_client', loc),
+                      key: const Key('invoice-form-client'),
+                      style: theme.textTheme.titleMedium,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  OutlinedButton.icon(
+                    key: const Key('invoice-form-pick-client'),
+                    onPressed: _saving ? null : _pickClient,
+                    icon: const Icon(Icons.search, size: 18),
+                    label: Text(
+                      AppStrings.t(
+                        _clientId == null ? 'select' : 'edit',
+                        loc,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              // ── Doc type / date / payment ────────────────────────
+              Row(
+                children: [
+                  Expanded(
+                    child: DropdownButtonFormField<String>(
+                      key: const Key('invoice-form-doc-type'),
+                      initialValue: _docType,
+                      isExpanded: true,
+                      decoration: InputDecoration(
+                        labelText: AppStrings.t('doc_type', loc),
+                        isDense: true,
+                      ),
+                      items: [
+                        for (final type in DocTypeValue.all)
+                          DropdownMenuItem<String>(
+                            value: type,
+                            child: Text(
+                              AppStrings.t('doc_type_${type.toLowerCase()}', loc),
+                            ),
+                          ),
+                      ],
+                      onChanged: _saving || _isEdit
+                          ? null
+                          : (value) => setState(() {
+                                _docType = value ?? DocTypeValue.fac;
+                                _error = null;
+                                _preview = null;
+                              }),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      key: const Key('invoice-form-date'),
+                      onPressed: _saving || _isEdit ? null : _pickDate,
+                      icon: const Icon(Icons.calendar_today, size: 18),
+                      label: Text(
+                        _documentDate == null
+                            ? AppStrings.t('document_date', loc)
+                            : _documentDate!
+                                .toIso8601String()
+                                .substring(0, 10),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: DropdownButtonFormField<String>(
+                      key: const Key('invoice-form-payment'),
+                      initialValue: _paymentMethod,
+                      isExpanded: true,
+                      decoration: InputDecoration(
+                        labelText: AppStrings.t('payment_method', loc),
+                        isDense: true,
+                      ),
+                      items: [
+                        for (final method in PaymentMethodValue.all)
+                          DropdownMenuItem<String>(
+                            value: method,
+                            child: Text(
+                              AppStrings.t('payment_$method', loc),
+                            ),
+                          ),
+                      ],
+                      onChanged: _saving
+                          ? null
+                          : (value) => setState(() {
+                                _paymentMethod =
+                                    value ?? PaymentMethodValue.cash;
+                                _error = null;
+                                _preview = null;
+                              }),
+                    ),
+                  ),
+                ],
+              ),
+              if (_isEdit) ...[
+                const SizedBox(height: 8),
+                Text(
+                  '${AppStrings.t('number', loc)}: ${widget.document!.number} · '
+                  '${AppStrings.t('document_date', loc)}: ${widget.document!.documentDate}',
+                  key: const Key('invoice-form-identity'),
+                  style: theme.textTheme.bodySmall,
+                ),
+              ],
+              const SizedBox(height: 8),
+              // ── Show flags ───────────────────────────────────────
+              Wrap(
+                spacing: 8,
+                runSpacing: 4,
+                children: [
+                  FilterChip(
+                    key: const Key('invoice-form-show-discount'),
+                    label: Text(AppStrings.t('show_discount', loc)),
+                    selected: _showDiscount,
+                    onSelected: _saving
+                        ? null
+                        : (v) => setState(() {
+                              _showDiscount = v;
+                              _preview = null;
+                            }),
+                  ),
+                  FilterChip(
+                    key: const Key('invoice-form-show-tva'),
+                    label: Text(AppStrings.t('show_tva', loc)),
+                    selected: _showTva,
+                    onSelected: _saving
+                        ? null
+                        : (v) => setState(() {
+                              _showTva = v;
+                              _preview = null;
+                            }),
+                  ),
+                  FilterChip(
+                    key: const Key('invoice-form-show-timbre'),
+                    label: Text(AppStrings.t('show_timbre', loc)),
+                    selected: _showTimbre,
+                    onSelected: _saving
+                        ? null
+                        : (v) => setState(() {
+                              _showTimbre = v;
+                              _preview = null;
+                            }),
+                  ),
+                  FilterChip(
+                    key: const Key('invoice-form-show-payment'),
+                    label: Text(AppStrings.t('show_payment_method', loc)),
+                    selected: _showPaymentMethod,
+                    onSelected: _saving
+                        ? null
+                        : (v) => setState(() {
+                              _showPaymentMethod = v;
+                              _preview = null;
+                            }),
+                  ),
+                  FilterChip(
+                    key: const Key('invoice-form-show-words'),
+                    label: Text(AppStrings.t('show_amount_words', loc)),
+                    selected: _showAmountWords,
+                    onSelected: _saving
+                        ? null
+                        : (v) => setState(() {
+                              _showAmountWords = v;
+                              _preview = null;
+                            }),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              // ── Notes ────────────────────────────────────────────
+              TextField(
+                key: const Key('invoice-form-notes'),
+                controller: _notes,
+                enabled: !_saving,
+                maxLength: 2000,
+                maxLines: 2,
+                decoration: InputDecoration(
+                  labelText: AppStrings.t('note', loc),
+                  counterText: '',
+                ),
+                onChanged: (_) => setState(() {
+                  _error = null;
+                  _preview = null;
+                }),
+              ),
+              const SizedBox(height: 12),
+              // ── Lines ────────────────────────────────────────────
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      '${AppStrings.t('lines', loc)} (${_lines.length})',
+                      key: const Key('invoice-form-lines-label'),
+                      style: theme.textTheme.titleSmall,
+                    ),
+                  ),
+                  OutlinedButton.icon(
+                    key: const Key('invoice-form-add-line'),
+                    onPressed: _saving ? null : _addLine,
+                    icon: const Icon(Icons.add, size: 18),
+                    label: Text(AppStrings.t('add_line', loc)),
+                  ),
+                ],
+              ),
+              if (_lines.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  child: Text(
+                    AppStrings.t('purchase_requires_lines', loc),
+                    key: const Key('invoice-form-lines-empty'),
+                    style: theme.textTheme.bodySmall,
+                  ),
+                )
+              else
+                for (var i = 0; i < _lines.length; i++)
+                  Card(
+                    margin: const EdgeInsets.only(top: 4),
+                    child: ListTile(
+                      key: Key('invoice-form-line-$i'),
+                      dense: true,
+                      title: Text(
+                        _lines[i].description.isEmpty
+                            ? (_lines[i].productName ?? '')
+                            : _lines[i].description,
+                      ),
+                      subtitle: Text(
+                        '${_lines[i].quantity} × ${_lines[i].unitPriceHt}'
+                        '${_lines[i].tvaRate != null ? ' · TVA ${_lines[i].tvaRate}%' : ''}'
+                        '${_lines[i].discountPct != '0' ? ' · -${_lines[i].discountPct}%' : ''}'
+                        ' · ${AppStrings.t('line_total', loc)}: '
+                        '${formatMoney(_lines[i].lineHt)}',
+                      ),
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          IconButton(
+                            key: Key('invoice-form-line-edit-$i'),
+                            icon: const Icon(Icons.edit_outlined, size: 18),
+                            onPressed:
+                                _saving ? null : () => _editLine(i),
+                          ),
+                          IconButton(
+                            key: Key('invoice-form-line-remove-$i'),
+                            icon: const Icon(Icons.delete_outline, size: 18),
+                            onPressed:
+                                _saving ? null : () => _removeLine(i),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+              const SizedBox(height: 12),
+              // ── Preview / totals ─────────────────────────────────
+              if (_previewing)
+                const Center(child: LinearProgressIndicator())
+              else if (totals != null)
+                Material(
+                  key: const Key('invoice-form-preview'),
+                  color: theme.colorScheme.surfaceContainerHighest,
+                  borderRadius: BorderRadius.circular(8),
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '${AppStrings.t('proposed_number', loc)}: '
+                          '${_preview!.number}',
+                          key: const Key('invoice-form-preview-number'),
+                          style: theme.textTheme.titleSmall,
+                        ),
+                        const SizedBox(height: 4),
+                        _totalsRow(
+                          theme,
+                          loc,
+                          'total_ht',
+                          formatMoney(totals.totalHt),
+                        ),
+                        _totalsRow(
+                          theme,
+                          loc,
+                          'total_tva',
+                          formatMoney(totals.totalTva),
+                        ),
+                        _totalsRow(
+                          theme,
+                          loc,
+                          'total_ttc',
+                          formatMoney(totals.totalTtc),
+                        ),
+                        if (_showTimbre)
+                          _totalsRow(
+                            theme,
+                            loc,
+                            'timbre',
+                            formatMoney(totals.timbre),
+                          ),
+                        _totalsRow(
+                          theme,
+                          loc,
+                          'net_a_payer',
+                          formatMoney(totals.netAPayer),
+                          emphasis: true,
+                        ),
+                        if (_preview!.amountInWords.isNotEmpty) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            _preview!.amountInWords,
+                            key: const Key('invoice-form-preview-words'),
+                            style: theme.textTheme.bodySmall,
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                )
+              else
+                // Display-only fallback before the first preview.
+                Text(
+                  '${AppStrings.t('subtotal', loc)}: '
+                  '${milliToMoney(_subtotalHtMilli)} · '
+                  '${AppStrings.t('tva', loc)}: '
+                  '${milliToMoney(_subtotalTvaMilli)}',
+                  key: const Key('invoice-form-display-totals'),
+                  style: theme.textTheme.titleSmall,
+                ),
+              if (_error != null) ...[
+                const SizedBox(height: 12),
+                Text(
+                  _error!,
+                  key: const Key('invoice-form-error'),
+                  style: TextStyle(color: theme.colorScheme.error),
+                ),
+                if (_errorDetail != null && _errorDetail!.isNotEmpty)
+                  Text(
+                    _errorDetail!,
+                    key: const Key('invoice-form-error-detail'),
+                    style: theme.textTheme.bodySmall,
+                  ),
+              ],
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          key: const Key('invoice-form-cancel'),
+          onPressed: _saving ? null : () => Navigator.pop(context),
+          child: Text(AppStrings.t('cancel', loc)),
+        ),
+        if (!_isEdit)
+          OutlinedButton(
+            key: const Key('invoice-form-preview-button'),
+            onPressed: _saving || _previewing ? null : _runPreview,
+            child: Text(AppStrings.t('preview', loc)),
+          ),
+        ElevatedButton(
+          key: const Key('invoice-form-submit'),
+          onPressed: _saving ? null : _submit,
+          child: _saving
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : Text(AppStrings.t('save', loc)),
+        ),
+      ],
+    );
+  }
+
+  Widget _totalsRow(
+    ThemeData theme,
+    String loc,
+    String labelKey,
+    String value, {
+    bool emphasis = false,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 1),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(
+            AppStrings.t(labelKey, loc),
+            style: emphasis ? theme.textTheme.titleSmall : null,
+          ),
+          Text(
+            value,
+            key: Key('invoice-form-total-$labelKey'),
+            style: emphasis
+                ? theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  )
+                : null,
+          ),
+        ],
+      ),
+    );
+  }
+}

@@ -105,10 +105,11 @@ void main() {
       // wizard-step surfaces — 20 keys (960); the barcode-label subphase
       // added the print-labels / sheet-layout surface — 15 keys (975);
       // the roll-label subphase added the paper-type + roll geometry
-      // surface — 12 keys (987).  Update this
+      // surface — 12 keys (987); Phase 8 facturation added the
+      // invoice-clients + documents surface — 54 keys (1041).  Update this
       // deliberately when a subphase adds strings — an unexplained
       // drop means keys were deleted from one map only.
-      expect(_map('en').keys.length, 987);
+      expect(_map('en').keys.length, 1041);
       expect(_map('ar').keys.length, _map('en').keys.length);
       expect(_map('fr').keys.length, _map('en').keys.length);
     });
