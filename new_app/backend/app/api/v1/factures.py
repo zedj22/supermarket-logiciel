@@ -19,13 +19,12 @@ schema / pagination conventions):
 There is deliberately NO DELETE endpoint — historical fiscal documents
 are never deleted by the application — and no DOCX export.
 
-RBAC: every endpoint requires an authenticated user
-(``get_current_user``). NO new PermissionScope is invented here —
-facturation permission scopes belong to the later permissions phase
-(precedent: backups / print / settings endpoints authenticate without a
-scope), and the PDF route follows the same authenticated-only contract
-by design. Router-level rate-limit + device guards from ``api_router``
-apply as on every other route.
+RBAC: reads (list / detail / preview / pdf) require
+``facturation_view``; writes (create / update) require
+``facturation_manage``. These scopes are seeded to Admin and Manager
+only — a Cashier or role-less guest is 403 on every route. Router-level
+rate-limit + device guards from ``api_router`` apply as on every other
+route.
 
 The detail payload is built by ``build_document_response`` (service
 layer) so the PDF prints exactly what ``GET /factures/{id}`` returns.
@@ -40,9 +39,10 @@ from datetime import date
 from fastapi import APIRouter, Depends, Header, Query, Request, Response
 from sqlalchemy.orm import Session
 
-from app.api.dependencies import get_current_user
+from app.api.dependencies import require_permission
 from app.core.constants import MAX_PAGE_SIZE
 from app.db.session import get_db
+from app.models.enums import PermissionScope
 from app.models.facturation import InvoiceDocument, InvoiceDocumentLine
 from app.models.user import User
 from app.schemas.export import ExportLocale
@@ -146,7 +146,7 @@ def _page(total: int, page: int, page_size: int) -> int:
 )
 def create_document(
     request: InvoiceDocumentCreateRequest,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_permission(PermissionScope.FACTURATION_MANAGE)),
     service: InvoiceDocumentService = Depends(_get_document_service),
 ) -> InvoiceDocumentResponse:
     """Create a FAC / DEV / PRO / BC / BL with an allocated number.
@@ -167,7 +167,7 @@ def create_document(
 )
 def preview_document(
     request: InvoiceDocumentCreateRequest,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_permission(PermissionScope.FACTURATION_VIEW)),
     service: InvoiceDocumentService = Depends(_get_document_service),
 ) -> InvoiceDocumentPreviewResponse:
     """Dry-run: resolve client + products, validate, Phase 1 totals.
@@ -197,7 +197,7 @@ def list_documents(
     date_from: date | None = Query(None),
     date_to: date | None = Query(None),
     q: str | None = Query(None, max_length=50, description="number contains"),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_permission(PermissionScope.FACTURATION_VIEW)),
     service: InvoiceDocumentService = Depends(_get_document_service),
 ) -> InvoiceDocumentListResponse:
     """Paginated document list — deterministic newest-first ordering.
@@ -236,7 +236,7 @@ def list_documents(
 )
 def get_document(
     document_id: uuid.UUID,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_permission(PermissionScope.FACTURATION_VIEW)),
     service: InvoiceDocumentService = Depends(_get_document_service),
 ) -> InvoiceDocumentResponse:
     """Document detail: snapshot lines (position order) + Phase 1 totals
@@ -253,7 +253,7 @@ def get_document(
 def update_document(
     document_id: uuid.UUID,
     request: InvoiceDocumentUpdateRequest,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_permission(PermissionScope.FACTURATION_MANAGE)),
     service: InvoiceDocumentService = Depends(_get_document_service),
 ) -> InvoiceDocumentResponse:
     """Partial update: only supplied fields change.
@@ -280,15 +280,15 @@ def print_document_pdf(
     document_id: uuid.UUID,
     request: Request,
     locale: ExportLocale = Query("ar"),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_permission(PermissionScope.FACTURATION_VIEW)),
     service: PrintService = Depends(_get_print_service),
     x_device_id: str | None = Header(default=None, alias="X-Device-ID"),
 ) -> Response:
     """A4 PDF bytes for one FAC / DEV / PRO / BC / BL (Phase 7).
 
-    Authenticated-only like every other facturation route (facturation
-    has no PermissionScope yet — same precedent as backups / print /
-    settings), so a role-less guest may print a document it can read.
+    Requires ``facturation_view`` (Admin + Manager only — same as every
+    other facturation route since Phase 9 Stage B), so a Cashier or
+    role-less guest is 403 and may not print a document.
     ``locale`` is allowlisted to ar / fr / en: anything else is a 422
     VALIDATION_ERROR before any DB read or render. The printed date is
     the STORED ``document_date`` (never "today") and the amount in words

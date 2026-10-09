@@ -1,9 +1,9 @@
 """Phase 7 tests — facturation PDF (``POST /api/v1/factures/{id}/pdf``).
 
-A4-only, authenticated-only, locale allowlist ar / fr / en. Same
-TestClient + StaticPool SQLite pattern as
-``test_facturation_documents_api`` (seeded roles, admin, role-less guest,
-real bearer login).
+A4-only, ``facturation_view``-gated (Admin + Manager only), locale
+allowlist ar / fr / en. Same TestClient + StaticPool SQLite pattern as
+``test_facturation_documents_api`` (seeded roles, admin, manager,
+cashier, role-less guest, real bearer login).
 
 Covers the required Phase 7 scenarios:
 
@@ -21,7 +21,8 @@ Covers the required Phase 7 scenarios:
 - Default locale ar (shaped Arabic title), explicit fr, allowed en,
   unsupported locale → structured 422 before any render/audit.
 - Multi-page documents repeat the items header and number the footer.
-- 401 / role-less guest allowed / structured 404.
+- 401 / Cashier and role-less guest denied with ``required_permission``
+  ``facturation_view`` / structured 404.
 - Exactly one ``print`` audit row per attempt: success (bytes, filename,
   paper A4, locale) and failure (``PRINT_RENDER_FAILED`` via a monkeypatched
   renderer, ``COMPANY_MISSING`` via a blanked ``store_name``).
@@ -261,12 +262,15 @@ def testing_session(engine):
 
 @pytest.fixture()
 def db(engine, testing_session):
+    """Seeded session: roles/permissions + admin + manager + cashier + role-less guest."""
     session = testing_session()
     from app.core.seed import seed_roles_and_permissions
 
     seed_roles_and_permissions(session)
     service = AuthService(session)
     service.setup_first_admin(name="Admin", pin="1234", pin_confirm="1234")
+    service.create_user(name="Manager Mo", pin="2222", role_names=["manager"])
+    service.create_user(name="Cashier Ali", pin="3333", role_names=["cashier"])
     service.create_user(name="Guest No Roles", pin="9999", role_names=[])
     session.commit()
     yield session
@@ -301,6 +305,16 @@ def _login(client: TestClient, full_name: str, pin: str) -> dict:
 @pytest.fixture()
 def admin_headers(client):
     return _login(client, "Admin", "1234")
+
+
+@pytest.fixture()
+def manager_headers(client):
+    return _login(client, "Manager Mo", "2222")
+
+
+@pytest.fixture()
+def cashier_headers(client):
+    return _login(client, "Cashier Ali", "3333")
 
 
 @pytest.fixture()
@@ -717,9 +731,21 @@ def test_pdf_requires_authentication(client):
     assert resp.json()["error"]["code"] == "UNAUTHORIZED"
 
 
-def test_role_less_guest_may_print(client, guest_headers, db):
-    body = _create(client, guest_headers, str(_invoice_client(db).id))
-    resp = _print(client, guest_headers, body["id"], locale="fr")
+@pytest.mark.parametrize("fixture_name", ["cashier_headers", "guest_headers"])
+def test_denied_roles_cannot_print(client, request, fixture_name, db):
+    """PDF requires facturation_view (admin + manager only)."""
+    headers = request.getfixturevalue(fixture_name)
+    resp = _print(client, headers, str(uuid.uuid4()))
+    assert resp.status_code == 403
+    assert (
+        resp.json()["error"]["details"]["required_permission"]
+        == "facturation_view"
+    )
+
+
+def test_manager_can_print(client, manager_headers, db):
+    body = _create(client, manager_headers, str(_invoice_client(db).id))
+    resp = _print(client, manager_headers, body["id"], locale="fr")
     assert resp.status_code == 200, resp.text
     assert resp.content[:5] == b"%PDF-"
 

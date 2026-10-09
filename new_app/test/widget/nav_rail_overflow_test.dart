@@ -71,7 +71,7 @@ class FakeCredentialStorage extends SecureCredentialStorage {
 
 const _loginPath = '/api/v1/auth/login';
 
-/// Every scope that gates a rail destination → all 12 destinations show
+/// Every scope that gates a rail destination → all destinations show
 /// (worst case for rail height).
 const _allScopes = [
   'pos_sale',
@@ -82,6 +82,7 @@ const _allScopes = [
   'purchase_view',
   'user_manage',
   'report_financial',
+  'facturation_view',
 ];
 
 const _emptyListBody = {

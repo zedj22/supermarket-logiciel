@@ -6,10 +6,11 @@ login for bearer tokens, ``get_db`` overridden per request.
 
 Covers the required Phase 5 API scenarios:
 
-- RBAC: 401 without a token on every route; a role-less guest is
-  ALLOWED (facturation has no PermissionScope yet — authenticated-only
-  by design, like backups / print / settings); no DELETE route exists
-  (405), because historical fiscal documents are never deleted.
+- RBAC: 401 without a token on every route (including PDF); a
+  role-less guest and a Cashier are 403 on every route with the
+  ``required_permission`` envelope; Admin and Manager are allowed
+  subject to normal validation; no DELETE route exists (405), because
+  historical fiscal documents are never deleted.
 - Create: 201 + full body (number / year / flags / embedded client /
   lines with ids / Phase 1 totals / amount in words), Decimal fields
   serialized as JSON strings, all five doc types, structured error
@@ -69,13 +70,15 @@ def TestingSession(engine):
 
 @pytest.fixture()
 def db(engine, TestingSession):
-    """Seeded session: roles/permissions + admin + a role-less guest."""
+    """Seeded session: roles/permissions + admin + manager + cashier + role-less guest."""
     session = TestingSession()
     from app.core.seed import seed_roles_and_permissions
 
     seed_roles_and_permissions(session)
     service = AuthService(session)
     service.setup_first_admin(name="Admin", pin="1234", pin_confirm="1234")
+    service.create_user(name="Manager Mo", pin="2222", role_names=["manager"])
+    service.create_user(name="Cashier Ali", pin="3333", role_names=["cashier"])
     service.create_user(name="Guest No Roles", pin="9999", role_names=[])
     session.commit()
     yield session
@@ -110,6 +113,16 @@ def _login(client: TestClient, full_name: str, pin: str) -> dict:
 @pytest.fixture()
 def admin_headers(client):
     return _login(client, "Admin", "1234")
+
+
+@pytest.fixture()
+def manager_headers(client):
+    return _login(client, "Manager Mo", "2222")
+
+
+@pytest.fixture()
+def cashier_headers(client):
+    return _login(client, "Cashier Ali", "3333")
 
 
 @pytest.fixture()
@@ -174,6 +187,7 @@ UNAUTH_CASES = [
     ("post", "/api/v1/factures/preview"),
     ("get", "/api/v1/factures/00000000-0000-0000-0000-000000000000"),
     ("put", "/api/v1/factures/00000000-0000-0000-0000-000000000000"),
+    ("post", "/api/v1/factures/00000000-0000-0000-0000-000000000000/pdf"),
 ]
 
 
@@ -185,11 +199,73 @@ def test_every_route_requires_authentication(client, method, path):
     assert resp.json()["error"]["code"] == "UNAUTHORIZED"
 
 
-def test_role_less_guest_may_use_factures(client, guest_headers, db):
-    """No PermissionScope exists for facturation yet — auth-only."""
+# All 11 facturation routes: (method, path, body?, required_permission)
+DENIED_CASES = [
+    ("get", "/api/v1/factures", False, "facturation_view"),
+    ("post", "/api/v1/factures", True, "facturation_manage"),
+    ("post", "/api/v1/factures/preview", True, "facturation_view"),
+    ("get", "/api/v1/factures/00000000-0000-0000-0000-000000000000", False, "facturation_view"),
+    ("put", "/api/v1/factures/00000000-0000-0000-0000-000000000000", True, "facturation_manage"),
+    ("post", "/api/v1/factures/00000000-0000-0000-0000-000000000000/pdf", False, "facturation_view"),
+    ("get", "/api/v1/invoice-clients", False, "facturation_view"),
+    ("post", "/api/v1/invoice-clients", True, "facturation_manage"),
+    ("get", "/api/v1/invoice-clients/00000000-0000-0000-0000-000000000000", False, "facturation_view"),
+    ("put", "/api/v1/invoice-clients/00000000-0000-0000-0000-000000000000", True, "facturation_manage"),
+    ("delete", "/api/v1/invoice-clients/00000000-0000-0000-0000-000000000000", False, "facturation_manage"),
+]
+
+
+@pytest.mark.parametrize(
+    "fixture_name", ["cashier_headers", "guest_headers"]
+)
+@pytest.mark.parametrize("method,path,has_body,required", DENIED_CASES)
+def test_denied_roles_get_403_envelope(
+    client, request, fixture_name, method, path, has_body, required
+):
+    """Cashier and role-less guest are 403 on every facturation route."""
+    headers = request.getfixturevalue(fixture_name)
+    kwargs = {"json": {}} if has_body else {}
+    resp = getattr(client, method)(path, headers=headers, **kwargs)
+    assert resp.status_code == 403, resp.text
+    body = resp.json()
+    assert body["error"]["code"] == "FORBIDDEN"
+    assert body["error"]["details"]["required_permission"] == required
+
+
+def test_role_less_guest_is_denied_everything(client, guest_headers, db):
+    """Facturation scopes are admin+manager only — guest can never create."""
     client_id = str(_invoice_client(db).id)
-    body = _create(client, guest_headers, client_id)
+    resp = client.post(
+        "/api/v1/factures", json=_payload(client_id), headers=guest_headers
+    )
+    assert resp.status_code == 403
+    assert (
+        resp.json()["error"]["details"]["required_permission"]
+        == "facturation_manage"
+    )
+
+
+def test_manager_can_use_facturation(client, manager_headers, db):
+    """Manager holds both facturation scopes (seeded) — allowed end to end."""
+    client_id = str(_invoice_client(db).id)
+    body = _create(client, manager_headers, client_id)
     assert body["number"].startswith("FAC-2026-")
+    detail = client.get(
+        f"/api/v1/factures/{body['id']}", headers=manager_headers
+    )
+    assert detail.status_code == 200
+
+
+def test_cashier_is_denied_facturation_create(client, cashier_headers, db):
+    client_id = str(_invoice_client(db).id)
+    resp = client.post(
+        "/api/v1/factures", json=_payload(client_id), headers=cashier_headers
+    )
+    assert resp.status_code == 403
+    assert (
+        resp.json()["error"]["details"]["required_permission"]
+        == "facturation_manage"
+    )
 
 
 def test_no_delete_route_on_collection_or_detail(client, admin_headers):

@@ -68,6 +68,10 @@ class PermissionScope(str, enum.Enum):
     EXPORT_DATA = "export_data"
     BACKUP_RESTORE = "backup_restore"
 
+    # Facturation (Phase 9) — documents + invoice clients; admin + manager only.
+    FACTURATION_VIEW = "facturation_view"
+    FACTURATION_MANAGE = "facturation_manage"
+
     # Admin
     USER_MANAGE = "user_manage"
     SETTINGS_MANAGE = "settings_manage"

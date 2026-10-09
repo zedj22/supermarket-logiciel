@@ -14,6 +14,9 @@ This creates:
 - Promotions (Phase 18) — promotion_view/create/update go to admin and
   manager only; the cashier POS reads promotion prices through
   product_view (they ride on the product response).
+- Facturation (Phase 9) — facturation_view / facturation_manage go to
+  admin and manager only; the cashier has no access to Facturation or
+  Invoice Clients.
 
 NOT executed at application startup: run ``python -m app.core.seed``
 after deploying a revision that adds permission scopes (decision record
@@ -74,6 +77,10 @@ ROLE_PERMISSIONS: dict[str, list[PermissionScope]] = {
         PermissionScope.PROMOTION_VIEW,
         PermissionScope.PROMOTION_CREATE,
         PermissionScope.PROMOTION_UPDATE,
+        # Facturation (Phase 9) — documents + invoice clients are
+        # admin + manager only; the cashier never touches fiscal docs.
+        PermissionScope.FACTURATION_VIEW,
+        PermissionScope.FACTURATION_MANAGE,
         # Financial
         PermissionScope.REPORT_FINANCIAL,
         PermissionScope.EXPORT_DATA,

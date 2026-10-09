@@ -1,8 +1,8 @@
 // Phase 8 — Invoice Clients screen (CRUD) widget tests.
 //
 // Harness copied from clients_screen_test.dart (full-app login flow,
-// MockDio). Invoice clients are authenticated-only (no PermissionScope
-// on the rail entry), so the admin user always sees the destination.
+// MockDio). Invoice-clients rail entries are gated on facturation_view
+// (Phase 9 Stage C) — the mock admin login grants that scope.
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -73,6 +73,11 @@ Map<String, dynamic> _loginBody() => {
             'name': 'admin',
             'permissions': [
               {'id': 'p-view', 'scope': 'customer_view', 'description': null},
+              {
+                'id': 'p-fact',
+                'scope': 'facturation_view',
+                'description': null,
+              },
             ],
           },
         ],
@@ -312,7 +317,7 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('rail entry is always visible (scope null = authenticated)',
+    testWidgets('rail entries visible when facturation_view is granted',
         (tester) async {
       final dio = MockDio();
       stubRequests(dio);

@@ -19,8 +19,9 @@ table. Archived clients cannot receive NEW documents (422
 but stay retrievable, stay visible with ``include_archived=true``, and
 their historical documents remain intact.
 
-RBAC: authenticated-only — the facturation precedent (no
-PermissionScope; same as /factures, backups, print, settings).
+RBAC: reads require ``facturation_view``; writes (create / update /
+archive) require ``facturation_manage``. Seeded to Admin and Manager
+only — a Cashier or role-less guest is 403 on every route.
 """
 
 from __future__ import annotations
@@ -31,9 +32,10 @@ import uuid
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
-from app.api.dependencies import get_current_user
+from app.api.dependencies import require_permission
 from app.core.constants import MAX_PAGE_SIZE
 from app.db.session import get_db
+from app.models.enums import PermissionScope
 from app.models.facturation import InvoiceClient
 from app.models.user import User
 from app.schemas.invoice_clients import (
@@ -83,7 +85,7 @@ def list_invoice_clients(
     page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
     q: str | None = Query(None, max_length=200),
     include_archived: bool = Query(False),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_permission(PermissionScope.FACTURATION_VIEW)),
     service: InvoiceClientService = Depends(_get_service),
 ) -> InvoiceClientListResponse:
     """Paginated invoice-client list; ``q`` matches name/phone.
@@ -114,7 +116,7 @@ def list_invoice_clients(
 )
 def create_invoice_client(
     request: InvoiceClientCreateRequest,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_permission(PermissionScope.FACTURATION_MANAGE)),
     service: InvoiceClientService = Depends(_get_service),
 ) -> InvoiceClientResponse:
     """Create an invoice client (``name`` is the only required field)."""
@@ -141,7 +143,7 @@ def create_invoice_client(
 )
 def get_invoice_client(
     client_id: uuid.UUID,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_permission(PermissionScope.FACTURATION_VIEW)),
     service: InvoiceClientService = Depends(_get_service),
 ) -> InvoiceClientResponse:
     """Invoice-client detail (archived rows included — history stays readable)."""
@@ -157,7 +159,7 @@ def get_invoice_client(
 def update_invoice_client(
     client_id: uuid.UUID,
     request: InvoiceClientUpdateRequest,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_permission(PermissionScope.FACTURATION_MANAGE)),
     service: InvoiceClientService = Depends(_get_service),
 ) -> InvoiceClientResponse:
     """Partial update — only fields present in the body change."""
@@ -173,7 +175,7 @@ def update_invoice_client(
 )
 def archive_invoice_client(
     client_id: uuid.UUID,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_permission(PermissionScope.FACTURATION_MANAGE)),
     service: InvoiceClientService = Depends(_get_service),
 ) -> InvoiceClientResponse:
     """Soft-archive an invoice client (idempotent, never a hard delete).

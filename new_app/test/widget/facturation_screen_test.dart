@@ -1,7 +1,8 @@
 // Phase 8 — Facturation screen (document list) widget tests.
 //
 // Harness copied from clients_screen_test.dart (full-app login flow,
-// MockDio). Facturation is authenticated-only (no PermissionScope).
+// MockDio). Facturation rail entries are gated on facturation_view
+// (Phase 9 Stage C) — the mock admin login grants that scope.
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -73,6 +74,11 @@ Map<String, dynamic> _loginBody() => {
             'name': 'admin',
             'permissions': [
               {'id': 'p-view', 'scope': 'customer_view', 'description': null},
+              {
+                'id': 'p-fact',
+                'scope': 'facturation_view',
+                'description': null,
+              },
             ],
           },
         ],

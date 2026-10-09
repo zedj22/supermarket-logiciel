@@ -658,7 +658,7 @@ class TestSeed:
         from app.core.seed import seed_roles_and_permissions
 
         result = seed_roles_and_permissions(db)
-        assert result["permissions"] == 33  # 30 + Phase 18 promotion scopes
+        assert result["permissions"] == 35  # 30 + Phase 18 + Phase 9 scopes
         assert result["roles"] == 3
         assert result["role_permissions"] > 0
 
@@ -678,7 +678,7 @@ class TestSeed:
             select(Role).where(Role.name == "admin")
         ).scalar_one()
         perm_count = len(admin_role.role_permissions)
-        assert perm_count == 33
+        assert perm_count == 35
 
     def test_every_role_holds_the_expense_scopes(self, db: Session):
         """Phase 13 GATE 7/8/9 — admin, manager and cashier all match."""

@@ -43,7 +43,7 @@ class TestPermissionScope:
         assert PermissionScope.AUDIT_VIEW.value == "audit_view"
 
     def test_member_count(self):
-        assert len(PermissionScope) == 33  # 30 + Phase 18 promotion scopes
+        assert len(PermissionScope) == 35  # 30 + Phase 18 + Phase 9 scopes
 
     def test_expense_scopes_exist(self):
         assert PermissionScope.EXPENSE_VIEW.value == "expense_view"

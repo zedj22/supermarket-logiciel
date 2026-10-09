@@ -18,6 +18,7 @@ class NavScopes {
   static const String promotionView = 'promotion_view';
   static const String reportFinancial = 'report_financial';
   static const String deviceManage = 'device_manage';
+  static const String facturationView = 'facturation_view';
 }
 
 /// One destination in the rail.
@@ -173,20 +174,24 @@ List<NavGroup> buildNavGroups({required bool Function(String scope) can}) {
             scope: NavScopes.customerView,
           ),
         ],
-        // Phase 8 facturation: authenticated-only (scope null = always
-        // visible for any logged-in user; backend has no PermissionScope).
-        const NavItem(
-          path: '/facturation',
-          labelKey: 'facturation',
-          icon: Icons.description_outlined,
-          selectedIcon: Icons.description,
-        ),
-        const NavItem(
-          path: '/invoice-clients',
-          labelKey: 'invoice_clients',
-          icon: Icons.badge_outlined,
-          selectedIcon: Icons.badge,
-        ),
+        // Phase 9 facturation: gated on facturation_view (Admin + Manager).
+        // Backend RBAC remains the security boundary — this is UI only.
+        if (can(NavScopes.facturationView)) ...[
+          const NavItem(
+            path: '/facturation',
+            labelKey: 'facturation',
+            icon: Icons.description_outlined,
+            selectedIcon: Icons.description,
+            scope: NavScopes.facturationView,
+          ),
+          const NavItem(
+            path: '/invoice-clients',
+            labelKey: 'invoice_clients',
+            icon: Icons.badge_outlined,
+            selectedIcon: Icons.badge,
+            scope: NavScopes.facturationView,
+          ),
+        ],
         if (can(NavScopes.userManage))
           const NavItem(
             path: '/users',

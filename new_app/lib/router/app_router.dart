@@ -271,6 +271,11 @@ class ScaffoldWithNav extends ConsumerWidget {
   /// dashboard/reports content are gated on it).
   static const String reportViewScope = NavScopes.reportFinancial;
 
+  /// Scope required to see the Facturation and Invoice Clients
+  /// destinations (Phase 9 Stage C — `facturation_view`; Admin +
+  /// Manager only; backend RBAC remains the security boundary).
+  static const String facturationViewScope = NavScopes.facturationView;
+
   /// One- or two-letter monogram for the header avatar. Works on UTF-16
   /// safe boundaries (`runes`, not `substring`) so an Arabic or emoji
   /// leading character cannot throw mid-build.
