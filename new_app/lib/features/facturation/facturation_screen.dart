@@ -16,6 +16,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/strings.dart';
 import '../../core/widgets/table_header.dart';
 import '../../l10n/locale_provider.dart';
+import 'facturation_format.dart';
 import 'facturation_models.dart';
 import 'facturation_pickers.dart';
 import 'facturation_providers.dart';
@@ -302,7 +303,7 @@ class _FacturationScreenState extends ConsumerState<FacturationScreen> {
                     'doc_type_${doc.docType.toLowerCase()}',
                     loc,
                   ),
-                  doc.documentDate,
+                  formatDisplayDate(doc.documentDate, loc),
                   if (doc.client != null) doc.client!.name,
                 ].join(' · '),
                 key: Key('facturation-subtitle-$index'),
@@ -400,7 +401,7 @@ class _FacturationScreenState extends ConsumerState<FacturationScreen> {
                       Expanded(
                         flex: 12,
                         child: Text(
-                          doc.documentDate,
+                          formatDisplayDate(doc.documentDate, loc),
                           key: Key('facturation-date-$index'),
                         ),
                       ),

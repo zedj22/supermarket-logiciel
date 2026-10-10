@@ -12,6 +12,7 @@ import 'package:supermarket_pos/core/strings.dart';
 import 'package:supermarket_pos/features/auth/auth_provider.dart';
 import 'package:supermarket_pos/features/auth/credential_storage.dart';
 import 'package:supermarket_pos/features/facturation/facturation_screen.dart';
+import 'package:supermarket_pos/l10n/locale_provider.dart';
 import 'package:supermarket_pos/main.dart';
 import 'package:supermarket_pos/network/api_client.dart';
 
@@ -104,13 +105,14 @@ Map<String, dynamic> _docSummary({
   required String id,
   required String number,
   String docType = 'FAC',
+  String documentDate = '2026-03-15',
 }) =>
     {
       'id': id,
       'doc_type': docType,
       'year': 2026,
       'number': number,
-      'document_date': '2026-03-15',
+      'document_date': documentDate,
       'client_id': 'ic1',
       'client': _clientRef(),
       'payment_method': 'cash',
@@ -175,14 +177,21 @@ Map<String, dynamic> _docDetail() => {
 void stubRequests(
   MockDio dio, {
   List<Map<String, dynamic>>? listQueryLog,
+  List<Map<String, dynamic>>? postLog,
+  List<Map<String, dynamic>>? putLog,
+  List<Map<String, dynamic>>? listItems,
 }) {
   final log = listQueryLog ?? <Map<String, dynamic>>[];
+  final posts = postLog ?? <Map<String, dynamic>>[];
+  final puts = putLog ?? <Map<String, dynamic>>[];
   when(() => dio.interceptors).thenReturn(Interceptors());
   when(() => dio.options).thenReturn(BaseOptions());
 
   when(() => dio.post(any(), data: any(named: 'data'))).thenAnswer(
     (invocation) async {
       final path = invocation.positionalArguments.first as String;
+      final data = invocation.namedArguments[#data];
+      posts.add({'path': path, 'data': data});
       if (path == _loginPath) {
         return Response(
           requestOptions: RequestOptions(path: path),
@@ -276,7 +285,20 @@ void stubRequests(
       return Response(
         requestOptions: RequestOptions(path: path),
         statusCode: 200,
-        data: _listBody(),
+        data: _listBody(items: listItems),
+      );
+    }
+    if (path == '/api/v1/invoice-clients') {
+      return Response(
+        requestOptions: RequestOptions(path: path),
+        statusCode: 200,
+        data: {
+          'items': [_clientRef()],
+          'total': 1,
+          'page': 1,
+          'page_size': 40,
+          'pages': 1,
+        },
       );
     }
     return Response(
@@ -339,13 +361,19 @@ void stubRequests(
   );
 
   when(() => dio.put(any(), data: any(named: 'data'))).thenAnswer(
-    (invocation) async => Response(
-      requestOptions: RequestOptions(
-        path: invocation.positionalArguments.first as String,
-      ),
-      statusCode: 200,
-      data: _docDetail(),
-    ),
+    (invocation) async {
+      puts.add({
+        'path': invocation.positionalArguments.first as String,
+        'data': invocation.namedArguments[#data],
+      });
+      return Response(
+        requestOptions: RequestOptions(
+          path: invocation.positionalArguments.first as String,
+        ),
+        statusCode: 200,
+        data: _docDetail(),
+      );
+    },
   );
 
   when(() => dio.delete(any())).thenAnswer(
@@ -363,6 +391,7 @@ Future<void> pumpApp(
   WidgetTester tester,
   MockDio dio, {
   String navLabel = '',
+  AppLocale? locale,
 }) async {
   tester.view.physicalSize = const Size(2200, 1200);
   tester.view.devicePixelRatio = 1.0;
@@ -373,6 +402,10 @@ Future<void> pumpApp(
       overrides: [
         apiClientProvider.overrideWithValue(ApiClient(dio: dio)),
         credentialStorageProvider.overrideWithValue(FakeCredentialStorage()),
+        if (locale != null)
+          localeProvider.overrideWith(
+            (ref) => LocaleNotifier()..setLocale(locale),
+          ),
       ],
       child: const SupermarketPosApp(),
     ),
@@ -508,9 +541,9 @@ void main() {
       expect(find.byKey(const Key('invoice-detail-number')), findsOneWidget);
       // The tile behind the dialog still shows the same number.
       expect(find.text('FAC-2026-0001'), findsNWidgets(2));
-      // Server totals — net à payer 24.800 → formatMoney → '24.8'
+      // Server totals — net à payer 24.800 → formatDisplayMoney → '24.8 DA'
       expect(find.byKey(const Key('invoice-detail-total-net_a_payer')), findsOneWidget);
-      expect(find.text('24.8'), findsOneWidget);
+      expect(find.text('24.8 DA'), findsOneWidget);
       // Lines from GET /factures/{id}
       expect(find.text('Widget'), findsOneWidget);
     });
@@ -530,6 +563,396 @@ void main() {
 
       expect(find.byKey(const Key('invoice-detail-edit')), findsOneWidget);
       expect(find.byKey(const Key('invoice-detail-pdf')), findsOneWidget);
+    });
+  });
+
+  group('Facturation presentation formatting (C-2/C-3)', () {
+    for (final locale in [AppLocale.ar, AppLocale.fr, AppLocale.en]) {
+      final code = locale.name;
+
+      testWidgets('list date renders DD/MM/YYYY ($code)', (tester) async {
+        final dio = MockDio();
+        stubRequests(dio);
+
+        await pumpApp(
+          tester,
+          dio,
+          navLabel: AppStrings.t('facturation', code),
+          locale: locale,
+        );
+
+        // Mock document_date is '2026-03-15' → 15/03/2026 (both rows).
+        expect(find.byKey(const Key('facturation-date-0')), findsOneWidget);
+        expect(find.text('15/03/2026'), findsNWidgets(2));
+        // ISO form must not leak into the rendered cells.
+        expect(find.text('2026-03-15'), findsNothing);
+        // Layout direction follows the locale: only Arabic is RTL.
+        expect(
+          Directionality.of(
+            tester.element(find.byKey(const Key('facturation-date-0'))),
+          ),
+          locale == AppLocale.ar ? TextDirection.rtl : TextDirection.ltr,
+        );
+      });
+    }
+
+    testWidgets('list date zero-pads single-digit day and month',
+        (tester) async {
+      final dio = MockDio();
+      stubRequests(
+        dio,
+        listItems: [
+          _docSummary(
+            id: 'd1',
+            number: 'FAC-2026-0001',
+            documentDate: '2026-01-05',
+          ),
+        ],
+      );
+
+      await pumpApp(
+        tester,
+        dio,
+        navLabel: AppStrings.t('facturation', 'ar'),
+      );
+
+      // '2026-01-05' → '05/01/2026' (zero-padded).
+      expect(find.byKey(const Key('facturation-date-0')), findsOneWidget);
+      expect(find.text('05/01/2026'), findsOneWidget);
+      expect(find.text('2026-01-05'), findsNothing);
+    });
+
+    testWidgets('detail date and money totals carry exactly one DA (ar)',
+        (tester) async {
+      final dio = MockDio();
+      stubRequests(dio);
+
+      await pumpApp(
+        tester,
+        dio,
+        navLabel: AppStrings.t('facturation', 'ar'),
+      );
+
+      await tester.tap(find.byKey(const Key('facturation-tile-0')));
+      await tester.pumpAndSettle();
+
+      // Document date is display-formatted, not ISO. The meta's first line
+      // is the document_date row; created_at is a separate timestamp that
+      // legitimately still prints ISO, so scope the ISO check to line one.
+      final meta = tester.widget<Text>(
+        find.byKey(const Key('invoice-detail-meta')),
+      );
+      final docDateLine = meta.data!.split('\n').first;
+      expect(docDateLine, contains('15/03/2026'));
+      expect(docDateLine, isNot(contains('2026-03-15')));
+
+      // Monetary totals carry exactly one DA suffix. total_ht appears twice
+      // (line-table cell + totals row), so assert via the keyed totals rows.
+      expect(
+        tester
+            .widget<Text>(
+              find.byKey(const Key('invoice-detail-total-total_ht')),
+            )
+            .data,
+        '20 DA',
+      );
+      expect(
+        tester
+            .widget<Text>(
+              find.byKey(const Key('invoice-detail-total-total_tva')),
+            )
+            .data,
+        '3.8 DA',
+      );
+      expect(
+        tester
+            .widget<Text>(
+              find.byKey(const Key('invoice-detail-total-total_ttc')),
+            )
+            .data,
+        '23.8 DA',
+      );
+      expect(
+        tester
+            .widget<Text>(find.byKey(const Key('invoice-detail-total-timbre')))
+            .data,
+        '1 DA',
+      );
+      expect(
+        tester
+            .widget<Text>(
+              find.byKey(const Key('invoice-detail-total-net_a_payer')),
+            )
+            .data,
+        '24.8 DA',
+      );
+      // Line-table unit price also carries DA (10.000 → 10 DA, one cell).
+      expect(find.text('10 DA'), findsOneWidget);
+
+      // Quantities and percentages stay suffix-free.
+      expect(find.text('19%'), findsOneWidget);
+      expect(find.text('0%'), findsOneWidget);
+      expect(find.text('2 DA'), findsNothing); // quantity must not gain DA
+    });
+
+    testWidgets('detail money/quantity formatting holds in English',
+        (tester) async {
+      final dio = MockDio();
+      stubRequests(dio);
+
+      await pumpApp(
+        tester,
+        dio,
+        navLabel: AppStrings.t('facturation', 'en'),
+        locale: AppLocale.en,
+      );
+
+      await tester.tap(find.byKey(const Key('facturation-tile-0')));
+      await tester.pumpAndSettle();
+
+      final meta = tester.widget<Text>(
+        find.byKey(const Key('invoice-detail-meta')),
+      );
+      expect(meta.data, contains('15/03/2026'));
+      expect(find.text('24.8 DA'), findsOneWidget);
+      expect(find.text('19%'), findsOneWidget);
+      expect(find.text('2 DA'), findsNothing);
+    });
+
+    testWidgets('detail money/quantity formatting holds in French',
+        (tester) async {
+      final dio = MockDio();
+      stubRequests(dio);
+
+      await pumpApp(
+        tester,
+        dio,
+        navLabel: AppStrings.t('facturation', 'fr'),
+        locale: AppLocale.fr,
+      );
+
+      await tester.tap(find.byKey(const Key('facturation-tile-0')));
+      await tester.pumpAndSettle();
+
+      final meta = tester.widget<Text>(
+        find.byKey(const Key('invoice-detail-meta')),
+      );
+      expect(meta.data, contains('15/03/2026'));
+      expect(find.text('24.8 DA'), findsOneWidget);
+      expect(find.text('19%'), findsOneWidget);
+      expect(find.text('2 DA'), findsNothing);
+    });
+
+    testWidgets('form footer subtotals use trimmed DA formatting',
+        (tester) async {
+      final dio = MockDio();
+      stubRequests(dio);
+
+      await pumpApp(
+        tester,
+        dio,
+        navLabel: AppStrings.t('facturation', 'ar'),
+      );
+
+      await tester.tap(find.byKey(const Key('facturation-add-button')));
+      await tester.pumpAndSettle();
+
+      final footer = tester.widget<Text>(
+        find.byKey(const Key('invoice-form-display-totals')),
+      );
+      // milliToMoney(0) = '0.000' → formatDisplayMoney → '0 DA'.
+      expect(footer.data, contains('0 DA'));
+      // The old untrimmed '0.000' must not appear.
+      expect(footer.data, isNot(contains('0.000')));
+    });
+
+    for (final locale in [AppLocale.ar, AppLocale.fr, AppLocale.en]) {
+      final code = locale.name;
+
+      testWidgets(
+          'form edit identity and date label show DD/MM/YYYY ($code)',
+          (tester) async {
+        final dio = MockDio();
+        stubRequests(dio);
+
+        await pumpApp(
+          tester,
+          dio,
+          navLabel: AppStrings.t('facturation', code),
+          locale: locale,
+        );
+
+        await tester.tap(find.byKey(const Key('facturation-tile-0')));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const Key('invoice-detail-edit')));
+        await tester.pumpAndSettle();
+
+        final identity = tester.widget<Text>(
+          find.byKey(const Key('invoice-form-identity')),
+        );
+        expect(identity.data, contains('15/03/2026'));
+        expect(identity.data, isNot(contains('2026-03-15')));
+
+        // The form's date button label is display-formatted too.
+        final dateLabel = tester.widget<Text>(
+          find.descendant(
+            of: find.byKey(const Key('invoice-form-date')),
+            matching: find.byType(Text),
+          ),
+        );
+        expect(dateLabel.data, '15/03/2026');
+        expect(dateLabel.data, isNot(contains('2026-03-15')));
+      });
+    }
+
+    testWidgets('create payload keeps ISO document_date (English end-to-end)',
+        (tester) async {
+      final dio = MockDio();
+      final postLog = <Map<String, dynamic>>[];
+      stubRequests(dio, postLog: postLog);
+
+      await pumpApp(
+        tester,
+        dio,
+        navLabel: AppStrings.t('facturation', 'en'),
+        locale: AppLocale.en,
+      );
+
+      // Open the create form.
+      await tester.tap(find.byKey(const Key('facturation-add-button')));
+      await tester.pumpAndSettle();
+
+      // Pick a date via the Material date picker.
+      await tester.tap(find.byKey(const Key('invoice-form-date')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('15').first);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('OK'));
+      await tester.pumpAndSettle();
+
+      // The date BUTTON is display-formatted (its label is a Text inside
+      // the OutlinedButton.icon). The list rows behind the dialog are
+      // display-formatted too, so scope the label assertion to the button.
+      final dateLabel = tester.widget<Text>(
+        find.descendant(
+          of: find.byKey(const Key('invoice-form-date')),
+          matching: find.byType(Text),
+        ),
+      );
+      expect(dateLabel.data, matches(RegExp(r'^\d{2}/\d{2}/\d{4}$')));
+      // Round-trip the display label to the ISO the API must receive. The
+      // picker opens on the current month, so derive instead of hardcoding.
+      final picked = dateLabel.data!.split('/');
+      final expectedIso = '${picked[2]}-${picked[1]}-${picked[0]}';
+      // No ISO date anywhere in the rendered UI.
+      expect(find.text(expectedIso), findsNothing);
+
+      // Pick the invoice client.
+      await tester.tap(find.byKey(const Key('invoice-form-pick-client')));
+      await tester.pumpAndSettle();
+      // Scope to the picker option: the list rows behind also show the
+      // same client name.
+      await tester.tap(find.byKey(const Key('invoice-client-option-ic1')));
+      await tester.pumpAndSettle();
+
+      // Add a free-text line.
+      await tester.tap(find.byKey(const Key('invoice-form-add-line')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const Key('invoice-line-description')),
+        'Service',
+      );
+      await tester.enterText(find.byKey(const Key('invoice-line-qty')), '1');
+      await tester.enterText(
+        find.byKey(const Key('invoice-line-price')),
+        '100',
+      );
+      await tester.tap(find.byKey(const Key('invoice-line-tva')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('0%').last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('invoice-line-submit')));
+      await tester.pumpAndSettle();
+
+      // Form line preview: unit price is money (exactly one DA), quantity
+      // stays suffix-free — a suffixed quantity would render '1 DA × ...'.
+      final lineTile = find.byKey(const Key('invoice-form-line-0'));
+      final lineTexts = tester.widgetList<Text>(
+        find.descendant(of: lineTile, matching: find.byType(Text)),
+      );
+      final subtitle = lineTexts.last.data ?? '';
+      expect(subtitle, contains('1 × 100 DA'));
+      expect(
+        subtitle,
+        contains('${AppStrings.t('line_total', 'en')}: 100 DA'),
+      );
+
+      // Run the preview — this sends the create payload.
+      await tester.tap(find.byKey(const Key('invoice-form-preview-button')));
+      await tester.pumpAndSettle();
+
+      // The POST /factures/preview body must carry an ISO document_date.
+      final previewPost = postLog.lastWhere(
+        (p) => p['path'] == '$_facturesPath/preview',
+      );
+      final body = previewPost['data'] as Map<String, dynamic>;
+      expect(body['document_date'], expectedIso);
+      expect(body['document_date'], matches(RegExp(r'^\d{4}-\d{2}-\d{2}$')));
+
+      // Preview totals are money surfaces too — exactly one DA each.
+      expect(
+        tester
+            .widget<Text>(find.byKey(const Key('invoice-form-total-total_ht')))
+            .data,
+        '100 DA',
+      );
+      expect(
+        tester
+            .widget<Text>(
+              find.byKey(const Key('invoice-form-total-net_a_payer')),
+            )
+            .data,
+        '101 DA',
+      );
+    });
+
+    testWidgets('update payload never carries document_date (edit mode)',
+        (tester) async {
+      final dio = MockDio();
+      final putLog = <Map<String, dynamic>>[];
+      stubRequests(dio, putLog: putLog);
+
+      await pumpApp(
+        tester,
+        dio,
+        navLabel: AppStrings.t('facturation', 'ar'),
+      );
+
+      await tester.tap(find.byKey(const Key('facturation-tile-0')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('invoice-detail-edit')));
+      await tester.pumpAndSettle();
+
+      // Display stays DD/MM/YYYY right up to submit.
+      final identity = tester.widget<Text>(
+        find.byKey(const Key('invoice-form-identity')),
+      );
+      expect(identity.data, contains('15/03/2026'));
+
+      await tester.tap(find.byKey(const Key('invoice-form-submit')));
+      await tester.pumpAndSettle();
+
+      // PUT /factures/{id} — document_date is immutable identity and must
+      // never be serialized, display-formatted or otherwise.
+      expect(putLog, hasLength(1));
+      expect(putLog.single['path'], '$_facturesPath/d1');
+      final body = putLog.single['data'] as Map<String, dynamic>;
+      expect(body.containsKey('document_date'), isFalse);
+      expect(
+        body.keys.where((k) => k.contains('date')), // no date field at all
+        isEmpty,
+      );
+      expect(body['client_id'], 'ic1');
     });
   });
 }

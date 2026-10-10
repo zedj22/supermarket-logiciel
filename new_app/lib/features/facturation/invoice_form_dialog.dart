@@ -17,6 +17,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/strings.dart';
 import '../../l10n/locale_provider.dart';
 import '../pos/pos_toast.dart';
+import 'facturation_format.dart';
 import 'facturation_models.dart';
 import 'facturation_pickers.dart';
 import 'facturation_providers.dart';
@@ -409,9 +410,12 @@ class _InvoiceFormDialogState extends ConsumerState<InvoiceFormDialog> {
                       label: Text(
                         _documentDate == null
                             ? AppStrings.t('document_date', loc)
-                            : _documentDate!
-                                .toIso8601String()
-                                .substring(0, 10),
+                            : formatDisplayDate(
+                                _documentDate!
+                                    .toIso8601String()
+                                    .substring(0, 10),
+                                loc,
+                              ),
                       ),
                     ),
                   ),
@@ -450,7 +454,7 @@ class _InvoiceFormDialogState extends ConsumerState<InvoiceFormDialog> {
                 const SizedBox(height: 8),
                 Text(
                   '${AppStrings.t('number', loc)}: ${widget.document!.number} · '
-                  '${AppStrings.t('document_date', loc)}: ${widget.document!.documentDate}',
+                  '${AppStrings.t('document_date', loc)}: ${formatDisplayDate(widget.document!.documentDate, loc)}',
                   key: const Key('invoice-form-identity'),
                   style: theme.textTheme.bodySmall,
                 ),
@@ -576,11 +580,11 @@ class _InvoiceFormDialogState extends ConsumerState<InvoiceFormDialog> {
                             : _lines[i].description,
                       ),
                       subtitle: Text(
-                        '${_lines[i].quantity} × ${_lines[i].unitPriceHt}'
+                        '${_lines[i].quantity} × ${formatDisplayMoney(_lines[i].unitPriceHt, loc)}'
                         '${_lines[i].tvaRate != null ? ' · TVA ${_lines[i].tvaRate}%' : ''}'
                         '${_lines[i].discountPct != '0' ? ' · -${_lines[i].discountPct}%' : ''}'
                         ' · ${AppStrings.t('line_total', loc)}: '
-                        '${formatMoney(_lines[i].lineHt)}',
+                        '${formatDisplayMoney(_lines[i].lineHt, loc)}',
                       ),
                       trailing: Row(
                         mainAxisSize: MainAxisSize.min,
@@ -626,32 +630,32 @@ class _InvoiceFormDialogState extends ConsumerState<InvoiceFormDialog> {
                           theme,
                           loc,
                           'total_ht',
-                          formatMoney(totals.totalHt),
+                          formatDisplayMoney(totals.totalHt, loc),
                         ),
                         _totalsRow(
                           theme,
                           loc,
                           'total_tva',
-                          formatMoney(totals.totalTva),
+                          formatDisplayMoney(totals.totalTva, loc),
                         ),
                         _totalsRow(
                           theme,
                           loc,
                           'total_ttc',
-                          formatMoney(totals.totalTtc),
+                          formatDisplayMoney(totals.totalTtc, loc),
                         ),
                         if (_showTimbre)
                           _totalsRow(
                             theme,
                             loc,
                             'timbre',
-                            formatMoney(totals.timbre),
+                            formatDisplayMoney(totals.timbre, loc),
                           ),
                         _totalsRow(
                           theme,
                           loc,
                           'net_a_payer',
-                          formatMoney(totals.netAPayer),
+                          formatDisplayMoney(totals.netAPayer, loc),
                           emphasis: true,
                         ),
                         if (_preview!.amountInWords.isNotEmpty) ...[
@@ -670,9 +674,9 @@ class _InvoiceFormDialogState extends ConsumerState<InvoiceFormDialog> {
                 // Display-only fallback before the first preview.
                 Text(
                   '${AppStrings.t('subtotal', loc)}: '
-                  '${milliToMoney(_subtotalHtMilli)} · '
+                  '${formatDisplayMoney(milliToMoney(_subtotalHtMilli), loc)} · '
                   '${AppStrings.t('tva', loc)}: '
-                  '${milliToMoney(_subtotalTvaMilli)}',
+                  '${formatDisplayMoney(milliToMoney(_subtotalTvaMilli), loc)}',
                   key: const Key('invoice-form-display-totals'),
                   style: theme.textTheme.titleSmall,
                 ),

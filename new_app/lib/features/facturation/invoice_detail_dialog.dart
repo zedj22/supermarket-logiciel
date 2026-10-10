@@ -17,6 +17,7 @@ import '../auth/auth_provider.dart' show apiClientProvider;
 import '../pos/pos_toast.dart';
 import '../pos/pos_providers.dart' show posDeviceIdProvider;
 import 'facturation_error.dart';
+import 'facturation_format.dart';
 import 'facturation_models.dart';
 import 'facturation_providers.dart';
 import 'invoice_form_dialog.dart';
@@ -219,7 +220,7 @@ class _InvoiceDetailDialogState extends ConsumerState<InvoiceDetailDialog> {
                   const SizedBox(height: 8),
                   Text(
                     [
-                      '${AppStrings.t('document_date', loc)}: ${doc.documentDate}',
+                      '${AppStrings.t('document_date', loc)}: ${formatDisplayDate(doc.documentDate, loc)}',
                       '${AppStrings.t('payment_method', loc)}: '
                           '${AppStrings.t('payment_${doc.paymentMethod}', loc)}',
                       if (doc.client != null)
@@ -282,10 +283,14 @@ class _InvoiceDetailDialogState extends ConsumerState<InvoiceDetailDialog> {
                           cells: [
                             DataCell(Text(line.description)),
                             DataCell(Text(formatMoney(line.quantity))),
-                            DataCell(Text(formatMoney(line.unitPriceHt))),
+                            DataCell(
+                              Text(formatDisplayMoney(line.unitPriceHt, loc)),
+                            ),
                             DataCell(Text('${formatMoney(line.tvaRate)}%')),
                             DataCell(Text('${formatMoney(line.discountPct)}%')),
-                            DataCell(Text(formatMoney(line.totalHt))),
+                            DataCell(
+                              Text(formatDisplayMoney(line.totalHt, loc)),
+                            ),
                           ],
                         ),
                     ],
@@ -305,32 +310,32 @@ class _InvoiceDetailDialogState extends ConsumerState<InvoiceDetailDialog> {
                             theme,
                             loc,
                             'total_ht',
-                            formatMoney(doc.totals.totalHt),
+                            formatDisplayMoney(doc.totals.totalHt, loc),
                           ),
                           _row(
                             theme,
                             loc,
                             'total_tva',
-                            formatMoney(doc.totals.totalTva),
+                            formatDisplayMoney(doc.totals.totalTva, loc),
                           ),
                           _row(
                             theme,
                             loc,
                             'total_ttc',
-                            formatMoney(doc.totals.totalTtc),
+                            formatDisplayMoney(doc.totals.totalTtc, loc),
                           ),
                           if (doc.showTimbre)
                             _row(
                               theme,
                               loc,
                               'timbre',
-                              formatMoney(doc.totals.timbre),
+                              formatDisplayMoney(doc.totals.timbre, loc),
                             ),
                           _row(
                             theme,
                             loc,
                             'net_a_payer',
-                            formatMoney(doc.totals.netAPayer),
+                            formatDisplayMoney(doc.totals.netAPayer, loc),
                             emphasis: true,
                           ),
                         ],

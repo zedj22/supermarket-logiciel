@@ -15,6 +15,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/strings.dart';
 import '../../l10n/locale_provider.dart';
 import '../products/models.dart';
+import 'facturation_format.dart';
 import 'facturation_models.dart';
 import 'facturation_pickers.dart';
 
@@ -334,8 +335,8 @@ class _InvoiceLineDialogState extends ConsumerState<InvoiceLineDialog> {
               const SizedBox(height: 12),
               Text(
                 '${AppStrings.t('line_total', loc)}: '
-                '${formatMoney(previewLine.lineHt)}'
-                '${previewLine.lineTvaMilli > 0 ? ' + ${AppStrings.t('tva', loc)} ${formatMoney(previewLine.lineTva)}' : ''}',
+                '${formatDisplayMoney(previewLine.lineHt, loc)}'
+                '${previewLine.lineTvaMilli > 0 ? ' + ${AppStrings.t('tva', loc)} ${formatDisplayMoney(previewLine.lineTva, loc)}' : ''}',
                 key: const Key('invoice-line-total'),
                 style: theme.textTheme.titleMedium,
               ),
