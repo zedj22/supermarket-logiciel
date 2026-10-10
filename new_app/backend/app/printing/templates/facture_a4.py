@@ -266,12 +266,14 @@ def _totals_block(data: FactureData) -> Flowable:
 class _BottomSignature(Flowable):  # type: ignore[misc]
     """Signature block pinned to the bottom of the current page.
 
-    Consumes all remaining page height so the signature rule always sits
-    just above the bottom margin / footer, matching the legacy
-    ``factura_simple`` preview (which stretches the column and places the
-    signature at the end). When the remaining height is below
-    ``MIN_SIGNATURE_AREA``, reports a taller height so the layout engine
-    wraps to the next page instead of drawing under the footer.
+    Consumes all remaining page height so the block's bottom edge lands
+    exactly on the frame content bottom (~20 mm from the paper edge,
+    just above the 18 mm page margin and the footer). Legacy rhythm
+    top→bottom (``pdf_invoice.dart``): bold label, ~30 pt of empty
+    signing space, then the horizontal rule at the block's bottom edge
+    — the client signs *above* the line. When the remaining height is
+    below ``MIN_SIGNATURE_AREA``, reports a taller height so the layout
+    engine wraps to the next page instead of squeezing the block.
     """
 
     def __init__(self, data: FactureData) -> None:
@@ -294,13 +296,14 @@ class _BottomSignature(Flowable):  # type: ignore[misc]
         rtl = data.rtl
         width = self._width
         # Drawing origin is the flowable's bottom-left corner (y grows up).
-        # Pin the block to that bottom edge, legacy rhythm top→bottom:
-        # label, rule, then ~10 mm of empty space the client signs in.
+        # Legacy pdf_invoice.dart: label, SizedBox(30), rule (border-top)
+        # — so the rule is at local y=0 (the box bottom = frame content
+        # bottom) and the signing space is the 30 pt gap above it.
         label_flow = _p(label("signature", data.locale), 9, rtl, bold=True)
         label_w, _label_h = label_flow.wrap(60 * mm, 20)
-        signing_space = 10 * mm
-        rule_y = signing_space
-        label_bottom = rule_y + 3
+        signing_gap = 30  # pt — legacy SizedBox(height: 30)
+        rule_y = 0.0
+        label_bottom = rule_y + signing_gap
         label_flow.drawOn(canvas, 0 if rtl else width - label_w, label_bottom)
         canvas.setStrokeColorRGB(0.5, 0.5, 0.5)
         canvas.setLineWidth(0.6)

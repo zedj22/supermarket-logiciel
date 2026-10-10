@@ -917,10 +917,13 @@ def test_signature_label_drawn_in_lower_region_of_flowable_box():
         tmpl._p = original_p
 
     assert drawn, "draw() produced no canvas calls"
-    # Every drawn Y sits in the lower ~35 pt of the 400 pt box — the
-    # signing space (10 mm ≈ 28 pt) plus the label just above the rule.
-    for _x, y in drawn:
-        assert 0 <= y <= 35, f"drawn Y={y:.1f} not pinned to flowable bottom"
+    # Legacy rhythm: rule at local y=0 (box bottom), label 30 pt above
+    # it (the signing gap). Everything sits in the lower ~45 pt.
+    ys = sorted({y for _x, y in drawn})
+    assert ys[0] == 0.0, f"rule not at flowable bottom: ys={ys}"
+    assert any(25 <= y <= 40 for y in ys), f"label not in signing gap: ys={ys}"
+    for y in ys:
+        assert 0 <= y <= 45, f"drawn Y={y:.1f} not pinned to flowable bottom"
 
 
 def test_multi_page_signature_on_final_page_only(client, admin_headers, db):
@@ -950,6 +953,114 @@ def test_multi_page_signature_on_final_page_only(client, admin_headers, db):
     # The last article row and the signature are both present; the
     # signature is drawn after the final row (end of the story).
     assert text.find("Article numero 119") < text.find(label("signature", "fr"))
+
+
+def _signature_rule_y_from_bottom(raw: bytes, page_index: int = -1) -> float | None:
+    """Absolute Y (pt from paper bottom) of the short grey signature rule.
+
+    The signature rule is the only ~60 mm horizontal hairline in the
+    bottom 25 mm of the page that is NOT the footer. Table grid lines
+    are full-width; the footer is text, not a line.
+    """
+    import pymupdf
+
+    doc = pymupdf.open(stream=raw, filetype="pdf")
+    try:
+        page = doc[page_index]
+        h = page.rect.height
+        best: float | None = None
+        for drawing in page.get_drawings():
+            for item in drawing["items"]:
+                if item[0] != "l":
+                    continue
+                p1, p2 = item[1], item[2]
+                if abs(p1.y - p2.y) > 0.5:
+                    continue
+                span = abs(p2.x - p1.x)
+                # Signature rule ≈ 60 mm ≈ 170 pt (not the 498 pt table grid).
+                if not (140 < span < 220):
+                    continue
+                y_from_bottom = h - p1.y
+                if 0 < y_from_bottom < 80:
+                    best = y_from_bottom if best is None else min(best, y_from_bottom)
+        return best
+    finally:
+        doc.close()
+
+
+def test_signature_rule_at_frame_content_bottom_in_rendered_pdf(
+    client, admin_headers, db
+):
+    """Regression: the rendered signature rule sits at the frame content
+    bottom (~20 mm from the paper edge), not ~30 mm. This inspects the
+    actual PDF drawing coordinates via PyMuPDF, not the Flowable alone.
+
+    Frame content bottom = 18 mm page margin + 6 pt Frame padding
+    ≈ 57.0 pt ≈ 20.1 mm. The old inverted layout put the rule ~10 mm
+    higher (≈ 85 pt / 30 mm) because the signing gap was below it.
+    """
+    body = _create(client, admin_headers, str(_invoice_client(db).id))
+    resp = _print(client, admin_headers, body["id"], locale="fr")
+    assert resp.status_code == 200, resp.text
+    y = _signature_rule_y_from_bottom(resp.content)
+    assert y is not None, "signature rule not found in rendered PDF"
+    # Frame content bottom ≈ 57.0 pt; allow a small tolerance.
+    assert 50.0 <= y <= 65.0, (
+        f"signature rule at {y:.1f} pt from bottom "
+        f"({y * 25.4 / 72:.1f} mm); expected frame content bottom ~57 pt (20.1 mm)"
+    )
+
+
+def test_signature_rule_at_bottom_on_long_document(
+    client, admin_headers, db
+):
+    """Multi-page: the final page's signature rule is also at the frame
+    content bottom; earlier pages have no signature rule at all."""
+    body = _create(
+        client,
+        admin_headers,
+        str(_invoice_client(db).id),
+        lines=[
+            {
+                "description": f"Article numero {i}",
+                "quantity": "1",
+                "unit_price_ht": "100.000",
+                "tva_rate": "19",
+                "discount_pct": "0",
+            }
+            for i in range(120)
+        ],
+    )
+    resp = _print(client, admin_headers, body["id"], locale="fr")
+    assert resp.status_code == 200, resp.text
+    raw = resp.content
+    pages = _page_count(raw)
+    assert pages >= 3
+    # Intermediate pages: no signature-sized short rule near the bottom.
+    import pymupdf
+
+    doc = pymupdf.open(stream=raw, filetype="pdf")
+    try:
+        for pno in range(pages - 1):
+            page = doc[pno]
+            h = page.rect.height
+            found = False
+            for drawing in page.get_drawings():
+                for item in drawing["items"]:
+                    if item[0] != "l":
+                        continue
+                    p1, p2 = item[1], item[2]
+                    if abs(p1.y - p2.y) > 0.5:
+                        continue
+                    span = abs(p2.x - p1.x)
+                    if 140 < span < 220 and 0 < (h - p1.y) < 80:
+                        found = True
+            assert not found, f"unexpected signature rule on page {pno + 1}"
+    finally:
+        doc.close()
+    y = _signature_rule_y_from_bottom(raw)
+    assert y is not None
+    assert 50.0 <= y <= 65.0, f"last-page rule at {y:.1f} pt from bottom"
 
 
 def test_bottom_signature_flowable_wrap_contract():
