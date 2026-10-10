@@ -3,25 +3,37 @@
 //
 // Editor owns the draft state: invoice-client picker, doc-type / date /
 // payment-method / show-flags, staged lines (each via the line dialog),
-// and a server-side preview summary. Fiscal totals ALWAYS come from
+// and a server-side preview. Fiscal totals ALWAYS come from
 // POST /factures/preview — Flutter never computes HT / TVA / TTC /
 // timbre / net à payer authority; the live total row is display-only
 // integer milli math until the preview response lands.
 //
+// Stage 2: once the form is valid, changes auto-refresh the preview
+// (350 ms debounce, legacy invoice_page pattern) and the response
+// renders as a full A4 sheet (InvoicePreviewSheet) — company identity
+// from the settings snapshot, everything fiscal from the preview
+// response. A failed or superseded preview never leaves stale values
+// on screen.
+//
 // Immutable after create: doc_type / year / number / document_date
 // (the form locks them in edit mode; the server rejects changes).
 // No DELETE exists — historical fiscal documents are never deleted.
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/strings.dart';
 import '../../l10n/locale_provider.dart';
 import '../pos/pos_toast.dart';
+import '../settings/settings_models.dart';
+import '../settings/settings_provider.dart';
 import 'facturation_format.dart';
 import 'facturation_models.dart';
 import 'facturation_pickers.dart';
 import 'facturation_providers.dart';
 import 'invoice_line_dialog.dart';
+import 'invoice_preview_sheet.dart';
 
 Future<void> showInvoiceFormDialog(
   BuildContext context, {
@@ -65,6 +77,11 @@ class _InvoiceFormDialogState extends ConsumerState<InvoiceFormDialog> {
 
   InvoiceDocumentPreviewModel? _preview;
 
+  /// Debounced auto-refresh (legacy 350 ms) + stale-response guard: a
+  /// slow response must never overwrite a newer one.
+  Timer? _previewDebounce;
+  int _previewRequestId = 0;
+
   bool get _isEdit => widget.document != null;
 
   @override
@@ -96,10 +113,19 @@ class _InvoiceFormDialogState extends ConsumerState<InvoiceFormDialog> {
         ),
       );
     }
+    // Company identity for the preview sheet (Stage 1 settings). Silent:
+    // a failed settings load degrades to the company_missing hint.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      loadStoreSettingsOnce(ref);
+    });
+    // Legacy parity: an already-valid form previews immediately.
+    _schedulePreview();
   }
 
   @override
   void dispose() {
+    _previewDebounce?.cancel();
     _notes.dispose();
     super.dispose();
   }
@@ -201,6 +227,7 @@ class _InvoiceFormDialogState extends ConsumerState<InvoiceFormDialog> {
       _errorDetail = null;
       _preview = null;
     });
+    _schedulePreview();
   }
 
   Future<void> _addLine() async {
@@ -212,6 +239,7 @@ class _InvoiceFormDialogState extends ConsumerState<InvoiceFormDialog> {
       _errorDetail = null;
       _preview = null;
     });
+    _schedulePreview();
   }
 
   Future<void> _editLine(int index) async {
@@ -223,6 +251,7 @@ class _InvoiceFormDialogState extends ConsumerState<InvoiceFormDialog> {
       _errorDetail = null;
       _preview = null;
     });
+    _schedulePreview();
   }
 
   void _removeLine(int index) {
@@ -232,6 +261,7 @@ class _InvoiceFormDialogState extends ConsumerState<InvoiceFormDialog> {
       _errorDetail = null;
       _preview = null;
     });
+    _schedulePreview();
   }
 
   Future<void> _pickDate() async {
@@ -248,19 +278,36 @@ class _InvoiceFormDialogState extends ConsumerState<InvoiceFormDialog> {
       _error = null;
       _preview = null;
     });
+    _schedulePreview();
   }
 
-  Future<void> _runPreview() async {
+  /// Debounced auto-refresh (legacy `invoice_page._schedulePreview`):
+  /// only fires for a valid form, so a half-built draft never spams the
+  /// endpoint or surfaces validation noise while typing.
+  void _schedulePreview() {
+    _previewDebounce?.cancel();
+    _previewDebounce = Timer(const Duration(milliseconds: 350), () {
+      if (!mounted || _saving) return;
+      _runPreview(silent: true);
+    });
+  }
+
+  Future<void> _runPreview({bool silent = false}) async {
     if (_saving) return;
     final loc = ref.read(localeProvider).flutterLocale.languageCode;
     final validation = _validate(loc);
     if (validation != null) {
-      setState(() {
-        _error = validation;
-        _errorDetail = null;
-      });
+      // Silent (auto) runs skip an invalid form without shouting; the
+      // explicit Preview button reports the reason, as before.
+      if (!silent) {
+        setState(() {
+          _error = validation;
+          _errorDetail = null;
+        });
+      }
       return;
     }
+    final requestId = ++_previewRequestId;
     setState(() {
       _previewing = true;
       _error = null;
@@ -269,7 +316,8 @@ class _InvoiceFormDialogState extends ConsumerState<InvoiceFormDialog> {
     final (preview, error) = await ref
         .read(facturationDocumentProvider)
         .preview(_createPayload());
-    if (!mounted) return;
+    // Stale-response guard: only the latest request may touch state.
+    if (!mounted || requestId != _previewRequestId) return;
     setState(() {
       _previewing = false;
       if (error != null) {
@@ -284,6 +332,7 @@ class _InvoiceFormDialogState extends ConsumerState<InvoiceFormDialog> {
 
   Future<void> _submit() async {
     if (_saving) return;
+    _previewDebounce?.cancel();
     final loc = ref.read(localeProvider).flutterLocale.languageCode;
     final validation = _validate(loc);
     if (validation != null) {
@@ -332,6 +381,7 @@ class _InvoiceFormDialogState extends ConsumerState<InvoiceFormDialog> {
     final loc = ref.watch(localeProvider).flutterLocale.languageCode;
     final theme = Theme.of(context);
     final totals = _preview?.totals;
+    final companySettings = ref.watch(settingsProvider).settings;
 
     return AlertDialog(
       key: const Key('invoice-form-dialog'),
@@ -394,11 +444,14 @@ class _InvoiceFormDialogState extends ConsumerState<InvoiceFormDialog> {
                       ],
                       onChanged: _saving || _isEdit
                           ? null
-                          : (value) => setState(() {
+                          : (value) {
+                              setState(() {
                                 _docType = value ?? DocTypeValue.fac;
                                 _error = null;
                                 _preview = null;
-                              }),
+                              });
+                              _schedulePreview();
+                            },
                     ),
                   ),
                   const SizedBox(width: 12),
@@ -440,12 +493,15 @@ class _InvoiceFormDialogState extends ConsumerState<InvoiceFormDialog> {
                       ],
                       onChanged: _saving
                           ? null
-                          : (value) => setState(() {
+                          : (value) {
+                              setState(() {
                                 _paymentMethod =
                                     value ?? PaymentMethodValue.cash;
                                 _error = null;
                                 _preview = null;
-                              }),
+                              });
+                              _schedulePreview();
+                            },
                     ),
                   ),
                 ],
@@ -471,10 +527,13 @@ class _InvoiceFormDialogState extends ConsumerState<InvoiceFormDialog> {
                     selected: _showDiscount,
                     onSelected: _saving
                         ? null
-                        : (v) => setState(() {
+                        : (v) {
+                            setState(() {
                               _showDiscount = v;
                               _preview = null;
-                            }),
+                            });
+                            _schedulePreview();
+                          },
                   ),
                   FilterChip(
                     key: const Key('invoice-form-show-tva'),
@@ -482,10 +541,13 @@ class _InvoiceFormDialogState extends ConsumerState<InvoiceFormDialog> {
                     selected: _showTva,
                     onSelected: _saving
                         ? null
-                        : (v) => setState(() {
+                        : (v) {
+                            setState(() {
                               _showTva = v;
                               _preview = null;
-                            }),
+                            });
+                            _schedulePreview();
+                          },
                   ),
                   FilterChip(
                     key: const Key('invoice-form-show-timbre'),
@@ -493,10 +555,13 @@ class _InvoiceFormDialogState extends ConsumerState<InvoiceFormDialog> {
                     selected: _showTimbre,
                     onSelected: _saving
                         ? null
-                        : (v) => setState(() {
+                        : (v) {
+                            setState(() {
                               _showTimbre = v;
                               _preview = null;
-                            }),
+                            });
+                            _schedulePreview();
+                          },
                   ),
                   FilterChip(
                     key: const Key('invoice-form-show-payment'),
@@ -504,10 +569,13 @@ class _InvoiceFormDialogState extends ConsumerState<InvoiceFormDialog> {
                     selected: _showPaymentMethod,
                     onSelected: _saving
                         ? null
-                        : (v) => setState(() {
+                        : (v) {
+                            setState(() {
                               _showPaymentMethod = v;
                               _preview = null;
-                            }),
+                            });
+                            _schedulePreview();
+                          },
                   ),
                   FilterChip(
                     key: const Key('invoice-form-show-words'),
@@ -515,10 +583,13 @@ class _InvoiceFormDialogState extends ConsumerState<InvoiceFormDialog> {
                     selected: _showAmountWords,
                     onSelected: _saving
                         ? null
-                        : (v) => setState(() {
+                        : (v) {
+                            setState(() {
                               _showAmountWords = v;
                               _preview = null;
-                            }),
+                            });
+                            _schedulePreview();
+                          },
                   ),
                 ],
               ),
@@ -534,10 +605,13 @@ class _InvoiceFormDialogState extends ConsumerState<InvoiceFormDialog> {
                   labelText: AppStrings.t('note', loc),
                   counterText: '',
                 ),
-                onChanged: (_) => setState(() {
-                  _error = null;
-                  _preview = null;
-                }),
+                onChanged: (_) {
+                  setState(() {
+                    _error = null;
+                    _preview = null;
+                  });
+                  _schedulePreview();
+                },
               ),
               const SizedBox(height: 12),
               // ── Lines ────────────────────────────────────────────
@@ -606,68 +680,33 @@ class _InvoiceFormDialogState extends ConsumerState<InvoiceFormDialog> {
                     ),
                   ),
               const SizedBox(height: 12),
-              // ── Preview / totals ─────────────────────────────────
+              // ── Preview sheet / totals ──────────────────────────
               if (_previewing)
-                const Center(child: LinearProgressIndicator())
+                const Center(
+                  key: Key('invoice-form-preview-loading'),
+                  child: LinearProgressIndicator(),
+                )
               else if (totals != null)
-                Material(
-                  key: const Key('invoice-form-preview'),
-                  color: theme.colorScheme.surfaceContainerHighest,
-                  borderRadius: BorderRadius.circular(8),
-                  child: Padding(
-                    padding: const EdgeInsets.all(12),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          '${AppStrings.t('proposed_number', loc)}: '
-                          '${_preview!.number}',
-                          key: const Key('invoice-form-preview-number'),
-                          style: theme.textTheme.titleSmall,
-                        ),
-                        const SizedBox(height: 4),
-                        _totalsRow(
-                          theme,
-                          loc,
-                          'total_ht',
-                          formatDisplayMoney(totals.totalHt, loc),
-                        ),
-                        _totalsRow(
-                          theme,
-                          loc,
-                          'total_tva',
-                          formatDisplayMoney(totals.totalTva, loc),
-                        ),
-                        _totalsRow(
-                          theme,
-                          loc,
-                          'total_ttc',
-                          formatDisplayMoney(totals.totalTtc, loc),
-                        ),
-                        if (_showTimbre)
-                          _totalsRow(
-                            theme,
-                            loc,
-                            'timbre',
-                            formatDisplayMoney(totals.timbre, loc),
-                          ),
-                        _totalsRow(
-                          theme,
-                          loc,
-                          'net_a_payer',
-                          formatDisplayMoney(totals.netAPayer, loc),
-                          emphasis: true,
-                        ),
-                        if (_preview!.amountInWords.isNotEmpty) ...[
-                          const SizedBox(height: 4),
-                          Text(
-                            _preview!.amountInWords,
-                            key: const Key('invoice-form-preview-words'),
-                            style: theme.textTheme.bodySmall,
-                          ),
-                        ],
-                      ],
-                    ),
+                // Stage 2: the whole A4 document, not just totals. The
+                // company identity comes from the settings snapshot; all
+                // fiscal values from the server preview response. The
+                // sheet's FittedBox scales it to the dialog width.
+                Center(
+                  child: InvoicePreviewSheet(
+                    key: const Key('invoice-form-preview'),
+                    docType: _docType,
+                    paymentMethod: _paymentMethod,
+                    notes: _notes.text,
+                    company:
+                        companySettings ?? StoreSettings.fromJson(const {}),
+                    client: _preview!.client,
+                    preview: _preview!,
+                    showDiscount: _showDiscount,
+                    showTva: _showTva,
+                    showTimbre: _showTimbre,
+                    showPaymentMethod: _showPaymentMethod,
+                    showAmountWords: _showAmountWords,
+                    loc: loc,
                   ),
                 )
               else
@@ -707,7 +746,12 @@ class _InvoiceFormDialogState extends ConsumerState<InvoiceFormDialog> {
         if (!_isEdit)
           OutlinedButton(
             key: const Key('invoice-form-preview-button'),
-            onPressed: _saving || _previewing ? null : _runPreview,
+            onPressed: _saving || _previewing
+                ? null
+                : () {
+                    _previewDebounce?.cancel();
+                    _runPreview();
+                  },
             child: Text(AppStrings.t('preview', loc)),
           ),
         ElevatedButton(
@@ -722,36 +766,6 @@ class _InvoiceFormDialogState extends ConsumerState<InvoiceFormDialog> {
               : Text(AppStrings.t('save', loc)),
         ),
       ],
-    );
-  }
-
-  Widget _totalsRow(
-    ThemeData theme,
-    String loc,
-    String labelKey,
-    String value, {
-    bool emphasis = false,
-  }) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 1),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(
-            AppStrings.t(labelKey, loc),
-            style: emphasis ? theme.textTheme.titleSmall : null,
-          ),
-          Text(
-            value,
-            key: Key('invoice-form-total-$labelKey'),
-            style: emphasis
-                ? theme.textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  )
-                : null,
-          ),
-        ],
-      ),
     );
   }
 }

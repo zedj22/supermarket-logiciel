@@ -108,10 +108,13 @@ void main() {
       // surface — 12 keys (987); Phase 8 facturation added the
       // invoice-clients + documents surface — 54 keys (1041); Stage 1 of the
       // legacy-parity project added the settings-company section title and
-      // the RIB field label — 2 keys (1043).  Update this deliberately when
-      // a subphase adds strings — an unexplained drop means keys were
-      // deleted from one map only.
-      expect(_map('en').keys.length, 1043);
+      // the RIB field label — 2 keys (1043); Stage 2 added the full invoice
+      // preview sheet labels (doc titles, fiscal identity, item-table and
+      // totals headers, signature) mirroring backend printing/labels.py —
+      // 21 keys (1064).  Update this deliberately when a subphase adds
+      // strings — an unexplained drop means keys were deleted from one map
+      // only.
+      expect(_map('en').keys.length, 1064);
       expect(_map('ar').keys.length, _map('en').keys.length);
       expect(_map('fr').keys.length, _map('en').keys.length);
     });
