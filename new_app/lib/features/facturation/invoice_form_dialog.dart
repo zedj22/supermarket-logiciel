@@ -70,6 +70,9 @@ class _InvoiceFormDialogState extends ConsumerState<InvoiceFormDialog> {
   bool _showPaymentMethod = true;
   bool _showAmountWords = true;
 
+  /// Register-as-sale (only FAC; checked = post as POS sale after save).
+  bool _registerAsSale = false;
+
   bool _saving = false;
   bool _previewing = false;
   String? _error;
@@ -199,6 +202,7 @@ class _InvoiceFormDialogState extends ConsumerState<InvoiceFormDialog> {
       'show_timbre': _showTimbre,
       'show_payment_method': _showPaymentMethod,
       'show_amount_words': _showAmountWords,
+      'register_as_sale': _registerAsSale,
       'lines': [for (final line in _lines) line.toPayload()],
     };
   }
@@ -216,6 +220,7 @@ class _InvoiceFormDialogState extends ConsumerState<InvoiceFormDialog> {
       'show_timbre': _showTimbre,
       'show_payment_method': _showPaymentMethod,
       'show_amount_words': _showAmountWords,
+      'register_as_sale': _registerAsSale,
       'lines': [for (final line in _lines) line.toPayload()],
     };
   }
@@ -630,6 +635,25 @@ class _InvoiceFormDialogState extends ConsumerState<InvoiceFormDialog> {
                             _schedulePreview();
                           },
                   ),
+                  // Register-as-sale (FAC only): post as a real POS sale
+                  // through the authoritative SaleService (stock, sales,
+                  // reports, financials). Disabled on non-FAC doc types
+                  // and on already-posted documents (server locks content
+                  // edits; reversal is via POS void / return).
+                  if (_docType == DocTypeValue.fac)
+                    FilterChip(
+                      key: const Key('invoice-form-register-as-sale'),
+                      label: Text(AppStrings.t('register_as_sale', loc)),
+                      selected: _registerAsSale,
+                      onSelected: (_saving || (widget.document?.isPosted ?? false))
+                          ? null
+                          : (v) {
+                              setState(() {
+                                _registerAsSale = v;
+                                _preview = null;
+                              });
+                            },
+                    ),
                 ],
               ),
               const SizedBox(height: 12),

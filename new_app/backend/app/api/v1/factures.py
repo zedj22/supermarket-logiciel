@@ -39,7 +39,7 @@ from datetime import date
 from fastapi import APIRouter, Depends, Header, Query, Request, Response
 from sqlalchemy.orm import Session
 
-from app.api.dependencies import require_permission
+from app.api.dependencies import require_all_permissions, require_permission
 from app.core.constants import MAX_PAGE_SIZE
 from app.db.session import get_db
 from app.models.enums import PermissionScope
@@ -108,6 +108,8 @@ def _to_summary(document: InvoiceDocument) -> InvoiceDocumentSummaryResponse:
         client=build_client_ref(document.client),
         payment_method=document.payment_method,
         notes=document.notes,
+        sale_id=document.sale_id,
+        posted_at=document.posted_at,
         created_at=document.created_at,
         updated_at=document.updated_at,
     )
@@ -154,8 +156,16 @@ def create_document(
     Client, products and lines are resolved and validated BEFORE the
     transaction; the counter increment + document + lines + audit row
     commit together (failed creation never consumes a number).
+
+    ``register_as_sale=true`` (default false): after the document is
+    committed the service attempts to post it as a POS sale through
+    SaleService. Only FAC is eligible; if the post fails the document
+    is still returned (``sale_id = null``) so the client can retry via
+    ``POST /factures/{id}/post``.
     """
     document = service.create(request, actor_id=user.id)
+    if request.register_as_sale and document.doc_type == "FAC":
+        document = service.post_as_sale(document.id, actor_id=user.id)
     return build_document_response(document)
 
 
@@ -262,8 +272,48 @@ def update_document(
     id / doc_type / year / number / document_date. ``lines`` (when
     present) atomically replaces the whole line set; no change ever
     re-allocates a number. No DELETE exists.
+
+    ``register_as_sale=true`` on an unposted FAC attempts to post it
+    after the update commits (same semantics as create). A posted
+    document rejects content edits with 409 POSTED_DOCUMENT_LOCKED
+    (notes and show_* flags stay editable).
     """
     document = service.update(document_id, request, actor_id=user.id)
+    if request.register_as_sale and document.doc_type == "FAC":
+        document = service.post_as_sale(document.id, actor_id=user.id)
+    return build_document_response(document)
+
+
+# ── Post as sale (optional sale posting) ─────────────────────────────────
+
+
+@router.post(
+    "/{document_id}/post",
+    response_model=InvoiceDocumentResponse,
+    summary="Post facturation document as a POS sale",
+    tags=["factures"],
+)
+def post_document_as_sale(
+    document_id: uuid.UUID,
+    user: User = Depends(
+        require_all_permissions(
+            PermissionScope.FACTURATION_MANAGE,
+            PermissionScope.POS_SALE,
+        ),
+    ),
+    service: InvoiceDocumentService = Depends(_get_document_service),
+) -> InvoiceDocumentResponse:
+    """Post a FAC document as a real POS sale (idempotent).
+
+    Requires ``facturation_manage`` (Admin + Manager) AND the POS sale
+    path runs through the authoritative ``SaleService`` so stock,
+    sales, reports and financials all update exactly as a normal POS
+    checkout. Only FAC is eligible; DEV / PRO / BC / BL return 422.
+    Free-text lines (no product_id / pack_id) are rejected with 422
+    FREE_TEXT_LINE_NOT_POSTABLE. A second POST returns the already-
+    linked sale (idempotent — no duplicate).
+    """
+    document = service.post_as_sale(document_id, actor_id=user.id)
     return build_document_response(document)
 
 

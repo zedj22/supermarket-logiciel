@@ -1176,6 +1176,8 @@ class AppStrings {
   'language_ar': 'العربية',
   'language_fr': 'الفرنسية',
   'language_en': 'الإنجليزية',
+  'register_as_sale': 'تسجيل كعملية بيع',
+  'posted_as_sale': 'تم التسجيل كعملية بيع',
   'prefill_price': 'يُملأ من السعر',
   };
 
@@ -2331,6 +2333,8 @@ class AppStrings {
   'language_ar': 'Arabe',
   'language_fr': 'Français',
   'language_en': 'Anglais',
+  'register_as_sale': 'Enregistrer comme vente',
+  'posted_as_sale': 'Enregistré comme vente',
   'prefill_price': 'Pré-rempli depuis le prix',
   };
 
@@ -3479,6 +3483,8 @@ class AppStrings {
   'language_ar': 'Arabic',
   'language_fr': 'French',
   'language_en': 'English',
+  'register_as_sale': 'Register as Sale',
+  'posted_as_sale': 'Posted as Sale',
   'prefill_price': 'Prefilled from price',
   };
 }

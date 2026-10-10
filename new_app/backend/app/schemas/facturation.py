@@ -158,6 +158,13 @@ class InvoiceDocumentCreateRequest(StrictBaseModel):
     ``document_date`` (or today, exactly like the source's
     ``data.date or date.today()``). Number allocation happens inside
     the create transaction.
+
+    ``register_as_sale`` (optional, default False): when true the
+    service attempts to post the created FAC as a POS sale through
+    SaleService (stock + sales + reports + financials). Only FAC is
+    eligible; if the post fails the document is still created and
+    returned with ``sale_id = null`` so the client can retry via
+    ``POST /factures/{id}/post``.
     """
 
     doc_type: str = "FAC"  # domain membership {FAC,DEV,PRO,BC,BL}
@@ -170,6 +177,7 @@ class InvoiceDocumentCreateRequest(StrictBaseModel):
     show_timbre: bool = True
     show_payment_method: bool = True
     show_amount_words: bool = True
+    register_as_sale: bool = False
     lines: list[InvoiceLineRequest] = Field(..., min_length=1)
 
 
@@ -195,6 +203,7 @@ class InvoiceDocumentUpdateRequest(StrictBaseModel):
     show_timbre: bool = True
     show_payment_method: bool = True
     show_amount_words: bool = True
+    register_as_sale: bool = False
     lines: list[InvoiceLineRequest] | None = Field(default=None, min_length=1)
 
     @field_validator("client_id", "payment_method", "lines")
@@ -258,6 +267,8 @@ class InvoiceDocumentResponse(StrictBaseModel):
     lines: list[InvoiceLineResponse]
     totals: InvoiceDocumentTotalsResponse
     amount_in_words: str
+    sale_id: uuid.UUID | None = None
+    posted_at: datetime | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
@@ -279,6 +290,8 @@ class InvoiceDocumentSummaryResponse(StrictBaseModel):
     client: InvoiceClientRefResponse | None = None
     payment_method: str
     notes: str | None = None
+    sale_id: uuid.UUID | None = None
+    posted_at: datetime | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
 

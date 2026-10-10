@@ -33,7 +33,7 @@ pytestmark = pytest.mark.skipif(
     reason="PostgreSQL test database (supermarket_pro_test) not available",
 )
 
-HEAD_REV = "c9d4e2a7f1b6"  # 0029_facturation_option_identity
+HEAD_REV = "a1e8d3f92b47"  # 0030_facture_sale_posting
 PREV_REV = "b2e603d5c016"  # 0027_phase2_facturation_year_numbering
 # The 0028 revision is a FIXED historical fact — it revises 0027 forever,
 # regardless of which revision is currently the head (0029+).

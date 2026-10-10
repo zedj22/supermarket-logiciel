@@ -235,6 +235,10 @@ class InvoiceDocumentModel {
   final List<InvoiceLineModel> lines;
   final InvoiceDocumentTotalsModel totals;
   final String amountInWords;
+
+  /// Sale-posting link (null = not posted as a POS sale yet).
+  final String? saleId;
+  final DateTime? postedAt;
   final DateTime? createdAt;
   final DateTime? updatedAt;
 
@@ -256,9 +260,14 @@ class InvoiceDocumentModel {
     this.lines = const [],
     required this.totals,
     this.amountInWords = '',
+    this.saleId,
+    this.postedAt,
     this.createdAt,
     this.updatedAt,
   });
+
+  /// True when this document has already been posted as a POS sale.
+  bool get isPosted => saleId != null;
 
   factory InvoiceDocumentModel.fromJson(Map<String, dynamic> json) {
     return InvoiceDocumentModel(
@@ -287,6 +296,8 @@ class InvoiceDocumentModel {
         json['totals'] as Map<String, dynamic>? ?? const {},
       ),
       amountInWords: json['amount_in_words'] as String? ?? '',
+      saleId: json['sale_id'] as String?,
+      postedAt: DateTime.tryParse('${json['posted_at'] ?? ''}'),
       createdAt: DateTime.tryParse('${json['created_at'] ?? ''}'),
       updatedAt: DateTime.tryParse('${json['updated_at'] ?? ''}'),
     );

@@ -61,12 +61,13 @@ calculation/validation authority — notably ``tva_rate`` is NOT pinned to
 """
 
 import uuid
-from datetime import date
+from datetime import date, datetime
 
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
     Date,
+    DateTime,
     ForeignKey,
     Index,
     Integer,
@@ -183,6 +184,22 @@ class InvoiceDocument(DocumentModel):
         server_default=InvoicePaymentMethod.CASH.value,
     )
     notes: Mapped[str | None] = mapped_column(Text)
+
+    # Optional sale posting (task: register-as-sale). ``sale_id`` is the
+    # ONE-WAY link from a posted FAC to the POS sale created through the
+    # authoritative SaleService (client_request_id = facture:{document_id}).
+    # ``posted_at`` records when it was posted. Both nullable so every
+    # existing / non-posted document keeps NULL (no backfill ever).
+    # ON DELETE SET NULL keeps the fiscal document valid if a sale row is
+    # ever removed (never done by the app). Only FAC is eligible; the
+    # service enforces that — no DB CHECK (domain stays the authority).
+    sale_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("sales.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+        unique=True,
+    )
+    posted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     # Display/document options (factura_simple DocumentOptions). Typed
     # booleans instead of the source's JSON blob; defaults mirror

@@ -143,7 +143,12 @@ import structlog
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.core.exceptions import BusinessRuleError, NotFoundError, ValidationError
+from app.core.exceptions import (
+    BusinessRuleError,
+    ConflictError,
+    NotFoundError,
+    ValidationError,
+)
 from app.domain.facturation import (
     DocumentTotals,
     FacturationError,
@@ -159,7 +164,7 @@ from app.domain.facturation import (
 from app.domain.unit_conversions import effective_unit_price, to_decimal
 from app.models.audit import AuditLog
 from app.models.catalog import Pack, Product, ProductSellingUnit, ProductVariant
-from app.models.enums import AuditAction
+from app.models.enums import AuditAction, InvoiceDocType
 from app.models.facturation import (
     InvoiceClient,
     InvoiceDocument,
@@ -183,8 +188,10 @@ from app.schemas.facturation import (
     InvoiceLineRequest,
     InvoiceLineResponse,
 )
+from app.schemas.sale import CreateSaleRequest, SaleLineRequest
 from app.services.base import BaseService
 from app.services.catalog import ProductService
+from app.services.sale import SaleService
 from app.services.settings import SettingsService
 
 logger = structlog.get_logger(__name__)
@@ -923,6 +930,8 @@ def build_document_response(document: InvoiceDocument) -> InvoiceDocumentRespons
         lines=lines,
         totals=build_totals_response(calculation.totals),
         amount_in_words=calculation.amount_in_words,
+        sale_id=document.sale_id,
+        posted_at=document.posted_at,
         created_at=document.created_at,
         updated_at=document.updated_at,
     )
@@ -1079,8 +1088,30 @@ class InvoiceDocumentService(BaseService):
         (no audit row), matching InvoiceClientService.update.
         """
         document = self.get(document_id)
-        data = request.model_dump(exclude_unset=True, exclude={"lines"})
+        data = request.model_dump(exclude_unset=True, exclude={"lines", "register_as_sale"})
         new_lines = list(request.lines) if "lines" in request.model_fields_set else None
+
+        # Lifecycle: a posted document is locked against content edits
+        # (lines / client / payment). Notes and show_* flags stay
+        # editable so operators can annotate a posted invoice.
+        if document.sale_id is not None:
+            locked = {"client_id", "payment_method"}
+            attempted = locked & set(data)
+            if new_lines is not None:
+                attempted.add("lines")
+            if attempted:
+                raise ConflictError(
+                    message=(
+                        "Document is posted as a sale and can no longer "
+                        "be edited for content"
+                    ),
+                    details={
+                        "document_id": str(document.id),
+                        "sale_id": str(document.sale_id),
+                        "locked_fields": sorted(attempted),
+                        "code": "POSTED_DOCUMENT_LOCKED",
+                    },
+                )
 
         if "client_id" in data:
             data["client_id"] = self.clients.ensure_usable_for_new_document(data["client_id"]).id
@@ -1121,6 +1152,191 @@ class InvoiceDocumentService(BaseService):
             fields=changed,
         )
         return document
+
+    # ── Optional sale posting ────────────────────────────────────────
+
+    def post_as_sale(
+        self,
+        document_id: uuid.UUID,
+        *,
+        actor_id: uuid.UUID | None = None,
+    ) -> InvoiceDocument:
+        """Post a FAC document as a real POS sale (idempotent).
+
+        Two-step flow (SaleService owns its own transaction, so we can
+        not nest ``transaction()`` blocks):
+
+        1. Load the document under FOR UPDATE and check ``sale_id`` —
+           a second post returns the already-linked sale (409 if a
+           different sale is somehow linked; same sale = idempotent).
+        2. Build a ``CreateSaleRequest`` from the document's snapshotted
+           lines and call ``SaleService.create_sale`` with the
+           deterministic idempotency key ``facture:{document_id}`` so a
+           concurrent retry never creates a second sale.
+        3. On success, re-open a short transaction to set
+           ``sale_id`` / ``posted_at`` on the document.
+
+        Eligibility: only FAC documents may post. Every line must carry
+        a ``product_id`` or ``pack_id`` — free-text lines are rejected
+        (422 ``FREE_TEXT_LINE_NOT_POSTABLE``). Pricing, stock, sales,
+        reports and financials are entirely the POS SaleService's
+        responsibility; this method only maps and links.
+        """
+        # 1. Lock + validate eligibility.
+        with self.transaction():
+            document = self._locked_document(document_id)
+            if document.doc_type != InvoiceDocType.FAC.value:
+                raise ValidationError(
+                    message="Only FAC documents can be posted as sales",
+                    details={
+                        "doc_type": document.doc_type,
+                        "eligible_doc_type": InvoiceDocType.FAC.value,
+                    },
+                )
+            if document.sale_id is not None:
+                # Already posted — idempotent success (same sale).
+                logger.info(
+                    "facture_post_idempotent",
+                    document_id=str(document.id),
+                    sale_id=str(document.sale_id),
+                )
+                return document
+            sale_request = self._build_sale_request(document)
+
+        # 2. Authoritative sale creation (SaleService owns the tx).
+        sale_service = SaleService(self.db)
+        try:
+            sale_result = sale_service.create_sale(
+                sale_request,
+                user=None,
+                require_pos_discount=False,
+                require_pos_credit=False,
+            )
+        except Exception as exc:
+            logger.warning(
+                "facture_post_failed",
+                document_id=str(document_id),
+                error=str(exc),
+            )
+            raise
+
+        # 3. Link the document to the sale (short transaction).
+        with self.transaction():
+            # Re-load under FOR UPDATE: a concurrent post may have
+            # already linked the same sale while we were in step 2.
+            document = self._locked_document(document_id)
+            if document.sale_id is None:
+                document.sale_id = sale_result.id
+                document.posted_at = datetime.now(timezone.utc)
+                self._audit(
+                    AuditAction.UPDATE,
+                    entity_id=document.id,
+                    actor_id=actor_id,
+                    details=f"posted as sale {sale_result.id}",
+                )
+            elif document.sale_id != sale_result.id:
+                # Extremely unlikely (same client_request_id), but never
+                # silently overwrite a different sale link.
+                raise ConflictError(
+                    message="Document already linked to a different sale",
+                    details={
+                        "document_id": str(document.id),
+                        "existing_sale_id": str(document.sale_id),
+                    },
+                )
+        logger.info(
+            "facture_posted",
+            document_id=str(document.id),
+            sale_id=str(sale_result.id),
+            idempotent_replay=sale_result.idempotent_replay,
+        )
+        return document
+
+    def _locked_document(self, document_id: uuid.UUID) -> InvoiceDocument:
+        """Fetch one document under FOR UPDATE (serializes concurrent posts)."""
+        stmt = (
+            select(InvoiceDocument)
+            .where(InvoiceDocument.id == document_id)
+            .with_for_update()
+        )
+        document = self.db.execute(stmt).scalar_one_or_none()
+        if document is None:
+            raise NotFoundError(
+                message="Invoice document not found",
+                details={"document_id": str(document_id)},
+            )
+        return document
+
+    def _build_sale_request(self, document: InvoiceDocument) -> CreateSaleRequest:
+        """Map a persisted FAC document to an authoritative CreateSaleRequest.
+
+        Every line must carry product_id or pack_id (free-text is not
+        postable). The document's ``unit_price_ht`` is passed as the
+        requested ``unit_price``; SaleService's catalog resolution is
+        the price authority (it may report a PriceOverride). The
+        ``discount_pct`` is converted to an absolute ``line_discount``
+        against the HT line amount so the discount is preserved.
+        """
+        ordered = sorted(document.lines, key=lambda line: line.position)
+        items: list[SaleLineRequest] = []
+        for line in ordered:
+            if line.product_id is None and line.pack_id is None:
+                raise ValidationError(
+                    message=(
+                        "Free-text lines cannot be posted as sales; "
+                        "link a product or pack first"
+                    ),
+                    details={
+                        "line_position": line.position,
+                        "line_description": line.description,
+                        "code": "FREE_TEXT_LINE_NOT_POSTABLE",
+                    },
+                )
+            discount_pct = Decimal(line.discount_pct or 0)
+            base_ht = Decimal(line.unit_price_ht) * Decimal(line.quantity)
+            line_discount = (base_ht * discount_pct / Decimal(100)).quantize(
+                Decimal("0.01")
+            )
+            items.append(
+                SaleLineRequest(
+                    product_id=line.product_id,
+                    pack_id=line.pack_id,
+                    variant_id=line.variant_id,
+                    selling_unit_id=line.selling_unit_id,
+                    quantity=Decimal(line.quantity),
+                    unit_price=Decimal(line.unit_price_ht),
+                    line_discount=line_discount,
+                )
+            )
+        total_ht = sum(
+            (Decimal(line.unit_price_ht) * Decimal(line.quantity) for line in ordered),
+            Decimal("0"),
+        )
+        total_discount = sum(
+            (
+                (
+                    Decimal(line.unit_price_ht)
+                    * Decimal(line.quantity)
+                    * Decimal(line.discount_pct or 0)
+                    / Decimal(100)
+                ).quantize(Decimal("0.01"))
+                for line in ordered
+            ),
+            Decimal("0"),
+        )
+        net = total_ht - total_discount
+        note_bits = [f"Facture {document.number}"]
+        if document.payment_method:
+            note_bits.append(f"payment={document.payment_method}")
+        return CreateSaleRequest(
+            client_request_id=f"facture:{document.id}",
+            items=items,
+            customer_id=None,
+            invoice_discount=Decimal("0"),
+            payment_method="cash",
+            paid=net,
+            note="; ".join(note_bits)[:2000],
+        )
 
     # ── Preview (no persistence) ─────────────────────────────────────
 

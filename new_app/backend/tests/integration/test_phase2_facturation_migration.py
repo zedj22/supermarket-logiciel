@@ -32,7 +32,7 @@ pytestmark = pytest.mark.skipif(
     reason="PostgreSQL test database (supermarket_pro_test) not available",
 )
 
-HEAD_REV = "c9d4e2a7f1b6"  # 0029_facturation_option_identity (current head)
+HEAD_REV = "a1e8d3f92b47"  # 0030_facture_sale_posting (current head)
 ORIG_PHASE2_REV = "f3f734338032"  # 0026_phase2_facturation
 PREVIOUS_REV = "9f2e8c7a4b1d"  # 0025_phase18_promotions (pre-Phase-2 baseline)
 INVOICE_TABLES = (
@@ -247,11 +247,17 @@ class TestPhase2FacturationMigration:
               AND tc.table_name LIKE 'invoice%'
         """)
         fks = {(row[0], row[1]): (row[2], row[3]) for row in cur.fetchall()}
-        assert len(fks) == 6, f"Expected exactly 6 facturation FKs, got {fks}"
+        # 0030 added invoice_documents.sale_id -> sales (SET NULL), so 7.
+        assert len(fks) == 7, f"Expected exactly 7 facturation FKs, got {fks}"
         assert fks[("invoice_documents", "client_id")] == (
             "invoice_clients",
             "RESTRICT",
         ), "invoice_documents.client_id must be FK RESTRICT -> invoice_clients"
+        # 0030: the posted-FAC link never destroys the fiscal document.
+        assert fks[("invoice_documents", "sale_id")] == (
+            "sales",
+            "SET NULL",
+        ), "invoice_documents.sale_id must be FK SET NULL -> sales"
         assert fks[("invoice_document_lines", "document_id")] == (
             "invoice_documents",
             "CASCADE",
@@ -307,6 +313,8 @@ class TestPhase2FacturationMigration:
                 "ix_invoice_documents_doc_type",
                 "ix_invoice_documents_doc_type_document_date",
                 "uq_invoice_documents_doc_type_year_number",
+                # 0030: unique index on the optional sale link.
+                "ix_invoice_documents_sale_id",
             },
             "invoice_document_lines": {
                 "invoice_document_lines_pkey",

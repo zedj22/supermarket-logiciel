@@ -114,10 +114,12 @@ void main() {
       // 21 keys (1064).  Stage 3A facturation options added the pack
       // picker title — 1 key (1065).  The PDF layout/language pass added
       // the invoice-language selector label and the three language-name
-      // labels — 4 keys (1069).  Update this deliberately when a subphase
+      // labels — 4 keys (1069).  The optional sale-posting pass added the
+      // register-as-sale checkbox label and the posted-as-sale status
+      // label — 2 keys (1071).  Update this deliberately when a subphase
       // adds strings — an unexplained drop means keys were deleted from
       // one map only.
-      expect(_map('en').keys.length, 1069);
+      expect(_map('en').keys.length, 1071);
       expect(_map('ar').keys.length, _map('en').keys.length);
       expect(_map('fr').keys.length, _map('en').keys.length);
     });

@@ -16,6 +16,7 @@ Usage in routers:
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Annotated
 
@@ -165,5 +166,28 @@ def require_any_permission(*scopes: PermissionScope):
             message=f"Permission denied: one of {required} required",
             details={"required_permissions": required},
         )
+
+    return _check
+
+
+def require_all_permissions(
+    *scopes: PermissionScope,
+) -> Callable[..., User]:
+    """Factory dependency that requires ALL of the given permission scopes."""
+
+    def _check(user: User = Depends(get_current_user)) -> User:
+        missing = [s.value for s in scopes if not user.has_permission(s)]
+        if missing:
+            logger.warning(
+                "permission_denied",
+                user_id=str(user.id),
+                required_scopes=[s.value for s in scopes],
+                missing=missing,
+            )
+            raise ForbiddenError(
+                message=f"Permission denied: {', '.join(missing)} required",
+                details={"required_permissions": [s.value for s in scopes]},
+            )
+        return user
 
     return _check
