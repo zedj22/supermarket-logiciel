@@ -88,6 +88,14 @@ class InvoiceClientModel {
 class InvoiceLineModel {
   final String id;
   final String? productId;
+
+  /// Stage 3A option identity — nullable traceability links (the
+  /// backend stores them SET NULL; description + price snapshots stay
+  /// the printable truth).
+  final String? variantId;
+  final String? sellingUnitId;
+  final String? packId;
+
   final String description;
   final String quantity;
   final String unitPriceHt;
@@ -100,6 +108,9 @@ class InvoiceLineModel {
   const InvoiceLineModel({
     required this.id,
     this.productId,
+    this.variantId,
+    this.sellingUnitId,
+    this.packId,
     required this.description,
     required this.quantity,
     required this.unitPriceHt,
@@ -114,6 +125,9 @@ class InvoiceLineModel {
     return InvoiceLineModel(
       id: json['id'] as String,
       productId: json['product_id'] as String?,
+      variantId: json['variant_id'] as String?,
+      sellingUnitId: json['selling_unit_id'] as String?,
+      packId: json['pack_id'] as String?,
       description: json['description'] as String? ?? '',
       quantity: '${json['quantity'] ?? 0}',
       unitPriceHt: '${json['unit_price_ht'] ?? 0}',
@@ -282,6 +296,12 @@ class InvoiceDocumentModel {
 /// POST /factures/preview resolved-but-unpersisted line (no id).
 class InvoiceLinePreviewModel {
   final String? productId;
+
+  /// Stage 3A option identity (nullable, same as the persisted line).
+  final String? variantId;
+  final String? sellingUnitId;
+  final String? packId;
+
   final String description;
   final String quantity;
   final String unitPriceHt;
@@ -293,6 +313,9 @@ class InvoiceLinePreviewModel {
 
   const InvoiceLinePreviewModel({
     this.productId,
+    this.variantId,
+    this.sellingUnitId,
+    this.packId,
     required this.description,
     required this.quantity,
     required this.unitPriceHt,
@@ -306,6 +329,9 @@ class InvoiceLinePreviewModel {
   factory InvoiceLinePreviewModel.fromJson(Map<String, dynamic> json) {
     return InvoiceLinePreviewModel(
       productId: json['product_id'] as String?,
+      variantId: json['variant_id'] as String?,
+      sellingUnitId: json['selling_unit_id'] as String?,
+      packId: json['pack_id'] as String?,
       description: json['description'] as String? ?? '',
       quantity: '${json['quantity'] ?? 0}',
       unitPriceHt: '${json['unit_price_ht'] ?? 0}',
@@ -369,9 +395,23 @@ class InvoiceDocumentPreviewModel {
 /// Quantity / price / discount stay as raw text until submit; money
 /// math uses the exact milli helpers only (display totals, never
 /// fiscal authority — the preview endpoint is).
+///
+/// Stage 3A option identity: at most one of (variant, selling unit)
+/// under a product, or a pack alone — mirrors the backend contract.
+/// The three ids are transmitted as-is; display names are dialog UX
+/// only (the server snapshots description + price as fiscal truth).
 class DraftInvoiceLine {
   final String? productId;
   final String? productName;
+
+  /// Stage 3A option identity + display names (nullable).
+  final String? variantId;
+  final String? variantName;
+  final String? sellingUnitId;
+  final String? sellingUnitName;
+  final String? packId;
+  final String? packName;
+
   final String description;
   final String quantity;
   final String unitPriceHt;
@@ -383,6 +423,12 @@ class DraftInvoiceLine {
   const DraftInvoiceLine({
     this.productId,
     this.productName,
+    this.variantId,
+    this.variantName,
+    this.sellingUnitId,
+    this.sellingUnitName,
+    this.packId,
+    this.packName,
     required this.description,
     required this.quantity,
     required this.unitPriceHt,
@@ -390,22 +436,47 @@ class DraftInvoiceLine {
     this.discountPct = '0',
   });
 
-  bool get isFreeText => productId == null;
+  /// A line with NO product and NO pack requires full free-text fields.
+  /// Pack lines are not free-text — the server prefills name/price/tva.
+  bool get isFreeText => productId == null && packId == null;
+
+  bool get isPackLine => packId != null;
 
   DraftInvoiceLine copyWith({
     String? productId,
     String? productName,
+    String? variantId,
+    String? variantName,
+    String? sellingUnitId,
+    String? sellingUnitName,
+    String? packId,
+    String? packName,
     String? description,
     String? quantity,
     String? unitPriceHt,
     int? tvaRate,
     String? discountPct,
     bool clearProduct = false,
+    bool clearOption = false,
     bool clearTvaRate = false,
   }) {
     return DraftInvoiceLine(
       productId: clearProduct ? null : (productId ?? this.productId),
       productName: clearProduct ? null : (productName ?? this.productName),
+      // Option ids are owned by the product — clearing the product
+      // clears its variant / unit too (and vice versa via clearOption).
+      variantId:
+          (clearProduct || clearOption) ? null : (variantId ?? this.variantId),
+      variantName:
+          (clearProduct || clearOption) ? null : (variantName ?? this.variantName),
+      sellingUnitId: (clearProduct || clearOption)
+          ? null
+          : (sellingUnitId ?? this.sellingUnitId),
+      sellingUnitName: (clearProduct || clearOption)
+          ? null
+          : (sellingUnitName ?? this.sellingUnitName),
+      packId: clearProduct ? null : (packId ?? this.packId),
+      packName: clearProduct ? null : (packName ?? this.packName),
       description: description ?? this.description,
       quantity: quantity ?? this.quantity,
       unitPriceHt: unitPriceHt ?? this.unitPriceHt,
@@ -443,15 +514,26 @@ class DraftInvoiceLine {
   String get lineTva => milliToMoney(lineTvaMilli);
 
   Map<String, dynamic> toPayload() {
+    final hasProduct = productId != null;
+    final hasPack = packId != null;
     return {
-      if (productId != null) 'product_id': productId,
-      if (productId == null) 'description': description.trim(),
+      if (hasProduct) 'product_id': productId,
+      if (hasProduct && variantId != null) 'variant_id': variantId,
+      if (hasProduct && sellingUnitId != null) 'selling_unit_id': sellingUnitId,
+      if (hasPack) 'pack_id': packId,
+      // Free-text lines carry their own identity fields; product / pack
+      // lines send description and price only when the user edited them
+      // (empty prefill → the server's authoritative prefill wins).
+      if (!hasProduct && !hasPack) 'description': description.trim(),
       'quantity': quantity.trim(),
-      if (productId == null) 'unit_price_ht': unitPriceHt.trim(),
-      if (productId == null && tvaRate != null) 'tva_rate': '$tvaRate',
-      if (productId != null && unitPriceHt.trim().isNotEmpty)
+      if (!hasProduct && !hasPack) 'unit_price_ht': unitPriceHt.trim(),
+      if (!hasProduct && !hasPack && tvaRate != null) 'tva_rate': '$tvaRate',
+      if (hasProduct && unitPriceHt.trim().isNotEmpty)
         'unit_price_ht': unitPriceHt.trim(),
-      if (productId != null && tvaRate != null) 'tva_rate': '$tvaRate',
+      if (hasProduct && tvaRate != null) 'tva_rate': '$tvaRate',
+      if (hasPack && unitPriceHt.trim().isNotEmpty)
+        'unit_price_ht': unitPriceHt.trim(),
+      if (hasPack && tvaRate != null) 'tva_rate': '$tvaRate',
       'discount_pct': discountPct.trim().isEmpty ? '0' : discountPct.trim(),
     };
   }

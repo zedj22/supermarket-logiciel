@@ -111,10 +111,11 @@ void main() {
       // the RIB field label — 2 keys (1043); Stage 2 added the full invoice
       // preview sheet labels (doc titles, fiscal identity, item-table and
       // totals headers, signature) mirroring backend printing/labels.py —
-      // 21 keys (1064).  Update this deliberately when a subphase adds
-      // strings — an unexplained drop means keys were deleted from one map
-      // only.
-      expect(_map('en').keys.length, 1064);
+      // 21 keys (1064).  Stage 3A facturation options added the pack
+      // picker title — 1 key (1065).  Update this deliberately when a
+      // subphase adds strings — an unexplained drop means keys were
+      // deleted from one map only.
+      expect(_map('en').keys.length, 1065);
       expect(_map('ar').keys.length, _map('en').keys.length);
       expect(_map('fr').keys.length, _map('en').keys.length);
     });

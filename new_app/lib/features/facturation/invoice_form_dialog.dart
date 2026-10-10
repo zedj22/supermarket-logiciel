@@ -104,6 +104,11 @@ class _InvoiceFormDialogState extends ConsumerState<InvoiceFormDialog> {
         doc.lines.map(
           (l) => DraftInvoiceLine(
             productId: l.productId,
+            // Stage 3A option identity — rehydrated so an edit
+            // round-trip keeps variant / unit / pack links intact.
+            variantId: l.variantId,
+            sellingUnitId: l.sellingUnitId,
+            packId: l.packId,
             description: l.description,
             quantity: l.quantity,
             unitPriceHt: l.unitPriceHt,

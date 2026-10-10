@@ -42,6 +42,16 @@ class InvoiceLineDialog extends ConsumerStatefulWidget {
 class _InvoiceLineDialogState extends ConsumerState<InvoiceLineDialog> {
   ProductModel? _product;
 
+  /// Stage 3A option selection — at most one of (variant, selling unit)
+  /// under the product, or a pack alone. Names are display-only; the
+  /// ids are what the payload transmits.
+  String? _variantId;
+  String? _variantName;
+  String? _sellingUnitId;
+  String? _sellingUnitName;
+  String? _packId;
+  String? _packName;
+
   late final TextEditingController _description;
   late final TextEditingController _qty;
   late final TextEditingController _price;
@@ -53,6 +63,10 @@ class _InvoiceLineDialogState extends ConsumerState<InvoiceLineDialog> {
 
   bool get _isEdit => widget.initial != null;
 
+  /// A line with no product and no pack is free-text (all fields
+  /// required); pack lines are server-prefilled summary lines.
+  bool get _isFreeText => _product == null && _packId == null;
+
   @override
   void initState() {
     super.initState();
@@ -62,6 +76,26 @@ class _InvoiceLineDialogState extends ConsumerState<InvoiceLineDialog> {
     _price = TextEditingController(text: initial?.unitPriceHt ?? '');
     _discount = TextEditingController(text: initial?.discountPct ?? '0');
     _tvaRate = initial?.tvaRate;
+    // Rehydrate the full option identity so an edit round-trip keeps
+    // variant / selling unit / pack links intact.
+    _variantId = initial?.variantId;
+    _variantName = initial?.variantName;
+    _sellingUnitId = initial?.sellingUnitId;
+    _sellingUnitName = initial?.sellingUnitName;
+    _packId = initial?.packId;
+    _packName = initial?.packName;
+    // The persisted line carries only option ids; recover the display
+    // name from the "Product · Option" description convention so the
+    // buttons don't look unselected on a real edit.
+    if (_variantId != null && _variantName == null) {
+      _variantName = _optionNameFromDescription(initial?.description);
+    }
+    if (_sellingUnitId != null && _sellingUnitName == null) {
+      _sellingUnitName = _optionNameFromDescription(initial?.description);
+    }
+    if (_packId != null && _packName == null) {
+      _packName = initial?.description.trim();
+    }
     if (initial != null && initial.productId != null) {
       _product = ProductModel(
         id: initial.productId!,
@@ -79,13 +113,30 @@ class _InvoiceLineDialogState extends ConsumerState<InvoiceLineDialog> {
     super.dispose();
   }
 
+  /// Recovers the option display name from the "Product · Option"
+  /// description convention used by the backend prefill. Returns null
+  /// when the description doesn't follow the convention.
+  static String? _optionNameFromDescription(String? description) {
+    final d = description?.trim() ?? '';
+    final i = d.lastIndexOf(' · ');
+    if (i < 0 || i + 3 >= d.length) return null;
+    return d.substring(i + 3);
+  }
+
   Future<void> _pickProduct() async {
     final product = await showFacturationProductPicker(context);
     if (product == null || !mounted) return;
     setState(() {
       _product = product;
+      // A new product invalidates any option of the previous identity.
+      _variantId = null;
+      _variantName = null;
+      _sellingUnitId = null;
+      _sellingUnitName = null;
+      _packId = null;
+      _packName = null;
       // Prefill = products.price (HT) + products.vat_rate — never
-      // promotion / wholesale / selling-unit price (Phase 8 rule).
+      // promotion / wholesale price (Phase 8 rule).
       _description.text = product.name;
       if (_price.text.trim().isEmpty) {
         _price.text = product.price;
@@ -95,15 +146,92 @@ class _InvoiceLineDialogState extends ConsumerState<InvoiceLineDialog> {
     });
   }
 
+  Future<void> _pickVariant() async {
+    final product = _product;
+    if (product == null) return;
+    final variant = await showFacturationVariantPicker(
+      context,
+      productId: product.id,
+    );
+    if (variant == null || !mounted) return;
+    setState(() {
+      _variantId = variant.id;
+      _variantName = variant.name;
+      // Variant XOR selling unit (SaleService parity).
+      _sellingUnitId = null;
+      _sellingUnitName = null;
+      _description.text = '${product.name} · ${variant.name}';
+      // variant.price when configured, else products.price AS-IS
+      // (server-side rule mirrored for prefill UX only).
+      final variantPrice = variant.price;
+      if (_price.text.trim().isEmpty) {
+        _price.text = variantPrice ?? product.price;
+      }
+      _tvaRate ??= kTvaRates.contains(product.vatRate) ? product.vatRate : 0;
+      _error = null;
+    });
+  }
+
+  Future<void> _pickSellingUnit() async {
+    final product = _product;
+    if (product == null) return;
+    final unit = await showFacturationSellingUnitPicker(
+      context,
+      productId: product.id,
+    );
+    if (unit == null || !mounted) return;
+    setState(() {
+      _sellingUnitId = unit.id;
+      _sellingUnitName = unit.name;
+      // Selling unit XOR variant (SaleService parity).
+      _variantId = null;
+      _variantName = null;
+      _description.text = '${product.name} · ${unit.name}';
+      // effective_price (selling_price when configured, else the
+      // product price AS-IS — the multiplier never multiplies price).
+      final unitPrice = unit.effectivePrice ?? unit.sellingPrice;
+      if (_price.text.trim().isEmpty) {
+        _price.text = unitPrice ?? product.price;
+      }
+      _tvaRate ??= kTvaRates.contains(product.vatRate) ? product.vatRate : 0;
+      _error = null;
+    });
+  }
+
+  Future<void> _pickPack() async {
+    final pack = await showFacturationPackPicker(context);
+    if (pack == null || !mounted) return;
+    setState(() {
+      // Pack XOR product (backend contract).
+      _packId = pack.id;
+      _packName = pack.name;
+      _product = null;
+      _variantId = null;
+      _variantName = null;
+      _sellingUnitId = null;
+      _sellingUnitName = null;
+      _description.text = pack.name;
+      _price.text = pack.price;
+      _tvaRate ??= 0;
+      _error = null;
+    });
+  }
+
   void _clearProduct() {
     setState(() {
       _product = null;
+      _variantId = null;
+      _variantName = null;
+      _sellingUnitId = null;
+      _sellingUnitName = null;
+      _packId = null;
+      _packName = null;
       _error = null;
     });
   }
 
   String? _validate(String loc) {
-    final isFreeText = _product == null;
+    final isFreeText = _isFreeText;
     if (isFreeText && _description.text.trim().isEmpty) {
       return AppStrings.t('field_required', loc);
     }
@@ -114,8 +242,8 @@ class _InvoiceLineDialogState extends ConsumerState<InvoiceLineDialog> {
       return AppStrings.t('invalid_qty', loc);
     }
     final priceText = _price.text.trim();
-    // Free-text lines REQUIRE a price; product lines may leave it empty
-    // so the server prefills from products.price.
+    // Free-text lines REQUIRE a price; product / pack lines may leave it
+    // empty so the server prefills from its authoritative source.
     if (isFreeText && priceText.isEmpty) {
       return AppStrings.t('invalid_amount', loc);
     }
@@ -146,6 +274,12 @@ class _InvoiceLineDialogState extends ConsumerState<InvoiceLineDialog> {
       DraftInvoiceLine(
         productId: product?.id,
         productName: product?.name,
+        variantId: _variantId,
+        variantName: _variantName,
+        sellingUnitId: _sellingUnitId,
+        sellingUnitName: _sellingUnitName,
+        packId: _packId,
+        packName: _packName,
         description: _description.text.trim(),
         quantity: _qty.text.trim(),
         unitPriceHt: _price.text.trim(),
@@ -161,17 +295,26 @@ class _InvoiceLineDialogState extends ConsumerState<InvoiceLineDialog> {
   Widget build(BuildContext context) {
     final loc = ref.watch(localeProvider).flutterLocale.languageCode;
     final theme = Theme.of(context);
-    final isFreeText = _product == null;
+    final isFreeText = _isFreeText;
+    final hasPack = _packId != null;
+    final hasProduct = _product != null;
 
     final previewLine = DraftInvoiceLine(
       productId: _product?.id,
       productName: _product?.name,
+      variantId: _variantId,
+      sellingUnitId: _sellingUnitId,
+      packId: _packId,
       description: _description.text,
       quantity: _qty.text,
       unitPriceHt: _price.text,
       tvaRate: _tvaRate,
       discountPct: _discount.text,
     );
+
+    final identityLabel = hasPack
+        ? (_packName ?? AppStrings.t('pack', loc))
+        : _product?.name ?? AppStrings.t('free_text_line', loc);
 
     return AlertDialog(
       key: const Key('invoice-line-dialog'),
@@ -189,13 +332,13 @@ class _InvoiceLineDialogState extends ConsumerState<InvoiceLineDialog> {
               children: [
                 Expanded(
                   child: Text(
-                    _product?.name ?? AppStrings.t('free_text_line', loc),
+                    identityLabel,
                     key: const Key('invoice-line-product'),
                     style: theme.textTheme.titleMedium,
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
-                if (_product != null)
+                if (hasProduct || hasPack)
                   OutlinedButton.icon(
                     key: const Key('invoice-line-clear-product'),
                     onPressed: _saving ? null : _clearProduct,
@@ -208,13 +351,54 @@ class _InvoiceLineDialogState extends ConsumerState<InvoiceLineDialog> {
                   icon: const Icon(Icons.search, size: 18),
                   label: Text(
                     AppStrings.t(
-                      _product == null ? 'select_product' : 'change_product',
+                      hasProduct ? 'change_product' : 'select_product',
                       loc,
                     ),
                   ),
                 ),
               ],
             ),
+            if (hasProduct) ...[
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      key: const Key('invoice-line-pick-variant'),
+                      onPressed: _saving ? null : _pickVariant,
+                      icon: const Icon(Icons.category_outlined, size: 18),
+                      label: Text(
+                        _variantName == null
+                            ? AppStrings.t('select_variant', loc)
+                            : '${AppStrings.t('variants', loc)}: ${_variantName!}',
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      key: const Key('invoice-line-pick-selling-unit'),
+                      onPressed: _saving ? null : _pickSellingUnit,
+                      icon: const Icon(Icons.straighten, size: 18),
+                      label: Text(
+                        _sellingUnitName == null
+                            ? AppStrings.t('select_selling_unit', loc)
+                            : '${AppStrings.t('selling_units', loc)}: ${_sellingUnitName!}',
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+            if (!hasProduct && !hasPack) ...[
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                key: const Key('invoice-line-pick-pack'),
+                onPressed: _saving ? null : _pickPack,
+                icon: const Icon(Icons.inventory_2_outlined, size: 18),
+                label: Text(AppStrings.t('select_pack', loc)),
+              ),
+            ],
             if (isFreeText) ...[
               const SizedBox(height: 12),
               TextField(

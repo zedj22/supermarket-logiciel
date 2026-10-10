@@ -288,4 +288,248 @@ void main() {
       expect(kTvaRates, [0, 9, 19]);
     });
   });
+
+  // ---------------------------------------------------------------------
+  // Stage 3A — option identity (variant / selling unit / pack)
+  // ---------------------------------------------------------------------
+
+  group('DraftInvoiceLine option payloads', () {
+    test('variant line: product_id + variant_id, no unit/pack keys', () {
+      const line = DraftInvoiceLine(
+        productId: 'p1',
+        productName: 'Coca Cola',
+        variantId: 'v1',
+        variantName: 'Big',
+        description: 'Coca Cola · Big',
+        quantity: '2',
+        unitPriceHt: '120.000',
+        tvaRate: 19,
+      );
+      final payload = line.toPayload();
+      expect(payload['product_id'], 'p1');
+      expect(payload['variant_id'], 'v1');
+      expect(payload.containsKey('selling_unit_id'), isFalse);
+      expect(payload.containsKey('pack_id'), isFalse);
+      expect(payload['quantity'], '2');
+      // description is NOT sent — the server prefills "Product · Variant".
+      expect(payload.containsKey('description'), isFalse);
+    });
+
+    test('selling-unit line: product_id + selling_unit_id, no variant', () {
+      const line = DraftInvoiceLine(
+        productId: 'p1',
+        sellingUnitId: 'u1',
+        sellingUnitName: 'Box',
+        description: 'Coca Cola · Box',
+        quantity: '1',
+        unitPriceHt: '2200.000',
+        tvaRate: 19,
+      );
+      final payload = line.toPayload();
+      expect(payload['product_id'], 'p1');
+      expect(payload['selling_unit_id'], 'u1');
+      expect(payload.containsKey('variant_id'), isFalse);
+      expect(payload.containsKey('pack_id'), isFalse);
+    });
+
+    test('pack line: pack_id only — no product/variant/unit keys', () {
+      // Empty price + null tva → the server's pack prefill wins.
+      const line = DraftInvoiceLine(
+        packId: 'k1',
+        packName: 'Pack Promo',
+        description: 'Pack Promo',
+        quantity: '1',
+        unitPriceHt: '',
+      );
+      final payload = line.toPayload();
+      expect(payload['pack_id'], 'k1');
+      expect(payload.containsKey('product_id'), isFalse);
+      expect(payload.containsKey('variant_id'), isFalse);
+      expect(payload.containsKey('selling_unit_id'), isFalse);
+      expect(payload['quantity'], '1');
+      // Pack lines are NOT free-text: description is optional (server
+      // prefills the pack name) but sent when the user typed one.
+      expect(payload.containsKey('description'), isFalse);
+      expect(payload.containsKey('unit_price_ht'), isFalse);
+      expect(payload.containsKey('tva_rate'), isFalse);
+      expect(payload['discount_pct'], '0');
+    });
+
+    test('pack line with user overrides sends price and tva', () {
+      const line = DraftInvoiceLine(
+        packId: 'k1',
+        description: 'Pack Promo',
+        quantity: '2',
+        unitPriceHt: '260.000',
+        tvaRate: 19,
+      );
+      final payload = line.toPayload();
+      expect(payload['unit_price_ht'], '260.000');
+      expect(payload['tva_rate'], '19');
+    });
+
+    test('variant and selling unit are mutually exclusive in payload', () {
+      // The dialog clears the sibling on selection; the payload guard
+      // sends both only when both are somehow present (server rejects).
+      const line = DraftInvoiceLine(
+        productId: 'p1',
+        variantId: 'v1',
+        sellingUnitId: 'u1',
+        description: 'Coca Cola',
+        quantity: '1',
+        unitPriceHt: '1.000',
+        tvaRate: 0,
+      );
+      final payload = line.toPayload();
+      expect(payload['variant_id'], 'v1');
+      expect(payload['selling_unit_id'], 'u1');
+    });
+
+    test('isFreeText excludes pack lines', () {
+      const packLine = DraftInvoiceLine(
+        packId: 'k1',
+        description: 'Pack',
+        quantity: '1',
+        unitPriceHt: '10.000',
+      );
+      expect(packLine.isFreeText, isFalse);
+      expect(packLine.isPackLine, isTrue);
+
+      const freeText = DraftInvoiceLine(
+        description: 'Services',
+        quantity: '1',
+        unitPriceHt: '50.000',
+        tvaRate: 9,
+      );
+      expect(freeText.isFreeText, isTrue);
+      expect(freeText.isPackLine, isFalse);
+
+      const variantLine = DraftInvoiceLine(
+        productId: 'p1',
+        variantId: 'v1',
+        description: 'Coca Cola · Big',
+        quantity: '1',
+        unitPriceHt: '1.000',
+      );
+      expect(variantLine.isFreeText, isFalse);
+    });
+
+    test('copyWith clearOption resets variant and unit, keeps product', () {
+      const line = DraftInvoiceLine(
+        productId: 'p1',
+        productName: 'Coca',
+        variantId: 'v1',
+        variantName: 'Big',
+        description: 'Coca · Big',
+        quantity: '1',
+        unitPriceHt: '1.000',
+        tvaRate: 19,
+      );
+      final cleared = line.copyWith(clearOption: true);
+      expect(cleared.productId, 'p1');
+      expect(cleared.variantId, isNull);
+      expect(cleared.variantName, isNull);
+      expect(cleared.sellingUnitId, isNull);
+      expect(cleared.tvaRate, 19);
+    });
+
+    test('copyWith clearProduct resets product, options and pack', () {
+      const line = DraftInvoiceLine(
+        productId: 'p1',
+        variantId: 'v1',
+        packId: 'k1',
+        description: 'X',
+        quantity: '1',
+        unitPriceHt: '1.000',
+      );
+      final cleared = line.copyWith(clearProduct: true);
+      expect(cleared.productId, isNull);
+      expect(cleared.variantId, isNull);
+      expect(cleared.packId, isNull);
+      expect(cleared.packName, isNull);
+    });
+  });
+
+  group('InvoiceLineModel.fromJson option ids', () {
+    test('parses variant_id, selling_unit_id and pack_id', () {
+      final line = InvoiceLineModel.fromJson({
+        'id': 'l1',
+        'product_id': 'p1',
+        'variant_id': 'v1',
+        'selling_unit_id': null,
+        'pack_id': null,
+        'description': 'Coca Cola · Big',
+        'quantity': '2',
+        'unit_price_ht': '120.000',
+        'tva_rate': '19.000',
+        'discount_pct': '0.000',
+        'position': 0,
+        'total_ht': '240.000',
+        'total_tva': '45.600',
+      });
+      expect(line.variantId, 'v1');
+      expect(line.sellingUnitId, isNull);
+      expect(line.packId, isNull);
+    });
+
+    test('pack line: product_id null, pack_id set', () {
+      final line = InvoiceLineModel.fromJson({
+        'id': 'l2',
+        'product_id': null,
+        'variant_id': null,
+        'selling_unit_id': null,
+        'pack_id': 'k1',
+        'description': 'Pack Promo',
+        'quantity': '1',
+        'unit_price_ht': '250.000',
+        'tva_rate': '0.000',
+        'discount_pct': '0.000',
+        'position': 0,
+        'total_ht': '250.000',
+        'total_tva': '0.000',
+      });
+      expect(line.productId, isNull);
+      expect(line.packId, 'k1');
+    });
+
+    test('legacy line without option keys defaults to null', () {
+      final line = InvoiceLineModel.fromJson({
+        'id': 'l3',
+        'product_id': 'p1',
+        'description': 'Widget',
+        'quantity': '1',
+        'unit_price_ht': '10.000',
+        'tva_rate': '19.000',
+        'discount_pct': '0.000',
+        'position': 0,
+        'total_ht': '10.000',
+        'total_tva': '1.900',
+      });
+      expect(line.variantId, isNull);
+      expect(line.sellingUnitId, isNull);
+      expect(line.packId, isNull);
+    });
+  });
+
+  group('InvoiceLinePreviewModel.fromJson option ids', () {
+    test('parses the same option identity as the persisted line', () {
+      final line = InvoiceLinePreviewModel.fromJson({
+        'product_id': 'p1',
+        'variant_id': null,
+        'selling_unit_id': 'u1',
+        'pack_id': null,
+        'description': 'Coca Cola · Box',
+        'quantity': '1',
+        'unit_price_ht': '2200.000',
+        'tva_rate': '19.000',
+        'discount_pct': '0.000',
+        'position': 0,
+        'total_ht': '2200.000',
+        'total_tva': '418.000',
+      });
+      expect(line.sellingUnitId, 'u1');
+      expect(line.variantId, isNull);
+      expect(line.packId, isNull);
+    });
+  });
 }
