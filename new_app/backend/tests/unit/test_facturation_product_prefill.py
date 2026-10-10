@@ -502,6 +502,10 @@ def test_product_customer_domain_separation(service, db):
         "description",
         "unit_price_ht",
         "tva_rate",
+        # Stage 3A option identity — nullable, traceability only.
+        "variant_id",
+        "selling_unit_id",
+        "pack_id",
     }
     assert not hasattr(prefill, "customer_id")
     assert "invoice_products" not in Base.metadata.tables

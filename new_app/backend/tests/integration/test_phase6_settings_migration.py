@@ -33,8 +33,11 @@ pytestmark = pytest.mark.skipif(
     reason="PostgreSQL test database (supermarket_pro_test) not available",
 )
 
-HEAD_REV = "2dbe2160afb5"  # 0028_phase6_facturation_settings
+HEAD_REV = "c9d4e2a7f1b6"  # 0029_facturation_option_identity
 PREV_REV = "b2e603d5c016"  # 0027_phase2_facturation_year_numbering
+# The 0028 revision is a FIXED historical fact — it revises 0027 forever,
+# regardless of which revision is currently the head (0029+).
+REV_0028 = "2dbe2160afb5"  # 0028_phase6_facturation_settings
 
 # column -> (data_type, character_maximum_length, is_nullable)
 NEW_COLUMNS: dict[str, tuple[str, int | None, str]] = {
@@ -223,7 +226,7 @@ class TestPhase6SettingsMigration:
     def test_0028_revises_0027(self):
         history = _run_alembic("history")
         assert history.returncode == 0, history.stderr
-        assert f"{PREV_REV} -> {HEAD_REV}" in history.stdout, history.stdout
+        assert f"{PREV_REV} -> {REV_0028}" in history.stdout, history.stdout
         assert "0028_phase6_facturation_settings" in history.stdout
 
     # -- schema -----------------------------------------------------------

@@ -32,7 +32,7 @@ pytestmark = pytest.mark.skipif(
     reason="PostgreSQL test database (supermarket_pro_test) not available",
 )
 
-HEAD_REV = "2dbe2160afb5"  # 0028_phase6_facturation_settings (current head)
+HEAD_REV = "c9d4e2a7f1b6"  # 0029_facturation_option_identity (current head)
 ORIG_PHASE2_REV = "f3f734338032"  # 0026_phase2_facturation
 PREVIOUS_REV = "9f2e8c7a4b1d"  # 0025_phase18_promotions (pre-Phase-2 baseline)
 INVOICE_TABLES = (
@@ -247,7 +247,7 @@ class TestPhase2FacturationMigration:
               AND tc.table_name LIKE 'invoice%'
         """)
         fks = {(row[0], row[1]): (row[2], row[3]) for row in cur.fetchall()}
-        assert len(fks) == 3, f"Expected exactly 3 facturation FKs, got {fks}"
+        assert len(fks) == 6, f"Expected exactly 6 facturation FKs, got {fks}"
         assert fks[("invoice_documents", "client_id")] == (
             "invoice_clients",
             "RESTRICT",
@@ -260,6 +260,23 @@ class TestPhase2FacturationMigration:
             "products",
             "SET NULL",
         ), "invoice_document_lines.product_id must be FK SET NULL -> products"
+        # Stage 3A (0029): option identity links — all SET NULL like
+        # product_id, a deleted option never destroys a historical line.
+        assert fks[("invoice_document_lines", "variant_id")] == (
+            "product_variants",
+            "SET NULL",
+        ), "invoice_document_lines.variant_id must be FK SET NULL -> product_variants"
+        assert fks[("invoice_document_lines", "selling_unit_id")] == (
+            "product_selling_units",
+            "SET NULL",
+        ), (
+            "invoice_document_lines.selling_unit_id must be FK SET NULL "
+            "-> product_selling_units"
+        )
+        assert fks[("invoice_document_lines", "pack_id")] == (
+            "packs",
+            "SET NULL",
+        ), "invoice_document_lines.pack_id must be FK SET NULL -> packs"
         cur.close()
         conn.close()
 
@@ -296,6 +313,10 @@ class TestPhase2FacturationMigration:
                 "ix_invoice_document_lines_id",
                 "ix_invoice_document_lines_document_id",
                 "ix_invoice_document_lines_product_id",
+                # Stage 3A (0029) option identity indexes.
+                "ix_invoice_document_lines_variant_id",
+                "ix_invoice_document_lines_selling_unit_id",
+                "ix_invoice_document_lines_pack_id",
             },
             "invoice_document_counters": {
                 "invoice_document_counters_pkey",

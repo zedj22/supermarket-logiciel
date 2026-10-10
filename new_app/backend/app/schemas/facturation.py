@@ -79,11 +79,29 @@ class InvoiceLineRequest(StrictBaseModel):
     and ``products.vat_rate`` are the INITIAL values, never a live
     price source.
 
+    Stage 3A option identity (all optional, additive):
+    - ``variant_id`` (+ ``product_id``): initial price is
+      ``variant.price`` when set, else ``products.price``; description
+      prefills to ``"{product} · {variant}"``.
+    - ``selling_unit_id`` (+ ``product_id``): initial price is
+      ``effective_unit_price(unit.selling_price, product.price)``
+      (selling-unit price wins when present, else the product price
+      AS-IS — the multiplier never multiplies the price); description
+      prefills to ``"{product} · {unit}"``. Cannot combine with
+      ``variant_id`` (SaleService parity).
+    - ``pack_id`` (alone — no product/variant/unit): initial price is
+      ``pack.price``, description prefills to the pack name, and
+      ``tva_rate`` prefills to 0 (a pack spans products, so it has no
+      single authoritative VAT rate; the client may send any {0,9,19}).
+
     product_id absent (free-text line, ``product_id = NULL``) ->
     description, unit_price_ht and tva_rate are all REQUIRED.
     """
 
     product_id: uuid.UUID | None = None
+    variant_id: uuid.UUID | None = None
+    selling_unit_id: uuid.UUID | None = None
+    pack_id: uuid.UUID | None = None
     description: str | None = Field(default=None)
     quantity: Decimal = Field(..., gt=0)
     unit_price_ht: Decimal | None = Field(default=None, ge=0)
@@ -93,13 +111,43 @@ class InvoiceLineRequest(StrictBaseModel):
 
     @model_validator(mode="after")
     def _free_text_lines_need_identity(self) -> InvoiceLineRequest:
-        if self.product_id is None:
+        # A line carrying any identity (product / variant / unit / pack)
+        # is not free-text — the combination validator below owns the
+        # "option without product" errors.
+        if (
+            self.product_id is None
+            and self.pack_id is None
+            and self.variant_id is None
+            and self.selling_unit_id is None
+        ):
             if not self.description:
                 raise ValueError("description is required for free-text lines")
             if self.unit_price_ht is None:
                 raise ValueError("unit_price_ht is required for free-text lines")
             if self.tva_rate is None:
                 raise ValueError("tva_rate is required for free-text lines")
+        return self
+
+    @model_validator(mode="after")
+    def _option_combinations(self) -> InvoiceLineRequest:
+        if self.pack_id is not None:
+            if (
+                self.product_id is not None
+                or self.variant_id is not None
+                or self.selling_unit_id is not None
+            ):
+                raise ValueError(
+                    "pack_id cannot be combined with product_id, "
+                    "variant_id or selling_unit_id"
+                )
+        if self.variant_id is not None and self.selling_unit_id is not None:
+            raise ValueError(
+                "selling_unit_id cannot be combined with variant_id"
+            )
+        if self.variant_id is not None and self.product_id is None:
+            raise ValueError("variant_id requires product_id")
+        if self.selling_unit_id is not None and self.product_id is None:
+            raise ValueError("selling_unit_id requires product_id")
         return self
 
 
@@ -167,6 +215,9 @@ class InvoiceLineResponse(StrictBaseModel):
 
     id: uuid.UUID
     product_id: uuid.UUID | None = None
+    variant_id: uuid.UUID | None = None
+    selling_unit_id: uuid.UUID | None = None
+    pack_id: uuid.UUID | None = None
     description: str
     quantity: Decimal
     unit_price_ht: Decimal
@@ -248,6 +299,9 @@ class InvoiceLinePreviewResponse(StrictBaseModel):
     """
 
     product_id: uuid.UUID | None = None
+    variant_id: uuid.UUID | None = None
+    selling_unit_id: uuid.UUID | None = None
+    pack_id: uuid.UUID | None = None
     description: str
     quantity: Decimal
     unit_price_ht: Decimal

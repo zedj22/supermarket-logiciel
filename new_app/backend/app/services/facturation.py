@@ -43,22 +43,36 @@ transaction (``BaseService.transaction``) and every mutation appends one
 ``audit_logs`` row in the same transaction (entity_type
 ``invoice_client``).
 
-Product integration (Phase 4)
------------------------------
+Product integration (Phase 4 + Stage 3A)
+----------------------------------------
 ``InvoiceProductService`` resolves existing Supermarket Pro products for
 invoice-line prefill — ``products`` stays the SINGLE product catalog (no
 ``invoice_products`` table ever exists). ``get_product_for_invoice``
 reuses the existing ``ProductService`` read (structured 404) and returns
-a frozen ``InvoiceLinePrefill(product_id, description, unit_price_ht,
-tva_rate)`` built purely from ``products.price`` (the initial HT unit
-price) and ``products.vat_rate`` (authoritative Phase 17 metadata, the
-strict {0, 9, 19} set Phase 1 also supports). Promotion / wholesale /
-selling-unit / pack / variant / inventory pricing is NEVER consulted,
-the product row is never mutated, and stock is never touched. The
-archived-product gate mirrors ``SaleService._get_product``: archived
-products cannot be selected for NEW invoice lines, while historical
-lines never re-resolve the product and stay valid regardless of the
-product's current state.
+a frozen ``InvoiceLinePrefill`` built purely from ``products.price`` (the
+initial HT unit price) and ``products.vat_rate`` (authoritative Phase 17
+metadata, the strict {0, 9, 19} set Phase 1 also supports). Promotion /
+wholesale pricing is NEVER consulted, catalog rows are never mutated,
+and stock is never touched. The archived-product gate mirrors
+``SaleService._get_product``: archived products cannot be selected for
+NEW invoice lines, while historical lines never re-resolve the product
+and stay valid regardless of the product's current state.
+
+Stage 3A extends the same service with variant / selling-unit / pack
+resolution (SaleService validation-ladder parity: ownership → archived
+gate), each returning an option-aware prefill:
+- variant line: ``variant.price`` when set, else ``products.price``;
+  description ``"{product} · {variant}"``;
+- selling-unit line: ``effective_unit_price(unit.selling_price,
+  product.price)`` (selling-unit price wins when present, else the
+  product price AS-IS — the multiplier never multiplies a price);
+  description ``"{product} · {unit}"``;
+- pack line: ``packs.price``, description = pack name, tva 0 default,
+  ``product_id`` NULL (separate summary line, components never expanded).
+Option identity columns ``variant_id`` / ``selling_unit_id`` /
+``pack_id`` are stored on the line as traceability links (nullable SET
+NULL); the stored description + price snapshots remain the printable
+truth and totals/PDF code never re-resolves them.
 
 Document workflow (Phase 5)
 ---------------------------
@@ -129,7 +143,7 @@ import structlog
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.core.exceptions import BusinessRuleError, ValidationError
+from app.core.exceptions import BusinessRuleError, NotFoundError, ValidationError
 from app.domain.facturation import (
     DocumentTotals,
     FacturationError,
@@ -142,19 +156,24 @@ from app.domain.facturation import (
     validate_document_inputs,
     validate_payment_method,
 )
-from app.domain.unit_conversions import to_decimal
+from app.domain.unit_conversions import effective_unit_price, to_decimal
 from app.models.audit import AuditLog
-from app.models.catalog import Product
+from app.models.catalog import Pack, Product, ProductSellingUnit, ProductVariant
 from app.models.enums import AuditAction
 from app.models.facturation import (
     InvoiceClient,
     InvoiceDocument,
     InvoiceDocumentLine,
 )
+from app.repositories.catalog import (
+    ProductVariantRepository,
+    SellingUnitRepository,
+)
 from app.repositories.facturation import (
     InvoiceClientRepository,
     InvoiceDocumentRepository,
 )
+from app.repositories.pack import PackRepository
 from app.schemas.facturation import (
     InvoiceClientRefResponse,
     InvoiceDocumentCreateRequest,
@@ -471,22 +490,26 @@ class InvoiceClientService(BaseService):
 
 @dataclass(frozen=True)
 class InvoiceLinePrefill:
-    """Product snapshot for prefilling one invoice line (Phase 4).
+    """Product/option snapshot for prefilling one invoice line.
 
-    Exactly the authoritative fields the future document workflow copies
-    into ``invoice_document_lines``: ``product_id`` (traceability only),
-    ``description`` (product-name snapshot), ``unit_price_ht`` (the
-    ``products.price`` snapshot) and ``tva_rate`` (the
-    ``products.vat_rate`` snapshot). Nothing else — wholesale /
-    promotion / selling-unit prices, stock and catalog metadata are
+    Exactly the authoritative fields the document workflow copies into
+    ``invoice_document_lines``: ``product_id`` (traceability only, NULL
+    for pack lines), the Stage 3A option identity fields
+    ``variant_id`` / ``selling_unit_id`` / ``pack_id`` (all nullable,
+    traceability only), ``description`` (name snapshot), ``unit_price_ht``
+    (option-aware INITIAL price) and ``tva_rate`` (product VAT, or 0 for
+    packs). Wholesale / promotion prices, stock and catalog metadata are
     deliberately absent so no caller can leak them into a facturation
     line.
     """
 
-    product_id: uuid.UUID
+    product_id: uuid.UUID | None
     description: str
     unit_price_ht: Decimal
     tva_rate: Decimal
+    variant_id: uuid.UUID | None = None
+    selling_unit_id: uuid.UUID | None = None
+    pack_id: uuid.UUID | None = None
 
 
 def product_line_prefill(product: Product) -> InvoiceLinePrefill:
@@ -505,22 +528,86 @@ def product_line_prefill(product: Product) -> InvoiceLinePrefill:
     )
 
 
+def variant_line_prefill(product: Product, variant: ProductVariant) -> InvoiceLinePrefill:
+    """Pure (Product, ProductVariant) → invoice-line prefill (Stage 3A).
+
+    Price precedence per SaleService (facturation subset — no promotion
+    / wholesale ever): ``variant.price`` when configured, else the
+    product retail price ``products.price`` AS-IS. Description is the
+    established POS display snapshot ``"{product} · {variant}"``; TVA
+    stays ``products.vat_rate`` (variants have no VAT field).
+    """
+    price = variant.price if variant.price is not None else product.price
+    return InvoiceLinePrefill(
+        product_id=product.id,
+        description=f"{product.name} · {variant.name}",
+        unit_price_ht=to_decimal(price),
+        tva_rate=to_decimal(product.vat_rate),
+        variant_id=variant.id,
+    )
+
+
+def selling_unit_line_prefill(
+    product: Product, selling_unit: ProductSellingUnit
+) -> InvoiceLinePrefill:
+    """Pure (Product, ProductSellingUnit) → invoice-line prefill (Stage 3A).
+
+    Price via the domain helper ``effective_unit_price``: the unit's own
+    ``selling_price`` wins when configured, else the product price
+    AS-IS (the multiplier never multiplies a price). Description is the
+    POS display snapshot ``"{product} · {unit}"``; TVA is the product
+    VAT. Wholesale and promotion are excluded (selling-unit lines can
+    never qualify for the product's base-unit-only rules).
+    """
+    return InvoiceLinePrefill(
+        product_id=product.id,
+        description=f"{product.name} · {selling_unit.name}",
+        unit_price_ht=effective_unit_price(
+            selling_unit.selling_price, product.price
+        ),
+        tva_rate=to_decimal(product.vat_rate),
+        selling_unit_id=selling_unit.id,
+    )
+
+
+def pack_line_prefill(pack: Pack) -> InvoiceLinePrefill:
+    """Pure Pack → invoice-line prefill (Stage 3A).
+
+    Packs are separate summary lines (POS parity): price is
+    ``packs.price``, description is the pack name, and the TVA rate
+    prefills to 0 — a pack spans multiple products so it has no single
+    authoritative VAT rate; the client may still send any {0,9,19}.
+    ``product_id`` stays NULL (no product ownership).
+    """
+    return InvoiceLinePrefill(
+        product_id=None,
+        description=pack.name,
+        unit_price_ht=to_decimal(pack.price),
+        tva_rate=Decimal("0"),
+        pack_id=pack.id,
+    )
+
+
 class InvoiceProductService(BaseService):
-    """Resolves existing Supermarket Pro products for invoice use (V1).
+    """Resolves existing catalog options for invoice use (V1 + Stage 3A).
 
     Product selection is PRODUCT-ROW based: one lookup reuses the
     existing ``ProductService.get`` read (structured 404 via
     ``BaseRepository.get_by_id_or_none``) and applies the established
-    archived-product gate (SaleService / pack / purchase parity). There
-    is no second product repository or catalog — ``products`` is the
-    single source of truth, and this service never reads promotion
-    state, wholesale fields, selling units, packs, variants or
-    inventory, never mutates the product, and never touches stock.
+    archived-product gate (SaleService / pack / purchase parity). Stage
+    3A adds variant / selling-unit / pack resolution mirroring
+    SaleService's validation ladder exactly (ownership → archived gate)
+    with the facturation pricing subset — promotion and wholesale are
+    never consulted. This service never mutates any catalog row and
+    never touches stock or inventory.
     """
 
     def __init__(self, db: Session):
         super().__init__(db)
         self.products = ProductService(db)
+        self.variants = ProductVariantRepository(db)
+        self.selling_units = SellingUnitRepository(db)
+        self.packs = PackRepository(db)
 
     def get_product_for_invoice(self, product_id: uuid.UUID) -> InvoiceLinePrefill:
         """Load a product and return the invoice-line prefill snapshot.
@@ -539,6 +626,105 @@ class InvoiceProductService(BaseService):
                 details={"product_id": str(product.id)},
             )
         return product_line_prefill(product)
+
+    def get_variant_for_invoice(
+        self, product_id: uuid.UUID, variant_id: uuid.UUID
+    ) -> InvoiceLinePrefill:
+        """Load a variant under its product and return the prefill.
+
+        Same ladder as SaleService: unknown variant → structured 404;
+        variant owned by a different product → 422 (it is not a valid
+        option of the requested product); archived variant → 422. The
+        product itself still passes the archived-product gate.
+        """
+        product = self.products.get(product_id)
+        if product.archived_at is not None:
+            raise BusinessRuleError(
+                message="Archived product cannot be used for new invoice lines",
+                details={"product_id": str(product.id)},
+            )
+        variant = self.variants.get_by_id(variant_id)
+        if variant is None:
+            raise NotFoundError(
+                message="Variant not found",
+                details={"variant_id": str(variant_id)},
+            )
+        if variant.product_id != product.id:
+            raise ValidationError(
+                message="Variant does not belong to product",
+                details={
+                    "variant_id": str(variant.id),
+                    "product_id": str(product.id),
+                },
+            )
+        if variant.archived_at is not None:
+            raise BusinessRuleError(
+                message="Archived variant cannot be used for new invoice lines",
+                details={"variant_id": str(variant.id)},
+            )
+        return variant_line_prefill(product, variant)
+
+    def get_selling_unit_for_invoice(
+        self, product_id: uuid.UUID, selling_unit_id: uuid.UUID
+    ) -> InvoiceLinePrefill:
+        """Load a selling unit under its product and return the prefill.
+
+        Same ladder as SaleService: unknown unit → structured 404;
+        unit owned by a different product → 422; archived unit → 422.
+        The product itself still passes the archived-product gate.
+        """
+        product = self.products.get(product_id)
+        if product.archived_at is not None:
+            raise BusinessRuleError(
+                message="Archived product cannot be used for new invoice lines",
+                details={"product_id": str(product.id)},
+            )
+        selling_unit = self.selling_units.get_by_id(selling_unit_id)
+        if selling_unit is None:
+            raise NotFoundError(
+                message="Selling unit not found",
+                details={"selling_unit_id": str(selling_unit_id)},
+            )
+        if selling_unit.product_id != product.id:
+            raise ValidationError(
+                message="Selling unit does not belong to product",
+                details={
+                    "selling_unit_id": str(selling_unit.id),
+                    "product_id": str(product.id),
+                },
+            )
+        if selling_unit.archived_at is not None:
+            raise BusinessRuleError(
+                message="Archived selling unit cannot be used for new invoice lines",
+                details={"selling_unit_id": str(selling_unit.id)},
+            )
+        return selling_unit_line_prefill(product, selling_unit)
+
+    def get_pack_for_invoice(self, pack_id: uuid.UUID) -> InvoiceLinePrefill:
+        """Load a pack and return the invoice-line prefill.
+
+        Saleable gate parity with SaleService (GATE 8): unknown pack →
+        structured 404; inactive or archived pack → 422. Components are
+        never loaded or priced — facturation charges the pack summary
+        line only (no stock coupling).
+        """
+        pack = self.packs.get_by_id(pack_id)
+        if pack is None:
+            raise NotFoundError(
+                message="Pack not found",
+                details={"pack_id": str(pack_id)},
+            )
+        if not pack.is_active or pack.archived_at is not None:
+            raise BusinessRuleError(
+                message="Pack is not active and cannot be used for new invoice lines",
+                details={
+                    "pack_id": str(pack.id),
+                    "pack_name": pack.name,
+                    "is_active": bool(pack.is_active),
+                    "is_archived": pack.archived_at is not None,
+                },
+            )
+        return pack_line_prefill(pack)
 
 
 # =========================================================================
@@ -669,9 +855,17 @@ def build_totals_response(totals: DocumentTotals) -> InvoiceDocumentTotalsRespon
 
 
 def build_line_fields(line: InvoiceDocumentLine) -> dict[str, Any]:
-    """The Phase 2 line snapshot (shared by detail and preview lines)."""
+    """The Phase 2 line snapshot (shared by detail and preview lines).
+
+    Stage 3A: includes the option identity columns (variant_id /
+    selling_unit_id / pack_id, all nullable SET NULL) so the API and
+    the PDF payload carry the same links the row stores.
+    """
     return {
         "product_id": line.product_id,
+        "variant_id": line.variant_id,
+        "selling_unit_id": line.selling_unit_id,
+        "pack_id": line.pack_id,
         "description": line.description,
         "quantity": to_decimal(line.quantity),
         "unit_price_ht": to_decimal(line.unit_price_ht),
@@ -960,29 +1154,84 @@ class InvoiceDocumentService(BaseService):
     # ── Internals ────────────────────────────────────────────────────
 
     def _resolve_lines(self, lines: Sequence[InvoiceLineRequest]) -> list[InvoiceDocumentLine]:
-        """Build snapshot line rows from request lines (Phase 4 prefill).
+        """Build snapshot line rows from request lines (prefill + Stage 3A).
 
-        Product lines resolve through ``InvoiceProductService`` (404 /
-        archived 422) and take the prefill ONLY for fields the client
-        omitted — an explicitly sent description / price / VAT always
-        wins (``products.price`` is the INITIAL HT price, editable).
+        Option lines resolve through ``InvoiceProductService`` (404 /
+        archived / ownership 422) and take the prefill ONLY for fields
+        the client omitted — an explicitly sent description / price /
+        VAT always wins. Stage 3A branches:
+          - ``pack_id`` alone → pack summary line (pack.name /
+            pack.price / tva 0, product_id NULL);
+          - ``variant_id`` (+ product_id) → ``variant.price`` else
+            ``products.price``;
+          - ``selling_unit_id`` (+ product_id) →
+            ``effective_unit_price``;
+          - plain ``product_id`` → unchanged product prefill.
         Free-text lines carry ``product_id = NULL`` and must provide
         description + unit_price_ht + tva_rate (the Pydantic schema
-        enforces this for API callers too). Positions default to the
-        list index. Nothing here touches promotion / wholesale /
-        selling-unit pricing, Customer, inventory or stock.
+        enforces this for API callers too; the service mirrors the
+        combination and free-text rules here so direct non-API callers
+        are equally protected). Positions default to the list index.
+        Nothing here touches promotion / wholesale pricing, Customer,
+        inventory or stock.
         """
         resolved: list[InvoiceDocumentLine] = []
         for index, line in enumerate(lines):
-            if line.product_id is not None:
-                prefill = self.products.get_product_for_invoice(line.product_id)
+            # Mirror the schema combination rules at service level.
+            if line.pack_id is not None and (
+                line.product_id is not None
+                or line.variant_id is not None
+                or line.selling_unit_id is not None
+            ):
+                raise ValidationError(
+                    message=(
+                        "pack_id cannot be combined with product_id, "
+                        "variant_id or selling_unit_id"
+                    ),
+                    details={"line_index": index},
+                )
+            if line.variant_id is not None and line.selling_unit_id is not None:
+                raise ValidationError(
+                    message="selling_unit_id cannot be combined with variant_id",
+                    details={"line_index": index},
+                )
+            if line.variant_id is not None and line.product_id is None:
+                raise ValidationError(
+                    message="variant_id requires product_id",
+                    details={"line_index": index},
+                )
+            if line.selling_unit_id is not None and line.product_id is None:
+                raise ValidationError(
+                    message="selling_unit_id requires product_id",
+                    details={"line_index": index},
+                )
+
+            prefill: InvoiceLinePrefill | None = None
+            if line.pack_id is not None:
+                prefill = self.products.get_pack_for_invoice(line.pack_id)
+            elif line.product_id is not None:
+                if line.variant_id is not None:
+                    prefill = self.products.get_variant_for_invoice(
+                        line.product_id, line.variant_id
+                    )
+                elif line.selling_unit_id is not None:
+                    prefill = self.products.get_selling_unit_for_invoice(
+                        line.product_id, line.selling_unit_id
+                    )
+                else:
+                    prefill = self.products.get_product_for_invoice(line.product_id)
+
+            if prefill is not None:
                 description = (line.description or "").strip()
-                product_id = prefill.product_id
                 description = description or prefill.description
                 unit_price_ht = (
-                    line.unit_price_ht if line.unit_price_ht is not None else prefill.unit_price_ht
+                    line.unit_price_ht
+                    if line.unit_price_ht is not None
+                    else prefill.unit_price_ht
                 )
-                tva_rate = line.tva_rate if line.tva_rate is not None else prefill.tva_rate
+                tva_rate = (
+                    line.tva_rate if line.tva_rate is not None else prefill.tva_rate
+                )
             else:
                 # Free-text line: mirror the schema rules at service level
                 # so direct (non-API) callers are equally protected.
@@ -1001,13 +1250,15 @@ class InvoiceDocumentService(BaseService):
                         message="tva_rate is required for free-text lines",
                         details={"field": "tva_rate"},
                     )
-                product_id = None
                 description = line.description.strip()
                 unit_price_ht = line.unit_price_ht
                 tva_rate = line.tva_rate
             resolved.append(
                 InvoiceDocumentLine(
-                    product_id=product_id,
+                    product_id=prefill.product_id if prefill else None,
+                    variant_id=prefill.variant_id if prefill else None,
+                    selling_unit_id=prefill.selling_unit_id if prefill else None,
+                    pack_id=prefill.pack_id if prefill else None,
                     description=description,
                     quantity=to_decimal(line.quantity),
                     unit_price_ht=to_decimal(unit_price_ht),

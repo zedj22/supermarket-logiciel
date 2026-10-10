@@ -260,6 +260,28 @@ class InvoiceDocumentLine(Base, UUIDMixin, TimestampMixin):
         nullable=True,
         index=True,
     )
+    # Stage 3A — optional option identity (additive, all SET NULL like
+    # product_id: a deleted catalog option never destroys the historical
+    # line; the description + price snapshots keep it printable). A line
+    # carries at most one of variant_id / selling_unit_id / pack_id and
+    # the service validates the combinations (variant XOR unit; pack
+    # alone). These are traceability links ONLY — no pricing, stock or
+    # totals code ever re-resolves them.
+    variant_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("product_variants.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    selling_unit_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("product_selling_units.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    pack_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("packs.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     # Snapshots — historical data survives product renames/archives.
     description: Mapped[str] = mapped_column(Text, nullable=False)
     quantity: Mapped[float] = numeric_quantity()
