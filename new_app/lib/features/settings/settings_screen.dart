@@ -126,6 +126,8 @@ class SettingsScreen extends ConsumerWidget {
             if (canManage) ...[
               const SizedBox(height: 16),
               const _StoreSettingsSection(),
+              const SizedBox(height: 16),
+              const _CompanySettingsSection(),
             ],
             if (canBackup) ...[
               const SizedBox(height: 16),
@@ -167,6 +169,19 @@ class _StoreSettingsSectionState extends ConsumerState<_StoreSettingsSection> {
   bool _allowDebt = true;
   String _defaultPaper = '80mm';
   int _lowStock = 5;
+
+  // Phase 6 company/fiscal identity: this section does not edit those
+  // fields (the company section below does), but the PUT body is the whole
+  // form, so the draft carries them — always as the last snapshot values,
+  // which is exactly what the server already stores.  Re-seeded on every
+  // snapshot change, so a save here never reverts a company value.
+  String _storeWilaya = '';
+  String _storeEmail = '';
+  String _storeNif = '';
+  String _storeNis = '';
+  String _storeRc = '';
+  String _storeAi = '';
+  String _storeRib = '';
 
   @override
   void initState() {
@@ -214,6 +229,13 @@ class _StoreSettingsSectionState extends ConsumerState<_StoreSettingsSection> {
     _autoPrintInvoice = settings.autoPrintInvoice;
     _allowDebt = settings.allowDebt;
     _defaultPaper = settings.defaultPaper;
+    _storeWilaya = settings.storeWilaya;
+    _storeEmail = settings.storeEmail;
+    _storeNif = settings.storeNif;
+    _storeNis = settings.storeNis;
+    _storeRc = settings.storeRc;
+    _storeAi = settings.storeAi;
+    _storeRib = settings.storeRib;
   }
 
   StoreSettings get _draft => StoreSettings(
@@ -221,6 +243,13 @@ class _StoreSettingsSectionState extends ConsumerState<_StoreSettingsSection> {
         storePhone: _storePhone.text,
         storeAddress: _storeAddress.text,
         invoiceFooter: _invoiceFooter.text,
+        storeWilaya: _storeWilaya,
+        storeEmail: _storeEmail,
+        storeNif: _storeNif,
+        storeNis: _storeNis,
+        storeRc: _storeRc,
+        storeAi: _storeAi,
+        storeRib: _storeRib,
         defaultPaper: _defaultPaper,
         askBeforePrint: _askBeforePrint,
         autoPrintInvoice: _autoPrintInvoice,
@@ -482,6 +511,218 @@ class _StoreSettingsSectionState extends ConsumerState<_StoreSettingsSection> {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Company / fiscal identity (Stage 1, factura_simple parity): the seven
+/// Phase 6 `store_*` fields on `GET` + `PUT /api/v1/settings`.
+///
+/// The legacy company form had 10 fields (name, address, wilaya, phone,
+/// email, rc, nif, ai, nis, rib).  Three of them — name, address, phone —
+/// already live in the store section above: they ARE `store_name` /
+/// `store_address` / `store_phone` (backend `settings.py` documents the
+/// mapping), so all 10 legacy company fields are editable on this screen
+/// without a second controller bound to the same value.
+///
+/// Lifecycle: the parent builds this widget only for `settings_manage`
+/// holders, exactly like the store section.  It never issues its own GET —
+/// while the provider snapshot is still null (load in flight or failed) it
+/// renders nothing and the store section owns the loading/error UI; once a
+/// snapshot exists it seeds from it and re-seeds on every snapshot change.
+/// The save PUTs the whole form: the 7 edited company fields from these
+/// controllers, everything else from the last snapshot — so saving company
+/// information can never revert an unrelated saved setting.
+class _CompanySettingsSection extends ConsumerStatefulWidget {
+  const _CompanySettingsSection();
+
+  @override
+  ConsumerState<_CompanySettingsSection> createState() =>
+      _CompanySettingsSectionState();
+}
+
+class _CompanySettingsSectionState
+    extends ConsumerState<_CompanySettingsSection> {
+  late final TextEditingController _wilaya;
+  late final TextEditingController _email;
+  late final TextEditingController _rc;
+  late final TextEditingController _nif;
+  late final TextEditingController _ai;
+  late final TextEditingController _nis;
+  late final TextEditingController _rib;
+
+  @override
+  void initState() {
+    super.initState();
+    _wilaya = TextEditingController();
+    _email = TextEditingController();
+    _rc = TextEditingController();
+    _nif = TextEditingController();
+    _ai = TextEditingController();
+    _nis = TextEditingController();
+    _rib = TextEditingController();
+    final current = ref.read(settingsProvider).settings;
+    if (current != null) _seedFrom(current);
+  }
+
+  @override
+  void dispose() {
+    _wilaya.dispose();
+    _email.dispose();
+    _rc.dispose();
+    _nif.dispose();
+    _ai.dispose();
+    _nis.dispose();
+    _rib.dispose();
+    super.dispose();
+  }
+
+  void _seedFrom(StoreSettings settings) {
+    _wilaya.text = settings.storeWilaya;
+    _email.text = settings.storeEmail;
+    _rc.text = settings.storeRc;
+    _nif.text = settings.storeNif;
+    _ai.text = settings.storeAi;
+    _nis.text = settings.storeNis;
+    _rib.text = settings.storeRib;
+  }
+
+  /// The PUT body = last snapshot + these 7 edited fields (full form, as
+  /// the endpoint's contract requires).
+  StoreSettings _draftFrom(StoreSettings snapshot) => snapshot.copyWith(
+        storeWilaya: _wilaya.text,
+        storeEmail: _email.text,
+        storeRc: _rc.text,
+        storeNif: _nif.text,
+        storeAi: _ai.text,
+        storeNis: _nis.text,
+        storeRib: _rib.text,
+      );
+
+  Future<void> _save(StoreSettings snapshot) async {
+    final ok =
+        await ref.read(settingsProvider.notifier).save(_draftFrom(snapshot));
+    if (!ok || !mounted) return; // never report a failed save as saved
+    final loc = ref.read(localeProvider).flutterLocale.languageCode;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(AppStrings.t('settings_saved', loc))),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final loc = ref.watch(localeProvider).flutterLocale.languageCode;
+    final state = ref.watch(settingsProvider);
+
+    // A successful save (or a background reload) replaces the server
+    // snapshot — re-seed these controllers from it.  A failed save leaves
+    // `settings` untouched, so the operator's typing survives (same
+    // contract as the store section).
+    ref.listen<SettingsState>(settingsProvider, (previous, next) {
+      final settings = next.settings;
+      if (settings != null && settings != previous?.settings) {
+        setState(() => _seedFrom(settings));
+      }
+    });
+
+    final settings = state.settings;
+    if (settings == null) {
+      // Loading or load-failed: the store section above renders the
+      // spinner / retry card, so this section simply stays out of the way.
+      return const SizedBox.shrink();
+    }
+
+    final hasChanges = _draftFrom(settings) != settings;
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              AppStrings.t('settings_company', loc),
+              style: theme.textTheme.titleMedium,
+            ),
+            const SizedBox(height: 12),
+            _textField(
+              key: const Key('settings-company-wilaya'),
+              controller: _wilaya,
+              label: AppStrings.t('wilaya', loc),
+            ),
+            const SizedBox(height: 12),
+            _textField(
+              key: const Key('settings-company-email'),
+              controller: _email,
+              label: AppStrings.t('email', loc),
+              keyboardType: TextInputType.emailAddress,
+            ),
+            const SizedBox(height: 12),
+            _textField(
+              key: const Key('settings-company-rc'),
+              controller: _rc,
+              label: AppStrings.t('rc', loc),
+            ),
+            const SizedBox(height: 12),
+            _textField(
+              key: const Key('settings-company-nif'),
+              controller: _nif,
+              label: AppStrings.t('nif', loc),
+            ),
+            const SizedBox(height: 12),
+            _textField(
+              key: const Key('settings-company-ai'),
+              controller: _ai,
+              label: AppStrings.t('ai', loc),
+            ),
+            const SizedBox(height: 12),
+            _textField(
+              key: const Key('settings-company-nis'),
+              controller: _nis,
+              label: AppStrings.t('nis', loc),
+            ),
+            const SizedBox(height: 12),
+            _textField(
+              key: const Key('settings-company-rib'),
+              controller: _rib,
+              label: AppStrings.t('rib', loc),
+            ),
+            const SizedBox(height: 20),
+            FilledButton(
+              key: const Key('settings-company-save-button'),
+              onPressed: state.isSaving || !hasChanges
+                  ? null
+                  : () => _save(settings),
+              child: state.isSaving
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : Text(AppStrings.t('save', loc)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _textField({
+    required Key key,
+    required TextEditingController controller,
+    required String label,
+    TextInputType? keyboardType,
+  }) {
+    return TextFormField(
+      key: key,
+      controller: controller,
+      keyboardType: keyboardType,
+      decoration: InputDecoration(
+        labelText: label,
+        border: const OutlineInputBorder(),
+      ),
+      onChanged: (_) => setState(() {}),
     );
   }
 }

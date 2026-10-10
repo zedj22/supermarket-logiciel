@@ -14,6 +14,13 @@ class StoreSettings {
     required this.storePhone,
     required this.storeAddress,
     required this.invoiceFooter,
+    required this.storeWilaya,
+    required this.storeEmail,
+    required this.storeNif,
+    required this.storeNis,
+    required this.storeRc,
+    required this.storeAi,
+    required this.storeRib,
     required this.defaultPaper,
     required this.askBeforePrint,
     required this.autoPrintInvoice,
@@ -32,6 +39,19 @@ class StoreSettings {
   final String storePhone;
   final String storeAddress;
   final String invoiceFooter;
+
+  /// Phase 6 — company/fiscal identity, the facturation document header
+  /// source of truth (legacy factura_simple ``Company``: wilaya, e-mail,
+  /// NIF, NIS, RC, AI, RIB/CCP).  Name/address/phone are the three store_*
+  /// fields above — together they are the legacy company's 10 fields.
+  final String storeWilaya;
+  final String storeEmail;
+  final String storeNif;
+  final String storeNis;
+  final String storeRc;
+  final String storeAi;
+  final String storeRib;
+
   final String defaultPaper;
   final bool askBeforePrint;
   final bool autoPrintInvoice;
@@ -44,6 +64,13 @@ class StoreSettings {
       storePhone: json['store_phone'] as String? ?? '',
       storeAddress: json['store_address'] as String? ?? '',
       invoiceFooter: json['invoice_footer'] as String? ?? '',
+      storeWilaya: json['store_wilaya'] as String? ?? '',
+      storeEmail: json['store_email'] as String? ?? '',
+      storeNif: json['store_nif'] as String? ?? '',
+      storeNis: json['store_nis'] as String? ?? '',
+      storeRc: json['store_rc'] as String? ?? '',
+      storeAi: json['store_ai'] as String? ?? '',
+      storeRib: json['store_rib'] as String? ?? '',
       defaultPaper: json['default_paper'] as String? ?? '80mm',
       askBeforePrint: json['ask_before_print'] as bool? ?? false,
       autoPrintInvoice: json['auto_print_invoice'] as bool? ?? false,
@@ -61,6 +88,13 @@ class StoreSettings {
         'store_phone': storePhone,
         'store_address': storeAddress,
         'invoice_footer': invoiceFooter,
+        'store_wilaya': storeWilaya,
+        'store_email': storeEmail,
+        'store_nif': storeNif,
+        'store_nis': storeNis,
+        'store_rc': storeRc,
+        'store_ai': storeAi,
+        'store_rib': storeRib,
         'default_paper': defaultPaper,
         'ask_before_print': askBeforePrint,
         'auto_print_invoice': autoPrintInvoice,
@@ -73,6 +107,13 @@ class StoreSettings {
     String? storePhone,
     String? storeAddress,
     String? invoiceFooter,
+    String? storeWilaya,
+    String? storeEmail,
+    String? storeNif,
+    String? storeNis,
+    String? storeRc,
+    String? storeAi,
+    String? storeRib,
     String? defaultPaper,
     bool? askBeforePrint,
     bool? autoPrintInvoice,
@@ -84,6 +125,13 @@ class StoreSettings {
       storePhone: storePhone ?? this.storePhone,
       storeAddress: storeAddress ?? this.storeAddress,
       invoiceFooter: invoiceFooter ?? this.invoiceFooter,
+      storeWilaya: storeWilaya ?? this.storeWilaya,
+      storeEmail: storeEmail ?? this.storeEmail,
+      storeNif: storeNif ?? this.storeNif,
+      storeNis: storeNis ?? this.storeNis,
+      storeRc: storeRc ?? this.storeRc,
+      storeAi: storeAi ?? this.storeAi,
+      storeRib: storeRib ?? this.storeRib,
       defaultPaper: defaultPaper ?? this.defaultPaper,
       askBeforePrint: askBeforePrint ?? this.askBeforePrint,
       autoPrintInvoice: autoPrintInvoice ?? this.autoPrintInvoice,
@@ -100,6 +148,13 @@ class StoreSettings {
           other.storePhone == storePhone &&
           other.storeAddress == storeAddress &&
           other.invoiceFooter == invoiceFooter &&
+          other.storeWilaya == storeWilaya &&
+          other.storeEmail == storeEmail &&
+          other.storeNif == storeNif &&
+          other.storeNis == storeNis &&
+          other.storeRc == storeRc &&
+          other.storeAi == storeAi &&
+          other.storeRib == storeRib &&
           other.defaultPaper == defaultPaper &&
           other.askBeforePrint == askBeforePrint &&
           other.autoPrintInvoice == autoPrintInvoice &&
@@ -107,17 +162,24 @@ class StoreSettings {
           other.lowStockThreshold == lowStockThreshold);
 
   @override
-  int get hashCode => Object.hash(
+  int get hashCode => Object.hashAll(<Object?>[
         storeName,
         storePhone,
         storeAddress,
         invoiceFooter,
+        storeWilaya,
+        storeEmail,
+        storeNif,
+        storeNis,
+        storeRc,
+        storeAi,
+        storeRib,
         defaultPaper,
         askBeforePrint,
         autoPrintInvoice,
         allowDebt,
         lowStockThreshold,
-      );
+      ]);
 
   @override
   String toString() =>

@@ -100,4 +100,61 @@ void main() {
       expect(translated, greaterThan(_phase17Keys.length ~/ 2));
     });
   });
+
+  // Stage 1 (facturation legacy parity) — the Company Information section
+  // introduces exactly two new keys; every field label it reuses must also
+  // keep resolving in all three locales.
+  group('Stage 1 company settings strings', () {
+    const stage1Keys = [
+      'settings_company',
+      'rib',
+    ];
+
+    /// Field labels the company section REUSES — they predate Stage 1 but
+    /// the section now depends on them.
+    const reusedByCompany = [
+      'wilaya',
+      'email',
+      'rc',
+      'nif',
+      'ai',
+      'nis',
+      'save',
+    ];
+
+    test('exactly 2 Stage 1 keys are under test', () {
+      expect(stage1Keys, hasLength(2));
+      expect(stage1Keys.toSet(), hasLength(2), reason: 'duplicate key');
+    });
+
+    for (final locale in _locales) {
+      test('every Stage 1 key exists and is non-empty in "$locale"', () {
+        for (final key in stage1Keys) {
+          final value = AppStrings.t(key, locale);
+          expect(value, isNotEmpty, reason: 'missing/empty: $key@$locale');
+          expect(
+            value,
+            isNot(key),
+            reason: 'untranslated fallback for $key@$locale',
+          );
+        }
+      });
+
+      test('company field labels reused from earlier phases still resolve '
+          'in "$locale"', () {
+        for (final key in reusedByCompany) {
+          final value = AppStrings.t(key, locale);
+          expect(value, isNotEmpty, reason: 'missing: $key@$locale');
+          expect(value, isNot(key), reason: 'raw key: $key@$locale');
+        }
+      });
+    }
+
+    test('Arabic, French and English section titles all differ', () {
+      final ar = AppStrings.t('settings_company', 'ar');
+      final fr = AppStrings.t('settings_company', 'fr');
+      final en = AppStrings.t('settings_company', 'en');
+      expect({ar, fr, en}, hasLength(3), reason: 'untranslated title');
+    });
+  });
 }

@@ -127,7 +127,7 @@ void main() {
       final body = Map<String, dynamic>.from(
         request.data as Map<String, dynamic>,
       );
-      expect(body, hasLength(9));
+      expect(body, hasLength(16));
       expect(body['store_name'], 'Boutique Centrale');
       expect(body['allow_debt'], isFalse);
       expect(body['low_stock_threshold'], 3);
@@ -138,6 +138,52 @@ void main() {
       expect(state.settings?.storeName, 'Boutique Centrale');
       expect(state.hasError, isFalse);
       expect(state.errorMessage, isNull);
+    });
+
+    test('save carries the Phase 6 company/fiscal fields and leaves the '
+        'unrelated settings from the snapshot untouched', () async {
+      final adapter = FakeJsonAdapter((options) async {
+        if (options.method == 'PUT') {
+          return (
+            statusCode: 200,
+            body: Map<String, dynamic>.from(options.data as Map),
+          );
+        }
+        return (statusCode: 200, body: kDefaultSettingsJson);
+      });
+      final notifier = _notifier(adapter);
+      await notifier.load();
+
+      final next = _seed().copyWith(
+        storeWilaya: 'Alger',
+        storeEmail: 'contact@store.dz',
+        storeNif: '1600011111111111',
+        storeNis: '1600022222222222',
+        storeRc: '16/00-9999999 B 99',
+        storeAi: '1600033333333333',
+        storeRib: '0079 1111 2222 3333 44',
+      );
+      final ok = await notifier.save(next);
+
+      expect(ok, isTrue);
+      final body = Map<String, dynamic>.from(
+        adapter.requests.last.data as Map<String, dynamic>,
+      );
+      expect(body['store_wilaya'], 'Alger');
+      expect(body['store_email'], 'contact@store.dz');
+      expect(body['store_nif'], '1600011111111111');
+      expect(body['store_nis'], '1600022222222222');
+      expect(body['store_rc'], '16/00-9999999 B 99');
+      expect(body['store_ai'], '1600033333333333');
+      expect(body['store_rib'], '0079 1111 2222 3333 44');
+      // Unrelated settings ride along unchanged from the snapshot.
+      expect(body['store_name'], 'Supermarket Pro');
+      expect(body['invoice_footer'], '');
+      expect(body['allow_debt'], isTrue);
+      expect(body['default_paper'], '80mm');
+
+      expect(notifier.state.settings?.storeWilaya, 'Alger');
+      expect(notifier.state.settings?.storeRib, '0079 1111 2222 3333 44');
     });
 
     test(
