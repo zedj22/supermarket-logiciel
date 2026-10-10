@@ -384,6 +384,7 @@ class _InvoiceFormDialogState extends ConsumerState<InvoiceFormDialog> {
   @override
   Widget build(BuildContext context) {
     final loc = ref.watch(localeProvider).flutterLocale.languageCode;
+    final invoiceLoc = ref.watch(effectiveInvoiceLanguageProvider);
     final theme = Theme.of(context);
     final totals = _preview?.totals;
     final companySettings = ref.watch(settingsProvider).settings;
@@ -510,6 +511,39 @@ class _InvoiceFormDialogState extends ConsumerState<InvoiceFormDialog> {
                     ),
                   ),
                 ],
+              ),
+              const SizedBox(height: 12),
+              // ── Invoice PDF language (independent of the UI locale) ─
+              DropdownButtonFormField<String>(
+                key: const Key('invoice-form-language'),
+                initialValue: invoiceLoc,
+                isExpanded: true,
+                decoration: InputDecoration(
+                  labelText: AppStrings.t('invoice_language', loc),
+                  isDense: true,
+                ),
+                items: [
+                  for (final code in const ['ar', 'fr', 'en'])
+                    DropdownMenuItem<String>(
+                      value: code,
+                      child: Text(
+                        AppStrings.t('language_$code', loc),
+                      ),
+                    ),
+                ],
+                onChanged: _saving
+                    ? null
+                    : (value) {
+                        if (value == null) return;
+                        ref
+                            .read(invoiceLanguageProvider.notifier)
+                            .state = value;
+                        setState(() {
+                          _error = null;
+                          _preview = null;
+                        });
+                        _schedulePreview();
+                      },
               ),
               if (_isEdit) ...[
                 const SizedBox(height: 8),
@@ -711,7 +745,7 @@ class _InvoiceFormDialogState extends ConsumerState<InvoiceFormDialog> {
                     showTimbre: _showTimbre,
                     showPaymentMethod: _showPaymentMethod,
                     showAmountWords: _showAmountWords,
-                    loc: loc,
+                    loc: invoiceLoc,
                   ),
                 )
               else

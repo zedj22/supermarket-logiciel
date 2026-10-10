@@ -1172,6 +1172,10 @@ class AppStrings {
   'col_timbre': 'حقوق الطابع',
   'col_net_a_payer': 'الصافي المطلوب',
   'signature': 'التوقيع',
+  'invoice_language': 'لغة الفاتورة',
+  'language_ar': 'العربية',
+  'language_fr': 'الفرنسية',
+  'language_en': 'الإنجليزية',
   'prefill_price': 'يُملأ من السعر',
   };
 
@@ -2323,6 +2327,10 @@ class AppStrings {
   'col_timbre': 'Droit de timbre',
   'col_net_a_payer': 'Net à payer',
   'signature': 'Signature',
+  'invoice_language': 'Langue de la facture',
+  'language_ar': 'Arabe',
+  'language_fr': 'Français',
+  'language_en': 'Anglais',
   'prefill_price': 'Pré-rempli depuis le prix',
   };
 
@@ -3467,6 +3475,10 @@ class AppStrings {
   'col_timbre': 'Stamp duty',
   'col_net_a_payer': 'Net payable',
   'signature': 'Signature',
+  'invoice_language': 'Invoice language',
+  'language_ar': 'Arabic',
+  'language_fr': 'French',
+  'language_en': 'English',
   'prefill_price': 'Prefilled from price',
   };
 }

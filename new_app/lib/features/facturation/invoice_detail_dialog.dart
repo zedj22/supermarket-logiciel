@@ -70,8 +70,9 @@ class _InvoiceDetailDialogState extends ConsumerState<InvoiceDetailDialog> {
 
   Future<void> _downloadPdf(
     InvoiceDocumentModel doc,
-    String loc,
-  ) async {
+    String loc, {
+    String? pdfLocale,
+  }) async {
     if (_exporting) return;
     setState(() => _exporting = true);
     String? deviceId;
@@ -84,7 +85,7 @@ class _InvoiceDetailDialogState extends ConsumerState<InvoiceDetailDialog> {
     try {
       final response = await dio.post<List<int>>(
         '$kFacturesPath/${doc.id}/pdf',
-        queryParameters: {'locale': loc},
+        queryParameters: {'locale': pdfLocale ?? loc},
         options: Options(
           responseType: ResponseType.bytes,
           headers: <String, dynamic>{
@@ -139,6 +140,7 @@ class _InvoiceDetailDialogState extends ConsumerState<InvoiceDetailDialog> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final loc = ref.watch(localeProvider).flutterLocale.languageCode;
+    final pdfLocale = ref.watch(effectiveInvoiceLanguageProvider);
     final detail = ref.watch(facturationDetailProvider(widget.documentId));
 
     return AlertDialog(
@@ -378,6 +380,7 @@ class _InvoiceDetailDialogState extends ConsumerState<InvoiceDetailDialog> {
                 : () => _downloadPdf(
                       detail.value as InvoiceDocumentModel,
                       loc,
+                      pdfLocale: pdfLocale,
                     ),
             icon: _exporting
                 ? const SizedBox(

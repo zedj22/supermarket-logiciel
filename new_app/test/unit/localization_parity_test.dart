@@ -112,10 +112,12 @@ void main() {
       // preview sheet labels (doc titles, fiscal identity, item-table and
       // totals headers, signature) mirroring backend printing/labels.py —
       // 21 keys (1064).  Stage 3A facturation options added the pack
-      // picker title — 1 key (1065).  Update this deliberately when a
-      // subphase adds strings — an unexplained drop means keys were
-      // deleted from one map only.
-      expect(_map('en').keys.length, 1065);
+      // picker title — 1 key (1065).  The PDF layout/language pass added
+      // the invoice-language selector label and the three language-name
+      // labels — 4 keys (1069).  Update this deliberately when a subphase
+      // adds strings — an unexplained drop means keys were deleted from
+      // one map only.
+      expect(_map('en').keys.length, 1069);
       expect(_map('ar').keys.length, _map('en').keys.length);
       expect(_map('fr').keys.length, _map('en').keys.length);
     });

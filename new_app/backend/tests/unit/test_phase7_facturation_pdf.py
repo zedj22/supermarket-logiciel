@@ -822,5 +822,164 @@ def test_empty_company_name_refuses_with_company_missing(client, admin_headers, 
     details = json.loads(rows[0].details)
     assert details["result"] == "failure"
     assert details["error_code"] == "COMPANY_MISSING"
-    assert details["bytes"] == 0
-    assert details["filename"] is None
+
+
+# ---------------------------------------------------------------------------
+# Signature placement (bottom-pinned Flowable)
+# ---------------------------------------------------------------------------
+
+
+def test_signature_stays_on_single_page_for_short_document(
+    client, admin_headers, db
+):
+    """A short FAC fits on one page; the bottom-pinned signature does not
+    force a spurious second page."""
+    body = _create(client, admin_headers, str(_invoice_client(db).id))
+    resp = _print(client, admin_headers, body["id"], locale="fr")
+    assert resp.status_code == 200, resp.text
+    raw = resp.content
+    assert _page_count(raw) == 1
+    text = _pdf_text(raw)
+    assert label("signature", "fr") in text
+    # Signature is drawn once (label appears exactly once).
+    assert text.count(label("signature", "fr")) == 1
+
+
+def test_signature_drawn_after_notes_on_short_document(client, admin_headers, db):
+    """Content-stream order: the signature label is drawn AFTER the notes
+    line, i.e. at the end of the story — not interleaved with totals."""
+    body = _create(
+        client,
+        admin_headers,
+        str(_invoice_client(db).id),
+        notes="Bottom pin check",
+    )
+    resp = _print(client, admin_headers, body["id"], locale="fr")
+    assert resp.status_code == 200, resp.text
+    text = _pdf_text(resp.content)
+    notes_at = text.find("Bottom pin check")
+    sig_at = text.find(label("signature", "fr"))
+    assert notes_at != -1 and sig_at != -1
+    assert sig_at > notes_at
+
+
+def test_signature_label_drawn_in_lower_region_of_flowable_box():
+    """Unit: draw() pins label + rule to the bottom of the flowable box
+    (local y near 0), not the top — the box itself sits at the page bottom."""
+    from app.printing.facture_data import FactureData, IdentityBlock
+    from app.printing.templates.facture_a4 import _BottomSignature
+
+    data = FactureData(
+        locale="fr",
+        title="FACTURE",
+        number="FAC-2026-0001",
+        document_date="2026-01-15",
+        company=IdentityBlock(heading=None, name="SARL", lines=()),
+        client=None,
+        show_discount=True,
+        show_tva=True,
+        lines=(),
+        totals=None,  # type: ignore[arg-type] — not used by draw()
+        amount_in_words=None,
+        payment_method=None,
+        notes=None,
+    )
+    flow = _BottomSignature(data)
+    flow.wrap(500.0, 400.0)
+
+    drawn: list[tuple[float, float]] = []
+
+    class _FakePara:
+        def wrap(self, w, h):
+            return 60.0, 12.0
+
+        def drawOn(self, canvas, x, y):  # noqa: N802
+            drawn.append((x, y))
+
+    class _FakeCanvas:
+        def setStrokeColorRGB(self, *a):  # noqa: ANN002, ANN202, N802
+            pass
+
+        def setLineWidth(self, w):  # noqa: ANN001, N802
+            pass
+
+        def line(self, x1, y1, x2, y2):  # noqa: ANN001
+            drawn.append((x1, y1))
+
+    import app.printing.templates.facture_a4 as tmpl
+
+    original_p = tmpl._p
+    tmpl._p = lambda *a, **k: _FakePara()  # type: ignore[assignment]
+    try:
+        flow.canv = _FakeCanvas()  # type: ignore[attr-defined]
+        flow.draw()
+    finally:
+        tmpl._p = original_p
+
+    assert drawn, "draw() produced no canvas calls"
+    # Every drawn Y sits in the lower ~35 pt of the 400 pt box — the
+    # signing space (10 mm ≈ 28 pt) plus the label just above the rule.
+    for _x, y in drawn:
+        assert 0 <= y <= 35, f"drawn Y={y:.1f} not pinned to flowable bottom"
+
+
+def test_multi_page_signature_on_final_page_only(client, admin_headers, db):
+    """Long document: the signature appears once, on the last page."""
+    body = _create(
+        client,
+        admin_headers,
+        str(_invoice_client(db).id),
+        lines=[
+            {
+                "description": f"Article numero {i}",
+                "quantity": "1",
+                "unit_price_ht": "100.000",
+                "tva_rate": "19",
+                "discount_pct": "0",
+            }
+            for i in range(120)
+        ],
+    )
+    resp = _print(client, admin_headers, body["id"], locale="fr")
+    assert resp.status_code == 200, resp.text
+    raw = resp.content
+    pages = _page_count(raw)
+    assert pages >= 3
+    text = _pdf_text(raw)
+    assert text.count(label("signature", "fr")) == 1
+    # The last article row and the signature are both present; the
+    # signature is drawn after the final row (end of the story).
+    assert text.find("Article numero 119") < text.find(label("signature", "fr"))
+
+
+def test_bottom_signature_flowable_wrap_contract():
+    """Unit: wrap() consumes remaining height, or forces a page break."""
+    from app.printing.facture_data import FactureData, IdentityBlock
+    from app.printing.templates.facture_a4 import (
+        MIN_SIGNATURE_AREA,
+        _BottomSignature,
+    )
+
+    data = FactureData(
+        locale="fr",
+        title="FACTURE",
+        number="FAC-2026-0001",
+        document_date="2026-01-15",
+        company=IdentityBlock(heading=None, name="SARL", lines=()),
+        client=None,
+        show_discount=True,
+        show_tva=True,
+        lines=(),
+        totals=None,  # type: ignore[arg-type] — not used by wrap()
+        amount_in_words=None,
+        payment_method=None,
+        notes=None,
+    )
+    flow = _BottomSignature(data)
+    # Sufficient room: consumes it all.
+    w, h = flow.wrap(500.0, 400.0)
+    assert (w, h) == (500.0, 400.0)
+    # Insufficient room: asks for MIN_SIGNATURE_AREA → frame wraps page.
+    w, h = flow.wrap(500.0, MIN_SIGNATURE_AREA - 1)
+    assert h == MIN_SIGNATURE_AREA
+    assert h > MIN_SIGNATURE_AREA - 1

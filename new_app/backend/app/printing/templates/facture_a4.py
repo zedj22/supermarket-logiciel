@@ -4,7 +4,8 @@ Geometry: the shared A4 profile (portrait, margins 15/15/18/18mm, body
 180mm) so page numbering, footer and font registration in ``render.py``
 are reused untouched. Story: company + bordered title box → client box →
 items table (repeating header row) → totals block → amount in words /
-payment method / notes → signature rule.
+payment method / notes → signature block pinned to the bottom of the
+final page.
 
 Every value arrives pre-formatted and flag-gated in ``FactureData``
 (``show_discount`` / ``show_tva`` drop a column, ``show_timbre`` /
@@ -16,7 +17,8 @@ reverses the table columns, exactly like ``invoice_a4``.
 from __future__ import annotations
 
 from reportlab.lib.units import mm
-from reportlab.platypus import Flowable, KeepTogether, Paragraph, Spacer, Table, TableStyle
+from reportlab.pdfgen.canvas import Canvas  # type: ignore[import-untyped]
+from reportlab.platypus import Flowable, Paragraph, Spacer, Table, TableStyle
 
 from app.printing.facture_data import FactureData, FactureLineRow
 from app.printing.labels import label
@@ -24,7 +26,16 @@ from app.printing.styles import paragraph_style
 from app.printing.text import shape_text
 
 CONTENT_WIDTH = 180 * mm
-HAIRLINE = 0.6
+HAIRLINE = 0.8
+#: Extra vertical padding inside each item-table cell (pt) so long
+#: descriptions and multi-line wraps breathe and stay readable.
+ITEM_VPAD = 3.5
+ITEM_HPAD = 4.0
+#: Minimum remaining page height the signature block needs (label +
+#: rule + a little breathing room). Below this the flowable reports a
+#: taller height so the layout engine wraps to the next page instead of
+#: drawing the signature under the footer.
+MIN_SIGNATURE_AREA = 26 * mm
 #: mm widths of every item column; the two gated ones are only appended
 #: when their ``show_*`` flag is on, Désignation absorbs what is left.
 COL_QTY_MM = 16.0
@@ -202,11 +213,11 @@ def _items_table(data: FactureData) -> Flowable | None:
                 ("VALIGN", (0, 0), (-1, -1), "TOP"),
                 ("BACKGROUND", (0, 0), (-1, 0), "#eeeeee"),
                 ("GRID", (0, 0), (-1, -1), HAIRLINE, "grey"),
-                ("BOX", (0, 0), (-1, -1), 0.9, "black"),
-                ("TOPPADDING", (0, 0), (-1, -1), 2),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
-                ("LEFTPADDING", (0, 0), (-1, -1), 3),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+                ("BOX", (0, 0), (-1, -1), 1.0, "black"),
+                ("TOPPADDING", (0, 0), (-1, -1), ITEM_VPAD),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), ITEM_VPAD),
+                ("LEFTPADDING", (0, 0), (-1, -1), ITEM_HPAD),
+                ("RIGHTPADDING", (0, 0), (-1, -1), ITEM_HPAD),
             ]
         )
     )
@@ -252,26 +263,53 @@ def _totals_block(data: FactureData) -> Flowable:
     return table
 
 
-def _signature(data: FactureData) -> Flowable:
-    """Legacy signature block: label, gap, then a rule the client signs on."""
-    rtl = data.rtl
-    table = Table(
-        [[_p(label("signature", data.locale), 9, rtl, bold=True)], [Spacer(1, 10 * mm)]],
-        colWidths=[60 * mm],
-    )
-    table.setStyle(
-        TableStyle(
-            [
-                ("LINEABOVE", (0, 1), (-1, 1), 0.6, "grey"),
-                ("LEFTPADDING", (0, 0), (-1, -1), 0),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-                ("TOPPADDING", (0, 0), (-1, -1), 0),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
-            ]
+class _BottomSignature(Flowable):  # type: ignore[misc]
+    """Signature block pinned to the bottom of the current page.
+
+    Consumes all remaining page height so the signature rule always sits
+    just above the bottom margin / footer, matching the legacy
+    ``factura_simple`` preview (which stretches the column and places the
+    signature at the end). When the remaining height is below
+    ``MIN_SIGNATURE_AREA``, reports a taller height so the layout engine
+    wraps to the next page instead of drawing under the footer.
+    """
+
+    def __init__(self, data: FactureData) -> None:
+        super().__init__()
+        self._data = data
+        self._width = 0.0
+        self._height = 0.0
+
+    def wrap(self, avail_width: float, avail_height: float) -> tuple[float, float]:
+        self._width = avail_width
+        if avail_height < MIN_SIGNATURE_AREA:
+            self._height = MIN_SIGNATURE_AREA
+            return avail_width, MIN_SIGNATURE_AREA
+        self._height = avail_height
+        return avail_width, avail_height
+
+    def draw(self) -> None:
+        canvas: Canvas = self.canv
+        data = self._data
+        rtl = data.rtl
+        width = self._width
+        # Drawing origin is the flowable's bottom-left corner (y grows up).
+        # Pin the block to that bottom edge, legacy rhythm top→bottom:
+        # label, rule, then ~10 mm of empty space the client signs in.
+        label_flow = _p(label("signature", data.locale), 9, rtl, bold=True)
+        label_w, _label_h = label_flow.wrap(60 * mm, 20)
+        signing_space = 10 * mm
+        rule_y = signing_space
+        label_bottom = rule_y + 3
+        label_flow.drawOn(canvas, 0 if rtl else width - label_w, label_bottom)
+        canvas.setStrokeColorRGB(0.5, 0.5, 0.5)
+        canvas.setLineWidth(0.6)
+        canvas.line(
+            0 if rtl else width - 60 * mm,
+            rule_y,
+            60 * mm if rtl else width,
+            rule_y,
         )
-    )
-    table.hAlign = "LEFT" if rtl else "RIGHT"
-    return table
 
 
 def build_flowables(data: FactureData) -> list[Flowable]:
@@ -307,5 +345,5 @@ def build_flowables(data: FactureData) -> list[Flowable]:
         story.append(Spacer(1, 2 * mm))
         story.append(_p(f"{label('note', locale)} : {data.notes}", 9, rtl))
 
-    story.append(KeepTogether(_signature(data)))
+    story.append(_BottomSignature(data))
     return story

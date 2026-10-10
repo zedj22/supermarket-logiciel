@@ -331,3 +331,26 @@ final facturationDocumentProvider = Provider<FacturationDocumentNotifier>((
     () => ref.read(localeProvider).flutterLocale.languageCode,
   );
 });
+
+// ---------------------------------------------------------------------------
+// Invoice PDF language (independent of the UI locale)
+// ---------------------------------------------------------------------------
+//
+// The printed document language is a per-operator preference, not the
+// interface language: a French-speaking cashier may still need Arabic
+// invoices, and vice versa. `null` means "not chosen yet" and safely
+// follows the UI locale (default / parity); once the operator picks a
+// language in the invoice form it stays sticky for the whole session.
+// Not persisted to the server — no schema change for a print preference.
+
+/// Explicit invoice PDF/preview language (`ar` | `fr` | `en`), or null
+/// to follow the UI locale.
+final invoiceLanguageProvider = StateProvider<String?>((ref) => null);
+
+/// The language the invoice preview sheet and PDF export must use:
+/// the explicit choice when set, otherwise the live UI locale.
+final effectiveInvoiceLanguageProvider = Provider<String>((ref) {
+  final explicit = ref.watch(invoiceLanguageProvider);
+  if (explicit != null && explicit.isNotEmpty) return explicit;
+  return ref.watch(localeProvider).flutterLocale.languageCode;
+});
