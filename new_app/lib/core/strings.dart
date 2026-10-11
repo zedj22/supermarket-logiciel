@@ -463,6 +463,13 @@ class AppStrings {
     'customer_shortcut': 'عميل (F6)',
     'discount_shortcut': 'خصم فاتورة (F7)',
     'clear_shortcut': 'تفريغ (F12)',
+    // POS return mode — cart reviewed as an independent return.
+    'pos_return': 'إرجاع',
+    'pos_return_mode': 'وضع الإرجاع',
+    'pos_return_mode_hint': 'راجع الكميات ثم أكّد الإرجاع',
+    'pos_return_confirm': 'تأكيد الإرجاع',
+    'pos_return_pack_not_supported':
+        'لا يمكن إرجاع أسطر الطرد من نقطة البيع — استخدم شاشة المرتجعات',
     // Phase 17 §18 — keyboard shortcuts help surface.
     'shortcuts_title': 'اختصارات لوحة المفاتيح',
     'shortcuts_scope_global': 'عام',
@@ -1594,6 +1601,13 @@ class AppStrings {
     'customer_shortcut': 'Client (F6)',
     'discount_shortcut': 'Remise (F7)',
     'clear_shortcut': 'Vider (F12)',
+    // POS return mode — cart reviewed as an independent return.
+    'pos_return': 'Retour',
+    'pos_return_mode': 'Mode retour',
+    'pos_return_mode_hint': 'Vérifiez les quantités puis confirmez le retour',
+    'pos_return_confirm': 'Confirmer le retour',
+    'pos_return_pack_not_supported':
+        "Les lignes pack ne peuvent pas être retournées depuis la caisse — utilisez l'écran des retours",
     // Phase 17 §18 — keyboard shortcuts help surface.
     'shortcuts_title': 'Raccourcis clavier',
     'shortcuts_scope_global': 'Toutes les pages',
@@ -2751,6 +2765,13 @@ class AppStrings {
     'customer_shortcut': 'Customer (F6)',
     'discount_shortcut': 'Invoice discount (F7)',
     'clear_shortcut': 'Clear (F12)',
+    // POS return mode — cart reviewed as an independent return.
+    'pos_return': 'Return',
+    'pos_return_mode': 'Return mode',
+    'pos_return_mode_hint': 'Review the quantities, then confirm the return',
+    'pos_return_confirm': 'Confirm return',
+    'pos_return_pack_not_supported':
+        'Pack lines cannot be returned from the POS — use the Returns screen',
     // Phase 17 §18 — keyboard shortcuts help surface.
     'shortcuts_title': 'Keyboard shortcuts',
     'shortcuts_scope_global': 'Global',

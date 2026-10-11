@@ -116,10 +116,12 @@ void main() {
       // the invoice-language selector label and the three language-name
       // labels — 4 keys (1069).  The optional sale-posting pass added the
       // register-as-sale checkbox label and the posted-as-sale status
-      // label — 2 keys (1071).  Update this deliberately when a subphase
+      // label — 2 keys (1071).  The POS return-mode pass added the return
+      // button / mode / hint / confirm / pack-unsupported labels — 5 keys
+      // (1076).  Update this deliberately when a subphase
       // adds strings — an unexplained drop means keys were deleted from
       // one map only.
-      expect(_map('en').keys.length, 1071);
+      expect(_map('en').keys.length, 1076);
       expect(_map('ar').keys.length, _map('en').keys.length);
       expect(_map('fr').keys.length, _map('en').keys.length);
     });

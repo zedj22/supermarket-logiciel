@@ -7,6 +7,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/address_display.dart';
 import '../../../core/strings.dart';
 import '../../../l10n/locale_provider.dart';
 import 'connection_provider.dart';
@@ -47,7 +48,10 @@ class ReconnectDialog extends ConsumerWidget {
           if (conn.baseUrl != null) ...[
             const SizedBox(height: 12),
             Text(
-              conn.baseUrl!,
+              // Display-only short form (host) — the provider keeps the
+              // full URL for every retry/probe.
+              displayServerAddress(conn.baseUrl!),
+              key: const Key('reconnect-address'),
               style: Theme.of(context).textTheme.bodySmall,
             ),
           ],

@@ -47,6 +47,22 @@ class PosCartState {
   final List<String> stockErrors;
   final String? notice;
 
+  /// POS return mode: the cart is being reviewed as an INDEPENDENT
+  /// return (`pos_return` permission). Lines are never touched by the
+  /// mode itself — cancel / mode flips leave the cart exactly as the
+  /// cashier built it. `clearCart` (and any state reset) exits the mode.
+  final bool returnMode;
+
+  /// A `POST /api/v1/returns` attempt is in flight (mirrors
+  /// [checkoutPending]: the UI shows a spinner and blocks a second
+  /// submit; the cart is kept until the server confirms).
+  final bool returnPending;
+
+  /// Idempotency key of the current return attempt — ONE id per attempt,
+  /// reused on retry, cleared when the mode is entered/exited (exactly
+  /// the checkout rule with `pendingClientRequestId`).
+  final String? pendingReturnClientRequestId;
+
   /// Key of the cart line the cashier touched last (added / edited).
   /// Drives the POS quantity shortcuts (`+` / `*`), which act on the last
   /// active line. Null after clear/checkout; a stale key (line removed)
@@ -63,6 +79,9 @@ class PosCartState {
     this.pendingClientRequestId,
     this.stockErrors = const [],
     this.notice,
+    this.returnMode = false,
+    this.returnPending = false,
+    this.pendingReturnClientRequestId,
     this.lastActiveKey,
   });
 
@@ -133,6 +152,10 @@ class PosCartState {
     bool clearStockErrors = false,
     String? notice,
     bool clearNotice = false,
+    bool? returnMode,
+    bool? returnPending,
+    String? pendingReturnClientRequestId,
+    bool clearPendingReturnRequestId = false,
     String? lastActiveKey,
     bool clearLastActiveKey = false,
   }) {
@@ -149,6 +172,12 @@ class PosCartState {
       stockErrors:
           clearStockErrors ? const [] : (stockErrors ?? this.stockErrors),
       notice: clearNotice ? null : (notice ?? this.notice),
+      returnMode: returnMode ?? this.returnMode,
+      returnPending: returnPending ?? this.returnPending,
+      pendingReturnClientRequestId: clearPendingReturnRequestId
+          ? null
+          : (pendingReturnClientRequestId ??
+              this.pendingReturnClientRequestId),
       lastActiveKey: clearLastActiveKey
           ? null
           : (lastActiveKey ?? this.lastActiveKey),
@@ -252,6 +281,45 @@ class PosCartNotifier extends StateNotifier<PosCartState> {
 
   void clearResult() {
     state = state.copyWith(clearResult: true);
+  }
+
+  /// Enter / exit the POS return mode. The cart lines are never touched:
+  /// a cancel (or a mode flip in either direction) must leave the cart
+  /// exactly as the cashier built it. Any stale return attempt id is
+  /// dropped so a fresh mode session always starts a NEW idempotency
+  /// attempt server-side.
+  void setReturnMode(bool enabled) {
+    if (state.returnMode == enabled) return;
+    state = state.copyWith(
+      returnMode: enabled,
+      clearPendingReturnRequestId: true,
+      clearError: true,
+      clearStockErrors: true,
+      clearNotice: true,
+    );
+  }
+
+  /// Return-attempt bookkeeping: marks the attempt pending and returns
+  /// the ONE `client_request_id` to send — reused on retry (same attempt),
+  /// exactly like the checkout rule.
+  String beginReturnAttempt() {
+    final clientRequestId = state.pendingReturnClientRequestId ??
+        'pos-ret-${DateTime.now().millisecondsSinceEpoch}-'
+            '${Random().nextInt(0x7fffffff)}';
+    state = state.copyWith(
+      returnPending: true,
+      clearError: true,
+      clearStockErrors: true,
+      pendingReturnClientRequestId: clientRequestId,
+    );
+    return clientRequestId;
+  }
+
+  /// A return attempt failed: drop the pending flag but KEEP the
+  /// `client_request_id`, so the cashier's retry replays idempotently
+  /// server-side (the backend dedupes on that id).
+  void failReturnAttempt() {
+    state = state.copyWith(returnPending: false);
   }
 
   /// Checkout with idempotency: reuse pendingClientRequestId on retry.

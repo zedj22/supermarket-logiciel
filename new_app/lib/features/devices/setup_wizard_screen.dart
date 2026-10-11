@@ -17,6 +17,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../core/address_display.dart';
 import '../../../core/strings.dart';
 import '../../../core/widgets/logo_mark.dart';
 import '../../../core/widgets/state_views.dart';
@@ -397,7 +398,9 @@ class _SetupWizardScreenState extends ConsumerState<SetupWizardScreen> {
               title: Text(offer.name.isEmpty
                   ? AppStrings.t('lan_server_found', loc)
                   : offer.name),
-              subtitle: Text('${offer.address}:${offer.httpPort}'),
+              // Display-only short form (host) — pairing still probes the
+              // full offer.baseUrl (ip:port).
+              subtitle: Text(displayServerAddress(offer.baseUrl)),
               trailing: const Icon(Icons.chevron_right),
               onTap: () => _selectOffer(offer),
             ),
@@ -465,7 +468,12 @@ class _SetupWizardScreenState extends ConsumerState<SetupWizardScreen> {
               children: [
                 Text(name, style: Theme.of(context).textTheme.titleLarge),
                 const SizedBox(height: 4),
-                Text(url, style: Theme.of(context).textTheme.bodySmall),
+                Text(
+                  // Display-only short form (host) — the stored/used URL
+                  // stays the full address.
+                  displayServerAddress(url),
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
                 const SizedBox(height: 8),
                 Text(AppStrings.t('lan_confirm_store_body', loc)),
               ],

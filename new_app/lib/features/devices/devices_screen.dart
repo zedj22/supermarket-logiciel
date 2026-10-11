@@ -12,6 +12,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/address_display.dart';
 import '../../core/colors.dart';
 import '../../core/strings.dart';
 import '../../core/widgets/page_title.dart';
@@ -335,7 +336,10 @@ class _DevicesScreenState extends ConsumerState<DevicesScreen> {
                     children: [
                       Expanded(
                         child: Text(
-                          _serverUrls[i],
+                          // Display-only short form (host); the clipboard
+                          // copy below keeps the FULL url (ip:port) because
+                          // pairing needs the port.
+                          displayServerAddress(_serverUrls[i]),
                           key: Key('store-address-$i'),
                           textDirection: TextDirection.ltr,
                           style: theme.textTheme.bodyMedium?.copyWith(

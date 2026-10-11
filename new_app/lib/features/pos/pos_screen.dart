@@ -57,6 +57,7 @@ import '../packs/pack_models.dart';
 import '../products/models.dart';
 import '../products/selling_unit_picker.dart';
 import '../products/variant_picker.dart';
+import '../returns/return_providers.dart';
 import '../settings/settings_provider.dart';
 import '../shell/shortcuts_help_dialog.dart';
 import 'customer_picker_dialog.dart';
@@ -70,6 +71,7 @@ import 'pos_models.dart';
 import 'pos_providers.dart';
 import 'pos_quantity.dart';
 import 'pos_qty_shortcuts.dart';
+import 'pos_return_lines.dart';
 import 'pos_toast.dart';
 import 'price_override_dialog.dart';
 import 'print_document.dart';
@@ -113,6 +115,13 @@ class _PosScreenState extends ConsumerState<PosScreen> {
   /// matching [_CartLineTile] and cleared again at the end of that frame.
   final ValueNotifier<String?> _qtyFocusRequest = ValueNotifier<String?>(null);
   bool _cartDrawerOpen = false;
+
+  /// Last POS return-mode failure (localized message + raw backend
+  /// detail) — shown inline in the return banner and as a toast. Kept
+  /// out of the cart provider on purpose: checkout's `lastError` listener
+  /// would otherwise double-toast it, and the return flow already has its
+  /// own banner surface.
+  PosApiError? _returnError;
 
   /// This screen's page-level shortcut hooks, published to the nav shell.
   late final PageShortcuts _pageShortcuts;
@@ -235,7 +244,9 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       return;
     }
     if (key == LogicalKeyboardKey.f9) {
-      if (cart.isEmpty) return;
+      // Return mode owns the cart: saving it as a hold would silently
+      // shelve the pending return (the hold restore is a SALE snapshot).
+      if (cart.isEmpty || cart.returnMode) return;
       final err = await ref.read(posCartProvider.notifier).createHold();
       if (err != null && mounted) {
         showPosToast(context, message: err, kind: PosToastKind.error);
@@ -795,6 +806,12 @@ class _PosScreenState extends ConsumerState<PosScreen> {
 
   Future<void> _openPayment() async {
     final cart = ref.read(posCartProvider);
+    // Return mode: SPACE / PAY confirm the return, never open the payment
+    // dialog — charging a customer mid-return would be a cash loss.
+    if (cart.returnMode) {
+      await _confirmReturn();
+      return;
+    }
     if (cart.isEmpty) {
       final loc = ref.read(localeProvider).flutterLocale.languageCode;
       showPosToast(
@@ -807,6 +824,102 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     final result = await showPaymentDialog(context);
     if (result != null && mounted) {
       await _afterCheckoutSuccess(result);
+    }
+  }
+
+  /// Enter / exit the POS return mode. Lines are never touched — the
+  /// notifier's [PosCartNotifier.setReturnMode] only flips the flag — and
+  /// any banner error from a previous attempt/session is dropped.
+  void _setReturnMode(bool enabled) {
+    ref.read(posCartProvider.notifier).setReturnMode(enabled);
+    if (!mounted) return;
+    setState(() => _returnError = null);
+  }
+
+  /// Confirm return mode → ONE `POST /api/v1/returns` with the cart as
+  /// independent lines (server prices every line, GATE 5).
+  ///
+  /// Idempotency mirrors checkout: one `client_request_id` per attempt,
+  /// reused on retry ([PosCartNotifier.beginReturnAttempt]); the cart is
+  /// cleared ONLY after the server confirms — a failure keeps the cart,
+  /// the mode and the same request id for a safe retry.
+  Future<void> _confirmReturn() async {
+    final cart = ref.read(posCartProvider);
+    final loc = ref.read(localeProvider).flutterLocale.languageCode;
+    if (cart.returnPending) return;
+    if (cart.isEmpty) {
+      showPosToast(
+        context,
+        message: AppStrings.t('cart_empty', loc),
+        kind: PosToastKind.info,
+      );
+      return;
+    }
+    final built = buildPosReturnLines(cart.lines);
+    final errorKey = built.errorKey;
+    if (errorKey != null) {
+      final error = PosApiError(AppStrings.t(errorKey, loc));
+      setState(() => _returnError = error);
+      showPosToast(
+        context,
+        message: error.message,
+        kind: PosToastKind.warning,
+        key: const Key('pos-return-validation-toast'),
+      );
+      return;
+    }
+
+    final notifier = ref.read(posCartProvider.notifier);
+    final clientRequestId = notifier.beginReturnAttempt();
+    setState(() => _returnError = null);
+
+    String? deviceId;
+    try {
+      deviceId = await ref.read(posDeviceIdProvider.future);
+    } catch (_) {
+      deviceId = null;
+    }
+    final (result, error) = await ref.read(returnsApiProvider).create(
+          payload: {
+            'client_request_id': clientRequestId,
+            'lines': [for (final line in built.lines) line.toJson()],
+            // Optional audit field: the backend stores null exactly as it
+            // stores an absent value, so no conditional entry is needed.
+            'device_id': deviceId,
+          },
+        );
+    if (!mounted) return;
+    if (result == null) {
+      // Keep cart + mode + client_request_id for a safe retry.
+      notifier.failReturnAttempt();
+      setState(() => _returnError = error);
+      showPosToast(
+        context,
+        message: error?.message ?? AppStrings.t('api_error_retry', loc),
+        detail: error?.detail,
+        kind: PosToastKind.error,
+        key: const Key('pos-return-error-toast'),
+      );
+      return;
+    }
+    // Server confirmed → clear the cart (also exits return mode) and
+    // report the server-owned refund total.
+    notifier.clearCart();
+    setState(() => _returnError = null);
+    showPosToast(
+      context,
+      message: AppStrings.t(
+        result.idempotentReplay ? 'return_replay' : 'return_success',
+        loc,
+      ),
+      detail: result.refundTotal,
+      kind: PosToastKind.success,
+      key: const Key('return-success-snackbar'),
+    );
+    // An already-open returns history list stays fresh (same pattern as
+    // the AR refresh after a credit sale — only views that are alive).
+    if (ref.exists(returnsProvider)) {
+      ref.read(returnsProvider.notifier).refresh();
     }
   }
 
@@ -951,7 +1064,8 @@ class _PosScreenState extends ConsumerState<PosScreen> {
 
   Future<void> _holdSale() async {
     final cart = ref.read(posCartProvider);
-    if (cart.isEmpty) return;
+    // Return mode owns the cart (same rule as the F9 shortcut).
+    if (cart.isEmpty || cart.returnMode) return;
     final loc = ref.read(localeProvider).flutterLocale.languageCode;
     final err = await ref.read(posCartProvider.notifier).createHold();
     if (!mounted) return;
@@ -1128,6 +1242,12 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       onHistory: () => showSaleHistoryDialog(context),
       onClear: _confirmClearCart,
       heldCount: heldCount,
+      // POS return mode (cart → independent return).
+      canReturn: ref.watch(hasPermissionProvider('pos_return')),
+      onReturn: () => _setReturnMode(true),
+      onCancelReturn: () => _setReturnMode(false),
+      onConfirmReturn: _confirmReturn,
+      returnError: _returnError?.message,
     );
 
         final workspace = Column(
@@ -2138,6 +2258,16 @@ class _CartPanel extends StatelessWidget {
   final VoidCallback onClear;
   final int heldCount;
 
+  /// POS return mode — the footer Return button (permission-gated) enters
+  /// the mode; the banner + totals-panel Confirm/Cancel own the mode.
+  final bool canReturn;
+  final VoidCallback onReturn;
+  final VoidCallback onCancelReturn;
+  final VoidCallback onConfirmReturn;
+
+  /// Localized last return failure — inline in the return banner.
+  final String? returnError;
+
   const _CartPanel({
     required this.cart,
     required this.qtyFocusRequest,
@@ -2153,6 +2283,11 @@ class _CartPanel extends StatelessWidget {
     required this.onHistory,
     required this.onClear,
     this.heldCount = 0,
+    this.canReturn = false,
+    required this.onReturn,
+    required this.onCancelReturn,
+    required this.onConfirmReturn,
+    this.returnError,
   });
 
   @override
@@ -2308,6 +2443,59 @@ class _CartPanel extends StatelessWidget {
             ),
           ),
           const Divider(height: 1),
+          // Return-mode banner: unmistakable mode indication above the
+          // lines, with the inline failure line while one exists.
+          if (cart.returnMode)
+            Container(
+              key: const Key('pos-return-banner'),
+              color: theme.colorScheme.tertiaryContainer,
+              padding:
+                  const EdgeInsetsDirectional.fromSTEB(12, 8, 12, 8),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.replay,
+                    size: 20,
+                    color: theme.colorScheme.onTertiaryContainer,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          AppStrings.t('pos_return_mode', loc),
+                          key: const Key('pos-return-banner-title'),
+                          style: theme.textTheme.titleSmall?.copyWith(
+                            fontWeight: FontWeight.w700,
+                            color: theme.colorScheme.onTertiaryContainer,
+                          ),
+                        ),
+                        Text(
+                          AppStrings.t('pos_return_mode_hint', loc),
+                          key: const Key('pos-return-banner-hint'),
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.onTertiaryContainer,
+                          ),
+                        ),
+                        if (returnError != null) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            returnError!,
+                            key: const Key('pos-return-banner-error'),
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: theme.colorScheme.error,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
           // Only the line list scrolls — header/totals/PAY stay fixed.
           Expanded(
             flex: 1,
@@ -2428,7 +2616,11 @@ class _CartPanel extends StatelessWidget {
                         key: const Key('pos-hold-button'),
                         icon: Icons.pause,
                         label: AppStrings.t('hold_shortcut', loc),
-                        onPressed: cart.isEmpty ? null : onHold,
+                        // Return mode owns the cart — holding it would
+                        // shelve the pending return (a hold is a SALE
+                        // snapshot).
+                        onPressed:
+                            (cart.isEmpty || cart.returnMode) ? null : onHold,
                         short: short || compact,
                       ),
                     ),
@@ -2461,13 +2653,35 @@ class _CartPanel extends StatelessWidget {
                     ),
                   ],
                 ),
+                // Return entry point (permission-gated): hidden while the
+                // mode is active — the banner + Confirm/Cancel own it.
+                if (canReturn && !cart.returnMode) ...[
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _actionButton(
+                          context: context,
+                          key: const Key('pos-return-button'),
+                          icon: Icons.replay,
+                          label: AppStrings.t('pos_return', loc),
+                          onPressed: cart.isEmpty ? null : onReturn,
+                          short: short || compact,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
               ],
             ),
           ),
-          // Sticky totals + PAY card (UX FIX #7/#8).
+          // Sticky totals + PAY card (UX FIX #7/#8) — in return mode the
+          // PAY slot becomes Confirm return / Cancel return.
           _PosTotalsPanel(
             cart: cart,
             onPayment: onPayment,
+            onConfirmReturn: onConfirmReturn,
+            onCancelReturn: onCancelReturn,
           ),
         ],
       ),
@@ -2522,13 +2736,18 @@ class _CartPanel extends StatelessWidget {
 }
 
 /// Dedicated totals card: Subtotal / Discount / TOTAL / PAY (UX FIX #7/#8).
+/// In POS return mode the PAY slot becomes Confirm return / Cancel return.
 class _PosTotalsPanel extends StatelessWidget {
   final PosCartState cart;
   final VoidCallback onPayment;
+  final VoidCallback onConfirmReturn;
+  final VoidCallback onCancelReturn;
 
   const _PosTotalsPanel({
     required this.cart,
     required this.onPayment,
+    required this.onConfirmReturn,
+    required this.onCancelReturn,
   });
 
   @override
@@ -2642,70 +2861,80 @@ class _PosTotalsPanel extends StatelessWidget {
                   top: false,
                   child: SizedBox(
                     height: payHeight,
-                    child: FilledButton(
-                      key: const Key('pos-pay-button'),
-                      style: FilledButton.styleFrom(
-                        minimumSize: Size.fromHeight(payHeight),
-                        maximumSize: Size(double.infinity, payHeight),
-                        padding:
-                            const EdgeInsets.symmetric(horizontal: 12),
-                        textStyle: theme.textTheme.labelLarge?.copyWith(
-                          fontSize: payFontSize,
-                          fontWeight: FontWeight.w700,
-                        ),
-                        backgroundColor: cs.primary,
-                        disabledBackgroundColor:
-                            cs.onSurface.withValues(alpha: 0.12),
-                        disabledForegroundColor:
-                            cs.onSurface.withValues(alpha: 0.38),
-                      ),
-                      onPressed: payEnabled ? onPayment : null,
-                      child: cart.checkoutPending
-                          ? Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                SizedBox(
-                                  width: 22,
-                                  height: 22,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2.5,
-                                    color: cs.onPrimary,
-                                  ),
-                                ),
-                                const SizedBox(width: 10),
-                                Flexible(
-                                  child: Text(
-                                    AppStrings.t('processing', loc),
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                      fontSize: payFontSize - 1,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            )
-                          : Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Icon(
-                                  Icons.credit_card,
-                                  size: payIconSize,
-                                  color: payEnabled
-                                      ? cs.onPrimary
-                                      : cs.onSurface.withValues(alpha: 0.38),
-                                ),
-                                const SizedBox(width: 8),
-                                Flexible(
-                                  child: Text(
-                                    '${AppStrings.t('payment_shortcut', loc)}'
-                                    ' — ${totals.totalDisplay} $currency',
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
-                              ],
+                    child: cart.returnMode
+                        ? _returnActions(
+                            theme: theme,
+                            cs: cs,
+                            loc: loc,
+                            payHeight: payHeight,
+                            payFontSize: payFontSize,
+                            payIconSize: payIconSize,
+                          )
+                        : FilledButton(
+                            key: const Key('pos-pay-button'),
+                            style: FilledButton.styleFrom(
+                              minimumSize: Size.fromHeight(payHeight),
+                              maximumSize: Size(double.infinity, payHeight),
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 12),
+                              textStyle: theme.textTheme.labelLarge?.copyWith(
+                                fontSize: payFontSize,
+                                fontWeight: FontWeight.w700,
+                              ),
+                              backgroundColor: cs.primary,
+                              disabledBackgroundColor:
+                                  cs.onSurface.withValues(alpha: 0.12),
+                              disabledForegroundColor:
+                                  cs.onSurface.withValues(alpha: 0.38),
                             ),
-                    ),
+                            onPressed: payEnabled ? onPayment : null,
+                            child: cart.checkoutPending
+                                ? Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      SizedBox(
+                                        width: 22,
+                                        height: 22,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2.5,
+                                          color: cs.onPrimary,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 10),
+                                      Flexible(
+                                        child: Text(
+                                          AppStrings.t('processing', loc),
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                            fontSize: payFontSize - 1,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  )
+                                : Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Icon(
+                                        Icons.credit_card,
+                                        size: payIconSize,
+                                        color: payEnabled
+                                            ? cs.onPrimary
+                                            : cs.onSurface
+                                                .withValues(alpha: 0.38),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Flexible(
+                                        child: Text(
+                                          '${AppStrings.t('payment_shortcut', loc)}'
+                                          ' — ${totals.totalDisplay} $currency',
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                          ),
                   ),
                 ),
               ],
@@ -2713,6 +2942,105 @@ class _PosTotalsPanel extends StatelessWidget {
           },
         ),
       ),
+    );
+  }
+
+  /// Return-mode actions replacing PAY: Confirm return (server prices
+  /// every line) + Cancel return (no API call, cart untouched). Both are
+  /// locked while the attempt is in flight.
+  Widget _returnActions({
+    required ThemeData theme,
+    required ColorScheme cs,
+    required String loc,
+    required double payHeight,
+    required double payFontSize,
+    required double payIconSize,
+  }) {
+    final locked = cart.returnPending;
+    return Row(
+      key: const Key('pos-return-actions'),
+      children: [
+        Expanded(
+          flex: 3,
+          child: FilledButton(
+            key: const Key('pos-return-confirm-button'),
+            style: FilledButton.styleFrom(
+              minimumSize: Size.fromHeight(payHeight),
+              maximumSize: Size(double.infinity, payHeight),
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              textStyle: theme.textTheme.labelLarge?.copyWith(
+                fontSize: payFontSize,
+                fontWeight: FontWeight.w700,
+              ),
+              backgroundColor: cs.error,
+              foregroundColor: cs.onError,
+              disabledBackgroundColor: cs.onSurface.withValues(alpha: 0.12),
+              disabledForegroundColor: cs.onSurface.withValues(alpha: 0.38),
+            ),
+            onPressed: locked ? null : onConfirmReturn,
+            child: locked
+                ? Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      SizedBox(
+                        width: 22,
+                        height: 22,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2.5,
+                          color: cs.onError,
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Flexible(
+                        child: Text(
+                          AppStrings.t('processing', loc),
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: payFontSize - 1,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ],
+                  )
+                : Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.replay, size: payIconSize),
+                      const SizedBox(width: 8),
+                      Flexible(
+                        child: Text(
+                          AppStrings.t('pos_return_confirm', loc),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          flex: 2,
+          child: OutlinedButton(
+            key: const Key('pos-return-cancel-button'),
+            style: OutlinedButton.styleFrom(
+              minimumSize: Size.fromHeight(payHeight),
+              maximumSize: Size(double.infinity, payHeight),
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              textStyle: theme.textTheme.labelLarge?.copyWith(
+                fontSize: payFontSize - 1,
+                fontWeight: FontWeight.w700,
+              ),
+              side: BorderSide(color: cs.outline),
+            ),
+            onPressed: locked ? null : onCancelReturn,
+            child: Text(
+              AppStrings.t('cancel', loc),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ),
+      ],
     );
   }
 

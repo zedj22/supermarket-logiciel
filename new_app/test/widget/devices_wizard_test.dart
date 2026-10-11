@@ -180,7 +180,9 @@ void main() {
 
       expect(find.byKey(const Key('offer-server-1')), findsOneWidget);
       expect(find.text('Store A'), findsOneWidget);
-      expect(find.text('192.168.1.10:8000'), findsOneWidget);
+      // Display-only short form (host); the full ip:port stays internal.
+      expect(find.text('192.168.1.10'), findsOneWidget);
+      expect(find.text('192.168.1.10:8000'), findsNothing);
       expect(tester.takeException(), isNull);
     });
 
