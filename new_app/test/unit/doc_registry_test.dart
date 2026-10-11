@@ -3,6 +3,8 @@
 // Pins the stable chapter/article ids (deep-link targets), proves every
 // content key resolves in all three locales, and checks the adjacency
 // helper used by previous/next navigation.
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:supermarket_pos/features/documentation/doc_content.dart';
 import 'package:supermarket_pos/features/documentation/doc_models.dart';
@@ -12,7 +14,22 @@ void main() {
   group('Documentation registry', () {
     test('chapter ids are stable and unique', () {
       final ids = [for (final c in docChapters) c.id];
-      expect(ids, ['getting_started', 'dashboard', 'pos']);
+      expect(ids, [
+        'getting_started',
+        'dashboard',
+        'pos',
+        'products',
+        'inventory',
+        'purchasing',
+        'customers',
+        'expenses',
+        'facturation',
+        'reports',
+        'printing',
+        'lan',
+        'settings',
+        'troubleshooting',
+      ]);
       expect(ids.toSet().length, ids.length);
     });
 
@@ -33,6 +50,30 @@ void main() {
         'pos_history',
         'pos_shortcuts',
         'pos_returns',
+        'cat_basics',
+        'cat_children',
+        'cat_pricing',
+        'inv_levels',
+        'inv_adjust',
+        'inv_movements',
+        'purch_suppliers',
+        'purch_docs',
+        'cust_records',
+        'cust_debts',
+        'exp_manage',
+        'fac_types',
+        'fac_totals',
+        'fac_pdf_post',
+        'rep_overview',
+        'rep_exports',
+        'prt_overview',
+        'lan_pairing',
+        'lan_devices',
+        'set_general',
+        'set_backup',
+        'ts_connection',
+        'ts_print_pdf',
+        'ts_data',
       ]);
       expect(ids.toSet().length, ids.length);
       for (final article in allDocArticles()) {
@@ -53,9 +94,10 @@ void main() {
       expect(adjacentDocArticleId('gs_first_launch', next: false), isNull);
       expect(adjacentDocArticleId('gs_first_launch', next: true),
           'gs_admin_login');
-      expect(adjacentDocArticleId('pos_returns', next: true), isNull);
-      expect(adjacentDocArticleId('pos_returns', next: false),
-          'pos_shortcuts');
+      expect(adjacentDocArticleId('pos_returns', next: true), 'cat_basics');
+      expect(adjacentDocArticleId('cat_basics', next: false), 'pos_returns');
+      expect(adjacentDocArticleId('ts_data', next: true), isNull);
+      expect(adjacentDocArticleId('ts_data', next: false), 'ts_print_pdf');
       expect(adjacentDocArticleId('unknown', next: true), isNull);
     });
 
@@ -68,6 +110,24 @@ void main() {
       }
       expect(missing, isEmpty,
           reason: 'unresolved/empty doc content keys: $missing');
+    });
+
+    test('screenshot refs are empty or resolve to existing files', () {
+      // Phase 4 ships with all screenshotRefs empty because safe
+      // screenshot capture is blocked on this machine (see Phase 4
+      // report).  When refs are added later, this test will enforce
+      // that each one points at a real file under assets/docshots/.
+      for (final article in allDocArticles()) {
+        for (final ref in article.screenshotRefs) {
+          expect(ref, isNotEmpty);
+          expect(
+            File('assets/docshots/$ref').existsSync(),
+            isTrue,
+            reason: 'screenshot ref "$ref" for ${article.id} '
+                'does not exist under assets/docshots/',
+          );
+        }
+      }
     });
 
     test('the three required Phase 3 chapters carry their articles', () {

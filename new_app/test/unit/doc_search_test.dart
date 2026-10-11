@@ -52,7 +52,9 @@ void main() {
     test('finds French content', () {
       final hits = searchDocContent('appairage', locale: 'fr');
       expect(hits, isNotEmpty);
-      expect(hits.first.article.id, 'gs_first_launch');
+      final ids = [for (final h in hits) h.article.id];
+      expect(ids, contains('gs_first_launch'));
+      expect(ids, contains('lan_pairing'));
     });
 
     test('unknown term returns an empty result set', () {

@@ -225,6 +225,24 @@ class _DocArticleViewState extends State<DocArticleView> {
                 ),
               ),
               const SizedBox(height: 20),
+              // Phase 4: article screenshots (always empty until a safe
+              // demo-dataset capture exists; see screenshotRefs).
+              for (final ref in article.screenshotRefs) ...[
+                Semantics(
+                  image: true,
+                  label: '${docT(article.titleKey, loc)} — $ref',
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: Image.asset(
+                      'assets/docshots/$ref',
+                      key: Key('documentation-screenshot-$ref'),
+                      errorBuilder: (context, error, stackTrace) =>
+                          const SizedBox.shrink(),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+              ],
               for (final section in article.sections) ...[
                 KeyedSubtree(
                   key: _sectionKeys.putIfAbsent(

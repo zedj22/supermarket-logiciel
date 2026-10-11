@@ -55,3 +55,9 @@ flutter:
 
   # assets:
   #   - assets/icons/
+
+  # Phase 4: documentation screenshots live here.  The directory ships
+  # with only a .gitkeep until a safe demo-dataset capture is possible;
+  # every DocArticle.screenshotRefs stays empty so nothing is fabricated.
+  assets:
+    - assets/docshots/
