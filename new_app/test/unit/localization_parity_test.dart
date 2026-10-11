@@ -118,10 +118,14 @@ void main() {
       // register-as-sale checkbox label and the posted-as-sale status
       // label — 2 keys (1071).  The POS return-mode pass added the return
       // button / mode / hint / confirm / pack-unsupported labels — 5 keys
-      // (1076).  Update this deliberately when a subphase
+      // (1076).  The About page pass added the page, hero, info, server,
+      // developer, documentation and six feature-card title/description
+      // labels — 24 keys (1100).  The Documentation Center pass added the
+      // screen chrome (search, prev/next, empty states, callout labels)
+      // — 12 keys (1112).  Update this deliberately when a subphase
       // adds strings — an unexplained drop means keys were deleted from
       // one map only.
-      expect(_map('en').keys.length, 1076);
+      expect(_map('en').keys.length, 1112);
       expect(_map('ar').keys.length, _map('en').keys.length);
       expect(_map('fr').keys.length, _map('en').keys.length);
     });

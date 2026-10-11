@@ -253,6 +253,13 @@ List<NavGroup> buildNavGroups({required bool Function(String scope) can}) {
           icon: Icons.settings_outlined,
           selectedIcon: Icons.settings,
         ),
+        // About — always visible, same no-scope pattern as Settings.
+        const NavItem(
+          path: '/about',
+          labelKey: 'about',
+          icon: Icons.info_outline,
+          selectedIcon: Icons.info,
+        ),
       ],
     ),
   ];

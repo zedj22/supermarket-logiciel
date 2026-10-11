@@ -13,6 +13,8 @@ import '../features/shell/app_nav_rail.dart';
 import '../features/shell/nav_items.dart';
 import '../features/shell/shortcuts_help_dialog.dart';
 import '../l10n/locale_provider.dart';
+import '../features/about/about_screen.dart';
+import '../features/documentation/documentation_screen.dart';
 import '../features/dashboard/dashboard_screen.dart';
 import '../features/clients/clients_screen.dart';
 import '../features/packs/packs_screen.dart';
@@ -215,6 +217,16 @@ final routerProvider = Provider<GoRouter>((ref) {
             path: '/settings',
             name: 'settings',
             builder: (context, state) => const SettingsScreen(),
+          ),
+          GoRoute(
+            path: '/about',
+            name: 'about',
+            builder: (context, state) => const AboutScreen(),
+          ),
+          GoRoute(
+            path: '/documentation',
+            name: 'documentation',
+            builder: (context, state) => const DocumentationScreen(),
           ),
         ],
       ),
