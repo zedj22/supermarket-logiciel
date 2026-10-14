@@ -46,10 +46,11 @@ from app.models.catalog import (
     ProductPurchaseUnit,
     ProductVariant,
 )
-from app.models.enums import StockMovementType
+from app.models.enums import AuditAction, AuditModule, AuditOutcome, StockMovementType
 from app.models.inventory import InventoryMovement
 from app.models.purchase import Purchase, PurchaseLine
 from app.models.user import User
+from app.services.audit import AuditService
 from app.repositories.catalog import (
     ProductRepository,
     ProductVariantRepository,
@@ -578,6 +579,15 @@ class InventoryService(BaseService):
                 user_id=user_id,
                 device_id=device_id,
             )
+            self._audit_adjust(
+                product,
+                request,
+                before=before,
+                after=after,
+                reason=reason,
+                user_id=user_id,
+                device_id=device_id,
+            )
             self.db.flush()
 
         logger.info(
@@ -614,6 +624,47 @@ class InventoryService(BaseService):
         if request.note:
             reason = f"{reason} — {request.note}"
         return reason
+
+    def _audit_adjust(
+        self,
+        product: Product,
+        request: InventoryAdjustRequest,
+        *,
+        before: Decimal,
+        after: Decimal,
+        reason: str,
+        user_id: uuid.UUID | None,
+        device_id: str | None,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        """One audit row per adjustment, inside the same transaction.
+
+        The immutable movement journal already records the stock delta;
+        this row answers the audit screen's "who / what / why / which PC"
+        with the operator-given reason and an explicit outcome. Recorded
+        through the shared AuditService so redaction and column defaults
+        stay in one place.
+        """
+        AuditService(self.db).record(
+            action=AuditAction.ADJUSTMENT,
+            module=AuditModule.INVENTORY,
+            outcome=AuditOutcome.SUCCESS,
+            entity_type="product",
+            entity_id=product.id,
+            entity_ref=product.name,
+            user_id=user_id,
+            device_id=device_id,
+            reason=reason,
+            details={
+                "operation": request.operation,
+                "requested_quantity": str(request.quantity),
+                "quantity_before": str(before),
+                "quantity_after": str(after),
+            },
+            before={"quantity": str(before)},
+            after={"quantity": str(after)},
+            metadata=metadata,
+        )
 
     def _adjust_packages(
         self,
@@ -775,6 +826,16 @@ class InventoryService(BaseService):
                 user_id=user_id,
                 device_id=device_id,
             )
+            self._audit_adjust(
+                product,
+                request,
+                before=before,
+                after=state.total_base,
+                reason=reason,
+                user_id=user_id,
+                device_id=device_id,
+                metadata={"purchase_unit_id": str(unit.id), "packages": str(pkg_qty)},
+            )
             self.db.flush()
 
         logger.info(
@@ -852,6 +913,16 @@ class InventoryService(BaseService):
                 reason=reason,
                 user_id=user_id,
                 device_id=device_id,
+            )
+            self._audit_adjust(
+                product,
+                request,
+                before=before,
+                after=after,
+                reason=reason,
+                user_id=user_id,
+                device_id=device_id,
+                metadata={"variant_id": str(variant.id)},
             )
             self.db.flush()
 

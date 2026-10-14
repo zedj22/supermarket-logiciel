@@ -19,6 +19,7 @@ class NavScopes {
   static const String reportFinancial = 'report_financial';
   static const String deviceManage = 'device_manage';
   static const String facturationView = 'facturation_view';
+  static const String auditView = 'audit_view';
 }
 
 /// One destination in the rail.
@@ -246,6 +247,16 @@ List<NavGroup> buildNavGroups({required bool Function(String scope) can}) {
             icon: Icons.devices_outlined,
             selectedIcon: Icons.devices,
             scope: NavScopes.deviceManage,
+          ),
+        // Audit Log — admin only (`audit_view`; backend RBAC remains the
+        // security boundary, this gate only hides the destination).
+        if (can(NavScopes.auditView))
+          const NavItem(
+            path: '/audit-log',
+            labelKey: 'audit_log',
+            icon: Icons.history_outlined,
+            selectedIcon: Icons.history,
+            scope: NavScopes.auditView,
           ),
         const NavItem(
           path: '/settings',

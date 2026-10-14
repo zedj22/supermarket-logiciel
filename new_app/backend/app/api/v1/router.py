@@ -16,6 +16,7 @@ D-08 deferred to this security pass.
 from fastapi import APIRouter, Depends
 
 from app.api.device_guard import device_guard
+from app.api.v1.audit import router as audit_router
 from app.api.v1.auth import router as auth_router
 from app.api.v1.backups import router as backups_router
 from app.api.v1.categories import router as categories_router
@@ -71,5 +72,6 @@ api_router.include_router(print_router, prefix="/print", tags=["print"])
 api_router.include_router(dashboard_router, prefix="/dashboard", tags=["dashboard"])
 api_router.include_router(pos_router, prefix="/pos", tags=["pos"])
 api_router.include_router(devices_router, prefix="/devices", tags=["devices"])
+api_router.include_router(audit_router, prefix="/audit", tags=["audit"])
 api_router.include_router(settings_router, prefix="/settings", tags=["settings"])
 api_router.include_router(backups_router, prefix="/backups", tags=["backups"])

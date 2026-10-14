@@ -31,14 +31,14 @@ from sqlalchemy.orm import Session
 from app.core.exceptions import ConflictError, NotFoundError
 from app.domain.unit_conversions import QTY_QUANTUM, selling_to_base, to_decimal
 from app.domain.valuation import quantize_money
-from app.models.audit import AuditLog
-from app.models.enums import AuditAction, SaleStatus, StockMovementType
+from app.models.enums import AuditAction, AuditModule, AuditOutcome, SaleStatus, StockMovementType
 from app.models.sale import Sale
 from app.repositories.debt import DebtLedgerEntryRepository
 from app.repositories.party import CustomerRepository
 from app.repositories.returns import ReturnRepository
 from app.repositories.sale import SaleRepository
 from app.schemas.returns import VoidRequest, VoidResponse
+from app.services.audit import AuditService
 from app.services.base import BaseService
 from app.services.returns import (
     apply_restore,
@@ -276,6 +276,9 @@ class VoidService(BaseService):
                 AuditAction.VOID,
                 entity_id=sale.id,
                 actor_id=actor_id,
+                reason=reason,
+                entity_ref=sale.invoice_number,
+                device_id=device_id,
                 details=json.dumps(
                     {
                         "invoice_number": sale.invoice_number,
@@ -310,20 +313,26 @@ class VoidService(BaseService):
         entity_id: uuid.UUID,
         actor_id: uuid.UUID | None,
         details: str = "",
+        reason: str | None = None,
+        entity_ref: str | None = None,
+        device_id: str | None = None,
     ) -> None:
         """Append an audit row inside the current transaction (§21).
 
         A committed void always has its audit entry and a rolled-back one
         leaves no orphan (Phase 0 rule #4).
         """
-        self.db.add(
-            AuditLog(
-                user_id=actor_id,
-                action=action.value,
-                entity_type="sale",
-                entity_id=entity_id,
-                details=details,
-            )
+        AuditService(self.db).record(
+            action=action,
+            module=AuditModule.SALES,
+            outcome=AuditOutcome.SUCCESS,
+            entity_type="sale",
+            entity_id=entity_id,
+            entity_ref=entity_ref,
+            user_id=actor_id,
+            device_id=device_id,
+            reason=reason,
+            details=details,
         )
 
 

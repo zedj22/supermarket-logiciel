@@ -51,6 +51,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.core.constants import DEVICE_ID_HEADER, DEVICE_TOKEN_HEADER
 from app.core.security import hash_token
 from app.db.session import get_db
 from app.models.device import Device
@@ -62,9 +63,6 @@ from app.services.devices import (
 )
 
 logger = structlog.get_logger(__name__)
-
-DEVICE_ID_HEADER = "X-Device-ID"
-DEVICE_TOKEN_HEADER = "X-Device-Token"
 
 # Do not turn every request into a write (§12.5).
 LAST_SEEN_THROTTLE_SECONDS = 60
@@ -145,13 +143,41 @@ def _touch_last_seen(db: Session, device: Device, ip: str | None) -> None:
         logger.warning("device_last_seen_commit_failed", error=str(exc))
 
 
+def _stash_device_context(
+    request: Request,
+    *,
+    device_id: str | None,
+    device_name: str | None = None,
+    verified: bool = False,
+) -> None:
+    """Expose the device identity on ``request.state`` for the audit layer.
+
+    Only *validated* registry values are trusted (``verified=True``); an
+    unvalidated ``X-Device-ID`` header is still recorded — clearly marked
+    unverified — so the audit trail never fabricates a machine identity
+    but never silently loses the client's claim either.
+    """
+    if device_id:
+        request.state.device_id = device_id
+        request.state.device_verified = verified
+        if device_name:
+            request.state.device_name = device_name
+
+
 def device_guard(request: Request, db: Session = Depends(get_db)) -> None:
     """Fail closed unless the caller presents a paired, unrevoked device."""
+    header_device_id = request.headers.get(DEVICE_ID_HEADER)
+
     if not settings.LAN_MODE:
+        # LAN mode off: JWT/RBAC only. A free-text X-Device-ID header, when
+        # present, is kept as an UNVERIFIED audit hint (device_name stays
+        # empty so a lie can never masquerade as a registry display name).
+        _stash_device_context(request, device_id=header_device_id, verified=False)
         return
 
     path = request.url.path
     if is_allowlisted(path):
+        _stash_device_context(request, device_id=header_device_id, verified=False)
         return
 
     # Q6 — the server PC's own local POS is not a LAN client: it is this
@@ -160,9 +186,10 @@ def device_guard(request: Request, db: Session = Depends(get_db)) -> None:
     # the device layer for loopback peers only; remote clients fall through
     # to the exact checks below, and JWT/RBAC still run on every route.
     if is_loopback_client(request):
+        _stash_device_context(request, device_id=header_device_id, verified=False)
         return
 
-    device_id = request.headers.get(DEVICE_ID_HEADER)
+    device_id = header_device_id
     token = request.headers.get(DEVICE_TOKEN_HEADER)
 
     if not device_id or not token:
@@ -194,3 +221,11 @@ def device_guard(request: Request, db: Session = Depends(get_db)) -> None:
         raise DeviceNotPairedError(message="Device credential is not valid")
 
     _touch_last_seen(db, device, _client_ip(request))
+    # Validated against the registry: the only path that may set a display
+    # name and verified=True.
+    _stash_device_context(
+        request,
+        device_id=device.device_id,
+        device_name=device.display_name,
+        verified=True,
+    )

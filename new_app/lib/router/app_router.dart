@@ -14,6 +14,7 @@ import '../features/shell/nav_items.dart';
 import '../features/shell/shortcuts_help_dialog.dart';
 import '../l10n/locale_provider.dart';
 import '../features/about/about_screen.dart';
+import '../features/audit/audit_screen.dart';
 import '../features/documentation/documentation_screen.dart';
 import '../features/dashboard/dashboard_screen.dart';
 import '../features/clients/clients_screen.dart';
@@ -212,6 +213,11 @@ final routerProvider = Provider<GoRouter>((ref) {
             path: '/devices',
             name: 'devices',
             builder: (context, state) => const DevicesScreen(),
+          ),
+          GoRoute(
+            path: '/audit-log',
+            name: 'audit-log',
+            builder: (context, state) => const AuditScreen(),
           ),
           GoRoute(
             path: '/settings',

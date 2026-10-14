@@ -12,6 +12,8 @@ Usage:
 # Enums (re-export for convenience)
 from app.models.enums import (  # noqa: F401
     AuditAction,
+    AuditModule,
+    AuditOutcome,
     DeviceStatus,
     ExpenseCategory,
     InvoiceDocType,
@@ -101,6 +103,8 @@ from app.db.base import Base, BaseModel, DocumentModel, MasterModel  # noqa: F40
 __all__ = [
     # Enums
     "AuditAction",
+    "AuditModule",
+    "AuditOutcome",
     "DeviceStatus",
     "ExpenseCategory",
     "InvoiceDocType",

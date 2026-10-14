@@ -38,3 +38,8 @@ ARGON2_MEMORY_COST = 65536  # 64 MB
 ARGON2_PARALLELISM = 4
 ARGON2_HASH_LENGTH = 32
 ARGON2_SALT_LENGTH = 16
+
+# Device identity headers (Phase 16). Lives in core so the audit layer can
+# read the free-text device id without importing the api package.
+DEVICE_ID_HEADER = "X-Device-ID"
+DEVICE_TOKEN_HEADER = "X-Device-Token"

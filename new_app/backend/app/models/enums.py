@@ -244,6 +244,55 @@ class AuditAction(str, enum.Enum):
     DEVICE_REVOKE = "device_revoke"
 
 
+class AuditOutcome(str, enum.Enum):
+    """Outcome of one audited attempt (audit trail slice A).
+
+    success — the operation completed (the state change committed).
+    failure — the operation was attempted and rejected by business rules
+              or credentials (wrong PIN, insufficient stock, ...).
+    denied  — refused by policy before the operation ran (disabled
+              account, missing permission scope, unknown device).
+
+    Legacy rows written before this column existed carry NULL and are
+    presented as "unknown" — never silently upgraded to "success".
+    """
+
+    SUCCESS = "success"
+    FAILURE = "failure"
+    DENIED = "denied"
+
+
+class AuditModule(str, enum.Enum):
+    """Functional module an audit event belongs to (audit trail slice A).
+
+    Additive vocabulary for filtering the audit screen. Legacy rows may
+    have module NULL ("unknown").
+    """
+
+    AUTH = "auth"
+    USERS = "users"
+    PRODUCTS = "products"
+    CATEGORIES = "categories"
+    INVENTORY = "inventory"
+    SALES = "sales"
+    RETURNS = "returns"
+    PURCHASES = "purchases"
+    CUSTOMERS = "customers"
+    SUPPLIERS = "suppliers"
+    DEBTS = "debts"
+    EXPENSES = "expenses"
+    PROMOTIONS = "promotions"
+    PACKS = "packs"
+    FACTURATION = "facturation"
+    SETTINGS = "settings"
+    DEVICES = "devices"
+    BACKUPS = "backups"
+    EXPORTS = "exports"
+    PRINT = "print"
+    REPORTS = "reports"
+    SYSTEM = "system"
+
+
 # ── Facturation (Phase 2 — invoices) ───────────────────────────────────
 
 

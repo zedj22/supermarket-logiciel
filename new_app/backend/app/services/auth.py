@@ -35,9 +35,9 @@ from app.core.security import (
     hash_token,
     verify_pin,
 )
-from app.models.audit import AuditLog
-from app.models.enums import AuditAction, PermissionScope
+from app.models.enums import AuditAction, AuditModule, AuditOutcome, PermissionScope
 from app.models.user import AuthSession, Role, User, UserRole
+from app.services.audit import AuditService
 from app.services.base import BaseService
 
 logger = structlog.get_logger(__name__)
@@ -153,19 +153,61 @@ class AuthService(BaseService):
         user_id: uuid.UUID,
         pin: str,
         device_name: str | None = None,
+        *,
+        ip_address: str | None = None,
+        request_id: str | None = None,
+        device_id: str | None = None,
+        device_verified: bool | None = None,
     ) -> tuple[str, User]:
         """Authenticate a user with PIN.
 
         Returns (access_token, user).
         Raises AuthenticationError on failure.
+
+        Every attempt appends exactly one audit row inside the auth
+        module — success, wrong PIN, unknown user, disabled or locked
+        account — carrying the outcome, IP and request id so the audit
+        screen can answer "who / from which PC / when / did it work".
+        The PIN itself is NEVER stored (only the attempt metadata).
         """
         # Find user
         user = self.db.get(User, user_id)
+        client_meta = {"client_device_name": device_name} if device_name else None
         if user is None:
             # Use generic error to prevent user enumeration
+            self._audit(
+                action=AuditAction.LOGIN,
+                entity_type="user",
+                entity_id=user_id,
+                details="Login failed: unknown user",
+                outcome=AuditOutcome.DENIED,
+                reason="unknown_user",
+                ip_address=ip_address,
+                request_id=request_id,
+                device_id=device_id,
+                device_verified=device_verified,
+                metadata=client_meta,
+            )
+            self.db.commit()
             raise AuthenticationError(message="Invalid credentials")
 
         if not user.is_active:
+            self._audit(
+                action=AuditAction.LOGIN,
+                entity_type="user",
+                entity_id=user.id,
+                details=f"Login refused: account disabled ({user.full_name})",
+                user_id=user.id,
+                actor_name=user.full_name,
+                outcome=AuditOutcome.DENIED,
+                reason="account_disabled",
+                ip_address=ip_address,
+                request_id=request_id,
+                device_id=device_id,
+                device_verified=device_verified,
+                metadata=client_meta,
+            )
+            self.db.commit()
             raise AuthenticationError(
                 message="Account is disabled",
                 details={"code": "ACCOUNT_DISABLED"},
@@ -174,6 +216,22 @@ class AuthService(BaseService):
         # Check lockout
         if user.locked_until and user.locked_until > datetime.now(timezone.utc):
             remaining = (user.locked_until - datetime.now(timezone.utc)).seconds // 60
+            self._audit(
+                action=AuditAction.LOGIN,
+                entity_type="user",
+                entity_id=user.id,
+                details=f"Login refused: account locked ({user.full_name})",
+                user_id=user.id,
+                actor_name=user.full_name,
+                outcome=AuditOutcome.DENIED,
+                reason="account_locked",
+                ip_address=ip_address,
+                request_id=request_id,
+                device_id=device_id,
+                device_verified=device_verified,
+                metadata={**(client_meta or {}), "retry_minutes": remaining},
+            )
+            self.db.commit()
             raise AuthenticationError(
                 message="Account is temporarily locked",
                 details={"code": "ACCOUNT_LOCKED", "retry_minutes": remaining},
@@ -181,7 +239,14 @@ class AuthService(BaseService):
 
         # Verify PIN
         if not verify_pin(pin, user.pin_hash):
-            self._handle_failed_login(user)
+            self._handle_failed_login(
+                user,
+                ip_address=ip_address,
+                request_id=request_id,
+                client_meta=client_meta,
+                device_id=device_id,
+                device_verified=device_verified,
+            )
             raise AuthenticationError(message="Invalid credentials")
 
         # Login successful — reset failed attempts and create session
@@ -212,19 +277,38 @@ class AuthService(BaseService):
             # Store token hash in session
             session.token_hash = hash_token(token)
 
-            # Audit
+            # Audit — in this transaction: no committed login without its
+            # trail, no orphan trail for a rolled-back login.
             self._audit(
                 action=AuditAction.LOGIN,
                 entity_type="session",
                 entity_id=session.id,
                 details=f"User {user.full_name} logged in",
                 user_id=user.id,
+                actor_name=user.full_name,
+                outcome=AuditOutcome.SUCCESS,
+                reason="pin_ok",
+                session_id=session.id,
+                ip_address=ip_address,
+                request_id=request_id,
+                device_id=device_id,
+                device_verified=device_verified,
+                metadata=client_meta,
             )
 
         logger.info("login_success", user_id=str(user.id), name=user.full_name)
         return token, user
 
-    def _handle_failed_login(self, user: User) -> None:
+    def _handle_failed_login(
+        self,
+        user: User,
+        *,
+        ip_address: str | None = None,
+        request_id: str | None = None,
+        client_meta: dict | None = None,
+        device_id: str | None = None,
+        device_verified: bool | None = None,
+    ) -> None:
         """Increment failed attempts and apply lockout if needed."""
         user.failed_login_attempts += 1
         if user.failed_login_attempts >= settings.LOCKOUT_THRESHOLD:
@@ -237,15 +321,24 @@ class AuthService(BaseService):
                 attempts=user.failed_login_attempts,
             )
 
-        self.db.commit()
-
+        # Audit inside the SAME commit as the counter/lockout so the
+        # attempt is never counted without a trail row.
         self._audit(
             action=AuditAction.LOGIN,
-            entity_type="session",
+            entity_type="user",
             entity_id=user.id,
             details=f"Failed login for {user.full_name}",
             user_id=user.id,
+            actor_name=user.full_name,
+            outcome=AuditOutcome.FAILURE,
+            reason="invalid_pin",
+            ip_address=ip_address,
+            request_id=request_id,
+            device_id=device_id,
+            device_verified=device_verified,
+            metadata={**(client_meta or {}), "failed_login_attempts": user.failed_login_attempts},
         )
+        self.db.commit()
 
     # ── Token verification ─────────────────────────────────────────────
 
@@ -295,7 +388,13 @@ class AuthService(BaseService):
 
     # ── Logout ─────────────────────────────────────────────────────────
 
-    def logout(self, token: str) -> None:
+    def logout(
+        self,
+        token: str,
+        *,
+        ip_address: str | None = None,
+        request_id: str | None = None,
+    ) -> None:
         """Revoke the current session."""
         payload = decode_access_token(token)
         if payload is None:
@@ -323,6 +422,12 @@ class AuthService(BaseService):
                 entity_id=session.id,
                 details=f"User {user.full_name} logged out" if user else "Session revoked",
                 user_id=session.user_id,
+                actor_name=user.full_name if user else None,
+                outcome=AuditOutcome.SUCCESS,
+                reason="user_logout",
+                session_id=session.id,
+                ip_address=ip_address,
+                request_id=request_id,
             )
 
         logger.info("logout", session_id=session_id)
@@ -345,7 +450,11 @@ class AuthService(BaseService):
                 entity_id=user.id,
                 details="Reauthentication failed",
                 user_id=user.id,
+                actor_name=user.full_name,
+                outcome=AuditOutcome.FAILURE,
+                reason="invalid_pin",
             )
+            self.db.commit()
             raise AuthenticationError(message="Invalid PIN")
 
         self._audit(
@@ -354,6 +463,9 @@ class AuthService(BaseService):
             entity_id=user.id,
             details="Reauthentication successful",
             user_id=user.id,
+            actor_name=user.full_name,
+            outcome=AuditOutcome.SUCCESS,
+            reason="pin_ok",
         )
         return True
 
@@ -556,20 +668,48 @@ class AuthService(BaseService):
         entity_id: uuid.UUID | None = None,
         details: str = "",
         user_id: uuid.UUID | None = None,
+        *,
+        module: AuditModule = AuditModule.AUTH,
+        outcome: AuditOutcome = AuditOutcome.SUCCESS,
+        reason: str | None = None,
+        entity_ref: str | None = None,
+        actor_name: str | None = None,
+        device_name: str | None = None,
+        device_id: str | None = None,
+        device_verified: bool | None = None,
+        session_id: uuid.UUID | str | None = None,
+        ip_address: str | None = None,
+        request_id: str | None = None,
+        metadata: dict | None = None,
     ) -> None:
         """Create an audit log entry. Never fails the main operation.
 
         ``user_id`` is the actor (the authenticated user performing the
-        action). Never store PINs, PIN hashes, JWTs, or raw tokens here.
+        action). Never store PINs, PIN hashes, JWTs, or raw tokens here —
+        AuditService redacts sensitive payload keys as a second line of
+        defense, but prose ``details`` must stay clean by construction.
+        Rows join the caller's open transaction (the login/logout paths
+        commit them together with the session change).
         """
         try:
-            log = AuditLog(
-                user_id=user_id,
-                action=action.value,
-                entity_type=entity_type,
+            AuditService(self.db).record(
+                action=action,
+                module=module,
+                outcome=outcome,
+                entity_type=entity_type or None,
                 entity_id=entity_id,
+                entity_ref=entity_ref,
+                user_id=user_id,
+                actor_name=actor_name,
+                device_name=device_name,
+                device_id=device_id,
+                device_verified=device_verified,
+                session_id=session_id,
+                ip_address=ip_address,
+                request_id=request_id,
+                reason=reason,
                 details=details,
+                metadata=metadata,
             )
-            self.db.add(log)
         except Exception as exc:
             logger.error("audit_log_failed", error=str(exc))

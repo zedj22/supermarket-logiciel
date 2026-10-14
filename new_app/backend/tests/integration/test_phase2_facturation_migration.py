@@ -32,7 +32,7 @@ pytestmark = pytest.mark.skipif(
     reason="PostgreSQL test database (supermarket_pro_test) not available",
 )
 
-HEAD_REV = "a1e8d3f92b47"  # 0030_facture_sale_posting (current head)
+HEAD_REV = "f3c8a21d9e05"  # 0030_facture_sale_posting (current head)
 ORIG_PHASE2_REV = "f3f734338032"  # 0026_phase2_facturation
 PREVIOUS_REV = "9f2e8c7a4b1d"  # 0025_phase18_promotions (pre-Phase-2 baseline)
 INVOICE_TABLES = (

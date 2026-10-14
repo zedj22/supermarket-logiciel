@@ -121,6 +121,10 @@ def login(
         user_id=payload.user_id,
         pin=payload.pin,
         device_name=payload.device_name,
+        ip_address=request.client.host if request.client else None,
+        request_id=getattr(request.state, "request_id", None),
+        device_id=getattr(request.state, "device_id", None),
+        device_verified=getattr(request.state, "device_verified", None),
     )
     return LoginResponse(
         access_token=token,
@@ -173,6 +177,7 @@ def verify_token_explicit(
 
 @router.post("/logout", tags=["auth"])
 def logout(
+    request: Request,
     token: str | None = Depends(get_bearer_token),
     user: User = Depends(get_current_user),
     service: AuthService = Depends(_get_auth_service),
@@ -183,17 +188,26 @@ def logout(
     token reaching this point is a live session that must be revoked.
     """
     if token:
-        service.logout(token)
+        service.logout(
+            token,
+            ip_address=request.client.host if request.client else None,
+            request_id=getattr(request.state, "request_id", None),
+        )
     return {"message": "Logged out successfully"}
 
 
 @router.post("/logout-token", tags=["auth"])
 def logout_with_token(
     token: str,
+    request: Request,
     service: AuthService = Depends(_get_auth_service),
 ) -> dict:
     """Revoke a specific session by token."""
-    service.logout(token)
+    service.logout(
+        token,
+        ip_address=request.client.host if request.client else None,
+        request_id=getattr(request.state, "request_id", None),
+    )
     return {"message": "Logged out successfully"}
 
 

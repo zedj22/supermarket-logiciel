@@ -32,8 +32,7 @@ import structlog
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.models.audit import AuditLog
-from app.models.enums import AuditAction
+from app.models.enums import AuditAction, AuditModule, AuditOutcome
 from app.models.settings import (
     DEFAULT_LOW_STOCK_THRESHOLD,
     DEFAULT_PAPER,
@@ -43,6 +42,7 @@ from app.models.settings import (
 )
 from app.repositories.settings import SettingsRepository
 from app.schemas.settings import SettingsUpdateRequest
+from app.services.audit import AuditService
 from app.services.base import BaseService
 
 logger = structlog.get_logger(__name__)
@@ -89,15 +89,16 @@ class SettingsService(BaseService):
             for key, value in changes.items():
                 setattr(row, key, value)
             # Same transaction as the change: no audit row, no save.
-            self.db.add(
-                AuditLog(
-                    user_id=actor_id,
-                    action=AuditAction.UPDATE.value,
-                    entity_type="settings",
-                    details=json.dumps(sorted(changes)),
-                    before_state=json.dumps(before_snapshot, default=str),
-                    after_state=json.dumps(after_snapshot, default=str),
-                )
+            AuditService(self.db).record(
+                action=AuditAction.UPDATE,
+                module=AuditModule.SETTINGS,
+                outcome=AuditOutcome.SUCCESS,
+                entity_type="settings",
+                entity_id=row.id,
+                user_id=actor_id,
+                details=json.dumps(sorted(changes)),
+                before=before_snapshot,
+                after=after_snapshot,
             )
         logger.info(
             "settings_updated",
