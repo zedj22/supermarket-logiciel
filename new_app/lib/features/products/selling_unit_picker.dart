@@ -137,6 +137,10 @@ class _SellingUnitPickerState extends ConsumerState<SellingUnitPicker> {
       unit: _baseUnitModel(name),
       productQuantity: widget.productQuantity,
       productUnit: widget.productUnit ?? name,
+      // Weight/length AMOUNT entry previews the line total from this
+      // effective price (promo first) — the same value the base card
+      // shows; the pick RESULT still returns the retail price.
+      unitPrice: widget.productPromoPrice ?? widget.productPrice,
     );
     if (qty == null || !mounted) return;
     Navigator.pop(
@@ -161,6 +165,11 @@ class _SellingUnitPickerState extends ConsumerState<SellingUnitPicker> {
       unit: unit,
       productQuantity: widget.productQuantity,
       productUnit: widget.productUnit ?? unit.unitType,
+      // Same precedence as the pick result / option card — amount entry
+      // previews from exactly this effective unit price.
+      unitPrice: unit.effectivePrice ??
+          unit.sellingPrice ??
+          widget.productPrice,
     );
     if (qty == null || !mounted) return;
     Navigator.pop(

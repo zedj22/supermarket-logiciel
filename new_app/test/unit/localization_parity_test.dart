@@ -122,10 +122,13 @@ void main() {
       // developer, documentation and six feature-card title/description
       // labels — 24 keys (1100).  The Documentation Center pass added the
       // screen chrome (search, prev/next, empty states, callout labels)
-      // — 12 keys (1112).  Update this deliberately when a subphase
+      // — 12 keys (1112).  The Klick POS weight/length amount-entry pass
+      // added the quantity-vs-amount mode toggle, amount input, computed
+      // quantity, requested amount and the zero/invalid-price explanation —
+      // 6 keys (1118).  Update this deliberately when a subphase
       // adds strings — an unexplained drop means keys were deleted from
       // one map only.
-      expect(_map('en').keys.length, 1112);
+      expect(_map('en').keys.length, 1118);
       expect(_map('ar').keys.length, _map('en').keys.length);
       expect(_map('fr').keys.length, _map('en').keys.length);
     });

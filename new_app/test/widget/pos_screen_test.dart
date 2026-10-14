@@ -203,12 +203,13 @@ Map<String, dynamic> _product({
   String price = '10.0',
   String quantity = '20',
   String? imagePath,
+  String unit = 'piece',
 }) =>
     {
       'id': id,
       'name': name,
       'barcode': barcode,
-      'unit': 'piece',
+      'unit': unit,
       'price': price,
       'cost': '5',
       'avg_cost': '5',
@@ -318,6 +319,7 @@ void _mockDio(
   String? imagePath,
   String productPrice = '10.0',
   String productQuantity = '20',
+  String productUnit = 'piece',
   void Function()? onSearch,
   int? variantsErrorStatus,
   int? sellingUnitsErrorStatus,
@@ -369,6 +371,7 @@ void _mockDio(
             imagePath: imagePath,
             price: productPrice,
             quantity: productQuantity,
+            unit: productUnit,
           ),
         ],
         'total': 1,
@@ -9528,6 +9531,195 @@ void main() {
       expect(container.read(posCartProvider).lines.single.unitPrice, '200');
       expect(find.byKey(Key('cart-line-wholesale-$key')), findsNothing);
       expect(tester.takeException(), isNull);
+    });
+  });
+
+  group('weight/length amount entry (Klick POS)', () {
+    ProviderContainer containerOf(WidgetTester tester) =>
+        ProviderScope.containerOf(
+          tester.element(find.byKey(const Key('pos-screen'))),
+          listen: false,
+        );
+
+    testWidgets(
+        'base weight product (no selling units) opens the entry dialog '
+        '— amount mode → fractional cart line', (tester) async {
+      final kgDio = MockDio();
+      _mockDio(
+        kgDio,
+        productUnit: 'kg',
+        productPrice: '250',
+        productQuantity: '20',
+      );
+      await _pumpApp(tester, dio: kgDio);
+      await tester.pump(const Duration(milliseconds: 500));
+
+      await tester.tap(find.byKey(Key('pos-product-$_productId')));
+      await tester.pumpAndSettle();
+
+      // The dialog appears instead of a silent qty-1 add.
+      expect(find.byKey(const Key('selling-unit-picker')), findsNothing);
+      expect(find.byKey(const Key('quantity-dialog')), findsOneWidget);
+      // Weight unit → the mode toggle is offered.
+      expect(find.byKey(const Key('quantity-mode-amount')), findsOneWidget);
+      expect(containerOf(tester).read(posCartProvider).lines, isEmpty);
+
+      await tester.tap(find.byKey(const Key('quantity-mode-amount')));
+      await tester.pump();
+      await tester.enterText(find.byKey(const Key('amount-input')), '100');
+      await tester.pump();
+      expect(find.text('Computed quantity: 0.4 kg'), findsOneWidget);
+      expect(find.text('Line total: 100'), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('quantity-submit')));
+      await tester.pumpAndSettle();
+
+      final cart = containerOf(tester).read(posCartProvider);
+      expect(cart.lines, hasLength(1));
+      final line = cart.lines.first;
+      expect(line.quantity, '0.4');
+      expect(line.unitPrice, '250');
+      expect(line.unitName, 'kg');
+      expect(line.sellingUnitId, isNull);
+      expect(line.productUnit, 'kg');
+    });
+
+    testWidgets(
+        'base weight product quantity mode → fractional cart line; '
+        'cancel adds nothing', (tester) async {
+      final kgDio = MockDio();
+      _mockDio(
+        kgDio,
+        productUnit: 'kg',
+        productPrice: '250',
+        productQuantity: '20',
+      );
+      await _pumpApp(tester, dio: kgDio);
+      await tester.pump(const Duration(milliseconds: 500));
+
+      await tester.tap(find.byKey(Key('pos-product-$_productId')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('quantity-dialog')), findsOneWidget);
+
+      await tester.enterText(
+        find.byKey(const Key('quantity-input')),
+        '2.5',
+      );
+      await tester.tap(find.byKey(const Key('quantity-submit')));
+      await tester.pumpAndSettle();
+
+      final cart = containerOf(tester).read(posCartProvider);
+      expect(cart.lines, hasLength(1));
+      expect(cart.lines.first.quantity, '2.5');
+      expect(cart.lines.first.unitPrice, '250');
+
+      // A second tap, cancelled → nothing is added.
+      await tester.tap(find.byKey(Key('pos-product-$_productId')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('quantity-dialog')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('quantity-cancel')));
+      await tester.pumpAndSettle();
+      expect(containerOf(tester).read(posCartProvider).lines, hasLength(1));
+    });
+
+    testWidgets(
+        'base length product (meter) → entry dialog, amount mode works',
+        (tester) async {
+      final mDio = MockDio();
+      _mockDio(
+        mDio,
+        productUnit: 'meter',
+        productPrice: '20',
+        productQuantity: '50',
+      );
+      await _pumpApp(tester, dio: mDio);
+      await tester.pump(const Duration(milliseconds: 500));
+
+      await tester.tap(find.byKey(Key('pos-product-$_productId')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('quantity-dialog')), findsOneWidget);
+      expect(find.byKey(const Key('quantity-mode-amount')), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('quantity-mode-amount')));
+      await tester.pump();
+      await tester.enterText(find.byKey(const Key('amount-input')), '50');
+      await tester.pump();
+      expect(find.text('Computed quantity: 2.5 meter'), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('quantity-submit')));
+      await tester.pumpAndSettle();
+      final cart = containerOf(tester).read(posCartProvider);
+      expect(cart.lines.single.quantity, '2.5');
+      expect(cart.lines.single.unitPrice, '20');
+    });
+
+    testWidgets(
+        'custom kg selling unit → picker → amount mode → fractional line '
+        'with selling_unit_id', (tester) async {
+      final unitDio = MockDio();
+      _mockDio(
+        unitDio,
+        productUnit: 'kg',
+        productPrice: '200',
+        productQuantity: '20',
+        sellingUnits: [
+          _sellingUnitJson(
+            id: 'su-kg',
+            name: 'Kg',
+            sellingPrice: '250',
+            isBaseUnit: false,
+            unitType: 'kg',
+            multiplier: '1',
+          ),
+        ],
+      );
+      await _pumpApp(tester, dio: unitDio);
+      await tester.pump(const Duration(milliseconds: 500));
+
+      await tester.tap(find.byKey(Key('pos-product-$_productId')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('selling-unit-picker')), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('selling-unit-su-kg')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('quantity-dialog')), findsOneWidget);
+      // Configured kg unit → amount mode offered, priced at 250 (the
+      // selling-unit price, not the product retail 200).
+      expect(find.byKey(const Key('quantity-mode-amount')), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('quantity-mode-amount')));
+      await tester.pump();
+      await tester.enterText(find.byKey(const Key('amount-input')), '100');
+      await tester.pump();
+      expect(find.text('Computed quantity: 0.4 Kg'), findsOneWidget);
+      expect(find.text('Line total: 100'), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('quantity-submit')));
+      await tester.pumpAndSettle();
+
+      final cart = containerOf(tester).read(posCartProvider);
+      expect(cart.lines, hasLength(1));
+      final line = cart.lines.first;
+      expect(line.sellingUnitId, 'su-kg');
+      expect(line.quantity, '0.4');
+      expect(line.unitPrice, '250');
+      expect(line.unitName, 'Kg');
+    });
+
+    testWidgets(
+        'piece product direct add is unchanged — no dialog, qty 1', (
+      tester,
+    ) async {
+      await _pumpApp(tester, dio: dio);
+      await tester.pump(const Duration(milliseconds: 500));
+
+      await tester.tap(find.byKey(Key('pos-product-$_productId')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('quantity-dialog')), findsNothing);
+      final cart = containerOf(tester).read(posCartProvider);
+      expect(cart.lines.single.quantity, '1');
+      expect(cart.lines.single.unitName, 'piece');
     });
   });
 

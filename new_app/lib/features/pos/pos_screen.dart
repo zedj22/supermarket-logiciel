@@ -44,6 +44,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/amount_entry.dart';
 import '../../core/colors.dart';
 import '../../core/keyboard.dart';
 import '../../core/shortcuts.dart';
@@ -55,6 +56,7 @@ import '../clients/clients_providers.dart';
 import '../clients/customer_models.dart';
 import '../packs/pack_models.dart';
 import '../products/models.dart';
+import '../products/quantity_dialog.dart';
 import '../products/selling_unit_picker.dart';
 import '../products/variant_picker.dart';
 import '../returns/return_providers.dart';
@@ -547,6 +549,55 @@ class _PosScreenState extends ConsumerState<PosScreen> {
         : null;
 
     if (units.isEmpty) {
+      // Weight/length base product with no configured selling units — the
+      // cashier must say HOW MUCH (kg/g/m or DA): show the entry dialog
+      // instead of silently adding qty 1 (non-weight units keep the direct
+      // add below; cancelling the dialog adds nothing).
+      if (isAmountEntryUnit(product.unit)) {
+        if (!mounted) return;
+        final qty = await showQuantityDialog(
+          context,
+          unit: SellingUnitModel(
+            id: kSellingUnitBaseKey,
+            productId: product.id,
+            name: product.unit,
+            unitType: product.unit,
+            multiplier: '1',
+            isBaseUnit: true,
+            sellingPrice: promoPrice ?? price,
+            effectivePrice: promoPrice ?? price,
+            availableBaseQty: stock,
+            availableSellingQty: stock,
+          ),
+          productQuantity: stock,
+          productUnit: product.unit,
+          unitPrice: promoPrice ?? price,
+        );
+        // Restore barcode/search focus after dialog closes (keyboard-first).
+        if (mounted) _searchFocusNode.requestFocus();
+        if (qty == null) return; // cancelled — never force a qty-1 line
+        _addCartLine(
+          productId: product.id,
+          variantId: variant?.id,
+          name: name,
+          variantName: variant?.name,
+          unitName: product.unit,
+          quantity: qty,
+          // Phase 18 — the promotion price replaces retail on this line;
+          // retailPrice below still stamps the ORIGINAL retail price.
+          unitPrice: promoPrice ?? price,
+          barcode: product.barcode,
+          productUnit: product.unit,
+          availableStock: stock,
+          baseUnitPrice: price,
+          // Phase 17 pricing — wholesale snapshot (see [_retailPriceOf]).
+          retailPrice: _retailPriceOf(product, price),
+          wholesalePrice: product.wholesalePrice,
+          wholesaleMinQty: product.wholesaleMinQty,
+          promotionPrice: promoPrice,
+        );
+        return;
+      }
       // No selling-unit choice → direct add (qty 1, base unit, catalog price).
       _addCartLine(
         productId: product.id,
