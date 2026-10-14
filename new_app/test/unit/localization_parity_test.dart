@@ -122,13 +122,21 @@ void main() {
       // developer, documentation and six feature-card title/description
       // labels — 24 keys (1100).  The Documentation Center pass added the
       // screen chrome (search, prev/next, empty states, callout labels)
-      // — 12 keys (1112).  The Klick POS weight/length amount-entry pass
+      // — 12 keys (1112).  The purchase total-cost pass added the
+      // checkbox label, its hint, and the live-preview total-quantity
+      // label — 3 keys (1115).  The audit-trail UI pass added the Audit
+      // Log surface — screen chrome, summary cards, filters, the 22-module
+      // / 18-action / 4-outcome vocabularies and the detail-dialog labels —
+      // 84 keys (1199).  The facturation price-selection pass added the
+      // unit-price (DA) label and the reference-price chips — header,
+      // regular price and the wholesale-unavailable explanation —
+      // 4 keys (1203).  The Klick POS weight/length amount-entry pass
       // added the quantity-vs-amount mode toggle, amount input, computed
       // quantity, requested amount and the zero/invalid-price explanation —
-      // 6 keys (1118).  Update this deliberately when a subphase
+      // 6 keys (1209).  Update this deliberately when a subphase
       // adds strings — an unexplained drop means keys were deleted from
       // one map only.
-      expect(_map('en').keys.length, 1118);
+      expect(_map('en').keys.length, 1209);
       expect(_map('ar').keys.length, _map('en').keys.length);
       expect(_map('fr').keys.length, _map('en').keys.length);
     });
