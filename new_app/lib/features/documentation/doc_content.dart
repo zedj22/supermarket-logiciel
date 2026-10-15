@@ -683,7 +683,143 @@ const Map<String, Map<String, String>> docContent = <String, Map<String, String>
         'history as the account record.',
 
     // ------------------------------------------------------------------
-    // Chapter 8 — Expenses and Financial Operations
+    // Chapter 8 — Loyalty (Loyalty Phase F)
+    // ------------------------------------------------------------------
+    'chapter.loyalty.title': 'Loyalty',
+    'loy_overview.title': 'Points and cashback overview',
+    'loy_overview.summary':
+        'How customers earn and spend loyalty rewards.',
+    'loy_overview.s1.heading': 'What loyalty does',
+    'loy_overview.s1.p1':
+        'The loyalty program lets customers earn points and/or cashback '
+        'on their purchases, then spend those rewards on later sales. '
+        'Points are earned per currency unit spent according to '
+        'the store\u2019s points rate; cashback accrues as a monetary '
+        'balance at the store\u2019s cashback rate. Every 100 points '
+        'unlock one reward, and a reward gives a percent discount on a '
+        'sale — points themselves are never money.',
+    'loy_overview.s1.p2':
+        'Each customer has one loyalty account holding both balances. '
+        'Accounts are per-customer (identified by phone at the POS), '
+        'and balances — including how many whole rewards they unlock '
+        '— are always computed by the server: no screen stores or '
+        'recalculates them.',
+    'loy_overview.s2.heading': 'Permissions',
+    'loy_overview.s2.p1':
+        'Earning and using rewards happen inside the normal sale flow, '
+        'so they follow the sale permissions. Viewing a customer\u2019s '
+        'balance or history needs customer view; changing the loyalty '
+        'rules needs the loyalty-settings permission.',
+
+    'loy_settings.title': 'Loyalty settings',
+    'loy_settings.summary':
+        'Enable earning, set rates, and set the maximum reward '
+        'discount.',
+    'loy_settings.s1.heading': 'Configuring the rules',
+    'loy_settings.s1.p1':
+        'Loyalty is configured once for the whole store from the '
+        'loyalty settings screen. Both rewards can be enabled '
+        'independently, and either can be turned off at any time.',
+    'loy_settings.s1.step1':
+        'Enable points, cashback, or both, and set their rates.',
+    'loy_settings.s1.step2':
+        'Set the maximum reward discount — the highest percent a '
+        'single reward may take off a sale (0 to 100).',
+    'loy_settings.s1.step3':
+        'Optionally enable earning on debt settlement, so a customer '
+        'earns when paying off a credit balance.',
+    'loy_settings.s2.heading': 'Reward discount limit',
+    'loy_settings.s2.p1':
+        'One limit controls reward redemption: the maximum percent of '
+        'a sale\u2019s amount a single reward may discount. It ranges '
+        'from 0 to 100; setting it to 0 parks reward redemption while '
+        'customers keep earning.',
+    'loy_settings.s2.warn1':
+        'Rate changes apply to future sales only. Balances already '
+        'earned keep their original value.',
+
+    'loy_earning.title': 'Earning rewards',
+    'loy_earning.summary':
+        'Points and cashback accrue on sales and debt settlements.',
+    'loy_earning.s1.heading': 'On sales',
+    'loy_earning.s1.p1':
+        'When a customer is selected at the POS, a completed sale '
+        'credits points and/or cashback based on the amounts actually '
+        'paid. Voided sales never earn; a full return of a sale also '
+        'reverses what that sale earned, so rewards always match the '
+        'net sales actually kept.',
+    'loy_earning.s2.heading': 'On debt settlement',
+    'loy_earning.s2.p1':
+        'When the earn-on-debt-settlement option is on, recording a '
+        'debt payment also earns points and cashback on the amount '
+        'actually applied to the debt — so paying later still rewards '
+        'the customer fairly.',
+
+    'loy_redeem.title': 'Using rewards',
+    'loy_redeem.summary':
+        'Turn 100 points into a percent discount at the POS.',
+    'loy_redeem.s1.heading': 'Using a reward at the POS',
+    'loy_redeem.s1.step1':
+        'Select the customer (F6) before or during the sale.',
+    'loy_redeem.s1.step2':
+        'At payment, pick a reward percent from the loyalty selector: '
+        'it only offers percents up to the store\u2019s configured '
+        'maximum, and it appears only when the customer holds at '
+        'least one reward (100 points). The preview shows the exact '
+        'discount and the amount left to pay.',
+    'loy_redeem.s1.step3':
+        'Confirm — the server applies the discount to the sale, '
+        'consumes exactly 100 points for that reward, and the '
+        'amount due drops accordingly.',
+    'loy_redeem.s1.p1':
+        'The client only ever sends the selected percent. The server '
+        'checks that the customer holds a reward, that the percent is '
+        'within the configured maximum, recomputes the discount from '
+        'the sale itself, and re-validates everything at checkout — '
+        'so nothing sent from the screen can claim a larger discount '
+        'or spend points the customer does not have.',
+    'loy_redeem.s2.heading': 'Returns and voids',
+    'loy_redeem.s2.warn1':
+        'Returning items from a sale that used a reward restores the '
+        'matching share of the reward discount and the matching '
+        'points; voiding such a sale restores the full reward '
+        'discount and its 100 points. Points come back only up to '
+        'what the customer still holds — a shortfall can remain if '
+        'they were spent in the meantime.',
+
+    'loy_report.title': 'The loyalty report',
+    'loy_report.summary':
+        'Period activity, current balances, and the full reward ledger.',
+    'loy_report.s1.heading': 'Overview',
+    'loy_report.s1.p1':
+        'The Loyalty tab in Reports answers two questions for any '
+        'period: what rewards moved during that period, and what the '
+        'store currently owes its customers. It shows sales context '
+        'beside the reward figures so the two can be read together.',
+    'loy_report.s2.heading': 'Report sections',
+    'loy_report.s2.p1':
+        'The report has four areas: sales context (gross sales and '
+        'invoices, same figures as the financial report), period '
+        'activity (points and cashback earned, reward discounts '
+        'applied, reversed, restored, and unrecovered shortfalls), '
+        'current balances (outstanding points and cashback, plus how '
+        'many customers hold a balance), and the event ledger — a '
+        'paginated, customer-by-customer history of every reward '
+        'movement.',
+    'loy_report.s2.warn1':
+        'Balances are current totals, not period figures: they '
+        'reflect every account as it stands now, regardless of the '
+        'selected date range.',
+    'loy_report.s3.heading': 'Access and export',
+    'loy_report.s3.p1':
+        'Viewing the loyalty report needs the financial-reports '
+        'permission — the same scope as every other report tab. The '
+        'shared period and device filters apply, and the report '
+        'exports through the same CSV / XLSX / PDF flows as the other '
+        'report tabs.',
+
+    // ------------------------------------------------------------------
+    // Chapter 9 — Expenses and Financial Operations
     // ------------------------------------------------------------------
     'chapter.expenses.title': 'Expenses and Financial Operations',
     'exp_manage.title': 'Recording and cancelling expenses',
@@ -716,7 +852,7 @@ const Map<String, Map<String, String>> docContent = <String, Map<String, String>
         'The expense date is set by the server and cannot be backdated.',
 
     // ------------------------------------------------------------------
-    // Chapter 9 — Facturation
+    // Chapter 10 — Facturation
     // ------------------------------------------------------------------
     'chapter.facturation.title': 'Facturation',
     'fac_types.title': 'Document types and creation',
@@ -788,7 +924,7 @@ const Map<String, Map<String, String>> docContent = <String, Map<String, String>
         'The number, type, year and date never change.',
 
     // ------------------------------------------------------------------
-    // Chapter 10 — Reports and Exports
+    // Chapter 11 — Reports and Exports
     // ------------------------------------------------------------------
     'chapter.reports.title': 'Reports and Exports',
     'rep_overview.title': 'The report tabs',
@@ -844,7 +980,7 @@ const Map<String, Map<String, String>> docContent = <String, Map<String, String>
         'same period already applied.',
 
     // ------------------------------------------------------------------
-    // Chapter 11 — Printing and Receipts
+    // Chapter 12 — Printing and Receipts
     // ------------------------------------------------------------------
     'chapter.printing.title': 'Printing and Receipts',
     'prt_overview.title': 'Receipts, labels, and document printing',
@@ -874,7 +1010,7 @@ const Map<String, Map<String, String>> docContent = <String, Map<String, String>
         'reports no usable printer — check the OS printer setup first.',
 
     // ------------------------------------------------------------------
-    // Chapter 12 — LAN and Multi-PC Setup
+    // Chapter 13 — LAN and Multi-PC Setup
     // ------------------------------------------------------------------
     'chapter.lan.title': 'LAN and Multi-PC Setup',
     'lan_pairing.title': 'Pairing and connection',
@@ -924,7 +1060,7 @@ const Map<String, Map<String, String>> docContent = <String, Map<String, String>
         'store\u2019s own network.',
 
     // ------------------------------------------------------------------
-    // Chapter 13 — Settings, Backup, and Restore
+    // Chapter 14 — Settings, Backup, and Restore
     // ------------------------------------------------------------------
     'chapter.settings.title': 'Settings, Backup, and Restore',
     'set_general.title': 'Language, theme, and store settings',
@@ -971,7 +1107,7 @@ const Map<String, Map<String, String>> docContent = <String, Map<String, String>
         'maintains the server to install them.',
 
     // ------------------------------------------------------------------
-    // Chapter 14 — Troubleshooting
+    // Chapter 15 — Troubleshooting
     // ------------------------------------------------------------------
     'chapter.troubleshooting.title': 'Troubleshooting',
     'ts_connection.title': 'Connection and server issues',
@@ -1641,7 +1777,129 @@ const Map<String, Map<String, String>> docContent = <String, Map<String, String>
         'هذه النسخة. استخدم تاريخ دين العميل كسجل حسابه.',
 
     // ------------------------------------------------------------------
-    // الفصل 8 — المصاريف والعمليات المالية
+    // الفصل 8 — الولاء (مرحلة F)
+    // ------------------------------------------------------------------
+    'chapter.loyalty.title': 'الولاء',
+    'loy_overview.title': 'نظرة عامة على النقاط والاسترداد النقدي',
+    'loy_overview.summary': 'كيف يكسب العملاء مكافآت الولاء وينفقونها.',
+    'loy_overview.s1.heading': 'ما يفعله برنامج الولاء',
+    'loy_overview.s1.p1':
+        'يتيح برنامج الولاء للعملاء كسب نقاط و/أو استرداد نقدي '
+        'من مشترياتهم، ثم إنفاق هذه المكافآت في مبيعات لاحقة. '
+        'تُكسب النقاط عن كل وحدة نقدية إنفقها العميل حسب معدل النقاط '
+        'المحدد للمتجر؛ ويتراكم الاسترداد النقدي كرصيد مالي بمعدل '
+        'المتجر. وكل 100 نقطة تفتح مكافأة واحدة، تمنح نسبة خصم على '
+        'البيع — النقاط نفسها ليست مالاً.',
+    'loy_overview.s1.p2':
+        'لكل عميل حساب ولاء واحد يحمل الرصيدين معاً. الحسابات '
+        'تخص كل عميل (يُعرّف برقم هاتفه عند نقطة البيع)، وتحسب '
+        'الأرصدة — بما فيها عدد المكافآت الكاملة التي تفتحها — دائماً '
+        'على الخادم: لا يخزّن أي شاشة الأرصدة ولا يعيد حسابها.',
+    'loy_overview.s2.heading': 'الصلاحيات',
+    'loy_overview.s2.p1':
+        'الكسب والاستخدام يتمان ضمن تدفق البيع العادي، فيتبعان '
+        'صلاحيات البيع. عرض رصيد العميل أو تاريخه يحتاج عرض '
+        'العملاء؛ وتعديل قواعد الولاء يحتاج صلاحية إعدادات الولاء.',
+
+    'loy_settings.title': 'إعدادات الولاء',
+    'loy_settings.summary':
+        'تفعيل الكسب وتحديد المعدلات وضبط أقصى نسبة خصم المكافأة.',
+    'loy_settings.s1.heading': 'إعداد القواعد',
+    'loy_settings.s1.p1':
+        'تُضبط إعدادات الولاء مرة واحدة لكامل المتجر من شاشة '
+        'إعدادات الولاء. يمكن تفعيل المكافأتين بشكل مستقل، ويمكن '
+        'إيقاف أي منهما في أي وقت.',
+    'loy_settings.s1.step1':
+        'فعّل النقاط أو الاسترداد النقدي أو كليهما، وحدد معدلاتهما.',
+    'loy_settings.s1.step2':
+        'حدد أقصى نسبة خصم المكافأة — النسبة القصوى التي قد تخصمها '
+        'مكافأة واحدة من البيع (من 0 إلى 100).',
+    'loy_settings.s1.step3':
+        'اختياراً، فعّل الكسب عند تسديد الديون ليكسب العميل عند '
+        'سداد رصيد آجل.',
+    'loy_settings.s2.heading': 'حد نسبة خصم المكافأة',
+    'loy_settings.s2.p1':
+        'تحكم قاعدة واحدة في استخدام المكافآت: النسبة القصوى من '
+        'مبلغ البيع التي قد تخصمها مكافأة واحدة. تتراوح بين 0 '
+        'و100؛ ووضعها على 0 يوقف استخدام المكافآت مؤقتاً مع '
+        'استمرار الكسب.',
+    'loy_settings.s2.warn1':
+        'تغييرات المعدلات تنطبق على المبيعات المستقبلية فقط. '
+        'الأرصدة المكتسبة سابقاً تحتفظ بقيتها الأصلية.',
+
+    'loy_earning.title': 'كسب المكافآت',
+    'loy_earning.summary':
+        'تتراكم النقاط والاسترداد النقدي على المبيعات وتسديد الديون.',
+    'loy_earning.s1.heading': 'على المبيعات',
+    'loy_earning.s1.p1':
+        'عند اختيار عميل عند نقطة البيع، يضيف البيع المكتمل نقاطاً '
+        'و/أو استرداداً نقدياً حسب المبالغ المدفوعة فعلياً. المبيعات '
+        'الملغاة لا تكسب شيئاً؛ وإرجاع بيع كامل يعكس ما كسبه ذلك '
+        'البيع أيضاً، فتتطابق المكافآت دائماً مع صافي المبيعات '
+        'المحتفظ بها فعلاً.',
+    'loy_earning.s2.heading': 'عند تسديد الدين',
+    'loy_earning.s2.p1':
+        'عند تفعيل خيار الكسب عند تسديد الديون، تسجيل دفعة دين '
+        'يضيف أيضاً نقاطاً واسترداداً نقدياً على المبلغ المطبق فعلياً '
+        'على الدين — فيكافأ العميل بإنصاف حتى عند الدفع لاحقاً.',
+
+    'loy_redeem.title': 'استخدام المكافآت',
+    'loy_redeem.summary':
+        'تحويل 100 نقطة إلى نسبة خصم عند نقطة البيع.',
+    'loy_redeem.s1.heading': 'استخدام مكافأة عند نقطة البيع',
+    'loy_redeem.s1.step1':
+        'اختر العميل (F6) قبل البيع أو خلاله.',
+    'loy_redeem.s1.step2':
+        'عند الدفع، اختر نسبة المكافأة من قائمة الولاء: لا تعرض سوى '
+        'النسب ضمن الحد الأقصى المحدد للمتجر، ولا تظهر إلا عندما '
+        'يملك العميل مكافأة واحدة على الأقل (100 نقطة). وتُظهر '
+        'المعاينة قيمة الخصم الدقيقة والمبلغ المتبقي للدفع.',
+    'loy_redeem.s1.step3':
+        'أكّد — يطبّق الخادم الخصم على البيع، ويستهلك 100 نقطة '
+        'بالضبط لمكافأة واحدة، وينخفض المبلغ المستحق تبعاً لذلك.',
+    'loy_redeem.s1.p1':
+        'لا ترسل الشاشة سوى النسبة المحددة. يتحقق الخادم من أن '
+        'العميل يملك مكافأة، وأن النسبة ضمن الحد الأقصى المحدد، '
+        'ويحسب الخصم من البيع نفسه، ويعيد التحقق من كل شيء عند '
+        'إتمام البيع — فلا تملك أي رسالة من الشاشة أن تطالب بخصم '
+        'أكبر أو بإنفاق نقاط لا يملكها العميل.',
+    'loy_redeem.s2.heading': 'المرتجعات والإلغاءات',
+    'loy_redeem.s2.warn1':
+        'إرجاع أصناف من بيع استخدم مكافأة يستعيد النسبة المقابلة من '
+        'خصم المكافأة والنقاط المقابلة؛ وإلغاء كهذا البيع يستعيد '
+        'خصم المكافأة كاملاً و100 نقطة معه. لا تعود النقاط إلا بحد '
+        'أقصى ما يملكه العميل بعد؛ وقد يبقى عجز إن تم إنفاقها في '
+        'الأثناء.',
+
+    'loy_report.title': 'تقرير الولاء',
+    'loy_report.summary':
+        'نشاط الفترة والأرصدة الحالية وسجل المكافآت الكامل.',
+    'loy_report.s1.heading': 'نظرة عامة',
+    'loy_report.s1.p1':
+        'تبويب الولاء في التقارير يجيب عن سؤالين لأي فترة: ما '
+        'المكافآت التي تحركت خلالها، وما يخصّص المتجر حالياً لعملائه. '
+        'يعرض سياق المبيعات بجانب أرقام المكافآت لتُقرأ معاً.',
+    'loy_report.s2.heading': 'أقسام التقرير',
+    'loy_report.s2.p1':
+        'يضم التقرير أربعة مجالات: سياق المبيعات (إجمالي المبيعات '
+        'والفواتير، بنفس أرقام التقرير المالي)، نشاط الفترة '
+        '(النقاط والاسترداد النقدي المكتسب وخصومات المكافأة المطبقة '
+        'والمعكوسة والمستعادة والأعطال غير المستردة)، الأرصدة '
+        'الحالية (النقاط والاسترداد النقدي القائم وعدد العملاء '
+        'الذين يحملون رصيداً)، وسجل الأحداث — تاريخ مفصل لكل حركة '
+        'مكافأة لكل عميل مع الصفحات.',
+    'loy_report.s2.warn1':
+        'الأرصدة إجماليات حالية وليست أرقام فترة: '
+        'تعكس كل حساب كما هو الآن، بغض النظر عن النطاق الزمني '
+        'المحدد.',
+    'loy_report.s3.heading': 'الوصول والتصدير',
+    'loy_report.s3.p1':
+        'عرض تقرير الولاء يحتاج صلاحية التقارير المالية — النطاق '
+        'نفسه كباقي تبويبات التقارير. يُطبق المرشح المشترك للفترة '
+        'والجهاز، ويُصدَّر التقرير عبر مسارات CSV / XLSX / PDF نفسها.',
+
+    // ------------------------------------------------------------------
+    // الفصل 9 — المصاريف والعمليات المالية
     // ------------------------------------------------------------------
     'chapter.expenses.title': 'المصاريف والعمليات المالية',
     'exp_manage.title': 'تسجيل المصاريف وإلغاؤها',
@@ -1671,7 +1929,7 @@ const Map<String, Map<String, String>> docContent = <String, Map<String, String>
         'يضبط الخادم تاريخ المصروف ولا يمكن استرجاعه.',
 
     // ------------------------------------------------------------------
-    // الفصل 9 — الفوترة
+    // الفصل 10 — الفوترة
     // ------------------------------------------------------------------
     'chapter.facturation.title': 'الفوترة',
     'fac_types.title': 'أنواع الوثائق وإنشاؤها',
@@ -1739,7 +1997,7 @@ const Map<String, Map<String, String>> docContent = <String, Map<String, String>
         'والنوع والسنة والتاريخ لا تتغير أبداً.',
 
     // ------------------------------------------------------------------
-    // الفصل 10 — التقارير والتصدير
+    // الفصل 11 — التقارير والتصدير
     // ------------------------------------------------------------------
     'chapter.reports.title': 'التقارير والتصدير',
     'rep_overview.title': 'أقسام التقارير',
@@ -1790,7 +2048,7 @@ const Map<String, Map<String, String>> docContent = <String, Map<String, String>
         'مطبّقة.',
 
     // ------------------------------------------------------------------
-    // الفصل 11 — الطباعة والإيصالات
+    // الفصل 12 — الطباعة والإيصالات
     // ------------------------------------------------------------------
     'chapter.printing.title': 'الطباعة والإيصالات',
     'prt_overview.title': 'الإيصالات والملصقات وطباعة الوثائق',
@@ -1819,7 +2077,7 @@ const Map<String, Map<String, String>> docContent = <String, Map<String, String>
         'أولاً.',
 
     // ------------------------------------------------------------------
-    // الفصل 12 — الشبكة متعددة الأجهزة
+    // الفصل 13 — الشبكة متعددة الأجهزة
     // ------------------------------------------------------------------
     'chapter.lan.title': 'الشبكة وتشغيل عدة أجهزة',
     'lan_pairing.title': 'الاقتران والاتصال',
@@ -1866,7 +2124,7 @@ const Map<String, Map<String, String>> docContent = <String, Map<String, String>
         'لا تشارك رموز الاقتران أو عناوين خارج شبكة المتجر نفسه.',
 
     // ------------------------------------------------------------------
-    // الفصل 13 — الإعدادات والنسخ الاحتياطي والاستعادة
+    // الفصل 14 — الإعدادات والنسخ الاحتياطي والاستعادة
     // ------------------------------------------------------------------
     'chapter.settings.title': 'الإعدادات والنسخ الاحتياطي والاستعادة',
     'set_general.title': 'اللغة والمظهر وإعدادات المتجر',
@@ -1911,7 +2169,7 @@ const Map<String, Map<String, String>> docContent = <String, Map<String, String>
         'التطبيق بأن الأدوات ناقصة، اطلب من مسؤول الخادم تركيبها.',
 
     // ------------------------------------------------------------------
-    // الفصل 14 — استكشاف الأخطاء وإصلاحها
+    // الفصل 15 — استكشاف الأخطاء وإصلاحها
     // ------------------------------------------------------------------
     'chapter.troubleshooting.title': 'استكشاف الأخطاء وإصلاحها',
     'ts_connection.title': 'مشكلات الاتصال والخادم',
@@ -2705,7 +2963,156 @@ const Map<String, Map<String, String>> docContent = <String, Map<String, String>
         'par client comme relevé.',
 
     // ------------------------------------------------------------------
-    // Chapitre 8 — Dépenses et opérations financières
+    // Chapitre 8 — Fidélité (Phase F)
+    // ------------------------------------------------------------------
+    'chapter.loyalty.title': 'Fidélité',
+    'loy_overview.title': 'Points et cashback : vue d\u2019ensemble',
+    'loy_overview.summary':
+        'Comment les clients gagnent et dépensent leurs récompenses.',
+    'loy_overview.s1.heading': 'Ce que fait la fidélité',
+    'loy_overview.s1.p1':
+        'Le programme de fidélité permet aux clients de gagner des '
+        'points et/ou du cashback sur leurs achats, puis d\u2019utiliser ces '
+        'récompenses sur des ventes ultérieures. Les points sont '
+        'gagnés par unité monétaire dépensée selon le taux de points '
+        'du magasin ; le cashback s\u2019accumule comme un solde monétaire '
+        'au taux de cashback du magasin. Tous les 100 points ouvrent '
+        'une récompense, qui donne un pourcentage de remise sur une '
+        'vente — les points en eux-mêmes ne sont jamais de l\u2019argent.',
+    'loy_overview.s1.p2':
+        'Chaque client a un compte de fidélité unique portant les deux '
+        'soldes. Les comptes sont individuels (identifiés par téléphone '
+        'à la caisse), et les soldes — y compris le nombre de '
+        'récompenses complètes qu\u2019ils ouvrent — sont toujours calculés '
+        'par le serveur : aucun écran ne les enregistre ni ne les '
+        'recalcule.',
+    'loy_overview.s2.heading': 'Autorisations',
+    'loy_overview.s2.p1':
+        'Le gain et l\u2019utilisation se déroulent dans le flux de vente '
+        'habituel et suivent donc les autorisations de vente. Voir le '
+        'solde ou l\u2019historique d\u2019un client nécessite l\u2019affichage clients ; '
+        'modifier les règles de fidélité nécessite l\u2019autorisation des '
+        'paramètres de fidélité.',
+
+    'loy_settings.title': 'Paramètres de fidélité',
+    'loy_settings.summary':
+        'Activer le gain, fixer les taux et fixer la remise maximale '
+        'de récompense.',
+    'loy_settings.s1.heading': 'Configurer les règles',
+    'loy_settings.s1.p1':
+        'La fidélité se configure une fois pour tout le magasin depuis '
+        'l\u2019écran des paramètres de fidélité. Les deux récompenses '
+        'peuvent être activées indépendamment et l\u2019une ou l\u2019autre peut '
+        'être désactivée à tout moment.',
+    'loy_settings.s1.step1':
+        'Activez les points, le cashback, ou les deux, et fixez leurs '
+        'taux.',
+    'loy_settings.s1.step2':
+        'Fixez la remise maximale de récompense — le pourcentage le '
+        'plus élevé qu\u2019une seule récompense puisse déduire d\u2019une '
+        'vente (0 à 100).',
+    'loy_settings.s1.step3':
+        'Si vous le souhaitez, activez le gain sur règlement de dette '
+        'pour que le client gagne en remboursant un crédit.',
+    'loy_settings.s2.heading': 'Limite de remise de récompense',
+    'loy_settings.s2.p1':
+        'Une seule règle régit l\u2019utilisation des récompenses : le '
+        'pourcentage maximal du montant d\u2019une vente qu\u2019une seule '
+        'récompense peut déduire. Il va de 0 à 100 ; le mettre à 0 '
+        'suspend l\u2019utilisation des récompenses tout en continuant à '
+        'gagner.',
+    'loy_settings.s2.warn1':
+        'Les changements de taux ne s\u2019appliquent qu\u2019aux ventes '
+        'futures. Les soldes déjà gagnés conservent leur valeur '
+        'd\u2019origine.',
+
+    'loy_earning.title': 'Gagner des récompenses',
+    'loy_earning.summary':
+        'Points et cashback s\u2019ajoutent sur les ventes et les règlements '
+        'de dette.',
+    'loy_earning.s1.heading': 'Sur les ventes',
+    'loy_earning.s1.p1':
+        'Lorsqu\u2019un client est sélectionné à la caisse, une vente '
+        'terminée crédite des points et/ou du cashback selon les '
+        'montants réellement payés. Les ventes annulées ne gagnent '
+        'rien ; un retour intégral d\u2019une vente annule aussi ce que '
+        'cette vente avait gagné — les récompenses suivent donc '
+        'toujours le net des ventes effectivement conservées.',
+    'loy_earning.s2.heading': 'Sur le règlement de dette',
+    'loy_earning.s2.p1':
+        'Quand l\u2019option de gain sur règlement de dette est active, '
+        'enregistrer un paiement de dette génère aussi des points et '
+        'du cashback sur le montant réellement appliqué à la dette — '
+        'payer plus tard récompense donc toujours le client équitablement.',
+
+    'loy_redeem.title': 'Utiliser les récompenses',
+    'loy_redeem.summary':
+        'Transformer 100 points en pourcentage de remise à la caisse.',
+    'loy_redeem.s1.heading': 'Utiliser une récompense à la caisse',
+    'loy_redeem.s1.step1':
+        'Sélectionnez le client (F6) avant ou pendant la vente.',
+    'loy_redeem.s1.step2':
+        'Au paiement, choisissez le pourcentage de récompense dans le '
+        'sélecteur de fidélité : il ne propose que les pourcentages '
+        'jusqu\u2019au maximum configuré par le magasin, et il n\u2019apparaît '
+        'que si le client détient au moins une récompense (100 '
+        'points). L\u2019aperçu montre la remise exacte et le montant '
+        'restant à payer.',
+    'loy_redeem.s1.step3':
+        'Confirmez — le serveur applique la remise à la vente, '
+        'consomme exactement 100 points pour cette récompense, et le '
+        'reste à payer baisse en conséquence.',
+    'loy_redeem.s1.p1':
+        'L\u2019écran n\u2019envoie jamais que le pourcentage choisi. Le '
+        'serveur vérifie que le client détient une récompense, que le '
+        'pourcentage est dans le maximum configuré, recalcule la '
+        'remise sur la vente elle-même, et revérifie tout au moment '
+        'de la vente — aucun message écran ne peut donc réclamer une '
+        'remise plus grande ni dépenser des points que le client '
+        'n\u2019a pas.',
+    'loy_redeem.s2.heading': 'Retours et annulations',
+    'loy_redeem.s2.warn1':
+        'Retourner des articles d\u2019une vente ayant utilisé une '
+        'récompense restaure la part correspondante de la remise et '
+        'les points correspondants ; annuler une telle vente restaure '
+        'la remise complète et ses 100 points. Les points ne reviennent '
+        'que dans la mesure où le client les détient encore ; un '
+        'manquant peut rester s\u2019ils ont été dépensés entre-temps.',
+
+    'loy_report.title': 'Le rapport de fidélité',
+    'loy_report.summary':
+        'Activité de période, soldes actuels et grand livre complet.',
+    'loy_report.s1.heading': 'Vue d\u2019ensemble',
+    'loy_report.s1.p1':
+        'L\u2019onglet Fidélité des rapports répond à deux questions pour '
+        'toute période : quelles récompenses y ont circulé, et ce que '
+        'le magasin doit actuellement à ses clients. Il affiche le '
+        'contexte des ventes à côté des chiffres de récompenses pour '
+        'les lire ensemble.',
+    'loy_report.s2.heading': 'Sections du rapport',
+    'loy_report.s2.p1':
+        'Le rapport comporte quatre zones : contexte des ventes (ventes '
+        'brutes et factures, mêmes chiffres que le rapport financier), '
+        'activité de la période (points et cashback gagnés, remises de '
+        'récompense appliquées, annulées, restaurées et manques non '
+        'récupérés), soldes actuels (points et cashback en circulation, '
+        'plus le nombre de clients ayant un solde), et le grand livre '
+        'des événements — un historique paginé, client par client, de '
+        'chaque mouvement de récompense.',
+    'loy_report.s2.warn1':
+        'Les soldes sont des totaux actuels, pas des chiffres de '
+        'période : ils reflètent chaque compte tel qu\u2019il est maintenant, '
+        'quelle que soit la plage de dates choisie.',
+    'loy_report.s3.heading': 'Accès et export',
+    'loy_report.s3.p1':
+        'Voir le rapport de fidélité nécessite l\u2019autorisation des '
+        'rapports financiers — le même périmètre que tous les autres '
+        'onglets de rapports. Les filtres période et appareil partagés '
+        's\u2019appliquent, et le rapport s\u2019exporte via les mêmes flux '
+        'CSV / XLSX / PDF que les autres onglets.',
+
+    // ------------------------------------------------------------------
+    // Chapitre 9 — Dépenses et opérations financières
     // ------------------------------------------------------------------
     'chapter.expenses.title': 'Dépenses et opérations financières',
     'exp_manage.title': 'Enregistrer et annuler des dépenses',
@@ -2740,7 +3147,7 @@ const Map<String, Map<String, String>> docContent = <String, Map<String, String>
         'être antidatée.',
 
     // ------------------------------------------------------------------
-    // Chapitre 9 — Facturation
+    // Chapitre 10 — Facturation
     // ------------------------------------------------------------------
     'chapter.facturation.title': 'Facturation',
     'fac_types.title': 'Types de documents et création',
@@ -2821,7 +3228,7 @@ const Map<String, Map<String, String>> docContent = <String, Map<String, String>
         'le type, l\u2019année et la date ne changent jamais.',
 
     // ------------------------------------------------------------------
-    // Chapitre 10 — Rapports et exports
+    // Chapitre 11 — Rapports et exports
     // ------------------------------------------------------------------
     'chapter.reports.title': 'Rapports et exports',
     'rep_overview.title': 'Les onglets de rapports',
@@ -2881,7 +3288,7 @@ const Map<String, Map<String, String>> docContent = <String, Map<String, String>
         'la même période déjà appliquée.',
 
     // ------------------------------------------------------------------
-    // Chapitre 11 — Impression et reçus
+    // Chapitre 12 — Impression et reçus
     // ------------------------------------------------------------------
     'chapter.printing.title': 'Impression et reçus',
     'prt_overview.title': 'Reçus, étiquettes et impression de documents',
@@ -2915,7 +3322,7 @@ const Map<String, Map<String, String>> docContent = <String, Map<String, String>
         'd\u2019abord la configuration d\u2019impression du système.',
 
     // ------------------------------------------------------------------
-    // Chapitre 12 — Réseau local et multi-PC
+    // Chapitre 13 — Réseau local et multi-PC
     // ------------------------------------------------------------------
     'chapter.lan.title': 'Réseau local et configuration multi-PC',
     'lan_pairing.title': 'Appairage et connexion',
@@ -2970,7 +3377,7 @@ const Map<String, Map<String, String>> docContent = <String, Map<String, String>
         'serveur en dehors du réseau du magasin.',
 
     // ------------------------------------------------------------------
-    // Chapitre 13 — Paramètres, sauvegarde et restauration
+    // Chapitre 14 — Paramètres, sauvegarde et restauration
     // ------------------------------------------------------------------
     'chapter.settings.title':
         'Paramètres, sauvegarde et restauration',
@@ -3023,7 +3430,7 @@ const Map<String, Map<String, String>> docContent = <String, Map<String, String>
         'demandez à qui maintient le serveur de les installer.',
 
     // ------------------------------------------------------------------
-    // Chapitre 14 — Dépannage
+    // Chapitre 15 — Dépannage
     // ------------------------------------------------------------------
     'chapter.troubleshooting.title': 'Dépannage',
     'ts_connection.title': 'Problèmes de connexion et de serveur',

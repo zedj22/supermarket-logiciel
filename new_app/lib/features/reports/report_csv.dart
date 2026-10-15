@@ -518,3 +518,105 @@ String suppliersCsv(SupplierReport report, String loc) {
   ];
   return buildCsv(rows);
 }
+
+// ---------------------------------------------------------------------------
+// Loyalty report (Loyalty Phase F)
+// ---------------------------------------------------------------------------
+
+/// Loyalty CSV: four blocks (sales context + period activity, current
+/// balances, events breakdown, full ledger). Raw values verbatim — no
+/// screen-side computation (§12.2).
+String loyaltyCsv(LoyaltyReport r, String loc) {
+  final rows = <List<String>>[
+    [
+      _t('label_period', loc),
+      _t('kpi_gross_sales', loc),
+      _t('kpi_sales_after_discounts', loc),
+      _t('kpi_invoices', loc),
+      _t('loyalty_points_earned', loc),
+      _t('loyalty_cashback_earned', loc),
+      _t('loyalty_settlement_points', loc),
+      _t('loyalty_points_redeemed', loc),
+      _t('loyalty_redemption_value', loc),
+      _t('loyalty_points_reversed', loc),
+      _t('loyalty_cashback_reversed', loc),
+      _t('loyalty_points_restored', loc),
+      _t('loyalty_restored_value', loc),
+      _t('loyalty_shortfall_points', loc),
+      _t('loyalty_shortfall_cashback', loc),
+      _t('loyalty_adjustment_points', loc),
+      _t('loyalty_adjustment_cashback', loc),
+    ],
+    <String>[
+      '${r.dateFrom} - ${r.dateTo}',
+      r.salesGross,
+      r.salesAfterDiscounts,
+      '${r.invoiceCount}',
+      r.pointsEarned,
+      r.cashbackEarned,
+      r.settlementPoints,
+      r.pointsRedeemed,
+      r.redemptionValue,
+      r.pointsReversed,
+      r.cashbackReversed,
+      r.pointsRestored,
+      r.restoredValue,
+      r.shortfallPoints,
+      r.shortfallCashback,
+      r.adjustmentPoints,
+      r.adjustmentCashback,
+    ],
+    const <String>[''],
+    [
+      _t('loyalty_report_balances', loc),
+      _t('loyalty_outstanding_points', loc),
+      _t('loyalty_outstanding_cashback', loc),
+      _t('loyalty_accounts_with_balance', loc),
+    ],
+    <String>[
+      '',
+      r.outstandingPoints,
+      r.outstandingCashback,
+      '${r.accountsWithBalance}',
+    ],
+    const <String>[''],
+    [
+      _t('col_event', loc),
+      _t('col_count', loc),
+      _t('col_points', loc),
+      _t('col_cashback', loc),
+    ],
+    for (final e in r.events)
+      [
+        _t('loyalty_event_${e.eventType}', loc),
+        '${e.entries}',
+        e.pointsDelta,
+        e.cashbackDelta,
+      ],
+    const <String>[''],
+    [
+      _t('col_date', loc),
+      _t('col_customer', loc),
+      _t('col_invoice', loc),
+      _t('col_event', loc),
+      _t('col_points', loc),
+      _t('col_cashback', loc),
+      _t('col_points_balance', loc),
+      _t('col_cashback_balance', loc),
+      _t('note', loc),
+    ],
+    for (final row in r.items)
+      [
+        row.createdAt,
+        row.customerName ?? '',
+        row.invoiceNumber ?? '',
+        _t('loyalty_event_${row.eventType}', loc),
+        row.pointsDelta,
+        row.cashbackDelta,
+        row.balanceAfterPoints,
+        row.balanceAfterCashback,
+        row.note ?? '',
+      ],
+  ];
+  return buildCsv(rows);
+}

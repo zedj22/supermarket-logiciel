@@ -43,6 +43,9 @@ const localizedExpressions = {
   'failure.message',
   'error.message',
   'stockError',
+  // Phase E loyalty QR toast: posApiMessage wraps posApiError().message,
+  // which is localized-only (pos_error_message.dart).
+  'posApiMessage(e, loc)',
 };
 
 String _argsOf(String source, int open) {

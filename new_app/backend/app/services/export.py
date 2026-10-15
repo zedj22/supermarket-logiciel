@@ -56,7 +56,17 @@ _PDF_MEDIA_TYPE = "application/pdf"
 
 # Reports that need an explicit date window (the rest derive it).
 _DATE_RANGE_REPORTS = frozenset(
-    {"financial", "products", "categories", "daily", "hourly", "voided", "sales", "suppliers"}
+    {
+        "financial",
+        "products",
+        "categories",
+        "daily",
+        "hourly",
+        "voided",
+        "sales",
+        "suppliers",
+        "loyalty",
+    }
 )
 _SUPPORTED_FORMATS = ("xlsx", "pdf")
 
@@ -242,6 +252,16 @@ class ExportService(BaseService):
                     status=req.status or "completed",
                     payment_method=req.payment_method,
                     user_id=req.user_id,
+                    device_id=device_id,
+                    page=page,
+                    page_size=size,
+                )
+            )
+        elif report == "loyalty":
+            payload = self._walk(
+                lambda page, size: svc.loyalty(
+                    date_from=date_from,
+                    date_to=date_to,
                     device_id=device_id,
                     page=page,
                     page_size=size,

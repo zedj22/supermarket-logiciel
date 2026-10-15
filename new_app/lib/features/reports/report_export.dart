@@ -205,6 +205,71 @@ Future<SlowMovingPage> fetchAllSlowMoving(
   );
 }
 
+/// `GET /reports/loyalty` until every ledger page is collected (Loyalty
+/// Phase F export). The first page also carries the summary/snapshot —
+/// kept verbatim from the last response; only `items` is merged.
+Future<LoyaltyReport> fetchAllLoyalty(
+  Dio dio,
+  ReportFilter filter,
+) async {
+  final items = <LoyaltyLedgerRow>[];
+  LoyaltyReport? last;
+  var page = 1;
+  while (true) {
+    final response = await dio.get(
+      '$kReportsPath/loyalty',
+      queryParameters: <String, dynamic>{
+        ...filter.rangeParams(),
+        'page': page,
+        'page_size': kReportPageSize,
+      },
+    );
+    last = LoyaltyReport.fromJson(
+      response.data as Map<String, dynamic>? ?? const {},
+    );
+    if (last.total > kExportRowLimit) {
+      throw ReportExportException('export_row_limit');
+    }
+    items.addAll(last.items);
+    if (page >= last.pages || last.items.isEmpty) break;
+    page++;
+  }
+  return LoyaltyReport(
+    dateFrom: last.dateFrom,
+    dateTo: last.dateTo,
+    deviceId: last.deviceId,
+    salesGross: last.salesGross,
+    salesAfterDiscounts: last.salesAfterDiscounts,
+    invoiceCount: last.invoiceCount,
+    pointsEarned: last.pointsEarned,
+    cashbackEarned: last.cashbackEarned,
+    earnEntries: last.earnEntries,
+    settlementPoints: last.settlementPoints,
+    pointsRedeemed: last.pointsRedeemed,
+    redemptionValue: last.redemptionValue,
+    redeemEntries: last.redeemEntries,
+    pointsReversed: last.pointsReversed,
+    cashbackReversed: last.cashbackReversed,
+    reversalEntries: last.reversalEntries,
+    pointsRestored: last.pointsRestored,
+    restoredValue: last.restoredValue,
+    restoreEntries: last.restoreEntries,
+    shortfallPoints: last.shortfallPoints,
+    shortfallCashback: last.shortfallCashback,
+    adjustmentPoints: last.adjustmentPoints,
+    adjustmentCashback: last.adjustmentCashback,
+    outstandingPoints: last.outstandingPoints,
+    outstandingCashback: last.outstandingCashback,
+    accountsWithBalance: last.accountsWithBalance,
+    events: last.events,
+    items: items,
+    total: last.total,
+    page: 1,
+    pageSize: last.pageSize,
+    pages: 1,
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Save dialog + toasts
 // ---------------------------------------------------------------------------

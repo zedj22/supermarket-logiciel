@@ -26,6 +26,7 @@ LABELS: dict[str, tuple[str, str, str]] = {
     "report_voided": ("الفواتير الملغاة", "Factures annulées", "Voided invoices"),
     "report_sales": ("تفاصيل المبيعات", "Détail des ventes", "Sales detail"),
     "report_suppliers": ("تقرير الموردين", "Rapport fournisseurs", "Supplier report"),
+    "report_loyalty": ("الولاء", "Fidélité", "Loyalty"),
     # ---- KPI headers (financial CSV column keys) ----
     "kpi_gross_sales": ("إجمالي المبيعات", "Ventes brutes", "Gross sales"),
     "kpi_line_discounts": ("خصومات البنود", "Remises lignes", "Line discounts"),
@@ -71,6 +72,117 @@ LABELS: dict[str, tuple[str, str, str]] = {
         "الموردون ذوو الرصيد",
         "Fournisseurs avec solde",
         "Suppliers with balance",
+    ),
+    # ---- loyalty report (Loyalty Phase F — strings.dart wording) ----
+    "loyalty_settlement_points": (
+        "نقاط من تسديد الدين",
+        "Points du règlement de dette",
+        "Points from debt settlement",
+    ),
+    "loyalty_points_redeemed": (
+        "النقاط المستردة",
+        "Points utilisés",
+        "Points redeemed",
+    ),
+    "loyalty_redemption_value": (
+        "خصم المكافأة",
+        "Remise récompense",
+        "Reward discount",
+    ),
+    "loyalty_points_reversed": (
+        "نقاط مقلوبة (مرتجعات/إلغاء)",
+        "Points retirés (retours/annulations)",
+        "Points reversed (returns/voids)",
+    ),
+    "loyalty_cashback_reversed": (
+        "استرداد نقدي مقلوب (مرتجعات/إلغاء)",
+        "Cashback retiré (retours/annulations)",
+        "Cashback reversed (returns/voids)",
+    ),
+    "loyalty_points_restored": (
+        "نقاط مستعادة",
+        "Points restitués",
+        "Points restored",
+    ),
+    "loyalty_restored_value": (
+        "قيمة مكافأة مستعادة",
+        "Valeur récompense restituée",
+        "Restored reward value",
+    ),
+    "loyalty_shortfall_points": (
+        "نقاط لم تُسترجع",
+        "Points non récupérés",
+        "Unrecovered points",
+    ),
+    "loyalty_shortfall_cashback": (
+        "استرداد نقدي لم يُسترجع",
+        "Cashback non récupéré",
+        "Unrecovered cashback",
+    ),
+    "loyalty_outstanding_points": (
+        "النقاط القائمة",
+        "Points en circulation",
+        "Outstanding points",
+    ),
+    "loyalty_outstanding_cashback": (
+        "الاسترداد النقدي القائم",
+        "Cashback en circulation",
+        "Outstanding cashback",
+    ),
+    "loyalty_accounts_with_balance": (
+        "عملاء لديهم رصيد",
+        "Clients avec solde",
+        "Customers with a balance",
+    ),
+    "loyalty_adjustment_points": (
+        "تسويات (نقاط)",
+        "Ajustements (points)",
+        "Adjustments (points)",
+    ),
+    "loyalty_adjustment_cashback": (
+        "تسويات (استرداد نقدي)",
+        "Ajustements (cashback)",
+        "Adjustments (cashback)",
+    ),
+    "loyalty_event_sale_earn": (
+        "نقاط مكتسبة من البيع",
+        "Points gagnés sur la vente",
+        "Points earned on sale",
+    ),
+    "loyalty_event_debt_settlement_earn": (
+        "نقاط مكتسبة من تسديد الدين",
+        "Points gagnés au règlement de la dette",
+        "Points earned on debt settlement",
+    ),
+    "loyalty_event_redeem": ("نقاط مستردة", "Points utilisés", "Points redeemed"),
+    "loyalty_event_return_clawback": (
+        "نقاط ملغاة (مرتجع)",
+        "Points retirés (retour)",
+        "Points revoked (return)",
+    ),
+    "loyalty_event_void_clawback": (
+        "نقاط ملغاة (إلغاء)",
+        "Points retirés (annulation)",
+        "Points revoked (void)",
+    ),
+    "loyalty_event_adjustment": (
+        "تسوية الرصيد",
+        "Ajustement du solde",
+        "Balance adjustment",
+    ),
+    "loyalty_event_expiry": (
+        "انتهاء النقاط",
+        "Expiration des points",
+        "Points expiry",
+    ),
+    "col_event": ("الحدث", "Événement", "Event"),
+    "col_points": ("النقاط", "Points", "Points"),
+    "col_cashback": ("الاسترداد النقدي", "Cashback", "Cashback"),
+    "col_points_balance": ("رصيد النقاط", "Solde de points", "Points balance"),
+    "col_cashback_balance": (
+        "رصيد الاسترداد النقدي",
+        "Solde de cashback",
+        "Cashback balance",
     ),
     # ---- table headers (CSV column keys) ----
     "col_invoice": ("الفاتورة", "Facture", "Invoice"),
@@ -153,6 +265,15 @@ LABELS: dict[str, tuple[str, str, str]] = {
     "customer": ("العميل", "Client", "Customer"),
     "cashier": ("البائع", "Caissier", "Cashier"),
     "note": ("ملاحظة", "Note", "Note"),
+    # ---- loyalty (reward redesign — reward wording) ----
+    "loyalty_redeemed": ("خصم المكافأة", "Remise récompense", "Reward discount"),
+    "amount_due": ("المبلغ المستحق", "Montant dû", "Amount due"),
+    "loyalty_points_earned": ("النقاط المكتسبة", "Points gagnés", "Points earned"),
+    "loyalty_cashback_earned": (
+        "الاسترداد النقدي المكتسب",
+        "Cashback gagné",
+        "Cashback earned",
+    ),
     # ---- new document-only labels ----
     "doc_invoice": ("فاتورة", "Facture", "Invoice"),
     "doc_return": ("مرتجع", "Retour", "Return"),

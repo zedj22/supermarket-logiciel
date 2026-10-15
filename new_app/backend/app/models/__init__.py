@@ -89,6 +89,13 @@ from app.models.device import Device  # noqa: F401
 # Store/application settings (Phase 17)
 from app.models.settings import AppSetting  # noqa: F401
 
+# Loyalty (Phase A): settings singleton, accounts, append-only ledger
+from app.models.loyalty import (  # noqa: F401
+    LoyaltyAccount,
+    LoyaltyLedgerEntry,
+    LoyaltySetting,
+)
+
 # Facturation (Phase 2): invoice document domain — isolated from POS/Sales
 from app.models.facturation import (  # noqa: F401
     InvoiceClient,

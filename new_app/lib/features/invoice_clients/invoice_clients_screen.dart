@@ -106,15 +106,18 @@ class _InvoiceClientsScreenState extends ConsumerState<InvoiceClientsScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Text(
+          // Wide windows keep the original single-row header (measured
+          // one-line width ≈ 1273px in Arabic); tighter windows let the
+          // title, search, chip and add button wrap instead of
+          // overflowing ("RenderFlex overflowed by 274 pixels").
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final title = Text(
                 AppStrings.t('invoice_clients', loc),
                 key: const Key('invoice-clients-title'),
                 style: theme.textTheme.headlineSmall,
-              ),
-              const SizedBox(width: 24),
-              SizedBox(
+              );
+              final searchField = SizedBox(
                 width: 260,
                 child: TextField(
                   key: const Key('invoice-clients-search'),
@@ -128,24 +131,47 @@ class _InvoiceClientsScreenState extends ConsumerState<InvoiceClientsScreen> {
                   onChanged: (value) =>
                       ref.read(invoiceClientsProvider.notifier).setSearch(value),
                 ),
-              ),
-              const SizedBox(width: 16),
-              FilterChip(
+              );
+              final archivedToggle = FilterChip(
                 key: const Key('invoice-clients-archived-toggle'),
                 label: Text(AppStrings.t('show_archived', loc)),
                 selected: query.includeArchived,
                 onSelected: (value) => ref
                     .read(invoiceClientsProvider.notifier)
                     .setIncludeArchived(value),
-              ),
-              const Spacer(),
-              ElevatedButton.icon(
+              );
+              final addButton = ElevatedButton.icon(
                 key: const Key('invoice-clients-add-button'),
                 onPressed: _add,
                 icon: const Icon(Icons.person_add_alt),
                 label: Text(AppStrings.t('add_invoice_client', loc)),
-              ),
-            ],
+              );
+
+              if (constraints.maxWidth >= 1320) {
+                return Row(
+                  children: [
+                    title,
+                    const SizedBox(width: 24),
+                    searchField,
+                    const SizedBox(width: 16),
+                    archivedToggle,
+                    const Spacer(),
+                    addButton,
+                  ],
+                );
+              }
+              return Wrap(
+                spacing: 12,
+                runSpacing: 8,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  title,
+                  searchField,
+                  archivedToggle,
+                  addButton,
+                ],
+              );
+            },
           ),
           if (state.error != null) ...[
             const SizedBox(height: 12),

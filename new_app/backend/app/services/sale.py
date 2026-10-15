@@ -80,6 +80,7 @@ from app.schemas.sale import (
     SaleResponse,
 )
 from app.services.base import BaseService
+from app.services.loyalty import LoyaltyEngine, RewardDecision
 
 logger = structlog.get_logger(__name__)
 
@@ -88,6 +89,11 @@ MONEY_QUANTUM = Decimal("0.001")
 
 def _money(value: Decimal | int | float | str) -> Decimal:
     return to_decimal(value).quantize(MONEY_QUANTUM, rounding=ROUND_HALF_UP)
+
+
+def _nullable_money(value: Decimal | int | float | str | None) -> Decimal | None:
+    """Money conversion that passes None through (pre-loyalty columns)."""
+    return None if value is None else to_decimal(value)
 
 
 def _generate_invoice_number() -> str:
@@ -778,14 +784,19 @@ class SaleService(BaseService):
     # Totals / payment validation
     # ------------------------------------------------------------------
 
-    def _compute_totals(
+    def _gross_from_lines(
         self,
         lines: list[_ResolvedLine],
         invoice_discount: Decimal,
-        payment_method: str,
-        paid: Decimal,
-        customer_id: uuid.UUID | None,
-    ) -> dict[str, Any]:
+    ) -> tuple[Decimal, Decimal, Decimal]:
+        """(subtotal, line_discounts, total) after invoice-discount checks.
+
+        The pure "what does this cart cost" half of :meth:`_compute_totals`
+        — extracted so a loyalty redemption can be priced against the GROSS
+        total before any payment math runs (redeemed value reduces the
+        amount due, so payment validation must happen only once, with the
+        final redeemed value in hand).
+        """
         invoice_discount = _money(invoice_discount)
         if invoice_discount < 0:
             raise ValidationError(message="invoice_discount must be >= 0")
@@ -819,32 +830,92 @@ class SaleService(BaseService):
                 },
             )
         total = _money(after_line_discounts - invoice_discount)
+        return subtotal, line_discounts, total
+
+    def _compute_totals(
+        self,
+        lines: list[_ResolvedLine],
+        invoice_discount: Decimal,
+        payment_method: str,
+        paid: Decimal,
+        customer_id: uuid.UUID | None,
+        loyalty_redeemed_value: Decimal = Decimal("0"),
+    ) -> dict[str, Any]:
+        subtotal, line_discounts, total = self._gross_from_lines(
+            lines, invoice_discount
+        )
+
+        # Phase C (loyalty): the redeemed value is a server-derived cap of
+        # the gross total — it never raises the payable amount, and every
+        # payment rule below is evaluated against the REDUCED amount due
+        # so cash/card/partial/credit semantics stay identical for sales
+        # without redemption (redeemed = 0 => amount_due == total).
+        redeemed = _money(loyalty_redeemed_value)
+        if redeemed < 0:
+            raise ValidationError(message="loyalty_redeemed_value must be >= 0")
+        if redeemed > total:
+            raise ValidationError(
+                message="loyalty_redeemed_value cannot exceed total",
+                details={
+                    "loyalty_redeemed_value": str(redeemed),
+                    "total": str(total),
+                },
+            )
+        amount_due = _money(total - redeemed)
+
         paid = _money(paid)
         if paid < 0:
             raise ValidationError(message="paid must be >= 0")
 
-        debt = _money(max(Decimal("0"), total - paid))
-        change = _money(max(Decimal("0"), paid - total))
+        debt = _money(max(Decimal("0"), amount_due - paid))
+        change = _money(max(Decimal("0"), paid - amount_due))
 
         method = PaymentMethod(payment_method)
+        if redeemed > 0 and amount_due == 0 and method in (
+            PaymentMethod.PARTIAL,
+            PaymentMethod.CREDIT,
+        ):
+            # A fully redeemed cart is settled, not payable over time —
+            # mirrors the pre-existing "zero-total sale" rule (tender it
+            # as cash with paid = 0).  Scoped to redeemed sales so every
+            # legacy zero-total path behaves exactly as before.
+            raise BusinessRuleError(
+                message="credit/partial not applicable to a fully redeemed sale",
+                details={
+                    "amount_due": str(amount_due),
+                    "total": str(total),
+                },
+            )
         if method == PaymentMethod.CASH or method == PaymentMethod.CARD:
-            if paid < total:
+            if paid < amount_due:
                 raise ValidationError(
-                    message=f"{method.value} payment requires paid >= total",
-                    details={"paid": str(paid), "total": str(total)},
+                    message=f"{method.value} payment requires paid >= amount due",
+                    details={
+                        "paid": str(paid),
+                        "total": str(total),
+                        "amount_due": str(amount_due),
+                    },
                 )
             debt = Decimal("0")
-            change = _money(paid - total)
+            change = _money(paid - amount_due)
         elif method == PaymentMethod.PARTIAL:
-            if paid >= total and total > 0:
+            if paid >= amount_due and amount_due > 0:
                 raise ValidationError(
-                    message="partial payment requires paid < total",
-                    details={"paid": str(paid), "total": str(total)},
+                    message="partial payment requires paid < amount due",
+                    details={
+                        "paid": str(paid),
+                        "total": str(total),
+                        "amount_due": str(amount_due),
+                    },
                 )
             if debt <= 0:
                 raise ValidationError(
                     message="partial payment with no remaining debt is invalid",
-                    details={"paid": str(paid), "total": str(total)},
+                    details={
+                        "paid": str(paid),
+                        "total": str(total),
+                        "amount_due": str(amount_due),
+                    },
                 )
             change = Decimal("0")
         elif method == PaymentMethod.CREDIT:
@@ -853,7 +924,7 @@ class SaleService(BaseService):
                     message="credit payment requires paid = 0",
                     details={"paid": str(paid)},
                 )
-            debt = total
+            debt = amount_due
             change = Decimal("0")
         else:  # pragma: no cover — schema restricts to known methods
             raise ValidationError(
@@ -874,10 +945,12 @@ class SaleService(BaseService):
                 )
 
         return {
-            "invoice_discount": invoice_discount,
+            "invoice_discount": _money(invoice_discount),
             "subtotal": subtotal,
             "line_discounts": line_discounts,
             "total": total,
+            "amount_due": amount_due,
+            "redeemed_value": redeemed,
             "paid": paid if method != PaymentMethod.CREDIT else Decimal("0"),
             "change": change,
             "debt": debt,
@@ -896,11 +969,21 @@ class SaleService(BaseService):
         device_id: str | None = None,
         require_pos_discount: bool = False,
         require_pos_credit: bool = False,
+        enable_loyalty: bool = True,
     ) -> SaleCreateResponse:
         """Create a sale atomically.
 
         Idempotency: if client_request_id already exists, return the original
         sale with idempotent_replay=True and do NOT create a second sale.
+
+        ``enable_loyalty=False`` (facturation post-as-sale, server-side
+        only) bypasses the loyalty flow entirely: no preview, no ledger
+        posts, and the five loyalty sales columns stay NULL — an invoice
+        sale is never a points event.  With loyalty enabled (the default),
+        a reward requested via ``request.loyalty_reward_percent`` is
+        previewed pre-transaction, revalidated in-transaction under the
+        account row lock, and posted through :class:`LoyaltyEngine` in the
+        SAME transaction as the sale (exactly 100 points consumed).
         """
         user_id = user.id if user is not None else None
         effective_device = device_id or request.device_id
@@ -936,12 +1019,37 @@ class SaleService(BaseService):
         if request.customer_id is not None:
             customer = self._get_customer(request.customer_id)
 
+        # --- Loyalty reward preview (read-only, pre-tx) ---
+        engine = LoyaltyEngine(self.db)
+        if not enable_loyalty and request.loyalty_reward_percent > 0:
+            raise ValidationError(
+                message="loyalty rewards are not available on this sale",
+                details={
+                    "loyalty_reward_percent": str(
+                        request.loyalty_reward_percent
+                    )
+                },
+            )
+        if request.loyalty_reward_percent > 0 and request.customer_id is None:
+            raise ValidationError(
+                message="customer_id is required to redeem a loyalty reward"
+            )
+        loyalty_preview = RewardDecision(Decimal(0), Decimal(0), _money(0))
+        if enable_loyalty and request.loyalty_reward_percent > 0:
+            gross_total = self._gross_from_lines(lines, request.invoice_discount)[2]
+            loyalty_preview = engine.preview_reward(
+                customer_id=request.customer_id,
+                reward_percent=request.loyalty_reward_percent,
+                gross_total=gross_total,
+            )
+
         totals = self._compute_totals(
             lines,
             request.invoice_discount,
             request.payment_method,
             request.paid,
             request.customer_id,
+            loyalty_redeemed_value=loyalty_preview.discount,
         )
 
         if require_pos_discount:
@@ -969,6 +1077,10 @@ class SaleService(BaseService):
         ]
 
         # --- ONE transaction: everything or nothing ---
+        redeem_points = Decimal(0)
+        redeem_value = _money(0)
+        earn_points = Decimal(0)
+        cashback_value = _money(0)
         try:
             with self.transaction() as tx:
                 # PHASE 9 BUG FIX: debt-ceiling gate FIRST — authoritative
@@ -978,6 +1090,32 @@ class SaleService(BaseService):
                 if totals["debt"] > 0 and customer is not None:
                     self._enforce_debt_ceiling(customer, totals["debt"])
 
+                # Authoritative loyalty revalidation under the account
+                # FOR UPDATE lock — also BEFORE any stock/sale mutation.
+                # A balance/settings drift vs the pre-tx preview aborts
+                # here with zero residue; the cashier retries.
+                reward_percent = Decimal(0)
+                if enable_loyalty and customer is not None:
+                    decision = engine.revalidate_reward(
+                        customer_id=customer.id,
+                        reward_percent=request.loyalty_reward_percent,
+                        gross_total=totals["total"],
+                        expected=loyalty_preview,
+                    )
+                    redeem_points, reward_percent, redeem_value = decision
+                    # Earn qualifies on what this sale actually collects,
+                    # net of redemption: cash/card -> amount_due (paid may
+                    # exceed it via change), partial -> paid, credit -> 0.
+                    earn = engine.calculate_earn(
+                        qualifying_amount=min(
+                            totals["paid"], totals["amount_due"]
+                        )
+                    )
+                    earn_points, cashback_value = (
+                        earn.points,
+                        earn.cashback,
+                    )
+
                 # Guarded stock decrements first (rowcount = concurrency safety).
                 # Pack summary lines own no stock (product is None) and are
                 # skipped; their component lines are decremented here.
@@ -985,6 +1123,24 @@ class SaleService(BaseService):
                     if ln.product is None:
                         continue
                     self._decrement_stock(ln)
+
+                loyalty_columns: dict[str, Any] = {}
+                if enable_loyalty:
+                    # amount_due + redeemed are always written for a
+                    # loyalty-enabled sale; earned columns are NULL only
+                    # when no customer participated (0/0.000 means "loyalty
+                    # sale that earned nothing", never NULL there).
+                    loyalty_columns = {
+                        "amount_due": totals["amount_due"],
+                        "loyalty_points_redeemed": redeem_points,
+                        "loyalty_redeemed_value": redeem_value,
+                        "loyalty_points_earned": (
+                            earn_points if customer is not None else None
+                        ),
+                        "loyalty_cashback_earned": (
+                            cashback_value if customer is not None else None
+                        ),
+                    }
 
                 sale = Sale(
                     invoice_number=invoice_number,
@@ -999,6 +1155,7 @@ class SaleService(BaseService):
                     client_request_id=request.client_request_id,
                     note=request.note,
                     device_id=effective_device,
+                    **loyalty_columns,
                 )
                 tx.add(sale)
                 tx.flush()  # assign sale.id for FKs
@@ -1046,6 +1203,38 @@ class SaleService(BaseService):
                             user_id=user_id,
                         )
                     )
+
+                # Loyalty ledger — reward debit and earn credit in the
+                # SAME transaction as the sale (sale.id was assigned by
+                # the sale-insert flush, so the FK and source keys exist).
+                # Exactly POINTS_PER_REWARD points are consumed; the note
+                # records which percent produced which discount.
+                if enable_loyalty and customer is not None:
+                    if redeem_points > 0:
+                        engine.post(
+                            customer_id=customer.id,
+                            event_type="redeem",
+                            source_event_key=f"redeem:{sale.id}",
+                            points_delta=-redeem_points,
+                            cashback_delta=Decimal("0"),
+                            sale_id=sale.id,
+                            created_by=user_id,
+                            note=(
+                                f"reward {reward_percent}%: discount "
+                                f"{redeem_value} DA | Sale {invoice_number}"
+                            ),
+                        )
+                    if earn_points > 0 or cashback_value > 0:
+                        engine.post(
+                            customer_id=customer.id,
+                            event_type="sale_earn",
+                            source_event_key=f"sale_earn:{sale.id}",
+                            points_delta=earn_points,
+                            cashback_delta=cashback_value,
+                            sale_id=sale.id,
+                            created_by=user_id,
+                            note=f"Sale {invoice_number}",
+                        )
 
                 tx.flush()
                 sale_id = sale.id
@@ -1320,9 +1509,17 @@ class SaleService(BaseService):
         idempotent_replay: bool,
         price_overrides: list[PriceOverride],
     ) -> SaleCreateResponse:
-        debt = _money(max(Decimal("0"), to_decimal(sale.total) - to_decimal(sale.paid)))
+        # Payable base: amount_due when the sale carried loyalty (Phase C),
+        # legacy gross total for pre-loyalty / facturation rows — so a
+        # fully redeemed sale (total 100, due 0) reports debt 0, not 100.
+        payable = (
+            to_decimal(sale.amount_due)
+            if sale.amount_due is not None
+            else to_decimal(sale.total)
+        )
+        debt = _money(max(Decimal("0"), payable - to_decimal(sale.paid)))
         if sale.payment_method == PaymentMethod.CREDIT.value:
-            debt = to_decimal(sale.total)
+            debt = payable
             paid = Decimal("0")
             change = Decimal("0")
         else:
@@ -1387,6 +1584,15 @@ class SaleService(BaseService):
             payments=payments,
             idempotent_replay=idempotent_replay,
             price_overrides=price_overrides,
+            loyalty_points_earned=_nullable_money(sale.loyalty_points_earned),
+            loyalty_cashback_earned=_nullable_money(
+                sale.loyalty_cashback_earned
+            ),
+            loyalty_points_redeemed=_nullable_money(
+                sale.loyalty_points_redeemed
+            ),
+            loyalty_redeemed_value=_nullable_money(sale.loyalty_redeemed_value),
+            amount_due=_nullable_money(sale.amount_due),
         )
 
     def _to_sale_response(self, sale: Sale, *, with_header: bool = False) -> SaleResponse:

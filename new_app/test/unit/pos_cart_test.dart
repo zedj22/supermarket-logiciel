@@ -404,6 +404,134 @@ void main() {
         'empty_cart_title',
       );
     });
+
+    group('amount due (loyalty reward discount)', () {
+      test('amountDueOf subtracts the reward discount and floors at 0', () {
+        expect(
+          PaymentMath.amountDueOf(total: 100, rewardDiscount: 60),
+          closeTo(40, 0.001),
+        );
+        expect(
+          PaymentMath.amountDueOf(total: 100, rewardDiscount: 150),
+          0,
+        );
+        expect(PaymentMath.amountDueOf(total: 100), closeTo(100, 0.001));
+      });
+
+      test('change and debt derive from the amount due, not the total', () {
+        // total 100, reward discount 60 -> due 40
+        expect(
+          PaymentMath.changeOf(paid: 50, total: 100, rewardDiscount: 60),
+          closeTo(10, 0.001),
+        );
+        expect(
+          PaymentMath.changeOf(paid: 30, total: 100, rewardDiscount: 60),
+          0,
+        );
+        expect(
+          PaymentMath.debtOf(paid: 30, total: 100, rewardDiscount: 60),
+          closeTo(10, 0.001),
+        );
+        expect(
+          PaymentMath.debtOf(paid: 40, total: 100, rewardDiscount: 60),
+          0,
+        );
+      });
+
+      test('cash requires paid >= amount due', () {
+        expect(
+          PaymentMath.validate(
+            method: PaymentMethod.cash,
+            total: 100,
+            paid: 39,
+            hasCustomer: true,
+            canDiscount: true,
+            canCredit: true,
+            rewardDiscount: 60,
+          ),
+          'paid_too_low',
+        );
+        expect(
+          PaymentMath.validate(
+            method: PaymentMethod.cash,
+            total: 100,
+            paid: 40,
+            hasCustomer: true,
+            canDiscount: true,
+            canCredit: true,
+            rewardDiscount: 60,
+          ),
+          isNull,
+        );
+        // Fully discounted: tendering 0 is valid cash.
+        expect(
+          PaymentMath.validate(
+            method: PaymentMethod.cash,
+            total: 100,
+            paid: 0,
+            hasCustomer: true,
+            canDiscount: true,
+            canCredit: true,
+            rewardDiscount: 100,
+          ),
+          isNull,
+        );
+      });
+
+      test('card requires paid == amount due', () {
+        expect(
+          PaymentMath.validate(
+            method: PaymentMethod.card,
+            total: 100,
+            paid: 50,
+            hasCustomer: true,
+            canDiscount: true,
+            canCredit: true,
+            rewardDiscount: 60,
+          ),
+          'invalid_amount',
+        );
+        expect(
+          PaymentMath.validate(
+            method: PaymentMethod.card,
+            total: 100,
+            paid: 40,
+            hasCustomer: true,
+            canDiscount: true,
+            canCredit: true,
+            rewardDiscount: 60,
+          ),
+          isNull,
+        );
+      });
+
+      test('partial rejects a fully redeemed amount due', () {
+        expect(
+          PaymentMath.validate(
+            method: PaymentMethod.partial,
+            total: 100,
+            paid: 0,
+            hasCustomer: true,
+            canDiscount: true,
+            canCredit: true,
+            rewardDiscount: 100,
+          ),
+          'invalid_amount',
+        );
+        expect(
+          PaymentMath.validate(
+            method: PaymentMethod.partial,
+            total: 100,
+            paid: 30,
+            hasCustomer: true,
+            canDiscount: true,
+            canCredit: true,
+            rewardDiscount: 60,
+          ),
+          isNull,
+        );
+      });
+    });
   });
 
   group('CheckoutResult / PriceOverride / models JSON', () {
@@ -433,6 +561,41 @@ void main() {
       expect(result.total, '90.00');
       expect(result.priceOverrides, hasLength(1));
       expect(result.priceOverrides.first.appliedUnitPrice, '10');
+      // Legacy response without loyalty keys: all five stay null.
+      expect(result.amountDue, isNull);
+      expect(result.loyaltyPointsEarned, isNull);
+      expect(result.loyaltyCashbackEarned, isNull);
+      expect(result.loyaltyPointsRedeemed, isNull);
+      expect(result.loyaltyRedeemedValue, isNull);
+    });
+
+    test('parses the additive loyalty summary fields', () {
+      final result = CheckoutResult.fromJson({
+        'id': 'sale-3',
+        'invoice_number': 'INV-003',
+        'status': 'completed',
+        'subtotal': '100.00',
+        'discount': '0',
+        'total': '100.00',
+        'paid': '40.00',
+        'change': '0',
+        'debt': '0',
+        'payment_method': 'cash',
+        'amount_due': '40.000',
+        'loyalty_points_earned': '0',
+        'loyalty_cashback_earned': '0.000',
+        'loyalty_points_redeemed': '60',
+        'loyalty_redeemed_value': '60.000',
+      });
+      expect(result.amountDue, '40.000');
+      expect(result.loyaltyPointsEarned, '0');
+      expect(result.loyaltyCashbackEarned, '0.000');
+      expect(result.loyaltyPointsRedeemed, '60');
+      expect(result.loyaltyRedeemedValue, '60.000');
+      // Carried through the override merge (receipt flow).
+      final carried = result.withPriceOverrides(const []);
+      expect(carried.amountDue, '40.000');
+      expect(carried.loyaltyPointsRedeemed, '60');
     });
 
     test('price override response keeps requested and applied prices', () {

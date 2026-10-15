@@ -191,11 +191,15 @@ def _totals_block(data: DocumentData) -> Flowable | None:
         (label("subtotal", locale), t.subtotal),
         (label("col_line_discounts", locale), t.line_discounts_sum),
         (label("col_invoice_discount", locale), t.invoice_discount),
+        (label("loyalty_redeemed", locale), t.loyalty_redeemed),
+        (label("amount_due", locale), t.amount_due),
         (label("total", locale), t.total),
         (label("amount_paid", locale), t.paid),
         (label("change", locale), t.change),
         (label("debt", locale), t.debt),
         (label("payment_method", locale), t.payment_method),
+        (label("loyalty_points_earned", locale), t.loyalty_points_earned),
+        (label("loyalty_cashback_earned", locale), t.loyalty_cashback_earned),
     ]
     pairs = [(lab, val) for lab, val in pairs if val is not None]
     total_index = next(i for i, (lab, _) in enumerate(pairs) if lab == label("total", locale))

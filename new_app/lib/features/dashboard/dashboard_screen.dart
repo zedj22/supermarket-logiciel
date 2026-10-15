@@ -133,47 +133,66 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
   Widget _buildPeriodBar(String loc) {
     final filter = ref.watch(reportFilterProvider);
     final notifier = ref.read(reportFilterProvider.notifier);
-    return Row(
-      children: [
-        SizedBox(
-          width: 170,
-          child: DropdownButtonFormField<String>(
-            key: ValueKey<String>('dashboard-preset-${filter.preset}'),
-            initialValue: filter.preset,
-            isExpanded: true,
-            decoration: InputDecoration(
-              labelText: AppStrings.t('label_period', loc),
-              isDense: true,
-              border: const OutlineInputBorder(),
+    final presetDropdown = SizedBox(
+      width: 170,
+      child: DropdownButtonFormField<String>(
+        key: ValueKey<String>('dashboard-preset-${filter.preset}'),
+        initialValue: filter.preset,
+        isExpanded: true,
+        decoration: InputDecoration(
+          labelText: AppStrings.t('label_period', loc),
+          isDense: true,
+          border: const OutlineInputBorder(),
+        ),
+        items: [
+          for (final preset in kReportPresets)
+            DropdownMenuItem(
+              value: preset,
+              child: Text(
+                AppStrings.t(reportPresetKey(preset), loc),
+                key: Key('dashboard-preset-item-$preset'),
+              ),
             ),
-            items: [
-              for (final preset in kReportPresets)
-                DropdownMenuItem(
-                  value: preset,
-                  child: Text(
-                    AppStrings.t(reportPresetKey(preset), loc),
-                    key: Key('dashboard-preset-item-$preset'),
-                  ),
-                ),
+        ],
+        onChanged: (value) {
+          if (value != null) notifier.setPreset(value);
+        },
+      ),
+    );
+    final dateFrom = OutlinedButton(
+      key: const Key('dashboard-date-from'),
+      onPressed: () => _pickDate(from: true),
+      child: Text(reportDateParam(filter.dateFrom)),
+    );
+    final dateTo = OutlinedButton(
+      key: const Key('dashboard-date-to'),
+      onPressed: () => _pickDate(from: false),
+      child: Text(reportDateParam(filter.dateTo)),
+    );
+
+    // Wide windows keep the original single row; tighter windows wrap
+    // the period controls instead of overflowing ("RenderFlex overflowed
+    // by 29 pixels" at an 800px window).
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (constraints.maxWidth >= 740) {
+          return Row(
+            children: [
+              presetDropdown,
+              const SizedBox(width: 8),
+              dateFrom,
+              const SizedBox(width: 6),
+              dateTo,
             ],
-            onChanged: (value) {
-              if (value != null) notifier.setPreset(value);
-            },
-          ),
-        ),
-        const SizedBox(width: 8),
-        OutlinedButton(
-          key: const Key('dashboard-date-from'),
-          onPressed: () => _pickDate(from: true),
-          child: Text(reportDateParam(filter.dateFrom)),
-        ),
-        const SizedBox(width: 6),
-        OutlinedButton(
-          key: const Key('dashboard-date-to'),
-          onPressed: () => _pickDate(from: false),
-          child: Text(reportDateParam(filter.dateTo)),
-        ),
-      ],
+          );
+        }
+        return Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [presetDropdown, dateFrom, dateTo],
+        );
+      },
     );
   }
 

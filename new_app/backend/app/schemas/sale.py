@@ -89,6 +89,17 @@ class CreateSaleRequest(StrictBaseModel):
     invoice_discount: Decimal = Field(default=Decimal("0"), ge=0)
     payment_method: PaymentMethodLiteral = "cash"
     paid: Decimal = Field(..., ge=0)
+    loyalty_reward_percent: Decimal = Field(
+        default=Decimal("0"), ge=0, le=100
+    )
+    """Discount percentage the cashier selected for ONE loyalty reward.
+
+    Percent ONLY — the client never submits a monetary discount or a
+    balance; the server derives the DA value from this percent and the
+    eligible base under a row lock, and consumes exactly 100 points
+    (requires ``customer_id`` and an available reward).  0 (default) =
+    no reward, so every existing client keeps its exact payload shape.
+    """
     device_id: str | None = Field(default=None, max_length=100)
     note: str | None = Field(default=None, max_length=2000)
 
@@ -191,6 +202,19 @@ class SaleResponse(StrictBaseModel):
     customer_name: str | None = None
     cashier_name: str | None = None
     store: StoreInfo | None = None
+    # Loyalty summary (Phase C): additive, NULL = pre-loyalty / facturation
+    # sale.  Mirrors the five nullable sales columns verbatim — never
+    # recomputed here, so a void or report path can never disagree.
+    loyalty_points_earned: Decimal | None = None
+    loyalty_cashback_earned: Decimal | None = None
+    loyalty_points_redeemed: Decimal | None = None
+    loyalty_redeemed_value: Decimal | None = None
+    amount_due: Decimal | None = None
+    """Payable after invoice discount minus redeemed loyalty value.
+
+    Null on pre-loyalty rows; the legacy fallback for ``debt`` is
+    ``total`` when this is null.
+    """
 
 
 class PriceOverride(StrictBaseModel):

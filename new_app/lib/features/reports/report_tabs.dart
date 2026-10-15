@@ -1352,3 +1352,229 @@ class _SuppliersTabState extends ConsumerState<SuppliersTab>
     );
   }
 }
+
+// ---------------------------------------------------------------------------
+// Loyalty — period activity + balance snapshot + ledger (Loyalty Phase F)
+// ---------------------------------------------------------------------------
+
+class LoyaltyTab extends ConsumerStatefulWidget {
+  const LoyaltyTab({super.key});
+
+  @override
+  ConsumerState<LoyaltyTab> createState() => _LoyaltyTabState();
+}
+
+class _LoyaltyTabState extends ConsumerState<LoyaltyTab>
+    with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+
+  @override
+  void initState() {
+    super.initState();
+    Future.microtask(() {
+      if (!mounted) return;
+      ref.read(loyaltyProvider.notifier).load();
+    });
+  }
+
+  /// Localized ledger event label (`loyalty_event_<code>`) with a raw
+  /// fallback — same contract as `_enumLabel`.
+  String _eventLabel(String raw, String loc) =>
+      _enumLabel('loyalty_event_$raw', raw, loc);
+
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
+    final theme = Theme.of(context);
+    final loc = ref.watch(localeProvider).flutterLocale.languageCode;
+    final state = ref.watch(loyaltyProvider);
+    final r = state.data;
+
+    return ReportStateView<LoyaltyReport>(
+      state: state,
+      isEmpty: false,
+      emptyKey: 'state_no_data',
+      loc: loc,
+      onRetry: () => ref.read(loyaltyProvider.notifier).load(),
+      child: r == null
+          ? const SizedBox.shrink()
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Summary scrolls; the ledger table below owns the rest of
+                // the viewport (ReportTable needs bounded height).
+                Expanded(
+                  flex: 2,
+                  child: ListView(
+                    key: const Key('loyalty-content'),
+                    padding: const EdgeInsets.only(top: 8),
+                    children: [
+                      _sectionTitle(
+                        theme,
+                        loc,
+                        'label_period',
+                        icon: Icons.date_range_outlined,
+                      ),
+                      Text(
+                        '${r.dateFrom} → ${r.dateTo}',
+                        key: const Key('loyalty-range'),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        AppStrings.t('loyalty_report_snapshot', loc),
+                        key: const Key('loyalty-snapshot-note'),
+                        style: theme.textTheme.bodySmall,
+                      ),
+                      const SizedBox(height: 12),
+
+                      // Sales context (§5.1 semantics — rewards reported
+                      // beside, never inside sales totals).
+                      _sectionTitle(theme, loc, 'sales',
+                          tone: ReportMetricTone.sales),
+                      _tiles([
+                        _tile('kpi_gross_sales', _m(r.salesGross)),
+                        _tile(
+                            'kpi_sales_after_discounts', _m(r.salesAfterDiscounts)),
+                        _tile('kpi_invoices', '${r.invoiceCount}'),
+                      ]),
+                      const SizedBox(height: 12),
+
+                      // Period activity (ledger, window-bounded).
+                      _sectionTitle(theme, loc, 'loyalty_report_activity',
+                          tone: ReportMetricTone.profit),
+                      _tiles([
+                        _tile('loyalty_points_earned', _m(r.pointsEarned)),
+                        _tile('loyalty_cashback_earned', _m(r.cashbackEarned)),
+                        _tile(
+                            'loyalty_settlement_points', _m(r.settlementPoints)),
+                        _tile('loyalty_points_redeemed', _m(r.pointsRedeemed)),
+                        _tile(
+                            'loyalty_redemption_value', _m(r.redemptionValue)),
+                        _tile('loyalty_points_reversed', _m(r.pointsReversed)),
+                        _tile('loyalty_cashback_reversed',
+                            _m(r.cashbackReversed)),
+                        _tile(
+                            'loyalty_points_restored', _m(r.pointsRestored)),
+                        _tile('loyalty_restored_value', _m(r.restoredValue)),
+                        _tile('loyalty_shortfall_points', _m(r.shortfallPoints)),
+                        _tile(
+                            'loyalty_shortfall_cashback', _m(r.shortfallCashback)),
+                        _tile(
+                            'loyalty_adjustment_points', _m(r.adjustmentPoints)),
+                        _tile('loyalty_adjustment_cashback',
+                            _m(r.adjustmentCashback)),
+                      ]),
+                      const SizedBox(height: 12),
+
+                      // Current balances (snapshot — not a window total).
+                      _sectionTitle(theme, loc, 'loyalty_report_balances',
+                          tone: ReportMetricTone.debt),
+                      _tiles([
+                        _tile(
+                            'loyalty_outstanding_points', _m(r.outstandingPoints)),
+                        _tile('loyalty_outstanding_cashback',
+                            _m(r.outstandingCashback)),
+                        _tile(
+                          'loyalty_accounts_with_balance',
+                          '${r.accountsWithBalance}',
+                        ),
+                      ]),
+                      const SizedBox(height: 12),
+
+                      // Events breakdown (raw ledger event types in the
+                      // window — includes restorations posted as
+                      // adjustments; the headline adjustment tiles above
+                      // count admin adjustments only).
+                      if (r.events.isNotEmpty) ...[
+                        ReportTable(
+                          key: const Key('loyalty-events-table'),
+                          loc: loc,
+                          columns: const [
+                            ReportColumn('col_event'),
+                            ReportColumn('col_count', numeric: true),
+                            ReportColumn('col_points', numeric: true),
+                            ReportColumn('col_cashback', numeric: true),
+                          ],
+                          rows: [
+                            for (final e in r.events)
+                              [
+                                _eventLabel(e.eventType, loc),
+                                '${e.entries}',
+                                _m(e.pointsDelta),
+                                _m(e.cashbackDelta),
+                              ],
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                      ],
+                    ],
+                  ),
+                ),
+
+                // Ledger history (paginated detail).
+                _sectionTitle(
+                  theme,
+                  loc,
+                  'loyalty_report_ledger',
+                  icon: Icons.history_outlined,
+                ),
+                Expanded(
+                  flex: 3,
+                  child: Column(
+                    children: [
+                      Expanded(
+                        child: ReportTable(
+                          key: const Key('loyalty-ledger-table'),
+                          loc: loc,
+                          columns: const [
+                            ReportColumn('col_date'),
+                            ReportColumn('col_customer'),
+                            ReportColumn('col_invoice'),
+                            ReportColumn('col_event'),
+                            ReportColumn('col_points', numeric: true),
+                            ReportColumn('col_cashback', numeric: true),
+                            ReportColumn('col_points_balance', numeric: true),
+                            ReportColumn('col_cashback_balance', numeric: true),
+                            ReportColumn('note'),
+                          ],
+                          rows: [
+                            for (final row in r.items)
+                              [
+                                reportDateTimeLabel(row.createdAt),
+                                row.customerName ?? '',
+                                row.invoiceNumber ?? '',
+                                _eventLabel(row.eventType, loc),
+                                _m(row.pointsDelta),
+                                _m(row.cashbackDelta),
+                                _m(row.balanceAfterPoints),
+                                _m(row.balanceAfterCashback),
+                                row.note ?? '',
+                              ],
+                          ],
+                        ),
+                      ),
+                      if (r.pages > 1)
+                        ReportPagination(
+                          page: r.page,
+                          pages: r.pages,
+                          total: r.total,
+                          loading: state.loading,
+                          onPrev: () =>
+                              ref.read(loyaltyProvider.notifier).setPage(
+                                    r.page - 1,
+                                  ),
+                          onNext: () =>
+                              ref.read(loyaltyProvider.notifier).setPage(
+                                    r.page + 1,
+                                  ),
+                          loc: loc,
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+    );
+  }
+}

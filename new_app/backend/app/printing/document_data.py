@@ -148,6 +148,12 @@ class TotalsBlock:
     change: str | None = None
     debt: str | None = None
     payment_method: str | None = None
+    # Phase E loyalty (additive; None = pre-loyalty / facturation sale —
+    # the renderer drops None rows, so their row set is untouched).
+    loyalty_redeemed: str | None = None
+    amount_due: str | None = None
+    loyalty_points_earned: str | None = None
+    loyalty_cashback_earned: str | None = None
 
 
 @dataclass
@@ -306,6 +312,12 @@ def build_sale_document(
 
     discount_sum = sum((_dec(ln.line_discount) for ln in sale.lines), Decimal("0"))
     invoice_discount = _dec(sale.discount)
+    # Phase E loyalty summary — every value comes from the sale response
+    # (server-computed); a missing/zero field renders no row at all.
+    redeemed_value = getattr(sale, "loyalty_redeemed_value", None)
+    amount_due = getattr(sale, "amount_due", None)
+    points_earned = getattr(sale, "loyalty_points_earned", None)
+    cashback_earned = getattr(sale, "loyalty_cashback_earned", None)
     totals = TotalsBlock(
         subtotal=format_money(sale.subtotal),
         total=format_money(sale.total),
@@ -315,6 +327,16 @@ def build_sale_document(
         change=format_money(sale.change),
         debt=format_money(sale.debt) if _dec(sale.debt) > 0 else None,
         payment_method=_method_label(sale.payment_method, locale),
+        loyalty_redeemed=format_money(_dec(redeemed_value))
+        if redeemed_value is not None and _dec(redeemed_value) != 0
+        else None,
+        amount_due=format_money(_dec(amount_due)) if amount_due is not None else None,
+        loyalty_points_earned=format_qty(_dec(points_earned))
+        if points_earned is not None and _dec(points_earned) != 0
+        else None,
+        loyalty_cashback_earned=format_money(_dec(cashback_earned))
+        if cashback_earned is not None and _dec(cashback_earned) != 0
+        else None,
     )
 
     payments = [

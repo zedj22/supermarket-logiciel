@@ -1,5 +1,5 @@
-// Reports screen (Phase 14) — tabs R1–R9 + R13, with R15 shown inside the
-// financial tab (§8).
+// Reports screen (Phase 14) — tabs R1–R9 + R13 + Loyalty (Phase F), with
+// R15 shown inside the financial tab (§8).
 //
 // RBAC: `report_financial` to view (§10 — same scope as the backend), and
 // the CSV export button only renders with `export_data`. The shell
@@ -46,6 +46,7 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen>
     ('voided', 'report_voided'),
     ('sales', 'report_sales'),
     ('suppliers', 'report_suppliers'),
+    ('loyalty', 'report_loyalty'),
   ];
 
   /// Report slug per tab index (§14 names, `peak-hours` / `slow-moving`).
@@ -60,6 +61,7 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen>
     'voided',
     'sales',
     'suppliers',
+    'loyalty',
   ];
 
   bool _exporting = false;
@@ -252,6 +254,20 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen>
           dateTo: data.dateTo,
           build: () async => suppliersCsv(data, loc),
         );
+      case 10:
+        final data = ref.read(loyaltyProvider).data;
+        if (data == null) return;
+        await exportReportCsv(
+          context: context,
+          loc: loc,
+          reportSlug: 'loyalty',
+          dateFrom: data.dateFrom,
+          dateTo: data.dateTo,
+          build: () async => loyaltyCsv(
+            await fetchAllLoyalty(dio, filter),
+            loc,
+          ),
+        );
     }
   }
 
@@ -326,6 +342,8 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen>
         return ref.read(peakProvider).data != null;
       case 9:
         return ref.read(suppliersReportProvider).data != null;
+      case 10:
+        return ref.read(loyaltyProvider).data != null;
       default:
         // Row-level reports page fresh during export (§12.2).
         return true;
@@ -347,6 +365,7 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen>
     ref.watch(hourlyProvider.select((s) => s.data != null));
     ref.watch(peakProvider.select((s) => s.data != null));
     ref.watch(suppliersReportProvider.select((s) => s.data != null));
+    ref.watch(loyaltyProvider.select((s) => s.data != null));
 
     if (!canView) {
       return Center(
@@ -415,6 +434,7 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen>
                 VoidedTab(),
                 SalesTab(),
                 SuppliersTab(),
+                LoyaltyTab(),
               ],
             ),
           ),

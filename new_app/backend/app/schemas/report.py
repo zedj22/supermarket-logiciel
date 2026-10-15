@@ -327,6 +327,89 @@ class SupplierReportResponse(StrictBaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Loyalty report (Loyalty Phase F)
+# ---------------------------------------------------------------------------
+
+
+class LoyaltyEventTotals(StrictBaseModel):
+    """One row per ledger event type in the window (signed net deltas)."""
+
+    event_type: str
+    entries: int
+    points_delta: Decimal
+    cashback_delta: Decimal
+
+
+class LoyaltyLedgerRow(StrictBaseModel):
+    """One ledger entry with its transaction reference (invoice)."""
+
+    entry_id: UUID
+    created_at: datetime
+    customer_id: UUID
+    customer_name: str | None = None
+    event_type: str
+    points_delta: Decimal
+    cashback_delta: Decimal
+    balance_after_points: Decimal
+    balance_after_cashback: Decimal
+    invoice_number: str | None = None
+    sale_id: UUID | None = None
+    return_id: UUID | None = None
+    note: str | None = None
+
+
+class LoyaltyReportResponse(StrictBaseModel):
+    """Loyalty activity for a window plus the current balance snapshot.
+
+    Sales figures keep their financial-report semantics (gross sales are
+    never reduced by rewards); redemption value, restored value and
+    cashback are reported as separate, clearly-labelled figures so no
+    reward is counted twice.
+    """
+
+    date_from: date
+    date_to: date
+    device_id: str | None = None
+
+    # Sales context (same formulas as §5.1 — unchanged semantics).
+    sales_gross: Decimal
+    sales_after_discounts: Decimal
+    invoice_count: int
+
+    # Period activity (ledger, window-bounded).
+    points_earned: Decimal
+    cashback_earned: Decimal
+    earn_entries: int
+    settlement_points: Decimal
+    points_redeemed: Decimal
+    redemption_value: Decimal
+    redeem_entries: int
+    points_reversed: Decimal
+    cashback_reversed: Decimal
+    reversal_entries: int
+    points_restored: Decimal
+    restored_value: Decimal
+    restore_entries: int
+    shortfall_points: Decimal
+    shortfall_cashback: Decimal
+    adjustment_points: Decimal
+    adjustment_cashback: Decimal
+
+    # Current balances (snapshot, not a window total).
+    outstanding_points: Decimal
+    outstanding_cashback: Decimal
+    accounts_with_balance: int
+
+    # Breakdown + ledger history.
+    events: list[LoyaltyEventTotals]
+    items: list[LoyaltyLedgerRow]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+# ---------------------------------------------------------------------------
 # §7 — dashboard
 # ---------------------------------------------------------------------------
 

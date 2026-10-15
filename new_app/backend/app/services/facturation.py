@@ -1211,6 +1211,9 @@ class InvoiceDocumentService(BaseService):
                 user=None,
                 require_pos_discount=False,
                 require_pos_credit=False,
+                # Phase C: an invoice post is never a loyalty event — the
+                # five loyalty sales columns stay NULL on this sale.
+                enable_loyalty=False,
             )
         except Exception as exc:
             logger.warning(

@@ -294,11 +294,21 @@ def test_partial_fiscal_update_leaves_the_rest_alone(client, admin_headers):
 
 
 def test_no_new_settings_endpoint_exists():
-    """Phase 6 adds no route: GET/PUT ``/api/v1/settings`` is the surface."""
+    """Phase 6 adds no route: GET/PUT ``/api/v1/settings`` is the surface.
+
+    Phase E adds exactly one settings surface of its own — the loyalty
+    rules (``/api/v1/loyalty/settings``, also GET+PUT) — so the allow
+    list names both and nothing else; legacy duplicates and any
+    Facturation-specific settings surface remain forbidden.
+    """
     paths = app.openapi()["paths"]
     settings_paths = {p for p in paths if "settings" in p}
-    assert settings_paths == {"/api/v1/settings"}
+    assert settings_paths == {
+        "/api/v1/settings",
+        "/api/v1/loyalty/settings",
+    }
     assert set(paths["/api/v1/settings"]) == {"get", "put"}
+    assert set(paths["/api/v1/loyalty/settings"]) == {"get", "put"}
     # No legacy duplicate and no Facturation-specific settings surface.
     assert not [p for p in paths if p.endswith("/company")]
     assert not [p for p in paths if "fiscal" in p or "facturation" in p]
@@ -453,7 +463,10 @@ def test_no_settings_table_besides_app_settings():
     settings_tables = [
         name for name in Base.metadata.tables if "setting" in name.lower()
     ]
-    assert settings_tables == ["app_settings"]
+    # Phase A (loyalty): loyalty_settings is a deliberate second singleton
+    # for a DIFFERENT domain (points/cashback rules), not a duplication of
+    # the store/company settings system this test guards.
+    assert sorted(settings_tables) == ["app_settings", "loyalty_settings"]
     for forbidden in (
         "company",
         "companies",

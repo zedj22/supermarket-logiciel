@@ -14,6 +14,7 @@ Tests verify:
 import os
 import pathlib
 import subprocess
+from decimal import Decimal
 
 import pytest
 
@@ -236,7 +237,7 @@ class TestPhase6SellingUnitsMigration:
     """Migration 0005/0006 â€” product_selling_units + purchase packaging tables."""
 
     SELLING_UNITS_REV = "c3d4e5f6a7b8"
-    HEAD_REV = "f3c8a21d9e05"  # 0029 facturation option identity head
+    HEAD_REV = "b4d5e6f7a8c1"  # 0029 facturation option identity head
 
     @pytest.fixture(autouse=True)
     def _setup_db(self):
@@ -394,7 +395,7 @@ class TestPhase6SellingUnitsMigration:
 class TestPhase6PurchasePackagingMigration:
     """Migration 0006 (d4e5f6a7b8c9) â€” purchase packaging / stock-breaking."""
 
-    HEAD_REV = "f3c8a21d9e05"  # linear chain head after 0029
+    HEAD_REV = "b4d5e6f7a8c1"  # linear chain head after 0029
 
     @pytest.fixture(autouse=True)
     def _setup_db(self):
@@ -584,7 +585,7 @@ class TestPhase6PurchasePackagingMigration:
 class TestPhase7InventoryPMPMigration:
     """Migration 0008 (f1a2b3c4d5e6) â€” products.avg_cost + movement cost cols."""
 
-    HEAD_REV = "f3c8a21d9e05"
+    HEAD_REV = "b4d5e6f7a8c1"
 
     @pytest.fixture(autouse=True)
     def _setup_db(self):
@@ -726,7 +727,7 @@ class TestPhase10AvgCostBackfillMigration:
     exactly 100%.
     """
 
-    HEAD_REV = "f3c8a21d9e05"
+    HEAD_REV = "b4d5e6f7a8c1"
     PREV_REV = "b7c8d9e0f1a2"
 
     @pytest.fixture(autouse=True)
@@ -862,7 +863,7 @@ class TestPhase10AvgCostBackfillMigration:
 class TestPhase12ReturnsVoidsMigration:
     """0016_phase12_returns_voids â€” void columns + return snapshot columns."""
 
-    HEAD_REV = "f3c8a21d9e05"
+    HEAD_REV = "b4d5e6f7a8c1"
     PREVIOUS_REV = "d3e4f5a6b7c8"
 
     @pytest.fixture(autouse=True)
@@ -1087,7 +1088,7 @@ class TestPhase17ReturnReasonOptionalMigration:
     ``tests/unit/test_void.py::test_reason_is_mandatory``).
     """
 
-    HEAD_REV = "f3c8a21d9e05"
+    HEAD_REV = "b4d5e6f7a8c1"
     PREVIOUS_REV = "e4f5a6b7c8d9"
     TEST_RETURN_NUMBER = "RET-TEST-0017-NO-REASON"
 
@@ -1201,7 +1202,7 @@ class TestPhase13ExpensesMigration:
     and never rewrites an existing value (decision record section 5).
     """
 
-    HEAD_REV = "f3c8a21d9e05"
+    HEAD_REV = "b4d5e6f7a8c1"
     PREVIOUS_REV = "f5a6b7c8d9e0"
     TEST_TITLE = "PHASE13-MIGRATION-TEST"
 
@@ -1440,7 +1441,7 @@ class TestPhase13TitleOptionalMigration:
     expense title can be stored as NULL (decision record B1).
     """
 
-    HEAD_REV = "f3c8a21d9e05"
+    HEAD_REV = "b4d5e6f7a8c1"
     PREVIOUS_REV = "1a2b3c4d5e6f"
     NULL_ROW_MARKER = "PHASE19-TITLE-NULL-TEST"
 
@@ -1547,7 +1548,7 @@ class TestPhase17PricingMigration:
     vat_rate lands 0. Sale, invoice and report tables are untouched.
     """
 
-    HEAD_REV = "f3c8a21d9e05"
+    HEAD_REV = "b4d5e6f7a8c1"
     PREVIOUS_REV = "5c8d2e1f4a73"
 
     @pytest.fixture(autouse=True)
@@ -1645,3 +1646,632 @@ class TestPhase17PricingMigration:
         assert "wholesale_price" in cols
         assert "wholesale_min_qty" in cols
         assert "vat_rate" in cols
+
+
+class TestPhaseLoyaltyMigration:
+    """Migrations 0032 (e8f2a4c6d1b9) + 0033 (b4d5e6f7a8c1) — loyalty.
+
+    0032: three new tables (loyalty_settings / loyalty_accounts /
+    loyalty_ledger_entries) plus five nullable loyalty summary columns on
+    sales. Additive only: legacy sales keep NULL summaries, no existing
+    column or row is rewritten.
+
+    0033: adds loyalty_settings.max_reward_discount_percent (NOT NULL,
+    server default 20, CHECK within [0, 100]) for the milestone reward
+    model; the deprecated points-as-money columns and their CHECKs stay
+    intact so no history is rewritten.
+    """
+
+    HEAD_REV = "b4d5e6f7a8c1"
+    PREVIOUS_REV = "f3c8a21d9e05"
+    CANARY = "phase32-loyalty-canary"
+
+    @pytest.fixture(autouse=True)
+    def _setup_db(self):
+        """Ensure head before, and head after, every test."""
+        result = _run_alembic("upgrade head")
+        assert result.returncode == 0, f"Setup upgrade failed: {result.stderr}"
+        yield
+        result = _run_alembic("upgrade head")
+        assert result.returncode == 0, f"Restore upgrade failed: {result.stderr}"
+
+    @staticmethod
+    def _columns(table: str) -> dict:
+        conn = _get_test_conn()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT column_name, data_type, is_nullable,
+                   numeric_precision, numeric_scale, column_default
+            FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = %s
+            """,
+            (table,),
+        )
+        columns = {row[0]: row for row in cur.fetchall()}
+        cur.close()
+        conn.close()
+        return columns
+
+    @staticmethod
+    def _indexes(table: str) -> set:
+        conn = _get_test_conn()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT indexname FROM pg_indexes "
+            "WHERE schemaname = 'public' AND tablename = %s",
+            (table,),
+        )
+        names = {row[0] for row in cur.fetchall()}
+        cur.close()
+        conn.close()
+        return names
+
+    @staticmethod
+    def _foreign_keys(table: str) -> dict:
+        conn = _get_test_conn()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT kcu.column_name, ccu.table_name, rc.delete_rule
+            FROM information_schema.table_constraints tc
+            JOIN information_schema.key_column_usage kcu
+                ON tc.constraint_name = kcu.constraint_name
+            JOIN information_schema.constraint_column_usage ccu
+                ON ccu.constraint_name = tc.constraint_name
+            JOIN information_schema.referential_constraints rc
+                ON rc.constraint_name = tc.constraint_name
+            WHERE tc.table_schema = 'public'
+              AND tc.table_name = %s
+              AND tc.constraint_type = 'FOREIGN KEY'
+            """,
+            (table,),
+        )
+        fks = {row[0]: (row[1], row[2]) for row in cur.fetchall()}
+        cur.close()
+        conn.close()
+        return fks
+
+    @staticmethod
+    def _check_constraints(table: str) -> set:
+        conn = _get_test_conn()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT conname FROM pg_constraint "
+            "WHERE conrelid = %s::regclass AND contype = 'c'",
+            (table,),
+        )
+        names = {row[0] for row in cur.fetchall()}
+        cur.close()
+        conn.close()
+        return names
+
+    def test_single_head_is_0033(self):
+        current = _run_alembic("current")
+        assert current.returncode == 0, current.stderr
+        assert self.HEAD_REV in current.stdout, current.stdout
+
+        heads = _run_alembic("heads")
+        assert heads.returncode == 0, heads.stderr
+        assert self.HEAD_REV in heads.stdout, heads.stdout
+        assert heads.stdout.count("(head)") == 1, heads.stdout
+
+    def test_loyalty_tables_exist(self):
+        conn = _get_test_conn()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT tablename FROM pg_tables "
+            "WHERE schemaname = 'public' AND tablename LIKE 'loyalty%%'"
+        )
+        tables = {row[0] for row in cur.fetchall()}
+        cur.close()
+        conn.close()
+        assert tables == {
+            "loyalty_settings",
+            "loyalty_accounts",
+            "loyalty_ledger_entries",
+        }, tables
+
+    def test_loyalty_settings_shape_and_checks(self):
+        cols = self._columns("loyalty_settings")
+        assert cols["id"][1] == "integer" and cols["id"][2] == "NO"
+        for name in (
+            "points_enabled",
+            "cashback_enabled",
+            "earn_on_debt_settlement",
+        ):
+            assert cols[name][1] == "boolean" and cols[name][2] == "NO", name
+        for name, scale in (
+            ("points_rate", 6),
+            ("cashback_rate", 3),
+            ("point_value", 3),
+            ("min_redemption_points", 0),
+            ("max_redemption_percent", 3),
+            ("max_reward_discount_percent", 3),
+        ):
+            row = cols[name]
+            assert row[1] == "numeric", row
+            assert row[3] == 18 and row[4] == scale, row
+            assert row[2] == "NO", row
+        # 0033 ships a column default so pre-existing singleton rows
+        # receive the approved cap of 20.
+        cap_default = cols["max_reward_discount_percent"][5]
+        assert cap_default is not None and "20" in cap_default, cap_default
+
+        checks = self._check_constraints("loyalty_settings")
+        for name in (
+            "ck_loyalty_settings_singleton",
+            "ck_loyalty_settings_points_rate",
+            "ck_loyalty_settings_cashback_rate",
+            "ck_loyalty_settings_point_value",
+            "ck_loyalty_settings_min_redemption_points",
+            "ck_loyalty_settings_max_redemption_percent",
+            "ck_loyalty_settings_max_reward_discount_percent",
+        ):
+            assert name in checks, f"{name} missing: {checks}"
+
+    def test_loyalty_settings_singleton_and_numeric_checks(self):
+        conn = _get_test_conn()
+        cur = conn.cursor()
+        valid = (
+            "INSERT INTO loyalty_settings (id, points_enabled, points_rate, "
+            "cashback_enabled, cashback_rate, point_value, "
+            "min_redemption_points, max_redemption_percent, "
+            "earn_on_debt_settlement) "
+            "VALUES (1, true, 0.01, false, 1.000, 1.000, 1, 100.000, true)"
+        )
+        try:
+            cur.execute(valid)
+            conn.commit()
+
+            import psycopg2
+
+            # Singleton CHECK: only id = 1 may exist.
+            with pytest.raises(psycopg2.errors.CheckViolation):
+                cur.execute(valid.replace("VALUES (1,", "VALUES (2,"))
+                conn.commit()
+            conn.rollback()
+
+            # Numeric checks are exercised via UPDATE on the existing row so
+            # the primary key can never mask the violation being tested.
+            def _expect_checkViolation(sql: str) -> None:
+                with pytest.raises(psycopg2.errors.CheckViolation):
+                    cur.execute(sql)
+                    conn.commit()
+                conn.rollback()
+
+            # Negative points rate rejected.
+            _expect_checkViolation(
+                "UPDATE loyalty_settings SET points_rate = -0.01 WHERE id = 1"
+            )
+            # Negative cashback rate rejected.
+            _expect_checkViolation(
+                "UPDATE loyalty_settings SET cashback_rate = -1 WHERE id = 1"
+            )
+            # point_value must be > 0.
+            _expect_checkViolation(
+                "UPDATE loyalty_settings SET point_value = 0 WHERE id = 1"
+            )
+            # Negative minimum redemption rejected.
+            _expect_checkViolation(
+                "UPDATE loyalty_settings SET min_redemption_points = -1 "
+                "WHERE id = 1"
+            )
+            # Redemption cap must stay within (0, 100].
+            _expect_checkViolation(
+                "UPDATE loyalty_settings SET max_redemption_percent = 100.001 "
+                "WHERE id = 1"
+            )
+            _expect_checkViolation(
+                "UPDATE loyalty_settings SET max_redemption_percent = 0 "
+                "WHERE id = 1"
+            )
+            # 0033 reward cap must stay within [0, 100]; 0 parks the
+            # feature and is deliberately VALID (unlike the legacy cap).
+            _expect_checkViolation(
+                "UPDATE loyalty_settings SET max_reward_discount_percent = -1 "
+                "WHERE id = 1"
+            )
+            _expect_checkViolation(
+                "UPDATE loyalty_settings SET max_reward_discount_percent = "
+                "100.001 WHERE id = 1"
+            )
+            cur.execute(
+                "UPDATE loyalty_settings SET max_reward_discount_percent = 0 "
+                "WHERE id = 1"
+            )
+            conn.commit()
+            cur.execute(
+                "UPDATE loyalty_settings SET max_reward_discount_percent = 100 "
+                "WHERE id = 1"
+            )
+            conn.commit()
+
+            # A valid partial update round-trips.
+            cur.execute(
+                "UPDATE loyalty_settings SET points_rate = 0.02 WHERE id = 1"
+            )
+            conn.commit()
+            cur.execute("SELECT points_rate FROM loyalty_settings WHERE id = 1")
+            assert cur.fetchone()[0] == Decimal("0.020000")
+        finally:
+            conn.rollback()
+            cur.execute("DELETE FROM loyalty_settings WHERE id = 1")
+            conn.commit()
+            cur.close()
+            conn.close()
+
+    def test_0033_insert_without_cap_defaults_to_20(self):
+        conn = _get_test_conn()
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "INSERT INTO loyalty_settings (id, points_enabled, points_rate, "
+                "cashback_enabled, cashback_rate, point_value, "
+                "min_redemption_points, max_redemption_percent, "
+                "earn_on_debt_settlement) "
+                "VALUES (1, true, 0.01, false, 1.000, 1.000, 1, 100.000, true)"
+            )
+            conn.commit()
+            cur.execute(
+                "SELECT max_reward_discount_percent "
+                "FROM loyalty_settings WHERE id = 1"
+            )
+            assert cur.fetchone()[0] == Decimal("20.000")
+        finally:
+            conn.rollback()
+            cur.execute("DELETE FROM loyalty_settings WHERE id = 1")
+            conn.commit()
+            cur.close()
+            conn.close()
+
+    def test_0033_downgrade_drops_only_the_reward_cap(self):
+        """0033 is additive: its downgrade removes ONLY its own objects."""
+        result = _run_alembic("downgrade e8f2a4c6d1b9")
+        assert result.returncode == 0, result.stderr
+        try:
+            cols = self._columns("loyalty_settings")
+            assert "max_reward_discount_percent" not in cols, list(cols)
+            # 0032's deprecated points-as-money columns stay untouched.
+            for name in (
+                "point_value",
+                "min_redemption_points",
+                "max_redemption_percent",
+            ):
+                assert name in cols, name
+            checks = self._check_constraints("loyalty_settings")
+            assert (
+                "ck_loyalty_settings_max_reward_discount_percent"
+                not in checks
+            ), checks
+            assert "ck_loyalty_settings_point_value" in checks, checks
+        finally:
+            result = _run_alembic("upgrade head")
+            assert result.returncode == 0, result.stderr
+
+        cols = self._columns("loyalty_settings")
+        assert "max_reward_discount_percent" in cols, list(cols)
+        checks = self._check_constraints("loyalty_settings")
+        assert "ck_loyalty_settings_max_reward_discount_percent" in checks
+
+    def test_loyalty_accounts_shape_constraints_and_unique_customer(self):
+        cols = self._columns("loyalty_accounts")
+        assert cols["customer_id"][1] == "uuid" and cols["customer_id"][2] == "NO"
+        points = cols["points_balance"]
+        assert points[1] == "numeric" and points[3] == 18 and points[4] == 0
+        assert points[2] == "NO"
+        cashback = cols["cashback_balance"]
+        assert cashback[1] == "numeric" and cashback[3] == 18 and cashback[4] == 3
+        assert cashback[2] == "NO"
+
+        indexes = self._indexes("loyalty_accounts")
+        assert "ix_loyalty_accounts_id" in indexes, indexes
+        assert "ix_loyalty_accounts_customer_id" in indexes, indexes
+
+        checks = self._check_constraints("loyalty_accounts")
+        assert "ck_loyalty_accounts_points_balance" in checks, checks
+        assert "ck_loyalty_accounts_cashback_balance" in checks, checks
+
+        import psycopg2
+
+        conn = _get_test_conn()
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "INSERT INTO customers (name) VALUES (%s) RETURNING id",
+                (self.CANARY,),
+            )
+            customer_id = cur.fetchone()[0]
+            cur.execute(
+                "INSERT INTO loyalty_accounts (customer_id) VALUES (%s)",
+                (customer_id,),
+            )
+            conn.commit()
+
+            # One account per customer.
+            with pytest.raises(psycopg2.errors.UniqueViolation):
+                cur.execute(
+                    "INSERT INTO loyalty_accounts (customer_id) VALUES (%s)",
+                    (customer_id,),
+                )
+                conn.commit()
+            conn.rollback()
+
+            # Balances can never go negative.
+            with pytest.raises(psycopg2.errors.CheckViolation):
+                cur.execute(
+                    "INSERT INTO loyalty_accounts "
+                    "(customer_id, points_balance) VALUES (gen_random_uuid(), -1)"
+                )
+                conn.commit()
+            conn.rollback()
+        finally:
+            cur.execute("DELETE FROM loyalty_accounts WHERE customer_id IN "
+                        "(SELECT id FROM customers WHERE name = %s)",
+                        (self.CANARY,))
+            cur.execute(
+                "DELETE FROM customers WHERE name = %s", (self.CANARY,)
+            )
+            conn.commit()
+            cur.close()
+            conn.close()
+
+    def test_ledger_shape_fks_and_constraints(self):
+        cols = self._columns("loyalty_ledger_entries")
+        assert cols["account_id"][1] == "uuid" and cols["account_id"][2] == "NO"
+        assert cols["event_type"][1] == "character varying"
+        assert cols["event_type"][2] == "NO"
+        assert cols["source_event_key"][1] == "character varying"
+        assert cols["source_event_key"][2] == "NO"
+        for name, scale in (
+            ("points_delta", 0),
+            ("balance_after_points", 0),
+            ("cashback_delta", 3),
+            ("balance_after_cashback", 3),
+        ):
+            row = cols[name]
+            assert row[1] == "numeric" and row[2] == "NO", row
+            assert row[3] == 18 and row[4] == scale, row
+        for name in ("sale_id", "return_id", "created_by", "note"):
+            assert cols[name][2] == "YES", f"{name} must be nullable"
+
+        fks = self._foreign_keys("loyalty_ledger_entries")
+        assert fks["account_id"] == ("loyalty_accounts", "CASCADE"), fks
+        assert fks["sale_id"] == ("sales", "RESTRICT"), fks
+        assert fks["return_id"] == ("returns", "RESTRICT"), fks
+        assert fks["created_by"] == ("users", "SET NULL"), fks
+
+        indexes = self._indexes("loyalty_ledger_entries")
+        assert "ix_loyalty_ledger_entries_source_event_key" in indexes
+        assert "ix_loyalty_ledger_entries_account_created" in indexes
+        assert "ix_loyalty_ledger_entries_account_id" in indexes
+        assert "ix_loyalty_ledger_entries_sale_id" in indexes
+        assert "ix_loyalty_ledger_entries_return_id" in indexes
+
+        conn = _get_test_conn()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT indisunique FROM pg_index WHERE indexrelid = "
+            "'ix_loyalty_ledger_entries_source_event_key'::regclass"
+        )
+        assert cur.fetchone()[0] is True, "source_event_key index must be UNIQUE"
+
+        checks = self._check_constraints("loyalty_ledger_entries")
+        for name in (
+            "ck_loyalty_ledger_entries_event_type",
+            "ck_loyalty_ledger_entries_balance_after_points",
+            "ck_loyalty_ledger_entries_balance_after_cashback",
+        ):
+            assert name in checks, f"{name} missing: {checks}"
+        cur.close()
+        conn.close()
+
+    def test_ledger_idempotency_and_event_checks(self):
+        import psycopg2
+
+        conn = _get_test_conn()
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "INSERT INTO customers (name) VALUES (%s) RETURNING id",
+                (self.CANARY,),
+            )
+            customer_id = cur.fetchone()[0]
+            cur.execute(
+                "INSERT INTO loyalty_accounts (customer_id) VALUES (%s) "
+                "RETURNING id",
+                (customer_id,),
+            )
+            account_id = cur.fetchone()[0]
+            conn.commit()
+
+            def insert_entry(key: str, event: str = "sale_earn",
+                             points: int = 10, after: int = 10) -> None:
+                cur.execute(
+                    "INSERT INTO loyalty_ledger_entries "
+                    "(account_id, event_type, points_delta, "
+                    "balance_after_points, source_event_key) "
+                    "VALUES (%s, %s, %s, %s, %s)",
+                    (account_id, event, points, after, key),
+                )
+                conn.commit()
+
+            insert_entry("sale-earn:canary-1")
+
+            # One logical event = one entry: a duplicate key is rejected.
+            with pytest.raises(psycopg2.errors.UniqueViolation):
+                insert_entry("sale-earn:canary-1")
+            conn.rollback()
+
+            # Unknown event types cannot land in the append-only history.
+            with pytest.raises(psycopg2.errors.CheckViolation):
+                insert_entry("typo:canary", event="sale_earn_typo")
+            conn.rollback()
+
+            # Balance snapshots can never go negative.
+            with pytest.raises(psycopg2.errors.CheckViolation):
+                insert_entry(
+                    "adjustment:canary", event="adjustment",
+                    points=-5, after=-5,
+                )
+            conn.rollback()
+
+            # Negative deltas are legitimate (redeem / clawback).
+            insert_entry(
+                "redeem:canary", event="redeem", points=-5, after=5
+            )
+        finally:
+            cur.execute(
+                "DELETE FROM loyalty_accounts WHERE customer_id IN "
+                "(SELECT id FROM customers WHERE name = %s)",
+                (self.CANARY,),
+            )
+            cur.execute(
+                "DELETE FROM customers WHERE name = %s", (self.CANARY,)
+            )
+            conn.commit()
+            cur.close()
+            conn.close()
+
+    def test_sales_loyalty_columns_are_nullable(self):
+        cols = self._columns("sales")
+        for name in (
+            "loyalty_points_earned",
+            "loyalty_cashback_earned",
+            "loyalty_points_redeemed",
+            "loyalty_redeemed_value",
+            "amount_due",
+        ):
+            assert name in cols, f"sales.{name} missing"
+            row = cols[name]
+            assert row[1] == "numeric", row
+            assert row[2] == "YES", f"sales.{name} must be nullable: {row}"
+
+        checks = self._check_constraints("sales")
+        for name in (
+            "ck_sales_loyalty_points_earned",
+            "ck_sales_loyalty_cashback_earned",
+            "ck_sales_loyalty_points_redeemed",
+            "ck_sales_loyalty_redeemed_value",
+            "ck_sales_amount_due",
+        ):
+            assert name in checks, f"{name} missing: {checks}"
+
+    def test_legacy_sale_row_stays_null_and_negative_rejected(self):
+        import psycopg2
+
+        conn = _get_test_conn()
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "INSERT INTO sales (invoice_number, subtotal, total) "
+                "VALUES (%s, 100.000, 100.000) RETURNING id, "
+                "loyalty_points_earned, amount_due",
+                (f"{self.CANARY}-legacy",),
+            )
+            row = cur.fetchone()
+            assert row[1] is None, f"legacy sale must keep NULL summary: {row}"
+            assert row[2] is None, f"legacy sale must keep NULL amount_due: {row}"
+
+            with pytest.raises(psycopg2.errors.CheckViolation):
+                cur.execute(
+                    "UPDATE sales SET loyalty_points_earned = -1 WHERE id = %s",
+                    (row[0],),
+                )
+                conn.commit()
+            conn.rollback()
+
+            cur.execute("DELETE FROM sales WHERE id = %s", (row[0],))
+            conn.commit()
+        finally:
+            cur.execute(
+                "DELETE FROM sales WHERE invoice_number LIKE %s",
+                (f"{self.CANARY}%%",),
+            )
+            conn.commit()
+            cur.close()
+            conn.close()
+
+    @staticmethod
+    def _sales_money_shape() -> dict:
+        conn = _get_test_conn()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT attname, atttypid::regtype::text, attnotnull
+            FROM pg_attribute att
+            JOIN pg_class c ON c.oid = att.attrelid
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = 'public'
+              AND c.relname = 'sales'
+              AND att.attnum > 0
+              AND NOT att.attisdropped
+              AND att.attname IN ('subtotal', 'discount', 'total', 'paid', 'change')
+            """
+        )
+        shape = {row[0]: row[1:] for row in cur.fetchall()}
+        cur.close()
+        conn.close()
+        return shape
+
+    def test_0032_does_not_touch_sales_money_columns_downgrade(self):
+        """The POS money shape is identical on both sides of 0032."""
+        result = _run_alembic("upgrade head")
+        assert result.returncode == 0, result.stderr
+        at_head = self._sales_money_shape()
+
+        result = _run_alembic(f"downgrade {self.PREVIOUS_REV}")
+        assert result.returncode == 0, result.stderr
+        try:
+            at_previous = self._sales_money_shape()
+        finally:
+            result = _run_alembic("upgrade head")
+            assert result.returncode == 0, result.stderr
+
+        assert at_head == at_previous, (at_head, at_previous)
+
+    def test_upgrade_downgrade_upgrade(self):
+        result = _run_alembic(f"downgrade {self.PREVIOUS_REV}")
+        assert result.returncode == 0, result.stderr
+        try:
+            conn = _get_test_conn()
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT tablename FROM pg_tables "
+                "WHERE schemaname = 'public' AND tablename LIKE 'loyalty%%'"
+            )
+            assert cur.fetchall() == [], "downgrade must drop loyalty tables"
+            cur.close()
+            conn.close()
+
+            cols = self._columns("sales")
+            for name in (
+                "loyalty_points_earned",
+                "loyalty_cashback_earned",
+                "loyalty_points_redeemed",
+                "loyalty_redeemed_value",
+                "amount_due",
+            ):
+                assert name not in cols, f"downgrade must drop sales.{name}"
+        finally:
+            result = _run_alembic("upgrade head")
+            assert result.returncode == 0, result.stderr
+
+        conn = _get_test_conn()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT tablename FROM pg_tables "
+            "WHERE schemaname = 'public' AND tablename LIKE 'loyalty%%'"
+        )
+        tables = {row[0] for row in cur.fetchall()}
+        cur.close()
+        conn.close()
+        assert tables == {
+            "loyalty_settings",
+            "loyalty_accounts",
+            "loyalty_ledger_entries",
+        }, tables
+
+        cols = self._columns("sales")
+        assert "loyalty_points_earned" in cols
+        assert "amount_due" in cols

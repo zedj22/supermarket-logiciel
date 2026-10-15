@@ -763,3 +763,46 @@ final suppliersReportProvider = StateNotifierProvider<SuppliersReportController,
   });
   return controller;
 });
+
+// --- Loyalty (Loyalty Phase F) ----------------------------------------------
+
+class LoyaltyController extends ReportTabController<LoyaltyReport> {
+  LoyaltyController(super.dio, super.locale, this._readFilter);
+
+  final _FilterReader _readFilter;
+  int page = 1;
+
+  @override
+  String get endpoint => 'loyalty';
+
+  @override
+  Map<String, dynamic> params() => <String, dynamic>{
+        ..._readFilter().rangeParams(),
+        'page': page,
+        'page_size': kReportPageSize,
+      };
+
+  @override
+  LoyaltyReport parse(Map<String, dynamic> json) =>
+      LoyaltyReport.fromJson(json);
+
+  void setPage(int value) {
+    page = value < 1 ? 1 : value;
+    load();
+  }
+}
+
+final loyaltyProvider =
+    StateNotifierProvider<LoyaltyController, ReportTabState<LoyaltyReport>>(
+        (ref) {
+  final dio = ref.watch(apiClientProvider).dio;
+  final controller = LoyaltyController(
+    dio,
+    () => ref.read(localeProvider).flutterLocale.languageCode,
+    () => ref.read(reportFilterProvider),
+  );
+  ref.listen(reportFilterProvider, (previous, next) {
+    if (previous != next && controller.initialized) controller.load();
+  });
+  return controller;
+});

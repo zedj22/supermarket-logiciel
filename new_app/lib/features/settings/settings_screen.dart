@@ -6,6 +6,8 @@ import '../../l10n/locale_provider.dart';
 import '../../theme/app_theme_mode.dart';
 import '../../theme/theme_provider.dart';
 import '../auth/permission_helpers.dart';
+import '../loyalty/loyalty_models.dart';
+import '../loyalty/loyalty_providers.dart';
 import 'backup_models.dart';
 import 'backup_provider.dart';
 import 'settings_models.dart';
@@ -128,6 +130,8 @@ class SettingsScreen extends ConsumerWidget {
               const _StoreSettingsSection(),
               const SizedBox(height: 16),
               const _CompanySettingsSection(),
+              const SizedBox(height: 16),
+              const _LoyaltySettingsSection(),
             ],
             if (canBackup) ...[
               const SizedBox(height: 16),
@@ -908,6 +912,317 @@ class _BackupSectionState extends ConsumerState<_BackupSection> {
                 child: CircularProgressIndicator(strokeWidth: 2),
               )
             : Text(AppStrings.t('backup_restore', loc)),
+      ),
+    );
+  }
+}
+
+/// Phase E — loyalty rules (`GET` + `PUT /api/v1/loyalty/settings`).
+///
+/// Same lifecycle contract as the store section: loaded lazily from
+/// `initState`, re-seeded whenever the server snapshot changes (a
+/// successful save updates it from the response, a failed one leaves the
+/// operator's typing alone), and `saved` is only ever reported from
+/// `save()`'s `true`. Rendered only for `settings_manage` — the server
+/// rejects the `PUT` for anyone else.
+class _LoyaltySettingsSection extends ConsumerStatefulWidget {
+  const _LoyaltySettingsSection();
+
+  @override
+  ConsumerState<_LoyaltySettingsSection> createState() =>
+      _LoyaltySettingsSectionState();
+}
+
+class _LoyaltySettingsSectionState
+    extends ConsumerState<_LoyaltySettingsSection> {
+  late final TextEditingController _pointsRate;
+  late final TextEditingController _cashbackRate;
+  late final TextEditingController _maxRewardDiscount;
+
+  bool _pointsEnabled = false;
+  bool _cashbackEnabled = false;
+  bool _earnOnDebt = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _pointsRate = TextEditingController();
+    _cashbackRate = TextEditingController();
+    _maxRewardDiscount = TextEditingController();
+    final current = ref.read(loyaltySettingsProvider).settings;
+    if (current != null) _seedFrom(current);
+    // Deferred out of initState: the provider must not be read while the
+    // widget tree is still building.
+    Future.microtask(_loadIfNeeded);
+  }
+
+  void _loadIfNeeded() {
+    if (!mounted) return;
+    final state = ref.read(loyaltySettingsProvider);
+    if (state.settings == null &&
+        state.status != LoyaltySettingsStatus.loading &&
+        state.status != LoyaltySettingsStatus.saving) {
+      ref.read(loyaltySettingsProvider.notifier).load();
+    }
+  }
+
+  @override
+  void dispose() {
+    _pointsRate.dispose();
+    _cashbackRate.dispose();
+    _maxRewardDiscount.dispose();
+    super.dispose();
+  }
+
+  static String _numText(double value) =>
+      value == value.roundToDouble() ? value.toInt().toString() : '$value';
+
+  void _seedFrom(LoyaltySettings settings) {
+    _pointsRate.text = _numText(settings.pointsRate);
+    _cashbackRate.text = _numText(settings.cashbackRate);
+    _maxRewardDiscount.text = _numText(settings.maxRewardDiscountPercent);
+    _pointsEnabled = settings.pointsEnabled;
+    _cashbackEnabled = settings.cashbackEnabled;
+    _earnOnDebt = settings.earnOnDebtSettlement;
+  }
+
+  LoyaltySettings get _draft => LoyaltySettings(
+        pointsEnabled: _pointsEnabled,
+        pointsRate: double.tryParse(_pointsRate.text.trim()) ?? -1,
+        cashbackEnabled: _cashbackEnabled,
+        cashbackRate: double.tryParse(_cashbackRate.text.trim()) ?? -1,
+        maxRewardDiscountPercent:
+            double.tryParse(_maxRewardDiscount.text.trim()) ?? -1,
+        earnOnDebtSettlement: _earnOnDebt,
+      );
+
+  /// Server field constraints mirrored client-side so the Save button is
+  /// never able to fire an obviously invalid body (0 parks reward
+  /// redemption, 100 allows it over the whole amount due).
+  bool _valid(LoyaltySettings draft) =>
+      draft.pointsRate >= 0 &&
+      draft.cashbackRate >= 0 &&
+      draft.maxRewardDiscountPercent >= 0 &&
+      draft.maxRewardDiscountPercent <= 100;
+
+  Future<void> _save() async {
+    final draft = _draft;
+    if (!_valid(draft)) return;
+    final ok = await ref.read(loyaltySettingsProvider.notifier).save(draft);
+    if (!ok || !mounted) return;
+    final loc = ref.read(localeProvider).flutterLocale.languageCode;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(AppStrings.t('settings_saved', loc))),
+    );
+  }
+
+  String? _fieldError(TextEditingController controller, {double? max}) {
+    final text = controller.text.trim();
+    final value = double.tryParse(text);
+    if (text.isEmpty || value == null) return AppStrings.t('validation_error', loc());
+    if (value < 0) return AppStrings.t('validation_error', loc());
+    if (max != null && value > max) return AppStrings.t('validation_error', loc());
+    return null;
+  }
+
+  String loc() => ref.read(localeProvider).flutterLocale.languageCode;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final loc = ref.watch(localeProvider).flutterLocale.languageCode;
+    final state = ref.watch(loyaltySettingsProvider);
+
+    // Re-seed on a fresh snapshot (first load or successful save); a
+    // FAILED save never replaces `settings`, so typing survives.
+    ref.listen<LoyaltySettingsState>(loyaltySettingsProvider, (prev, next) {
+      final settings = next.settings;
+      if (settings != null && settings != prev?.settings) {
+        setState(() => _seedFrom(settings));
+      }
+    });
+
+    if (state.settings == null) {
+      if (state.hasError) return _loadError(theme, loc, state.errorMessage);
+      return Card(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Center(
+            key: const Key('settings-loyalty-loading'),
+            child: const CircularProgressIndicator(),
+          ),
+        ),
+      );
+    }
+
+    final settings = state.settings!;
+    final draft = _draft;
+    final hasChanges = draft != settings;
+    final valid = _valid(draft);
+
+    return Card(
+      // Re-keys the subtree when the server snapshot changes so seeded
+      // fields re-initialise from freshly saved values.
+      key: ValueKey<LoyaltySettings?>(settings),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (state.hasError) _errorBanner(theme, loc, state),
+            Text(
+              AppStrings.t('loyalty_settings', loc),
+              key: const Key('settings-loyalty-title'),
+              style: theme.textTheme.titleMedium,
+            ),
+            const SizedBox(height: 4),
+            SwitchListTile(
+              key: const Key('settings-loyalty-points-enabled'),
+              contentPadding: EdgeInsets.zero,
+              title: Text(AppStrings.t('loyalty_settings_points_enabled', loc)),
+              value: _pointsEnabled,
+              onChanged: (value) => setState(() => _pointsEnabled = value),
+            ),
+            SwitchListTile(
+              key: const Key('settings-loyalty-cashback-enabled'),
+              contentPadding: EdgeInsets.zero,
+              title:
+                  Text(AppStrings.t('loyalty_settings_cashback_enabled', loc)),
+              value: _cashbackEnabled,
+              onChanged: (value) => setState(() => _cashbackEnabled = value),
+            ),
+            SwitchListTile(
+              key: const Key('settings-loyalty-earn-debt'),
+              contentPadding: EdgeInsets.zero,
+              title: Text(AppStrings.t('loyalty_settings_earn_on_debt', loc)),
+              value: _earnOnDebt,
+              onChanged: (value) => setState(() => _earnOnDebt = value),
+            ),
+            const SizedBox(height: 12),
+            _numField(
+              key: const Key('settings-loyalty-points-rate'),
+              controller: _pointsRate,
+              label: AppStrings.t('loyalty_settings_points_rate', loc),
+            ),
+            const SizedBox(height: 12),
+            _numField(
+              key: const Key('settings-loyalty-cashback-rate'),
+              controller: _cashbackRate,
+              label: AppStrings.t('loyalty_settings_cashback_rate', loc),
+            ),
+            const SizedBox(height: 12),
+            _numField(
+              key: const Key('settings-loyalty-max-reward-discount'),
+              controller: _maxRewardDiscount,
+              label: AppStrings.t(
+                'loyalty_settings_max_reward_discount',
+                loc,
+              ),
+              max: 100,
+            ),
+            const SizedBox(height: 20),
+            Row(
+              children: [
+                FilledButton(
+                  key: const Key('settings-loyalty-save-button'),
+                  onPressed: state.isSaving || !hasChanges || !valid
+                      ? null
+                      : _save,
+                  child: state.isSaving
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : Text(AppStrings.t('save', loc)),
+                ),
+                const SizedBox(width: 12),
+                OutlinedButton(
+                  key: const Key('settings-loyalty-refresh-button'),
+                  onPressed: state.isSaving
+                      ? null
+                      : () => ref.read(loyaltySettingsProvider.notifier).load(),
+                  child: Text(AppStrings.t('refresh', loc)),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _numField({
+    required Key key,
+    required TextEditingController controller,
+    required String label,
+    double? max,
+  }) {
+    return TextFormField(
+      key: key,
+      controller: controller,
+      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+      decoration: InputDecoration(
+        labelText: label,
+        errorText: _fieldError(controller, max: max),
+        border: const OutlineInputBorder(),
+      ),
+      onChanged: (_) => setState(() {}),
+    );
+  }
+
+  Widget _errorBanner(ThemeData theme, String loc, LoyaltySettingsState state) {
+    final headline =
+        state.failedDuringSave ? 'settings_save_failed' : 'settings_load_failed';
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Row(
+        key: const Key('settings-loyalty-error-banner'),
+        children: [
+          Icon(Icons.error_outline, color: theme.colorScheme.error),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              '${AppStrings.t(headline, loc)}'
+              '${state.errorMessage == null ? '' : ' — ${state.errorMessage}'}',
+              style: theme.textTheme.bodyMedium
+                  ?.copyWith(color: theme.colorScheme.error),
+            ),
+          ),
+          IconButton(
+            key: const Key('settings-loyalty-error-dismiss'),
+            icon: const Icon(Icons.close),
+            onPressed: () =>
+                ref.read(loyaltySettingsProvider.notifier).clearError(),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _loadError(ThemeData theme, String loc, String? detail) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          key: const Key('settings-loyalty-load-error'),
+          children: [
+            Text(
+              AppStrings.t('settings_load_failed', loc),
+              style: theme.textTheme.titleMedium,
+            ),
+            if (detail != null) ...[
+              const SizedBox(height: 8),
+              Text(detail, style: theme.textTheme.bodyMedium),
+            ],
+            const SizedBox(height: 16),
+            FilledButton(
+              onPressed: () =>
+                  ref.read(loyaltySettingsProvider.notifier).load(),
+              child: Text(AppStrings.t('retry', loc)),
+            ),
+          ],
+        ),
       ),
     );
   }

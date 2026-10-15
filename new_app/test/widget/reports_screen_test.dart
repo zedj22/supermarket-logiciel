@@ -369,7 +369,7 @@ void main() {
       expect(find.byKey(const Key('reports-date-from')), findsOneWidget);
       expect(find.byKey(const Key('reports-date-to')), findsOneWidget);
 
-      // All ten surfaces (§8 R1–R9 + R13).
+      // All eleven surfaces (§8 R1–R9 + R13 + Loyalty Phase F).
       for (final tab in [
         'financial',
         'products',
@@ -381,6 +381,7 @@ void main() {
         'voided',
         'sales',
         'suppliers',
+        'loyalty',
       ]) {
         expect(find.byKey(Key('reports-tab-$tab')), findsOneWidget);
       }

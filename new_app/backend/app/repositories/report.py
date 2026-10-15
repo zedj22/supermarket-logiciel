@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import date, datetime, time, timedelta, timezone
-from decimal import Decimal
+from decimal import ROUND_FLOOR, Decimal
 from typing import Any
 
 from sqlalchemy import and_, case, exists, extract, func, literal, or_, select, union_all
@@ -28,10 +28,12 @@ from sqlalchemy.orm import Session
 from sqlalchemy.sql.functions import FunctionElement
 
 from app.domain.unit_conversions import to_decimal
+from app.domain.valuation import quantize_money
 from app.models.catalog import Category, Product
 from app.models.debt import DebtLedgerEntry
 from app.models.enums import PaymentMethod, SaleStatus
 from app.models.expense import Expense
+from app.models.loyalty import LoyaltyAccount, LoyaltyLedgerEntry
 from app.models.party import Customer, Supplier
 from app.models.purchase import Purchase
 from app.models.return_doc import Return, ReturnLine
@@ -1377,6 +1379,338 @@ class ReportRepository:
             "supplier_paid": to_decimal(supplier_paid or 0),
             "suppliers_with_balance": suppliers_with_balance,
         }
+
+    # ------------------------------------------------------------------
+    # Loyalty report (Loyalty Phase F)
+    # ------------------------------------------------------------------
+
+    _CLAWBACK_EVENTS = ("return_clawback", "void_clawback")
+
+    @staticmethod
+    def _loyalty_window(
+        date_from: date, date_to: date, device_id: str | None = None
+    ) -> list:
+        """Ledger window on ``created_at`` (same rule as §6.1).
+
+        A device filter keeps only entries attached to a sale of that
+        device; ledger rows without a sale (debt settlement, manual
+        adjustment, expiry) carry no device and are excluded by it.
+        """
+        conds = list(_window(LoyaltyLedgerEntry.created_at, date_from, date_to))
+        if device_id:
+            conds.append(
+                LoyaltyLedgerEntry.sale_id.in_(
+                    select(Sale.id).where(Sale.device_id == device_id)
+                )
+            )
+        return conds
+
+    def loyalty_block(
+        self,
+        *,
+        date_from: date,
+        date_to: date,
+        device_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Window aggregates over the ledger + the current balance snapshot.
+
+        Nothing here touches the §5.1 sales formulas: gross sales are
+        returned untouched so a reader can separate turnover from reward
+        value instead of blending them.
+        """
+        conds = self._loyalty_window(date_from, date_to, device_id)
+        events: dict[str, tuple[int, Decimal, Decimal]] = {}
+        for event_type, count, points, cashback in self.db.execute(
+            select(
+                LoyaltyLedgerEntry.event_type,
+                func.count(LoyaltyLedgerEntry.id),
+                func.coalesce(func.sum(LoyaltyLedgerEntry.points_delta), 0),
+                func.coalesce(func.sum(LoyaltyLedgerEntry.cashback_delta), 0),
+            )
+            .where(*conds)
+            .group_by(LoyaltyLedgerEntry.event_type)
+        ).all():
+            events[str(event_type)] = (
+                int(count or 0),
+                to_decimal(points or 0),
+                to_decimal(cashback or 0),
+            )
+
+        # Cash value taken off the invoices in the window: one `redeem`
+        # entry per sale, so summing the sales' stored value cannot double
+        # count.
+        redemption_value = to_decimal(
+            self.db.scalar(
+                select(func.coalesce(func.sum(Sale.loyalty_redeemed_value), 0))
+                .select_from(LoyaltyLedgerEntry)
+                .join(Sale, Sale.id == LoyaltyLedgerEntry.sale_id)
+                .where(*conds, LoyaltyLedgerEntry.event_type == "redeem")
+            )
+            or 0
+        )
+
+        # Restored redemptions (return/void give the points back): the
+        # value follows the STORED redeemed value of each sale, exactly as
+        # the posting code derives it, so a settings change never rewrites
+        # history.
+        restore_points = Decimal("0")
+        restore_value = Decimal("0")
+        restore_entries = 0
+        for points_delta, redeemed_value, redeemed_points in self.db.execute(
+            select(
+                LoyaltyLedgerEntry.points_delta,
+                Sale.loyalty_redeemed_value,
+                Sale.loyalty_points_redeemed,
+            )
+            .join(Sale, Sale.id == LoyaltyLedgerEntry.sale_id)
+            .where(
+                *conds,
+                or_(
+                    LoyaltyLedgerEntry.source_event_key.like("return_redemption:%"),
+                    LoyaltyLedgerEntry.source_event_key.like("void_redemption:%"),
+                ),
+            )
+        ).all():
+            restore_entries += 1
+            delta = to_decimal(points_delta or 0)
+            restore_points += delta
+            redeemed = to_decimal(redeemed_points or 0)
+            if delta > 0 and redeemed > 0:
+                restore_value += quantize_money(
+                    to_decimal(redeemed_value or 0) * delta / redeemed
+                )
+
+        accounts, points_balance, cashback_balance = self.db.execute(
+            select(
+                func.count(LoyaltyAccount.id),
+                func.coalesce(func.sum(LoyaltyAccount.points_balance), 0),
+                func.coalesce(func.sum(LoyaltyAccount.cashback_balance), 0),
+            ).where(
+                or_(
+                    LoyaltyAccount.points_balance > 0,
+                    LoyaltyAccount.cashback_balance > 0,
+                )
+            )
+        ).one()
+
+        # Manual admin adjustments only — the `adjustment` event type also
+        # carries the return/void restorations, which are reported above.
+        adjustment_points, adjustment_cashback = self.db.execute(
+            select(
+                func.coalesce(func.sum(LoyaltyLedgerEntry.points_delta), 0),
+                func.coalesce(func.sum(LoyaltyLedgerEntry.cashback_delta), 0),
+            ).where(
+                *conds,
+                LoyaltyLedgerEntry.source_event_key.like("admin_adjust:%"),
+            )
+        ).one()
+
+        # Sales context — completed sales only, identical window and status
+        # rule to §5.1 so the two reports can never disagree.
+        sales_where: list = [
+            Sale.status == SaleStatus.COMPLETED.value,
+            *_window(Sale.sale_date, date_from, date_to),
+        ]
+        if device_id:
+            sales_where.append(Sale.device_id == device_id)
+        gross, after_discounts, invoices = self.db.execute(
+            select(
+                func.coalesce(func.sum(Sale.subtotal), 0),
+                func.coalesce(func.sum(Sale.total), 0),
+                func.count(Sale.id),
+            ).where(*sales_where)
+        ).one()
+
+        return {
+            "events": events,
+            "redemption_value": redemption_value,
+            "restore_points": restore_points,
+            "restore_value": restore_value,
+            "restore_entries": restore_entries,
+            "adjustment_points": to_decimal(adjustment_points or 0),
+            "adjustment_cashback": to_decimal(adjustment_cashback or 0),
+            "accounts_with_balance": int(accounts or 0),
+            "outstanding_points": to_decimal(points_balance or 0),
+            "outstanding_cashback": to_decimal(cashback_balance or 0),
+            "sales_gross": to_decimal(gross or 0),
+            "sales_after_discounts": to_decimal(after_discounts or 0),
+            "invoice_count": int(invoices or 0),
+        }
+
+    @staticmethod
+    def _floor_money(value: Decimal) -> Decimal:
+        """Floor to the money quantum (0.001) — never round a clawback UP."""
+        return value.quantize(Decimal("0.001"), rounding=ROUND_FLOOR)
+
+    def loyalty_shortfalls(
+        self,
+        *,
+        date_from: date,
+        date_to: date,
+        device_id: str | None = None,
+    ) -> tuple[Decimal, Decimal]:
+        """Rewards a return/void reversal could not recover (Phase D floor).
+
+        A clawback is floored at the balance the customer still had, so
+        rewards already spent are recorded as a shortfall note instead of a
+        negative balance.  For every clawback entry posted inside the
+        window this recomputes the entitlement the posting code derived
+        from the sale's stored loyalty columns (pro-rata for returns, full
+        for voids, minus what earlier reversals of the same sale already
+        recovered) and compares it with what the ledger actually recorded.
+        Per sale only the standing shortfall is counted, so one sale can
+        never contribute twice inside the same window.
+        """
+        conds = [
+            *_window(LoyaltyLedgerEntry.created_at, date_from, date_to),
+            LoyaltyLedgerEntry.event_type.in_(self._CLAWBACK_EVENTS),
+        ]
+        if device_id:
+            conds.append(
+                LoyaltyLedgerEntry.sale_id.in_(
+                    select(Sale.id).where(Sale.device_id == device_id)
+                )
+            )
+        window_rows = self.db.execute(
+            select(LoyaltyLedgerEntry, Sale)
+            .join(Sale, Sale.id == LoyaltyLedgerEntry.sale_id)
+            .where(*conds)
+        ).all()
+        if not window_rows:
+            return Decimal("0"), Decimal("0")
+
+        sales = {sale.id: sale for _entry, sale in window_rows}
+        in_window = {entry.id for entry, _sale in window_rows}
+
+        claw_rows = self.db.execute(
+            select(
+                LoyaltyLedgerEntry.sale_id,
+                LoyaltyLedgerEntry.event_type,
+                LoyaltyLedgerEntry.return_id,
+                LoyaltyLedgerEntry.points_delta,
+                LoyaltyLedgerEntry.cashback_delta,
+                LoyaltyLedgerEntry.id,
+            )
+            .where(
+                LoyaltyLedgerEntry.sale_id.in_(list(sales)),
+                LoyaltyLedgerEntry.event_type.in_(self._CLAWBACK_EVENTS),
+            )
+            .order_by(
+                LoyaltyLedgerEntry.sale_id,
+                LoyaltyLedgerEntry.created_at,
+                LoyaltyLedgerEntry.id,
+            )
+        ).all()
+
+        # Cumulative refunded value per return, in creation order — the
+        # exact fraction the posting code used for each reversal.
+        cumulative: dict[uuid.UUID, dict[uuid.UUID, Decimal]] = {}
+        running: dict[uuid.UUID, Decimal] = {}
+        for ret_id, ret_sale_id, ret_total in self.db.execute(
+            select(Return.id, Return.sale_id, Return.total)
+            .where(Return.sale_id.in_(list(sales)))
+            .order_by(Return.sale_id, Return.created_at, Return.id)
+        ).all():
+            new_total = running.get(ret_sale_id, Decimal("0")) + to_decimal(
+                ret_total or 0
+            )
+            running[ret_sale_id] = new_total
+            cumulative.setdefault(ret_sale_id, {})[ret_id] = new_total
+
+        claws: dict[uuid.UUID, list] = {}
+        for row in claw_rows:
+            claws.setdefault(row[0], []).append(row)
+
+        shortfall_points = Decimal("0")
+        shortfall_cashback = Decimal("0")
+        for sale_id, entries in claws.items():
+            sale = sales[sale_id]
+            earned_points = to_decimal(sale.loyalty_points_earned or 0)
+            earned_cashback = to_decimal(sale.loyalty_cashback_earned or 0)
+            sale_total = to_decimal(sale.total)
+            recovered_points = Decimal("0")
+            recovered_cashback = Decimal("0")
+            standing_points = Decimal("0")
+            standing_cashback = Decimal("0")
+            for _sid, event_type, return_id, pdelta, cdelta, entry_id in entries:
+                spent_points = -to_decimal(pdelta or 0)
+                spent_cashback = -to_decimal(cdelta or 0)
+                if event_type == "return_clawback":
+                    returned = cumulative.get(sale_id, {}).get(
+                        return_id, Decimal("0")
+                    )
+                    fraction = returned / sale_total if sale_total > 0 else Decimal("0")
+                    if fraction > 1:
+                        fraction = Decimal("1")
+                    due_points = (earned_points * fraction).to_integral_value(
+                        rounding=ROUND_FLOOR
+                    )
+                    due_cashback = self._floor_money(earned_cashback * fraction)
+                else:
+                    due_points = earned_points
+                    due_cashback = earned_cashback
+                due_points = max(Decimal("0"), due_points - recovered_points)
+                due_cashback = max(Decimal("0"), due_cashback - recovered_cashback)
+                if entry_id in in_window:
+                    standing_points = max(standing_points, due_points - spent_points)
+                    standing_cashback = max(
+                        standing_cashback, due_cashback - spent_cashback
+                    )
+                recovered_points += spent_points
+                recovered_cashback += spent_cashback
+            shortfall_points += standing_points
+            shortfall_cashback += standing_cashback
+        return shortfall_points, shortfall_cashback
+
+    def loyalty_ledger_rows(
+        self,
+        *,
+        date_from: date,
+        date_to: date,
+        device_id: str | None = None,
+        page: int = 1,
+        page_size: int = 100,
+    ) -> tuple[list[dict[str, Any]], int]:
+        """Paginated ledger history with customer + invoice references.
+
+        Ordering mirrors ``LoyaltyEngine.history`` (``created_at DESC,
+        id DESC``) so a report page and a customer's history never disagree
+        about which entry is newest.
+        """
+        conds = self._loyalty_window(date_from, date_to, device_id)
+        total = int(
+            self.db.scalar(select(func.count(LoyaltyLedgerEntry.id)).where(*conds))
+            or 0
+        )
+        stmt = (
+            select(
+                LoyaltyLedgerEntry,
+                LoyaltyAccount.customer_id,
+                Customer.name,
+                Sale.invoice_number,
+            )
+            .join(LoyaltyAccount, LoyaltyAccount.id == LoyaltyLedgerEntry.account_id)
+            .join(Customer, Customer.id == LoyaltyAccount.customer_id)
+            .outerjoin(Sale, Sale.id == LoyaltyLedgerEntry.sale_id)
+            .where(*conds)
+            .order_by(
+                LoyaltyLedgerEntry.created_at.desc(), LoyaltyLedgerEntry.id.desc()
+            )
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+        rows = [
+            {
+                "entry": entry,
+                "customer_id": customer_id,
+                "customer_name": customer_name,
+                "invoice_number": invoice_number,
+            }
+            for entry, customer_id, customer_name, invoice_number in self.db.execute(
+                stmt
+            ).all()
+        ]
+        return rows, total
 
     # ------------------------------------------------------------------
     # Snapshots (§5.7 / §7)

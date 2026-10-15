@@ -2,6 +2,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/strings.dart';
+import '../../core/widgets/adaptive_title_row.dart';
 import '../../l10n/locale_provider.dart';
 import '../auth/auth_models.dart';
 import '../auth/auth_provider.dart';
@@ -71,13 +72,12 @@ class _UsersScreenState extends ConsumerState<UsersScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Text(
-                AppStrings.t('user_list', loc),
-                style: theme.textTheme.headlineSmall,
-              ),
-              const Spacer(),
+          AdaptiveTitleRow(
+            title: Text(
+              AppStrings.t('user_list', loc),
+              style: theme.textTheme.headlineSmall,
+            ),
+            actions: [
               ElevatedButton.icon(
                 onPressed: () => _showCreateDialog(context),
                 icon: const Icon(Icons.person_add),

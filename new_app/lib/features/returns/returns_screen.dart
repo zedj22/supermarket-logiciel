@@ -11,6 +11,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/strings.dart';
+import '../../core/widgets/adaptive_title_row.dart';
 import '../../l10n/locale_provider.dart';
 import '../auth/permission_helpers.dart';
 import 'return_detail_dialog.dart';
@@ -165,21 +166,19 @@ class _ReturnsScreenState extends ConsumerState<ReturnsScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Text(
-                AppStrings.t('returns_history', loc),
-                key: const Key('returns-title'),
-                style: theme.textTheme.headlineSmall,
-              ),
-              const Spacer(),
+          AdaptiveTitleRow(
+            title: Text(
+              AppStrings.t('returns_history', loc),
+              key: const Key('returns-title'),
+              style: theme.textTheme.headlineSmall,
+            ),
+            actions: [
               OutlinedButton.icon(
                 key: const Key('returns-return-products'),
                 onPressed: _returnProducts,
                 icon: const Icon(Icons.undo, size: 18),
                 label: Text(AppStrings.t('return_products', loc)),
               ),
-              const SizedBox(width: 8),
               IconButton(
                 key: const Key('returns-refresh'),
                 tooltip: AppStrings.t('refresh', loc),
@@ -190,9 +189,12 @@ class _ReturnsScreenState extends ConsumerState<ReturnsScreen> {
             ],
           ),
           const SizedBox(height: 16),
-          Row(
-            children: [
-              SizedBox(
+          // Wide windows keep the original single-row filter bar; tighter
+          // windows wrap search / reason / count instead of overflowing
+          // ("RenderFlex overflowed by 139 pixels" at an 800px window).
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final searchField = SizedBox(
                 width: 280,
                 child: TextField(
                   key: const Key('returns-filter-invoice'),
@@ -209,9 +211,8 @@ class _ReturnsScreenState extends ConsumerState<ReturnsScreen> {
                       .read(returnsProvider.notifier)
                       .setInvoiceNumber(value),
                 ),
-              ),
-              const SizedBox(width: 12),
-              SizedBox(
+              );
+              final reasonFilter = SizedBox(
                 width: 240,
                 child: DropdownButtonFormField<String>(
                   key: const Key('returns-filter-reason'),
@@ -243,14 +244,31 @@ class _ReturnsScreenState extends ConsumerState<ReturnsScreen> {
                       .read(returnsProvider.notifier)
                       .setReason(value ?? ''),
                 ),
-              ),
-              const SizedBox(width: 12),
-              Text(
+              );
+              final countText = Text(
                 '${AppStrings.t('total', loc)}: ${state.total}',
                 key: const Key('returns-total-count'),
                 style: theme.textTheme.bodySmall,
-              ),
-            ],
+              );
+
+              if (constraints.maxWidth >= 840) {
+                return Row(
+                  children: [
+                    searchField,
+                    const SizedBox(width: 12),
+                    reasonFilter,
+                    const SizedBox(width: 12),
+                    countText,
+                  ],
+                );
+              }
+              return Wrap(
+                spacing: 12,
+                runSpacing: 8,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [searchField, reasonFilter, countText],
+              );
+            },
           ),
           const SizedBox(height: 8),
           Expanded(child: _buildList(theme, loc, state)),

@@ -160,6 +160,31 @@ const _phase14Keys = [
   'report_invalid_range',
   'report_range_too_wide',
   'report_sort_invalid',
+  // Loyalty Phase F — loyalty report (tab, KPIs, sections, table headers)
+  'report_loyalty',
+  'loyalty_settlement_points',
+  'loyalty_points_redeemed',
+  'loyalty_redemption_value',
+  'loyalty_points_reversed',
+  'loyalty_cashback_reversed',
+  'loyalty_points_restored',
+  'loyalty_restored_value',
+  'loyalty_shortfall_points',
+  'loyalty_shortfall_cashback',
+  'loyalty_outstanding_points',
+  'loyalty_outstanding_cashback',
+  'loyalty_accounts_with_balance',
+  'loyalty_adjustment_points',
+  'loyalty_adjustment_cashback',
+  'loyalty_report_activity',
+  'loyalty_report_balances',
+  'loyalty_report_ledger',
+  'loyalty_report_snapshot',
+  'col_event',
+  'col_points',
+  'col_cashback',
+  'col_points_balance',
+  'col_cashback_balance',
 ];
 
 /// Existing keys the Phase 14 screens reuse (must not regress).
@@ -180,9 +205,9 @@ const _reusedKeys = [
 
 void main() {
   group('Phase 14 report strings', () {
-  test('exactly 135 Phase 14 keys are under test (405 entries)', () {
-    expect(_phase14Keys, hasLength(135));
-    expect(_phase14Keys.toSet(), hasLength(135), reason: 'duplicate key');
+  test('exactly 159 Phase 14 + Loyalty F keys are under test (477 entries)', () {
+    expect(_phase14Keys, hasLength(159));
+    expect(_phase14Keys.toSet(), hasLength(159), reason: 'duplicate key');
     });
 
     for (final locale in _locales) {

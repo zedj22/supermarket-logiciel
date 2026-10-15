@@ -21,6 +21,11 @@ import 'pos_models.dart';
 
 const Duration kPosSearchDebounce = Duration(milliseconds: 250);
 
+/// Phase E — opaque loyalty QR payload prefix (`KLICK:C:<customer uuid>`).
+/// The code carries no personal data; matching happens case-insensitively
+/// on this prefix only, exactly like the backend lookup.
+const String kLoyaltyQrPrefix = 'KLICK:C:';
+
 // ---------------------------------------------------------------------------
 // Device id (holds filter + X-Device-ID)
 // ---------------------------------------------------------------------------
@@ -324,9 +329,14 @@ class PosCartNotifier extends StateNotifier<PosCartState> {
 
   /// Checkout with idempotency: reuse pendingClientRequestId on retry.
   /// Clears cart ONLY on confirmed success (2xx).
+  ///
+  /// `loyaltyRewardPercent` submits the PERCENT only (never a monetary
+  /// value or a balance — the server derives both); 0 omits the key so
+  /// the payload stays byte-identical for non-loyalty checkouts.
   Future<CheckoutResult?> checkout({
     required PaymentMethod method,
     required double paid,
+    double loyaltyRewardPercent = 0,
   }) async {
     if (state.lines.isEmpty || state.checkoutPending) return null;
 
@@ -349,9 +359,11 @@ class PosCartNotifier extends StateNotifier<PosCartState> {
       'paid': paid.toStringAsFixed(2),
       'invoice_discount': '${double.tryParse(state.invoiceDiscount) ?? 0}',
       // Sales API contract: ids/qty/price only (display metadata stays
-      // in the hold snapshot — see CartLine.toJson / toSaleJson).
+      // in the hold snapshot - see CartLine.toJson / toSaleJson).
       'items': state.lines.map((l) => l.toSaleJson()).toList(),
       if (state.customer != null) 'customer_id': state.customer!.id,
+      if (loyaltyRewardPercent > 0)
+        'loyalty_reward_percent': loyaltyRewardPercent,
       'device_id': deviceId,
     };
 
@@ -808,8 +820,13 @@ class CustomerSearchNotifier extends StateNotifier<CustomerSearchState> {
       loading: true,
     );
     try {
+      // Phase E: a loyalty QR payload (`KLICK:C:<uuid>`) typed/scanned into
+      // this field goes to the loyalty lookup (opaque handle, no PII) —
+      // both endpoints answer the same CustomerListResponse shape, so the
+      // list below is unchanged.
+      final isQr = q.toUpperCase().startsWith(kLoyaltyQrPrefix);
       final response = await _dio.get(
-        '/api/v1/customers/search',
+        isQr ? '/api/v1/loyalty/lookup' : '/api/v1/customers/search',
         queryParameters: {
           if (q.isNotEmpty) 'q': q,
           'page_size': 20,

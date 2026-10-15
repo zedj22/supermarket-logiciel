@@ -471,15 +471,20 @@ class _InfoRow extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 16),
-          Directionality(
-            textDirection: valueIsLtr
-                ? TextDirection.ltr
-                : Directionality.of(context),
-            child: Text(
-              value,
-              key: valueKey,
-              style: theme.textTheme.bodyMedium
-                  ?.copyWith(fontWeight: FontWeight.w600),
+          // Flexible: a long value (server URL, device id…) soft-wraps
+          // on very narrow windows instead of overflowing the Row by a
+          // few pixels.
+          Flexible(
+            child: Directionality(
+              textDirection: valueIsLtr
+                  ? TextDirection.ltr
+                  : Directionality.of(context),
+              child: Text(
+                value,
+                key: valueKey,
+                style: theme.textTheme.bodyMedium
+                    ?.copyWith(fontWeight: FontWeight.w600),
+              ),
             ),
           ),
         ],

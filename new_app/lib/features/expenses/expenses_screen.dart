@@ -11,6 +11,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/strings.dart';
+import '../../core/widgets/adaptive_title_row.dart';
 import '../../l10n/locale_provider.dart';
 import '../auth/permission_helpers.dart';
 import '../clients/customer_models.dart';
@@ -124,20 +125,18 @@ class _ExpensesScreenState extends ConsumerState<ExpensesScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Text(
-                AppStrings.t('expenses', loc),
-                key: const Key('expenses-title'),
-                style: theme.textTheme.headlineSmall,
-              ),
-              const SizedBox(width: 12),
-              Text(
-                AppStrings.t('expenses_subtitle', loc),
-                key: const Key('expenses-subtitle'),
-                style: theme.textTheme.bodyMedium,
-              ),
-              const Spacer(),
+          AdaptiveTitleRow(
+            title: Text(
+              AppStrings.t('expenses', loc),
+              key: const Key('expenses-title'),
+              style: theme.textTheme.headlineSmall,
+            ),
+            subtitle: Text(
+              AppStrings.t('expenses_subtitle', loc),
+              key: const Key('expenses-subtitle'),
+              style: theme.textTheme.bodyMedium,
+            ),
+            actions: [
               if (canCreate)
                 OutlinedButton.icon(
                   key: const Key('expenses-add'),
@@ -145,7 +144,6 @@ class _ExpensesScreenState extends ConsumerState<ExpensesScreen> {
                   icon: const Icon(Icons.add, size: 18),
                   label: Text(AppStrings.t('expense_add', loc)),
                 ),
-              const SizedBox(width: 8),
               IconButton(
                 key: const Key('expenses-refresh'),
                 tooltip: AppStrings.t('refresh', loc),
@@ -206,191 +204,220 @@ class _ExpensesScreenState extends ConsumerState<ExpensesScreen> {
         query.dateFrom != null ||
         query.dateTo != null;
 
-    return Row(
+    final searchField = SizedBox(
+      width: 260,
+      child: TextField(
+        key: const Key('expenses-search'),
+        controller: _searchController,
+        decoration: InputDecoration(
+          hintText: AppStrings.t('expense_search_hint', loc),
+          isDense: true,
+          prefixIcon: const Icon(Icons.search, size: 18),
+          border: const OutlineInputBorder(),
+        ),
+        inputFormatters: [LengthLimitingTextInputFormatter(200)],
+        onSubmitted: (value) => notifier.setSearch(value),
+      ),
+    );
+    final categoryFilter = SizedBox(
+      width: 200,
+      child: DropdownButtonFormField<String>(
+        key: const Key('expenses-category-filter'),
+        initialValue: query.category,
+        isExpanded: true,
+        decoration: InputDecoration(
+          labelText: AppStrings.t('category', loc),
+          isDense: true,
+          border: const OutlineInputBorder(),
+        ),
+        items: [
+          DropdownMenuItem(
+            value: '',
+            child: Text(
+              AppStrings.t('expense_filter_all_categories', loc),
+              key: const Key('expenses-category-all'),
+            ),
+          ),
+          for (final code in kExpenseCategories)
+            DropdownMenuItem(
+              value: code,
+              child: Text(
+                AppStrings.t(expenseCategoryKey(code), loc),
+                key: Key('expenses-category-$code'),
+              ),
+            ),
+        ],
+        onChanged: (value) => notifier.setCategory(value ?? ''),
+      ),
+    );
+    final paymentFilter = SizedBox(
+      width: 200,
+      child: DropdownButtonFormField<String>(
+        key: const Key('expenses-payment-filter'),
+        initialValue: query.paidFromDrawer == null
+            ? ''
+            : (query.paidFromDrawer! ? 'true' : 'false'),
+        isExpanded: true,
+        decoration: InputDecoration(
+          labelText: AppStrings.t('expense_filter_payment', loc),
+          isDense: true,
+          border: const OutlineInputBorder(),
+        ),
+        items: [
+          DropdownMenuItem(
+            value: '',
+            child: Text(
+              AppStrings.t('all', loc),
+              key: const Key('expenses-payment-all'),
+            ),
+          ),
+          DropdownMenuItem(
+            value: 'true',
+            child: Text(
+              AppStrings.t('expense_paid_from_drawer', loc),
+              key: const Key('expenses-payment-drawer'),
+            ),
+          ),
+          DropdownMenuItem(
+            value: 'false',
+            child: Text(
+              AppStrings.t('expense_paid_external', loc),
+              key: const Key('expenses-payment-external'),
+            ),
+          ),
+        ],
+        onChanged: (value) => notifier.setPaidFromDrawer(
+          value == null || value.isEmpty ? null : (value == 'true'),
+        ),
+      ),
+    );
+    final statusFilter = SizedBox(
+      width: 170,
+      child: DropdownButtonFormField<String>(
+        key: const Key('expenses-status-filter'),
+        initialValue: query.status,
+        isExpanded: true,
+        decoration: InputDecoration(
+          labelText: AppStrings.t('status', loc),
+          isDense: true,
+          border: const OutlineInputBorder(),
+        ),
+        items: [
+          DropdownMenuItem(
+            value: 'posted',
+            child: Text(
+              AppStrings.t('expense_status_posted', loc),
+              key: const Key('expenses-status-posted'),
+            ),
+          ),
+          DropdownMenuItem(
+            value: 'cancelled',
+            child: Text(
+              AppStrings.t('expense_status_cancelled', loc),
+              key: const Key('expenses-status-cancelled'),
+            ),
+          ),
+          DropdownMenuItem(
+            value: 'all',
+            child: Text(
+              AppStrings.t('all', loc),
+              key: const Key('expenses-status-all'),
+            ),
+          ),
+        ],
+        onChanged: (value) => notifier.setStatus(value ?? 'posted'),
+      ),
+    );
+    final dateRange = Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        SizedBox(
-          width: 260,
-          child: TextField(
-            key: const Key('expenses-search'),
-            controller: _searchController,
-            decoration: InputDecoration(
-              hintText: AppStrings.t('expense_search_hint', loc),
-              isDense: true,
-              prefixIcon: const Icon(Icons.search, size: 18),
-              border: const OutlineInputBorder(),
-            ),
-            inputFormatters: [LengthLimitingTextInputFormatter(200)],
-            onSubmitted: (value) => notifier.setSearch(value),
-          ),
+        Text(
+          AppStrings.t('expense_date_range', loc),
+          key: const Key('expenses-date-label'),
+          style: theme.textTheme.bodySmall,
         ),
-        const SizedBox(width: 12),
-        SizedBox(
-          width: 200,
-          child: DropdownButtonFormField<String>(
-            key: const Key('expenses-category-filter'),
-            initialValue: query.category,
-            isExpanded: true,
-            decoration: InputDecoration(
-              labelText: AppStrings.t('category', loc),
-              isDense: true,
-              border: const OutlineInputBorder(),
-            ),
-            items: [
-              DropdownMenuItem(
-                value: '',
-                child: Text(
-                  AppStrings.t('expense_filter_all_categories', loc),
-                  key: const Key('expenses-category-all'),
-                ),
-              ),
-              for (final code in kExpenseCategories)
-                DropdownMenuItem(
-                  value: code,
-                  child: Text(
-                    AppStrings.t(expenseCategoryKey(code), loc),
-                    key: Key('expenses-category-$code'),
-                  ),
-                ),
-            ],
-            onChanged: (value) => notifier.setCategory(value ?? ''),
-          ),
-        ),
-        const SizedBox(width: 12),
-        SizedBox(
-          width: 200,
-          child: DropdownButtonFormField<String>(
-            key: const Key('expenses-payment-filter'),
-            initialValue: query.paidFromDrawer == null
-                ? ''
-                : (query.paidFromDrawer! ? 'true' : 'false'),
-            isExpanded: true,
-            decoration: InputDecoration(
-              labelText: AppStrings.t('expense_filter_payment', loc),
-              isDense: true,
-              border: const OutlineInputBorder(),
-            ),
-            items: [
-              DropdownMenuItem(
-                value: '',
-                child: Text(
-                  AppStrings.t('all', loc),
-                  key: const Key('expenses-payment-all'),
-                ),
-              ),
-              DropdownMenuItem(
-                value: 'true',
-                child: Text(
-                  AppStrings.t('expense_paid_from_drawer', loc),
-                  key: const Key('expenses-payment-drawer'),
-                ),
-              ),
-              DropdownMenuItem(
-                value: 'false',
-                child: Text(
-                  AppStrings.t('expense_paid_external', loc),
-                  key: const Key('expenses-payment-external'),
-                ),
-              ),
-            ],
-            onChanged: (value) => notifier.setPaidFromDrawer(
-              value == null || value.isEmpty
-                  ? null
-                  : (value == 'true'),
-            ),
-          ),
-        ),
-        const SizedBox(width: 12),
-        SizedBox(
-          width: 170,
-          child: DropdownButtonFormField<String>(
-            key: const Key('expenses-status-filter'),
-            initialValue: query.status,
-            isExpanded: true,
-            decoration: InputDecoration(
-              labelText: AppStrings.t('status', loc),
-              isDense: true,
-              border: const OutlineInputBorder(),
-            ),
-            items: [
-              DropdownMenuItem(
-                value: 'posted',
-                child: Text(
-                  AppStrings.t('expense_status_posted', loc),
-                  key: const Key('expenses-status-posted'),
-                ),
-              ),
-              DropdownMenuItem(
-                value: 'cancelled',
-                child: Text(
-                  AppStrings.t('expense_status_cancelled', loc),
-                  key: const Key('expenses-status-cancelled'),
-                ),
-              ),
-              DropdownMenuItem(
-                value: 'all',
-                child: Text(
-                  AppStrings.t('all', loc),
-                  key: const Key('expenses-status-all'),
-                ),
-              ),
-            ],
-            onChanged: (value) => notifier.setStatus(value ?? 'posted'),
-          ),
-        ),
-        const SizedBox(width: 12),
-        Column(
+        Row(
           mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              AppStrings.t('expense_date_range', loc),
-              key: const Key('expenses-date-label'),
-              style: theme.textTheme.bodySmall,
+            OutlinedButton(
+              key: const Key('expenses-date-from'),
+              onPressed: () => _pickDate(from: true),
+              child: Text(
+                query.dateFrom == null
+                    ? AppStrings.t('from', loc)
+                    : expenseDateParam(query.dateFrom!),
+              ),
             ),
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                OutlinedButton(
-                  key: const Key('expenses-date-from'),
-                  onPressed: () => _pickDate(from: true),
-                  child: Text(
-                    query.dateFrom == null
-                        ? AppStrings.t('from', loc)
-                        : expenseDateParam(query.dateFrom!),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                OutlinedButton(
-                  key: const Key('expenses-date-to'),
-                  onPressed: () => _pickDate(from: false),
-                  child: Text(
-                    query.dateTo == null
-                        ? AppStrings.t('to', loc)
-                        : expenseDateParam(query.dateTo!),
-                  ),
-                ),
-              ],
+            const SizedBox(width: 8),
+            OutlinedButton(
+              key: const Key('expenses-date-to'),
+              onPressed: () => _pickDate(from: false),
+              child: Text(
+                query.dateTo == null
+                    ? AppStrings.t('to', loc)
+                    : expenseDateParam(query.dateTo!),
+              ),
             ),
           ],
         ),
-        const SizedBox(width: 8),
-        if (hasFilters)
-          IconButton(
-            key: const Key('expenses-clear'),
-            tooltip: AppStrings.t('clear', loc),
-            onPressed: () {
-              _searchController.clear();
-              notifier.clearFilters();
-            },
-            icon: const Icon(Icons.filter_alt_off_outlined, size: 20),
-          ),
-        const Spacer(),
-        Text(
-          '${AppStrings.t('expense_count', loc)}: ${expenses.total}',
-          key: const Key('expenses-total-count'),
-          style: theme.textTheme.bodySmall,
-        ),
       ],
+    );
+    final clearButton = IconButton(
+      key: const Key('expenses-clear'),
+      tooltip: AppStrings.t('clear', loc),
+      onPressed: () {
+        _searchController.clear();
+        notifier.clearFilters();
+      },
+      icon: const Icon(Icons.filter_alt_off_outlined, size: 20),
+    );
+    final countText = Text(
+      '${AppStrings.t('expense_count', loc)}: ${expenses.total}',
+      key: const Key('expenses-total-count'),
+      style: theme.textTheme.bodySmall,
+    );
+
+    // Wide windows keep the original single-row bar (filters left, count
+    // pinned right); tighter windows let the same controls wrap onto
+    // extra rows instead of overflowing (human QA: "RenderFlex overflowed
+    // by 365 pixels" on the expenses filter row).
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (constraints.maxWidth >= 1340) {
+          return Row(
+            children: [
+              searchField,
+              const SizedBox(width: 12),
+              categoryFilter,
+              const SizedBox(width: 12),
+              paymentFilter,
+              const SizedBox(width: 12),
+              statusFilter,
+              const SizedBox(width: 12),
+              dateRange,
+              const SizedBox(width: 8),
+              if (hasFilters) clearButton,
+              const Spacer(),
+              countText,
+            ],
+          );
+        }
+        return Wrap(
+          spacing: 12,
+          runSpacing: 8,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            searchField,
+            categoryFilter,
+            paymentFilter,
+            statusFilter,
+            dateRange,
+            if (hasFilters) clearButton,
+            countText,
+          ],
+        );
+      },
     );
   }
 
@@ -494,35 +521,54 @@ class _SummaryCard extends StatelessWidget {
       key: const Key('expenses-summary'),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        child: Row(
-          children: [
-            _SummaryItem(
-              labelKey: 'expense_count',
-              value: '${data?.count ?? 0}',
-              testKey: 'expenses-summary-count',
-            ),
-            _SummaryItem(
-              labelKey: 'expense_total',
-              value: formatMoney(data?.totalAmount ?? '0'),
-              testKey: 'expenses-summary-total',
-            ),
-            _SummaryItem(
-              labelKey: 'expense_total_drawer',
-              value: formatMoney(data?.drawerAmount ?? '0'),
-              testKey: 'expenses-summary-drawer',
-            ),
-            _SummaryItem(
-              labelKey: 'expense_total_external',
-              value: formatMoney(data?.externalAmount ?? '0'),
-              testKey: 'expenses-summary-external',
-            ),
-            const Spacer(),
-            Text(
+        // Wide windows keep the single-row summary; tighter windows let
+        // the items wrap instead of overflowing ("RenderFlex overflowed
+        // by 115 pixels" at an 800px window).
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final items = [
+              _SummaryItem(
+                labelKey: 'expense_count',
+                value: '${data?.count ?? 0}',
+                testKey: 'expenses-summary-count',
+              ),
+              _SummaryItem(
+                labelKey: 'expense_total',
+                value: formatMoney(data?.totalAmount ?? '0'),
+                testKey: 'expenses-summary-total',
+              ),
+              _SummaryItem(
+                labelKey: 'expense_total_drawer',
+                value: formatMoney(data?.drawerAmount ?? '0'),
+                testKey: 'expenses-summary-drawer',
+              ),
+              _SummaryItem(
+                labelKey: 'expense_total_external',
+                value: formatMoney(data?.externalAmount ?? '0'),
+                testKey: 'expenses-summary-external',
+              ),
+            ];
+            final currency = Text(
               AppStrings.t('currency', loc),
               key: const Key('expenses-summary-currency'),
               style: theme.textTheme.bodySmall,
-            ),
-          ],
+            );
+            if (constraints.maxWidth >= 840) {
+              return Row(
+                children: [
+                  ...items,
+                  const Spacer(),
+                  currency,
+                ],
+              );
+            }
+            return Wrap(
+              spacing: 16,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [...items, currency],
+            );
+          },
         ),
       ),
     );

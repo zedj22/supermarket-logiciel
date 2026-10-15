@@ -14,6 +14,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/strings.dart';
+import '../../core/widgets/adaptive_title_row.dart';
 import '../../l10n/locale_provider.dart';
 import '../auth/permission_helpers.dart';
 import '../pos/pos_toast.dart';
@@ -129,20 +130,18 @@ class _PromotionsScreenState extends ConsumerState<PromotionsScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Text(
-                AppStrings.t('promotions', loc),
-                key: const Key('promotions-title'),
-                style: theme.textTheme.headlineSmall,
-              ),
-              const SizedBox(width: 12),
-              Text(
-                AppStrings.t('promotions_subtitle', loc),
-                key: const Key('promotions-subtitle'),
-                style: theme.textTheme.bodyMedium,
-              ),
-              const Spacer(),
+          AdaptiveTitleRow(
+            title: Text(
+              AppStrings.t('promotions', loc),
+              key: const Key('promotions-title'),
+              style: theme.textTheme.headlineSmall,
+            ),
+            subtitle: Text(
+              AppStrings.t('promotions_subtitle', loc),
+              key: const Key('promotions-subtitle'),
+              style: theme.textTheme.bodyMedium,
+            ),
+            actions: [
               if (canCreate)
                 OutlinedButton.icon(
                   key: const Key('promotions-add'),
@@ -150,7 +149,6 @@ class _PromotionsScreenState extends ConsumerState<PromotionsScreen> {
                   icon: const Icon(Icons.add, size: 18),
                   label: Text(AppStrings.t('promotion_add', loc)),
                 ),
-              const SizedBox(width: 8),
               IconButton(
                 key: const Key('promotions-refresh'),
                 tooltip: AppStrings.t('refresh', loc),
@@ -205,83 +203,107 @@ class _PromotionsScreenState extends ConsumerState<PromotionsScreen> {
     final query = promotions.query;
     final hasFilters = query.search.isNotEmpty || query.isActive != null;
 
-    return Row(
-      children: [
-        SizedBox(
-          width: 280,
-          child: TextField(
-            key: const Key('promotions-search'),
-            controller: _searchController,
-            decoration: InputDecoration(
-              hintText: AppStrings.t('promotion_search_hint', loc),
-              isDense: true,
-              prefixIcon: const Icon(Icons.search, size: 18),
-              border: const OutlineInputBorder(),
-            ),
-            inputFormatters: [LengthLimitingTextInputFormatter(200)],
-            onSubmitted: (value) => notifier.setSearch(value),
-          ),
+    final searchField = SizedBox(
+      width: 280,
+      child: TextField(
+        key: const Key('promotions-search'),
+        controller: _searchController,
+        decoration: InputDecoration(
+          hintText: AppStrings.t('promotion_search_hint', loc),
+          isDense: true,
+          prefixIcon: const Icon(Icons.search, size: 18),
+          border: const OutlineInputBorder(),
         ),
-        const SizedBox(width: 12),
-        SizedBox(
-          width: 190,
-          child: DropdownButtonFormField<String>(
-            key: const Key('promotions-active-filter'),
-            initialValue: query.isActive == null
-                ? ''
-                : (query.isActive! ? 'true' : 'false'),
-            isExpanded: true,
-            decoration: InputDecoration(
-              labelText: AppStrings.t('status', loc),
-              isDense: true,
-              border: const OutlineInputBorder(),
+        inputFormatters: [LengthLimitingTextInputFormatter(200)],
+        onSubmitted: (value) => notifier.setSearch(value),
+      ),
+    );
+    final statusFilter = SizedBox(
+      width: 190,
+      child: DropdownButtonFormField<String>(
+        key: const Key('promotions-active-filter'),
+        initialValue: query.isActive == null
+            ? ''
+            : (query.isActive! ? 'true' : 'false'),
+        isExpanded: true,
+        decoration: InputDecoration(
+          labelText: AppStrings.t('status', loc),
+          isDense: true,
+          border: const OutlineInputBorder(),
+        ),
+        items: [
+          DropdownMenuItem(
+            value: '',
+            child: Text(
+              AppStrings.t('all', loc),
+              key: const Key('promotions-active-all'),
             ),
-            items: [
-              DropdownMenuItem(
-                value: '',
-                child: Text(
-                  AppStrings.t('all', loc),
-                  key: const Key('promotions-active-all'),
-                ),
-              ),
-              DropdownMenuItem(
-                value: 'true',
-                child: Text(
-                  AppStrings.t('active', loc),
-                  key: const Key('promotions-active-active'),
-                ),
-              ),
-              DropdownMenuItem(
-                value: 'false',
-                child: Text(
-                  AppStrings.t('inactive', loc),
-                  key: const Key('promotions-active-inactive'),
-                ),
-              ),
+          ),
+          DropdownMenuItem(
+            value: 'true',
+            child: Text(
+              AppStrings.t('active', loc),
+              key: const Key('promotions-active-active'),
+            ),
+          ),
+          DropdownMenuItem(
+            value: 'false',
+            child: Text(
+              AppStrings.t('inactive', loc),
+              key: const Key('promotions-active-inactive'),
+            ),
+          ),
+        ],
+        onChanged: (value) => notifier.setIsActive(
+          value == null || value.isEmpty ? null : (value == 'true'),
+        ),
+      ),
+    );
+    final clearButton = IconButton(
+      key: const Key('promotions-clear'),
+      tooltip: AppStrings.t('clear', loc),
+      onPressed: () {
+        _searchController.clear();
+        notifier.clearFilters();
+      },
+      icon: const Icon(Icons.filter_alt_off_outlined, size: 20),
+    );
+    final countText = Text(
+      '${AppStrings.t('promotion_count', loc)}: ${promotions.total}',
+      key: const Key('promotions-total-count'),
+      style: theme.textTheme.bodySmall,
+    );
+
+    // Wide windows keep the original single-row bar (measured one-line
+    // width ≈ 1033px in Arabic); tighter windows wrap the same controls
+    // instead of overflowing the Row.
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (constraints.maxWidth >= 1060) {
+          return Row(
+            children: [
+              searchField,
+              const SizedBox(width: 12),
+              statusFilter,
+              const SizedBox(width: 8),
+              if (hasFilters) clearButton,
+              const Spacer(),
+              countText,
             ],
-            onChanged: (value) => notifier.setIsActive(
-              value == null || value.isEmpty ? null : (value == 'true'),
-            ),
-          ),
-        ),
-        const SizedBox(width: 8),
-        if (hasFilters)
-          IconButton(
-            key: const Key('promotions-clear'),
-            tooltip: AppStrings.t('clear', loc),
-            onPressed: () {
-              _searchController.clear();
-              notifier.clearFilters();
-            },
-            icon: const Icon(Icons.filter_alt_off_outlined, size: 20),
-          ),
-        const Spacer(),
-        Text(
-          '${AppStrings.t('promotion_count', loc)}: ${promotions.total}',
-          key: const Key('promotions-total-count'),
-          style: theme.textTheme.bodySmall,
-        ),
-      ],
+          );
+        }
+        return Wrap(
+          spacing: 12,
+          runSpacing: 8,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            searchField,
+            statusFilter,
+            if (hasFilters) clearButton,
+            countText,
+          ],
+        );
+      },
     );
   }
 

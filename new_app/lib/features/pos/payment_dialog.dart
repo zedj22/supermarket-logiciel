@@ -12,8 +12,18 @@ import '../../core/colors.dart';
 import '../../core/strings.dart';
 import '../../l10n/locale_provider.dart';
 import '../auth/permission_helpers.dart';
+import '../loyalty/loyalty_providers.dart';
 import 'pos_models.dart';
 import 'pos_providers.dart';
+
+/// Display label for a reward percent: `20` → `"20"`, `12.5` → `"12.5"`.
+String _percentLabel(double value) {
+  if (value == value.roundToDouble()) return value.toInt().toString();
+  return value
+      .toStringAsFixed(2)
+      .replaceFirst(RegExp(r'0+$'), '')
+      .replaceFirst(RegExp(r'\.$'), '');
+}
 
 class PaymentDialog extends ConsumerStatefulWidget {
   const PaymentDialog({super.key});
@@ -31,8 +41,16 @@ class _PaymentDialogState extends ConsumerState<PaymentDialog> {
   @override
   void initState() {
     super.initState();
+    // Pre-fill the AMOUNT DUE (total minus the accepted loyalty reward
+    // discount) — `_openPayment` settled the server preview first, so
+    // this matches exactly what checkout will be validated against.
     final totals = ref.read(posCartProvider).totals;
-    _paid = TextEditingController(text: totals.totalDisplay);
+    _paid = TextEditingController(
+      text: PaymentMath.amountDueOf(
+        total: totals.total,
+        rewardDiscount: _rewardDiscount,
+      ).toStringAsFixed(2),
+    );
   }
 
   @override
@@ -41,7 +59,21 @@ class _PaymentDialogState extends ConsumerState<PaymentDialog> {
     super.dispose();
   }
 
-  double get _total => ref.read(posCartProvider).totals.total;
+  /// Accepted reward discount (server preview) for the CURRENT percent +
+  /// total; anything else (no customer, stale/failed preview, percent
+  /// above the cap) is worth 0 here — the server remains the authority
+  /// and a mismatch surfaces as its structured checkout error.
+  double get _rewardDiscount {
+    final loyalty = ref.read(posLoyaltyProvider);
+    return loyalty.previewMatches
+        ? loyalty.preview!.rewardDiscount
+        : 0.0;
+  }
+
+  double get _due => PaymentMath.amountDueOf(
+        total: ref.read(posCartProvider).totals.total,
+        rewardDiscount: _rewardDiscount,
+      );
 
   double get _paidAmount => PaymentMath.parse(_paid.text);
 
@@ -54,11 +86,12 @@ class _PaymentDialogState extends ConsumerState<PaymentDialog> {
       method: method,
       total: cart.totals.total,
       paid: method == PaymentMethod.cash || method == PaymentMethod.card
-          ? _total
+          ? _due
           : _paidAmount,
       hasCustomer: cart.customer != null,
       canDiscount: canDiscount || !cart.hasAnyDiscount,
       canCredit: canCredit,
+      rewardDiscount: _rewardDiscount,
     );
     if (key == null) return null;
     return AppStrings.t(key, loc);
@@ -69,7 +102,7 @@ class _PaymentDialogState extends ConsumerState<PaymentDialog> {
       _method = method;
       _error = null;
       if (method == PaymentMethod.cash || method == PaymentMethod.card) {
-        _paid.text = _total.toStringAsFixed(2);
+        _paid.text = _due.toStringAsFixed(2);
       } else if (method == PaymentMethod.credit) {
         _paid.text = '0.00';
       }
@@ -87,7 +120,7 @@ class _PaymentDialogState extends ConsumerState<PaymentDialog> {
       _error = null;
     });
     final paid = switch (_method) {
-      PaymentMethod.cash || PaymentMethod.card => _total,
+      PaymentMethod.cash || PaymentMethod.card => _due,
       PaymentMethod.credit => 0.0,
       PaymentMethod.partial => _paidAmount,
     };
@@ -95,6 +128,10 @@ class _PaymentDialogState extends ConsumerState<PaymentDialog> {
         await ref.read(posCartProvider.notifier).checkout(
               method: _method,
               paid: paid,
+              // Percent only — never a money value or a balance; the
+              // server re-prices and re-validates the reward.
+              loyaltyRewardPercent:
+                  ref.read(posLoyaltyProvider).rewardPercent,
             );
     if (!mounted) return;
     if (result != null) {
@@ -120,8 +157,27 @@ class _PaymentDialogState extends ConsumerState<PaymentDialog> {
     final totals = cart.totals;
     final canCredit = ref.watch(hasPermissionProvider('pos_credit_sale'));
     final hasCustomer = cart.customer != null;
-    final change = PaymentMath.changeOf(paid: _paidAmount, total: totals.total);
-    final debt = PaymentMath.debtOf(paid: _paidAmount, total: totals.total);
+    // Every money figure below is evaluated against the AMOUNT DUE
+    // (`total - accepted reward discount`); with no reward the dialog
+    // behaves bit-for-bit like the pre-loyalty one.
+    final loyalty = ref.watch(posLoyaltyProvider);
+    final rewardDiscount =
+        loyalty.previewMatches ? loyalty.preview!.rewardDiscount : 0.0;
+    final amountDue = PaymentMath.amountDueOf(
+      total: totals.total,
+      rewardDiscount: rewardDiscount,
+    );
+    final change = PaymentMath.changeOf(
+      paid: _paidAmount,
+      total: totals.total,
+      rewardDiscount: rewardDiscount,
+    );
+    final debt = PaymentMath.debtOf(
+      paid: _paidAmount,
+      total: totals.total,
+      rewardDiscount: rewardDiscount,
+    );
+    final currency = AppStrings.t('currency', loc);
     // 440 clipped the amount-paid field and the change/debt pair on a
     // 1366px window; the checkout dialog grows with the window but never
     // becomes a portrait strip on a small one.
@@ -155,6 +211,21 @@ class _PaymentDialogState extends ConsumerState<PaymentDialog> {
                 value: totals.totalDisplay,
                 emphasize: true,
               ),
+              if (rewardDiscount > 0) ...[
+                _SummaryRow(
+                  key: const Key('payment-loyalty-redeemed'),
+                  label: AppStrings.t('loyalty_redeemed', loc),
+                  value: '${_percentLabel(loyalty.rewardPercent)}% '
+                      '(${PaymentMath.money(rewardDiscount)} $currency)',
+                ),
+                _SummaryRow(
+                  key: const Key('payment-amount-due'),
+                  label: AppStrings.t('amount_due', loc),
+                  value: PaymentMath.money(amountDue),
+                  emphasize: true,
+                  color: theme.colorScheme.primary,
+                ),
+              ],
               const SizedBox(height: 16),
               Text(
                 AppStrings.t('payment_method', loc),
@@ -233,7 +304,9 @@ class _PaymentDialogState extends ConsumerState<PaymentDialog> {
                   decoration: InputDecoration(
                     labelText: AppStrings.t('amount_paid', loc),
                     helperText: _method == PaymentMethod.card
-                        ? AppStrings.t('total_label', loc)
+                        ? (rewardDiscount > 0
+                            ? AppStrings.t('amount_due', loc)
+                            : AppStrings.t('total_label', loc))
                         : null,
                   ),
                   onChanged: (_) => setState(() => _error = null),
@@ -307,6 +380,7 @@ class _SummaryRow extends StatelessWidget {
   final Color? color;
 
   const _SummaryRow({
+    super.key,
     required this.label,
     required this.value,
     this.emphasize = false,

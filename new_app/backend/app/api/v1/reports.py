@@ -1,8 +1,9 @@
 """Reports API endpoints (Phase 14).
 
-Ten ``/api/v1/reports/*`` surfaces (§11 of the Phase 14 decision record) plus
-``/api/v1/dashboard`` in ``dashboard.py``.  Every handler is guarded by the
-existing ``report_financial`` scope — no new permission was introduced.
+Eleven ``/api/v1/reports/*`` surfaces (§11 of the Phase 14 decision record
+plus the Loyalty Phase F loyalty report) plus ``/api/v1/dashboard`` in
+``dashboard.py``.  Every handler is guarded by the existing
+``report_financial`` scope — no new permission was introduced.
 
 Conventions: ``date_from``/``date_to`` are inclusive calendar dates resolved
 to a UTC window server-side (§6), rows are paginated with the standard
@@ -28,6 +29,7 @@ from app.schemas.report import (
     DailyReportResponse,
     FinancialReportResponse,
     HourlyReportResponse,
+    LoyaltyReportResponse,
     PeakHoursReportResponse,
     ProductReportResponse,
     SalesDetailResponse,
@@ -245,3 +247,29 @@ def suppliers_report(
 ) -> SupplierReportResponse:
     """§5.6 — period purchases/payments plus the current payable snapshot."""
     return service.suppliers(date_from=date_from, date_to=date_to)
+
+
+@reports_router.get(
+    "/loyalty",
+    response_model=LoyaltyReportResponse,
+    summary="Loyalty points and cashback activity",
+    tags=["reports"],
+)
+def loyalty_report(
+    date_from: date,
+    date_to: date,
+    device_id: str | None = Query(None, max_length=100),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(100, ge=1, le=100),
+    user: User = Depends(require_permission(PermissionScope.REPORT_FINANCIAL)),
+    service: ReportService = Depends(_get_service),
+) -> LoyaltyReportResponse:
+    """Earned/redeemed rewards, return/void reversals with their shortfalls,
+    the current outstanding balances, and the paginated ledger history."""
+    return service.loyalty(
+        date_from=date_from,
+        date_to=date_to,
+        device_id=device_id,
+        page=page,
+        page_size=page_size,
+    )

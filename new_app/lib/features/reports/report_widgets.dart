@@ -694,31 +694,39 @@ class ReportKpiTile extends StatelessWidget {
                 ),
                 const SizedBox(width: 10),
               ],
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    AppStrings.t(labelKey, loc),
-                    key: testKey == null ? null : Key('$testKey-label'),
-                    style: theme.textTheme.bodySmall,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    value,
-                    key: testKey == null ? null : Key('$testKey-value'),
-                    style: theme.textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.w700,
-                      color: valueColor,
+              // Flexible: inside a tight grid cell the label column gets
+              // the remaining width, so the maxLines/ellipsis below can
+              // actually engage instead of the Row overflowing the cell
+              // ("RenderFlex overflowed by 12–90 pixels" in the reports
+              // grid). In the dashboard's loose Wrap the card still hugs
+              // its content (flex children size to their content there).
+              Flexible(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      AppStrings.t(labelKey, loc),
+                      key: testKey == null ? null : Key('$testKey-label'),
+                      style: theme.textTheme.bodySmall,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    // Negatives never mirror under the RTL locale.
-                    textDirection: TextDirection.ltr,
-                  ),
-                ],
+                    const SizedBox(height: 4),
+                    Text(
+                      value,
+                      key: testKey == null ? null : Key('$testKey-value'),
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w700,
+                        color: valueColor,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      // Negatives never mirror under the RTL locale.
+                      textDirection: TextDirection.ltr,
+                    ),
+                  ],
+                ),
               ),
             ],
           ),

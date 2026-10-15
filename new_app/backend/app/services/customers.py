@@ -31,6 +31,11 @@ logger = structlog.get_logger(__name__)
 _UPDATABLE_FIELDS = frozenset({"name", "phone", "address", "debt_ceiling"})
 
 
+def _phone_digits(value: str) -> str:
+    """Digits-only view of a phone string for conservative comparison."""
+    return "".join(ch for ch in value if ch.isdigit())
+
+
 class CustomerService(BaseService):
     """Application service for customer master data."""
 
@@ -60,6 +65,36 @@ class CustomerService(BaseService):
     def get(self, customer_id: uuid.UUID) -> Customer:
         """Fetch a customer or raise a structured 404."""
         return self.repo.get_by_id_or_none(customer_id)
+
+    def lookup_by_phone(
+        self, digits: str, *, limit: int = 20
+    ) -> tuple[list[Customer], int]:
+        """Exact phone match after CONSERVATIVE digit normalization (Phase E).
+
+        Both sides are compared as digits only, so ``0550 12 34 56``,
+        ``0550-12-34-56`` and ``0550123456`` all match each other — but
+        stored formats are never rewritten and no Algerian prefix
+        handling (+213 / trunk 0) is applied: ``0550123456`` and
+        ``+213550123456`` are different writings and deliberately do NOT
+        match.  Duplicate phone numbers are a fact of life here, so the
+        caller gets the full match list (up to ``limit``) plus the total
+        count for a disambiguation UI.  Archived customers are excluded,
+        mirroring the search contract.
+        """
+        from sqlalchemy import select
+
+        rows = self.db.scalars(
+            select(Customer)
+            .where(
+                Customer.archived_at.is_(None),
+                Customer.phone.is_not(None),
+            )
+            .order_by(Customer.name.asc(), Customer.id.asc())
+        ).all()
+        matched = [
+            c for c in rows if _phone_digits(c.phone) == digits
+        ]
+        return matched[:limit], len(matched)
 
     # ── Writes ─────────────────────────────────────────────────────────
 

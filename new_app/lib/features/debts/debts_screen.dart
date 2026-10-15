@@ -212,8 +212,13 @@ class _DebtsScreenState extends ConsumerState<DebtsScreen> {
     }
     final data = summary.summary;
     if (data == null) return const SizedBox.shrink();
-    return Row(
+    // Wrap: the two fixed-width cards share one line on desktop and drop
+    // to two lines on very narrow windows instead of overflowing the Row
+    // ("RenderFlex overflowed by 177 pixels" at a 600px window).
+    return Wrap(
       key: const Key('debts-summary'),
+      spacing: 16,
+      runSpacing: 8,
       children: [
         _summaryCard(
           theme,
@@ -222,7 +227,6 @@ class _DebtsScreenState extends ConsumerState<DebtsScreen> {
           label: AppStrings.t('total_debt', loc),
           value: formatMoney(data.totalDebt),
         ),
-        const SizedBox(width: 16),
         _summaryCard(
           theme,
           loc,

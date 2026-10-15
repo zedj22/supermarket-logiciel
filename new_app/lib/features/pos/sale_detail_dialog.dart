@@ -13,6 +13,8 @@
 // the historical snapshots captured at checkout (UX FIX #11) — no catalog
 // API is ever called. Raw UUIDs are not shown in the primary UI (optional
 // secondary technical section).
+import 'dart:async';
+
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -22,6 +24,8 @@ import '../../core/strings.dart';
 import '../../l10n/locale_provider.dart';
 import '../auth/auth_provider.dart';
 import '../auth/permission_helpers.dart';
+import '../loyalty/loyalty_models.dart';
+import '../loyalty/loyalty_providers.dart';
 import '../returns/return_create_dialog.dart';
 import '../returns/return_providers.dart';
 import '../returns/return_void_dialog.dart';
@@ -107,6 +111,42 @@ String buildReceiptText(SaleDetail sale, String locale) {
   buffer.writeln(
     '${AppStrings.t('payment_method', locale)}: ${sale.paymentMethod}',
   );
+  // Phase E — loyalty summary. Rows appear only when the sale carries the
+  // field (additive contract): a pre-loyalty / facturation receipt keeps
+  // exactly its previous line set.
+  final redeemedPoints = loyaltyNum(sale.loyaltyPointsRedeemed);
+  if (redeemedPoints > 0) {
+    buffer.writeln(
+      '${AppStrings.t('loyalty_redeemed', locale)}: '
+      '${formatLoyaltyPoints(redeemedPoints)} '
+      '${AppStrings.t('loyalty_points', locale)} '
+      '(${PaymentMath.money(loyaltyNum(sale.loyaltyRedeemedValue))} '
+      '${AppStrings.t('currency', locale)})',
+    );
+  }
+  final amountDue = loyaltyNum(sale.amountDue);
+  if (amountDue > 0) {
+    buffer.writeln(
+      '${AppStrings.t('amount_due', locale)}: '
+      '${PaymentMath.money(amountDue)}',
+    );
+  }
+  final pointsEarned = loyaltyNum(sale.loyaltyPointsEarned);
+  if (pointsEarned > 0) {
+    buffer.writeln(
+      '${AppStrings.t('loyalty_points_earned', locale)}: '
+      '${formatLoyaltyPoints(pointsEarned)} '
+      '${AppStrings.t('loyalty_points', locale)}',
+    );
+  }
+  final cashbackEarned = loyaltyNum(sale.loyaltyCashbackEarned);
+  if (cashbackEarned > 0) {
+    buffer.writeln(
+      '${AppStrings.t('loyalty_cashback_earned', locale)}: '
+      '${PaymentMath.money(cashbackEarned)} '
+      '${AppStrings.t('currency', locale)}',
+    );
+  }
   return buffer.toString();
 }
 
@@ -226,6 +266,15 @@ class _SaleDetailDialogState extends ConsumerState<SaleDetailDialog> {
       key: const Key('sale-void-success-toast'),
     );
     await _load();
+    _refreshPosLoyalty();
+  }
+
+  /// Phase E — a void/return clawback moved the sale customer's loyalty
+  /// balances; refresh the POS session snapshot when one is alive behind
+  /// this dialog (no-op otherwise; the next attach always re-reads).
+  void _refreshPosLoyalty() {
+    if (!ref.exists(posLoyaltyProvider)) return;
+    unawaited(ref.read(posLoyaltyProvider.notifier).reload());
   }
 
   /// Phase 12 linked return: the dialog prices every line server-side and
@@ -247,6 +296,7 @@ class _SaleDetailDialogState extends ConsumerState<SaleDetailDialog> {
       key: const Key('sale-return-success-toast'),
     );
     await _load();
+    _refreshPosLoyalty();
   }
 
   /// Phase 15 §6.2 E: preview-first PDF flow — the backend renders the

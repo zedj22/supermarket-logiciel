@@ -475,6 +475,12 @@ class CheckoutResult {
   final String paymentMethod;
   final bool idempotentReplay;
   final List<PriceOverrideModel> priceOverrides;
+  // Loyalty summary (additive; null = pre-loyalty / facturation sale).
+  final String? amountDue;
+  final String? loyaltyPointsEarned;
+  final String? loyaltyCashbackEarned;
+  final String? loyaltyPointsRedeemed;
+  final String? loyaltyRedeemedValue;
 
   const CheckoutResult({
     required this.id,
@@ -489,6 +495,11 @@ class CheckoutResult {
     required this.paymentMethod,
     this.idempotentReplay = false,
     this.priceOverrides = const [],
+    this.amountDue,
+    this.loyaltyPointsEarned,
+    this.loyaltyCashbackEarned,
+    this.loyaltyPointsRedeemed,
+    this.loyaltyRedeemedValue,
   });
 
   CheckoutResult withPriceOverrides(List<PriceOverrideModel> overrides) {
@@ -505,6 +516,11 @@ class CheckoutResult {
       paymentMethod: paymentMethod,
       idempotentReplay: idempotentReplay,
       priceOverrides: overrides,
+      amountDue: amountDue,
+      loyaltyPointsEarned: loyaltyPointsEarned,
+      loyaltyCashbackEarned: loyaltyCashbackEarned,
+      loyaltyPointsRedeemed: loyaltyPointsRedeemed,
+      loyaltyRedeemedValue: loyaltyRedeemedValue,
     );
   }
 
@@ -524,6 +540,11 @@ class CheckoutResult {
       priceOverrides: (json['price_overrides'] as List<dynamic>? ?? const [])
           .map((e) => PriceOverrideModel.fromJson(e as Map<String, dynamic>))
           .toList(),
+      amountDue: json['amount_due']?.toString(),
+      loyaltyPointsEarned: json['loyalty_points_earned']?.toString(),
+      loyaltyCashbackEarned: json['loyalty_cashback_earned']?.toString(),
+      loyaltyPointsRedeemed: json['loyalty_points_redeemed']?.toString(),
+      loyaltyRedeemedValue: json['loyalty_redeemed_value']?.toString(),
     );
   }
 }
@@ -760,6 +781,14 @@ class SaleDetail {
   final List<SaleDetailLine> lines;
   final List<SalePayment> payments;
 
+  // Loyalty summary (Phase E; additive — null on pre-loyalty /
+  // facturation sales, so legacy receipts render exactly as before).
+  final String? amountDue;
+  final String? loyaltyPointsEarned;
+  final String? loyaltyCashbackEarned;
+  final String? loyaltyPointsRedeemed;
+  final String? loyaltyRedeemedValue;
+
   const SaleDetail({
     required this.id,
     required this.invoiceNumber,
@@ -780,6 +809,11 @@ class SaleDetail {
     this.voidReason,
     this.lines = const [],
     this.payments = const [],
+    this.amountDue,
+    this.loyaltyPointsEarned,
+    this.loyaltyCashbackEarned,
+    this.loyaltyPointsRedeemed,
+    this.loyaltyRedeemedValue,
   });
 
   /// Terminal void state (GATE 1): a voided sale can never be voided or
@@ -811,6 +845,11 @@ class SaleDetail {
       payments: (json['payments'] as List<dynamic>? ?? const [])
           .map((e) => SalePayment.fromJson(e as Map<String, dynamic>))
           .toList(),
+      amountDue: json['amount_due']?.toString(),
+      loyaltyPointsEarned: json['loyalty_points_earned']?.toString(),
+      loyaltyCashbackEarned: json['loyalty_cashback_earned']?.toString(),
+      loyaltyPointsRedeemed: json['loyalty_points_redeemed']?.toString(),
+      loyaltyRedeemedValue: json['loyalty_redeemed_value']?.toString(),
     );
   }
 }
@@ -842,17 +881,41 @@ class PaymentMath {
 
   static String money(double value) => value.toStringAsFixed(2);
 
-  static double changeOf({required double paid, required double total}) {
-    final delta = paid - total;
+  /// Payable after the loyalty reward discount: `total - rewardDiscount`,
+  /// floored at 0 (the server caps the discount, the client only mirrors).
+  static double amountDueOf({
+    required double total,
+    double rewardDiscount = 0,
+  }) {
+    final due = total - rewardDiscount;
+    return due > 0 ? due : 0;
+  }
+
+  static double changeOf({
+    required double paid,
+    required double total,
+    double rewardDiscount = 0,
+  }) {
+    final delta = paid - amountDueOf(total: total, rewardDiscount: rewardDiscount);
     return delta > 0 ? delta : 0;
   }
 
-  static double debtOf({required double paid, required double total}) {
-    final delta = total - paid;
+  static double debtOf({
+    required double paid,
+    required double total,
+    double rewardDiscount = 0,
+  }) {
+    final delta =
+        amountDueOf(total: total, rewardDiscount: rewardDiscount) - paid;
     return delta > 0 ? delta : 0;
   }
 
   /// Returns null when valid, else a machine key for the error message.
+  ///
+  /// Every payment rule is evaluated against the AMOUNT DUE
+  /// (`total - rewardDiscount`): with no reward the behaviour is
+  /// bit-for-bit the pre-loyalty one.  A fully discounted credit sale is
+  /// a server-side rejection (authority stays with the backend).
   static String? validate({
     required PaymentMethod method,
     required double total,
@@ -860,23 +923,25 @@ class PaymentMath {
     required bool hasCustomer,
     required bool canDiscount,
     required bool canCredit,
+    double rewardDiscount = 0,
   }) {
     if (total <= 0) return 'empty_cart_title';
     if (!canDiscount) {
       // Discounts are only rejected when actually present on the cart;
       // callers pass canDiscount=false together with hasAnyDiscount state.
     }
+    final due = amountDueOf(total: total, rewardDiscount: rewardDiscount);
     switch (method) {
       case PaymentMethod.cash:
-        if (paid + 1e-9 < total) return 'paid_too_low';
+        if (paid + 1e-9 < due) return 'paid_too_low';
         return null;
       case PaymentMethod.card:
-        if ((paid - total).abs() > 0.01) return 'invalid_amount';
+        if ((paid - due).abs() > 0.01) return 'invalid_amount';
         return null;
       case PaymentMethod.partial:
         if (!hasCustomer) return 'customer_required';
         if (!canCredit) return 'permission_credit';
-        if (paid <= 0 || paid + 1e-9 >= total) return 'invalid_amount';
+        if (paid <= 0 || paid + 1e-9 >= due) return 'invalid_amount';
         return null;
       case PaymentMethod.credit:
         if (!hasCustomer) return 'customer_required';

@@ -83,15 +83,18 @@ class _SuppliersScreenState extends ConsumerState<SuppliersScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Text(
+          // Wide windows keep the original single-row header (measured
+          // one-line width ≈ 1031px in Arabic); tighter windows let the
+          // title, search, chip and add button wrap instead of
+          // overflowing ("RenderFlex overflowed by 359 pixels").
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final title = Text(
                 AppStrings.t('suppliers', loc),
                 key: const Key('suppliers-title'),
                 style: theme.textTheme.headlineSmall,
-              ),
-              const SizedBox(width: 24),
-              SizedBox(
+              );
+              final searchField = SizedBox(
                 width: 260,
                 child: TextField(
                   key: const Key('suppliers-search'),
@@ -105,25 +108,49 @@ class _SuppliersScreenState extends ConsumerState<SuppliersScreen> {
                   onChanged: (value) =>
                       ref.read(suppliersProvider.notifier).setSearch(value),
                 ),
-              ),
-              const SizedBox(width: 16),
-              FilterChip(
+              );
+              final archivedToggle = FilterChip(
                 key: const Key('suppliers-archived-toggle'),
                 label: Text(AppStrings.t('show_archived', loc)),
                 selected: query.includeArchived,
                 onSelected: (value) => ref
                     .read(suppliersProvider.notifier)
                     .setIncludeArchived(value),
-              ),
-              const Spacer(),
-              if (canManage)
-                ElevatedButton.icon(
-                  key: const Key('suppliers-add-button'),
-                  onPressed: () => showSupplierFormDialog(context),
-                  icon: const Icon(Icons.person_add_alt),
-                  label: Text(AppStrings.t('add_supplier', loc)),
-                ),
-            ],
+              );
+              final addButton = canManage
+                  ? ElevatedButton.icon(
+                      key: const Key('suppliers-add-button'),
+                      onPressed: () => showSupplierFormDialog(context),
+                      icon: const Icon(Icons.person_add_alt),
+                      label: Text(AppStrings.t('add_supplier', loc)),
+                    )
+                  : null;
+
+              if (constraints.maxWidth >= 1070) {
+                return Row(
+                  children: [
+                    title,
+                    const SizedBox(width: 24),
+                    searchField,
+                    const SizedBox(width: 16),
+                    archivedToggle,
+                    const Spacer(),
+                    ?addButton,
+                  ],
+                );
+              }
+              return Wrap(
+                spacing: 12,
+                runSpacing: 8,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  title,
+                  searchField,
+                  archivedToggle,
+                  ?addButton,
+                ],
+              );
+            },
           ),
           if (state.error != null) ...[
             const SizedBox(height: 12),

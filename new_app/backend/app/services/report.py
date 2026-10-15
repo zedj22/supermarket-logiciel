@@ -33,6 +33,9 @@ from app.schemas.report import (
     FinancialReportResponse,
     HourlyReportResponse,
     HourlyReportRow,
+    LoyaltyEventTotals,
+    LoyaltyLedgerRow,
+    LoyaltyReportResponse,
     PeakHourRow,
     PeakHoursReportResponse,
     ProductReportResponse,
@@ -730,6 +733,151 @@ class ReportService:
             purchases_total=_money(block["purchases_total"]),
             supplier_paid=_money(block["supplier_paid"]),
             suppliers_with_balance=block["suppliers_with_balance"],
+        )
+
+    # ------------------------------------------------------------------
+    # Loyalty report (Loyalty Phase F)
+    # ------------------------------------------------------------------
+
+    #: Ledger event types in canonical report order (models/loyalty.py).
+    _LOYALTY_EVENT_ORDER = (
+        "sale_earn",
+        "debt_settlement_earn",
+        "redeem",
+        "return_clawback",
+        "void_clawback",
+        "adjustment",
+        "expiry",
+    )
+    #: Event types that grant rewards (never a negative delta).
+    _LOYALTY_EARN_EVENTS = ("sale_earn", "debt_settlement_earn")
+
+    def loyalty(
+        self,
+        *,
+        date_from: date,
+        date_to: date,
+        device_id: str | None = None,
+        page: int = 1,
+        page_size: int = 100,
+    ) -> LoyaltyReportResponse:
+        """Loyalty activity for the window plus the current reward liability.
+
+        Every figure comes from the append-only ledger (or, for balances,
+        from the cached account projection): points/cashback earned, points
+        redeemed and the cash value they removed from the invoices, the
+        reversals and restorations posted by returns/voids, and the
+        shortfall a floored reversal could not recover.  Sales totals keep
+        the §5.1 formulas untouched — reward value sits beside them and
+        never inside them.
+        """
+        self._validate_range(date_from, date_to)
+        block = self.repo.loyalty_block(
+            date_from=date_from, date_to=date_to, device_id=device_id
+        )
+        shortfall_points, shortfall_cashback = self.repo.loyalty_shortfalls(
+            date_from=date_from, date_to=date_to, device_id=device_id
+        )
+        rows, total = self.repo.loyalty_ledger_rows(
+            date_from=date_from,
+            date_to=date_to,
+            device_id=device_id,
+            page=page,
+            page_size=page_size,
+        )
+        events = block["events"]
+
+        def _aggregate(keys: tuple[str, ...]) -> tuple[int, Decimal, Decimal]:
+            entries = 0
+            points = _ZERO
+            cashback = _ZERO
+            for key in keys:
+                count, key_points, key_cashback = events.get(
+                    key, (0, _ZERO, _ZERO)
+                )
+                entries += count
+                points += key_points
+                cashback += key_cashback
+            return entries, points, cashback
+
+        earn_entries, points_earned, cashback_earned = _aggregate(
+            self._LOYALTY_EARN_EVENTS
+        )
+        redeem_entries, redeem_points, _redeem_cashback = _aggregate(("redeem",))
+        reversal_entries, reverse_points, reverse_cashback = _aggregate(
+            ("return_clawback", "void_clawback")
+        )
+        settlement_points = events.get(
+            "debt_settlement_earn", (0, _ZERO, _ZERO)
+        )[1]
+
+        # Read-only settings lookup (never creates the singleton row).
+        outstanding_points = block["outstanding_points"]
+        outstanding_cashback = block["outstanding_cashback"]
+
+        return LoyaltyReportResponse(
+            date_from=date_from,
+            date_to=date_to,
+            device_id=device_id,
+            sales_gross=_money(block["sales_gross"]),
+            sales_after_discounts=_money(block["sales_after_discounts"]),
+            invoice_count=block["invoice_count"],
+            points_earned=to_decimal(points_earned),
+            cashback_earned=_money(cashback_earned),
+            earn_entries=earn_entries,
+            settlement_points=to_decimal(settlement_points),
+            points_redeemed=to_decimal(-redeem_points),
+            redemption_value=_money(block["redemption_value"]),
+            redeem_entries=redeem_entries,
+            points_reversed=to_decimal(-reverse_points),
+            cashback_reversed=_money(-reverse_cashback),
+            reversal_entries=reversal_entries,
+            points_restored=to_decimal(block["restore_points"]),
+            restored_value=_money(block["restore_value"]),
+            restore_entries=block["restore_entries"],
+            shortfall_points=to_decimal(shortfall_points),
+            shortfall_cashback=_money(shortfall_cashback),
+            adjustment_points=to_decimal(block["adjustment_points"]),
+            adjustment_cashback=_money(block["adjustment_cashback"]),
+            outstanding_points=to_decimal(outstanding_points),
+            outstanding_cashback=_money(outstanding_cashback),
+            accounts_with_balance=block["accounts_with_balance"],
+            events=[
+                LoyaltyEventTotals(
+                    event_type=event_type,
+                    entries=events[event_type][0],
+                    points_delta=to_decimal(events[event_type][1]),
+                    cashback_delta=_money(events[event_type][2]),
+                )
+                for event_type in self._LOYALTY_EVENT_ORDER
+                if events.get(event_type, (0,))[0] > 0
+            ],
+            items=[
+                LoyaltyLedgerRow(
+                    entry_id=row["entry"].id,
+                    created_at=row["entry"].created_at,
+                    customer_id=row["customer_id"],
+                    customer_name=row["customer_name"],
+                    event_type=row["entry"].event_type,
+                    points_delta=to_decimal(row["entry"].points_delta),
+                    cashback_delta=_money(row["entry"].cashback_delta),
+                    balance_after_points=to_decimal(
+                        row["entry"].balance_after_points
+                    ),
+                    balance_after_cashback=_money(
+                        row["entry"].balance_after_cashback
+                    ),
+                    invoice_number=row["invoice_number"],
+                    sale_id=row["entry"].sale_id,
+                    return_id=row["entry"].return_id,
+                    note=row["entry"].note,
+                )
+                for row in rows
+            ],
+            total=total,
+            page=page,
+            page_size=page_size,
+            pages=self._pages(total, page_size),
         )
 
     # ------------------------------------------------------------------

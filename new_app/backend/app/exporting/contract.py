@@ -36,9 +36,13 @@ REPORT_SLUGS = (
     "voided",
     "sales",
     "suppliers",
+    "loyalty",
 )
 
 # Row-level reports (§9 note): paged endpoints, 50 000-row cap, autofilter.
+# `loyalty` pages too, but its export is sectioned (summary + events +
+# ledger) like the financial report, so it stays out of this set: an
+# autofilter would land on the one-row summary block.
 ROW_LEVEL_REPORTS = ("products", "slow-moving", "voided", "sales")
 
 _TITLE_KEYS = {
@@ -52,10 +56,11 @@ _TITLE_KEYS = {
     "voided": "report_voided",
     "sales": "report_sales",
     "suppliers": "report_suppliers",
+    "loyalty": "report_loyalty",
 }
 
 # §9 + §10.1: wide tables print landscape (same set for PDF and XLSX).
-_LANDSCAPE = {"products", "slow-moving", "voided", "sales"}
+_LANDSCAPE = {"products", "slow-moving", "voided", "sales", "loyalty"}
 
 
 @dataclass
@@ -737,6 +742,137 @@ def _suppliers(payload, locale: str) -> list[ExportBlock]:
     return [ExportBlock(headers=headers, rows=rows, kinds=kinds)]
 
 
+# ---------------------------------------------------------------------------
+# Loyalty — period activity, balance snapshot, event breakdown, ledger
+# ---------------------------------------------------------------------------
+
+
+def _loyalty(payload, locale: str) -> list[ExportBlock]:
+    # §1 period block: sales context and reward activity side by side but
+    # in separate columns — turnover is never reduced by reward value.
+    period_headers = [
+        _t("label_period", locale),
+        _t("kpi_gross_sales", locale),
+        _t("kpi_invoices", locale),
+        _t("loyalty_points_earned", locale),
+        _t("loyalty_cashback_earned", locale),
+        _t("loyalty_settlement_points", locale),
+        _t("loyalty_points_redeemed", locale),
+        _t("loyalty_redemption_value", locale),
+        _t("loyalty_points_reversed", locale),
+        _t("loyalty_cashback_reversed", locale),
+        _t("loyalty_points_restored", locale),
+        _t("loyalty_restored_value", locale),
+        _t("loyalty_shortfall_points", locale),
+        _t("loyalty_shortfall_cashback", locale),
+    ]
+    period_kinds = [
+        "text",
+        "money",
+        "int",
+        "int",
+        "money",
+        "int",
+        "int",
+        "money",
+        "int",
+        "money",
+        "int",
+        "money",
+        "int",
+        "money",
+    ]
+    period_row = [
+        f"{cell(payload.date_from)} - {cell(payload.date_to)}",
+        cell(payload.sales_gross),
+        cell(payload.invoice_count),
+        cell(payload.points_earned),
+        cell(payload.cashback_earned),
+        cell(payload.settlement_points),
+        cell(payload.points_redeemed),
+        cell(payload.redemption_value),
+        cell(payload.points_reversed),
+        cell(payload.cashback_reversed),
+        cell(payload.points_restored),
+        cell(payload.restored_value),
+        cell(payload.shortfall_points),
+        cell(payload.shortfall_cashback),
+    ]
+
+    balance_headers = [
+        _t("loyalty_outstanding_points", locale),
+        _t("loyalty_outstanding_cashback", locale),
+        _t("loyalty_accounts_with_balance", locale),
+    ]
+    balance_kinds = ["int", "money", "int"]
+    balance_row = [
+        cell(payload.outstanding_points),
+        cell(payload.outstanding_cashback),
+        cell(payload.accounts_with_balance),
+    ]
+
+    event_headers = [
+        _t("col_event", locale),
+        _t("col_count", locale),
+        _t("col_points", locale),
+        _t("col_cashback", locale),
+    ]
+    event_kinds = ["text", "int", "int", "money"]
+    event_rows = [
+        [
+            label(f"loyalty_event_{row.event_type}", locale),
+            cell(row.entries),
+            cell(row.points_delta),
+            cell(row.cashback_delta),
+        ]
+        for row in payload.events
+    ]
+
+    ledger_headers = [
+        _t("col_date", locale),
+        _t("col_customer", locale),
+        _t("col_event", locale),
+        _t("col_points", locale),
+        _t("col_cashback", locale),
+        _t("col_points_balance", locale),
+        _t("col_cashback_balance", locale),
+        _t("col_invoice", locale),
+        _t("note", locale),
+    ]
+    ledger_kinds = [
+        "date",
+        "text",
+        "text",
+        "int",
+        "money",
+        "int",
+        "money",
+        "text",
+        "text",
+    ]
+    ledger_rows = [
+        [
+            cell(row.created_at),
+            cell(row.customer_name),
+            label(f"loyalty_event_{row.event_type}", locale),
+            cell(row.points_delta),
+            cell(row.cashback_delta),
+            cell(row.balance_after_points),
+            cell(row.balance_after_cashback),
+            cell(row.invoice_number),
+            cell(row.note),
+        ]
+        for row in payload.items
+    ]
+
+    return [
+        ExportBlock(headers=period_headers, rows=[period_row], kinds=period_kinds),
+        ExportBlock(headers=balance_headers, rows=[balance_row], kinds=balance_kinds),
+        ExportBlock(headers=event_headers, rows=event_rows, kinds=event_kinds),
+        ExportBlock(headers=ledger_headers, rows=ledger_rows, kinds=ledger_kinds),
+    ]
+
+
 _BUILDERS = {
     "financial": _financial,
     "products": _products,
@@ -748,6 +884,7 @@ _BUILDERS = {
     "voided": _voided,
     "sales": _sales,
     "suppliers": _suppliers,
+    "loyalty": _loyalty,
 }
 
 

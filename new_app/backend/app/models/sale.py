@@ -10,8 +10,18 @@ Design principles:
 
 import uuid
 from datetime import datetime
+from decimal import Decimal
 
-from sqlalchemy import DateTime, ForeignKey, Index, Numeric, String, Text, func
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    Numeric,
+    String,
+    Text,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, DocumentModel, TimestampMixin, UUIDMixin, numeric_money, numeric_quantity
@@ -69,6 +79,27 @@ class Sale(DocumentModel):
         nullable=True,
     )
     void_reason: Mapped[str | None] = mapped_column(Text)
+    # Loyalty summary (Phase A). NULL = pre-loyalty sale, so every legacy
+    # row stays distinguishable from a loyalty sale that earned zero.
+    # Written by the Phase B posting code together with the ledger entry;
+    # never defaulted, never rewritten by void/report paths.
+    loyalty_points_earned: Mapped[Decimal | None] = mapped_column(
+        Numeric(18, 0), nullable=True,
+    )
+    loyalty_cashback_earned: Mapped[Decimal | None] = mapped_column(
+        Numeric(18, 3), nullable=True,
+    )
+    loyalty_points_redeemed: Mapped[Decimal | None] = mapped_column(
+        Numeric(18, 0), nullable=True,
+    )
+    loyalty_redeemed_value: Mapped[Decimal | None] = mapped_column(
+        Numeric(18, 3), nullable=True,
+    )
+    # Amount payable after the invoice discount minus the loyalty
+    # reward discount. NULL = pre-loyalty sale.
+    amount_due: Mapped[Decimal | None] = mapped_column(
+        Numeric(18, 3), nullable=True,
+    )
 
     # Relationships
     customer: Mapped["Customer | None"] = relationship(  # noqa: F821
@@ -112,6 +143,28 @@ class Sale(DocumentModel):
             "ix_sales_status_sale_date",
             "status",
             "sale_date",
+        ),
+        # Loyalty summary invariants (Phase A): no write path may record a
+        # negative value. NULL passes the CHECK (pre-loyalty rows).
+        CheckConstraint(
+            "loyalty_points_earned >= 0",
+            name="ck_sales_loyalty_points_earned",
+        ),
+        CheckConstraint(
+            "loyalty_cashback_earned >= 0",
+            name="ck_sales_loyalty_cashback_earned",
+        ),
+        CheckConstraint(
+            "loyalty_points_redeemed >= 0",
+            name="ck_sales_loyalty_points_redeemed",
+        ),
+        CheckConstraint(
+            "loyalty_redeemed_value >= 0",
+            name="ck_sales_loyalty_redeemed_value",
+        ),
+        CheckConstraint(
+            "amount_due >= 0",
+            name="ck_sales_amount_due",
         ),
     )
 

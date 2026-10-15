@@ -12,6 +12,12 @@ Hard rules (Phase 0 #3/#4, decision record §7/§8):
 - a voided sale is never returned, and a sale with returns is never voided
   (§16 mutual exclusion, checked here under the sale row lock).
 
+Phase D (loyalty): the void claws back the checkout rewards exactly once
+(floored at the current balance — spent rewards become a shortfall note,
+never a negative balance), restores the points redeemed on the sale and
+settles ``cash_pending`` net of the redeemed value, all in the SAME
+transaction, under lock order sale → customer → loyalty account → stock.
+
 Stock restoration and debt reversal are imported from
 ``app.services.void``'s sibling module so both Phase 12 operations share
 one implementation of each (see that module's header).
@@ -40,6 +46,7 @@ from app.repositories.sale import SaleRepository
 from app.schemas.returns import VoidRequest, VoidResponse
 from app.services.audit import AuditService
 from app.services.base import BaseService
+from app.services.loyalty import LoyaltyEngine
 from app.services.returns import (
     apply_restore,
     lock_restore_targets,
@@ -130,8 +137,12 @@ class VoidService(BaseService):
         # Re-read after commit (Phase 8/9 pattern) so the response carries
         # the committed void fields and the frozen snapshot totals.
         sale_response = SaleService(self.db).get_sale(voided_id)
+        # Phase D: the void restores the redeemed points, so the cash
+        # still owed excludes the redeemed value — that share is settled
+        # in points, never in cash.
+        redeemed_value = to_decimal(sale_response.loyalty_redeemed_value or _ZERO)
         cash_pending = quantize_money(
-            quantize_money(sale_response.total) - credit_reversed
+            quantize_money(sale_response.total) - credit_reversed - redeemed_value
         )
         logger.info(
             "sale_voided",
@@ -140,6 +151,7 @@ class VoidService(BaseService):
             refund_due=str(refund_due),
             credit_reversed=str(credit_reversed),
             cash_pending=str(cash_pending),
+            loyalty_redeemed_value=str(redeemed_value),
         )
         return VoidResponse(
             sale=sale_response,
@@ -208,6 +220,43 @@ class VoidService(BaseService):
                         details={"customer_id": str(sale.customer_id)},
                     )
 
+            # 3b. Phase D: loyalty plan + account lock — placed with the
+            #     customer lock and BEFORE the stock locks so the global
+            #     order stays sale → customer → loyalty account → stock,
+            #     identical to the checkout transaction (a cycle between
+            #     account and stock locks is thereby impossible).  A void
+            #     reverses the WHOLE document: full clawback of the
+            #     checkout rewards, floored at the balance as it stands
+            #     (spent rewards become a shortfall note — never a
+            #     negative balance), then full restoration of the points
+            #     redeemed on this sale.
+            loyalty_engine: LoyaltyEngine | None = None
+            loyalty_account = None
+            claw_points = _ZERO
+            claw_cashback = _ZERO
+            clawed_points = _ZERO
+            clawed_cashback = _ZERO
+            restored_points = _ZERO
+            restored_value = _ZERO
+            if customer is not None and (
+                sale.loyalty_points_earned is not None
+                or sale.loyalty_cashback_earned is not None
+                or (sale.loyalty_points_redeemed or 0) > 0
+            ):
+                claw_points = to_decimal(sale.loyalty_points_earned or _ZERO)
+                claw_cashback = to_decimal(sale.loyalty_cashback_earned or _ZERO)
+                restored_points = to_decimal(sale.loyalty_points_redeemed or _ZERO)
+                restored_value = to_decimal(sale.loyalty_redeemed_value or _ZERO)
+                if (
+                    claw_points > 0
+                    or claw_cashback > 0
+                    or restored_points > 0
+                ):
+                    loyalty_engine = LoyaltyEngine(self.db)
+                    loyalty_account = loyalty_engine.get_or_create_account(
+                        customer.id, for_update=True
+                    )
+
             # 4. Stock target locks, ascending id (§19).
             restores = void_restores(sale)
             product_ids = {r["product_id"] for r in restores}
@@ -263,6 +312,64 @@ class VoidService(BaseService):
                     entry_type="sale_void",
                 )
 
+            # 6b. Phase D: loyalty ledger — clawback FIRST (floored at
+            #     the pre-void balance, so rewards the customer already
+            #     spent are recorded as a shortfall note instead of a
+            #     negative balance), then the redemption restoration.
+            #     Both post in the SAME transaction as the void.
+            #     Exactly-once is enforced twice: the SALE_ALREADY_VOID
+            #     gate under the sale row lock (step 1) runs before this
+            #     block, and the unique source_event_keys make a second
+            #     reversal entry impossible even if a caller retries the
+            #     post itself.
+            if loyalty_engine is not None and loyalty_account is not None:
+                if claw_points > 0 or claw_cashback > 0:
+                    actual_points = min(
+                        claw_points, to_decimal(loyalty_account.points_balance)
+                    )
+                    actual_cashback = min(
+                        claw_cashback, to_decimal(loyalty_account.cashback_balance)
+                    )
+                    clawed_points = actual_points
+                    clawed_cashback = actual_cashback
+                    shortfalls = []
+                    if claw_points - actual_points > 0:
+                        shortfalls.append(
+                            f"{claw_points - actual_points} points already spent"
+                        )
+                    if claw_cashback - actual_cashback > 0:
+                        shortfalls.append(
+                            f"{claw_cashback - actual_cashback} cashback "
+                            "already spent"
+                        )
+                    note = f"Sale {sale.invoice_number} voided"
+                    if shortfalls:
+                        note = f"{note} (shortfall: {', '.join(shortfalls)})"
+                    loyalty_engine.post(
+                        customer_id=customer.id,
+                        event_type="void_clawback",
+                        source_event_key=f"void_clawback:{sale.id}",
+                        points_delta=-actual_points,
+                        cashback_delta=-actual_cashback,
+                        sale_id=sale.id,
+                        created_by=actor_id,
+                        note=note,
+                    )
+                if restored_points > 0:
+                    loyalty_engine.post(
+                        customer_id=customer.id,
+                        event_type="adjustment",
+                        source_event_key=f"void_redemption:{sale.id}",
+                        points_delta=restored_points,
+                        cashback_delta=_ZERO,
+                        sale_id=sale.id,
+                        created_by=actor_id,
+                        note=(
+                            f"Sale {sale.invoice_number} voided: redeemed "
+                            "points restored"
+                        ),
+                    )
+
             # 7. Terminal flip + attribution (GATE 9). Totals stay frozen:
             #    never rewrite subtotal/discount/total/paid/change.
             sale.status = SaleStatus.VOID.value
@@ -288,8 +395,14 @@ class VoidService(BaseService):
                         "refund_due": str(refund_due),
                         "credit_reversed": str(credit_reversed),
                         "cash_pending": str(
-                            quantize_money(refund_due - credit_reversed)
+                            quantize_money(
+                                refund_due - credit_reversed - restored_value
+                            )
                         ),
+                        "loyalty_points_clawed": str(clawed_points),
+                        "loyalty_cashback_clawed": str(clawed_cashback),
+                        "loyalty_points_restored": str(restored_points),
+                        "loyalty_restored_value": str(restored_value),
                         "totals_preserved": {
                             "subtotal": str(to_decimal(sale.subtotal)),
                             "discount": str(to_decimal(sale.discount)),

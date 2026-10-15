@@ -18,6 +18,17 @@ debt credit/reversal sums). Void and return restore the same stock and
 reverse the same debt, so one implementation of each keeps them provably
 symmetric; ``void.py`` imports them from here instead of duplicating them
 or editing a Phase 7 service.
+
+Phase D (loyalty): a linked return of a loyalty sale claws back the
+pro-rata share of the checkout rewards (floored at the current balance —
+an unreversed shortfall goes in the ledger note, never a negative
+balance), restores the pro-rata share of the redeemed points and settles
+exactly one compensation per financing source: points for the redeemed
+share, credit for the debt share, cash for the rest — never a second
+cash refund for the redeemed portion.  All of it posts through
+:class:`app.services.loyalty.LoyaltyEngine` inside the SAME transaction
+as the return document, under lock order sale → customer → loyalty
+account → stock.
 """
 
 from __future__ import annotations
@@ -26,7 +37,7 @@ import json
 import math
 import uuid
 from datetime import datetime, timezone
-from decimal import Decimal
+from decimal import ROUND_FLOOR, Decimal
 from typing import Any
 
 import structlog
@@ -51,6 +62,7 @@ from app.models.enums import (
     StockMovementType,
 )
 from app.models.inventory import InventoryMovement
+from app.models.loyalty import LoyaltyLedgerEntry
 from app.models.return_doc import Return, ReturnLine
 from app.models.sale import Sale, SaleLine
 from app.repositories.catalog import ProductRepository, ProductVariantRepository
@@ -66,10 +78,16 @@ from app.schemas.returns import (
     ReturnResponse,
 )
 from app.services.base import BaseService
+from app.services.loyalty import LoyaltyEngine
 
 logger = structlog.get_logger(__name__)
 
 _ZERO = Decimal("0")
+
+
+def _floor_money(value: Decimal) -> Decimal:
+    """Floor to the money quantum (0.001) — never round a clawback UP."""
+    return value.quantize(Decimal("0.001"), rounding=ROUND_FLOOR)
 
 
 def _generate_return_number() -> str:
@@ -280,6 +298,26 @@ def credit_reversed_for_key(session: Session, client_request_id: str) -> Decimal
         )
     ).scalar()
     return quantize_money(to_decimal(amount))
+
+
+def restored_points_for_return(session: Session, return_id: uuid.UUID) -> Decimal:
+    """Points restored by one return (idempotent replay path, Phase D).
+
+    The redemption-restoration entry is written with
+    ``source_event_key = return_redemption:{return_id}`` in the same
+    transaction as the return, so a replayed response derives the same
+    settlement (``cash_pending``) without re-running the plan.
+    """
+    if return_id is None:
+        return _ZERO
+    points = session.execute(
+        select(func.coalesce(func.sum(LoyaltyLedgerEntry.points_delta), 0)).where(
+            LoyaltyLedgerEntry.return_id == return_id,
+            LoyaltyLedgerEntry.event_type == "adjustment",
+            LoyaltyLedgerEntry.source_event_key.like("return_redemption:%"),
+        )
+    ).scalar()
+    return to_decimal(points)
 
 
 def reverse_customer_debt(
@@ -581,6 +619,131 @@ class ReturnService(BaseService):
                         details={"customer_id": str(customer_id)},
                     )
 
+            # 3b. Phase D: loyalty plan + account lock.  The plan is pure
+            #     arithmetic on the SALE's stored loyalty columns and on
+            #     prior returns of this sale (this return's document row
+            #     is written in step 5, after the plan).  Computed under
+            #     the sale row lock — competing returns/voids of the same
+            #     sale serialize there — and BEFORE any stock or document
+            #     write, so a rejected return leaves zero loyalty residue.
+            #     Lock order extends §19 exactly like the sale
+            #     transaction: sale → customer → loyalty account → stock.
+            loyalty_engine: LoyaltyEngine | None = None
+            loyalty_account = None
+            claw_points = _ZERO
+            claw_cashback = _ZERO
+            clawed_points = _ZERO
+            clawed_cashback = _ZERO
+            restored_points = _ZERO
+            restored_value = _ZERO
+            if sale is not None and customer is not None and (
+                sale.loyalty_points_earned is not None
+                or sale.loyalty_cashback_earned is not None
+                or (sale.loyalty_points_redeemed or 0) > 0
+            ):
+                sale_total = to_decimal(sale.total)
+                if sale_total > 0:
+                    # Cumulative refunded value of PRIOR returns of this
+                    # sale (cap §11 keeps the sum ≤ sale.total, so the
+                    # fraction can never exceed 1).
+                    returned_before = to_decimal(
+                        self.db.execute(
+                            select(func.coalesce(func.sum(Return.total), 0)).where(
+                                Return.sale_id == sale.id
+                            )
+                        ).scalar()
+                    )
+                    fraction = (returned_before + total) / sale_total
+
+                    # Redemption restoration — entitlement pattern
+                    # mirrored from _pro_rata_refund: cumulative restores
+                    # land on EXACTLY the full redeemed points once the
+                    # sale is fully returned, and partial restores are
+                    # floored (never over-restore).
+                    redeemed_points = to_decimal(
+                        sale.loyalty_points_redeemed or _ZERO
+                    )
+                    if redeemed_points > 0:
+                        entitlement = (redeemed_points * fraction).to_integral_value(
+                            rounding=ROUND_FLOOR
+                        )
+                        restored_before = to_decimal(
+                            self.db.execute(
+                                select(
+                                    func.coalesce(
+                                        func.sum(LoyaltyLedgerEntry.points_delta), 0
+                                    )
+                                ).where(
+                                    LoyaltyLedgerEntry.sale_id == sale.id,
+                                    LoyaltyLedgerEntry.source_event_key.like(
+                                        "return_redemption:%"
+                                    ),
+                                )
+                            ).scalar()
+                        )
+                        restored_points = max(_ZERO, entitlement - restored_before)
+                        if restored_points > 0:
+                            # Value follows the points restored, derived
+                            # from the STORED redeemed value: a later
+                            # settings change cannot rewrite what this
+                            # return settles in cash.
+                            restored_value = quantize_money(
+                                to_decimal(sale.loyalty_redeemed_value)
+                                * restored_points
+                                / redeemed_points
+                            )
+
+                    # Earn clawback — the appropriate share of the
+                    # checkout rewards, floored (a clawback never rounds
+                    # UP) and entitlement-exact across partial returns.
+                    if sale.loyalty_points_earned is not None:
+                        earned_points = to_decimal(sale.loyalty_points_earned)
+                        earned_cashback = to_decimal(
+                            sale.loyalty_cashback_earned or _ZERO
+                        )
+                        claw_points = max(
+                            _ZERO,
+                            min(
+                                earned_points,
+                                (earned_points * fraction).to_integral_value(
+                                    rounding=ROUND_FLOOR
+                                ),
+                            ),
+                        )
+                        claw_cashback = max(
+                            _ZERO,
+                            min(
+                                earned_cashback,
+                                _floor_money(earned_cashback * fraction),
+                            ),
+                        )
+                        prior_claw = self.db.execute(
+                            select(
+                                func.coalesce(
+                                    func.sum(LoyaltyLedgerEntry.points_delta), 0
+                                ),
+                                func.coalesce(
+                                    func.sum(LoyaltyLedgerEntry.cashback_delta), 0
+                                ),
+                            ).where(
+                                LoyaltyLedgerEntry.sale_id == sale.id,
+                                LoyaltyLedgerEntry.event_type == "return_clawback",
+                            )
+                        ).one()
+                        # Prior clawback entries are strictly negative.
+                        claw_points = max(
+                            _ZERO, claw_points + to_decimal(prior_claw[0])
+                        )
+                        claw_cashback = max(
+                            _ZERO, claw_cashback + to_decimal(prior_claw[1])
+                        )
+
+                if claw_points > 0 or claw_cashback > 0 or restored_points > 0:
+                    loyalty_engine = LoyaltyEngine(self.db)
+                    loyalty_account = loyalty_engine.get_or_create_account(
+                        customer.id, for_update=True
+                    )
+
             # 4. Stock target locks, ascending id (§19).
             product_ids: set[uuid.UUID] = set()
             variant_ids: set[uuid.UUID] = set()
@@ -655,6 +818,12 @@ class ReturnService(BaseService):
                     )
 
             # 7. Debt reversal (§17): capped, shortfall never silent.
+            #    Phase D: the redeemed share of this return is settled in
+            #    POINTS (step 7b) — carve it out of the settlement base so
+            #    no portion of the refund is compensated twice (never a
+            #    second cash refund for the redeemed portion).  With
+            #    restored_value = 0 the base is the untouched `total`.
+            credit_base = quantize_money(total - restored_value)
             credit_reversed = _ZERO
             if customer is not None and sale is not None:
                 credit, reversed_before = sale_credit_and_reversed(
@@ -666,12 +835,71 @@ class ReturnService(BaseService):
                     customer=customer,
                     credit=credit,
                     reversed_before=reversed_before,
-                    refund_total=total,
+                    refund_total=credit_base,
                     reference_sale_id=sale.id,
                     note=f"Return {ret.return_number} refund",
                     client_request_id=request.client_request_id,
                     actor_id=actor_id,
                 )
+
+            # 7b. Phase D: loyalty ledger — SAME transaction as the
+            #     return.  Order matters: the earn clawback runs FIRST,
+            #     floored at the balance as it stands BEFORE this
+            #     return's restoration, so points being restored for the
+            #     returned goods are never consumed by an earn reversal;
+            #     any unreversed shortfall is written into the ledger
+            #     note and the return itself stays valid.  The
+            #     restoration follows (positive adjustment — it reverses
+            #     a checkout ``redeem``, it is not itself a clawback).
+            if loyalty_engine is not None and loyalty_account is not None:
+                if claw_points > 0 or claw_cashback > 0:
+                    actual_points = min(
+                        claw_points, to_decimal(loyalty_account.points_balance)
+                    )
+                    actual_cashback = min(
+                        claw_cashback, to_decimal(loyalty_account.cashback_balance)
+                    )
+                    clawed_points = actual_points
+                    clawed_cashback = actual_cashback
+                    shortfalls = []
+                    if claw_points - actual_points > 0:
+                        shortfalls.append(
+                            f"{claw_points - actual_points} points already spent"
+                        )
+                    if claw_cashback - actual_cashback > 0:
+                        shortfalls.append(
+                            f"{claw_cashback - actual_cashback} cashback "
+                            "already spent"
+                        )
+                    note = f"Return {ret.return_number} reward reversal"
+                    if shortfalls:
+                        note = f"{note} (shortfall: {', '.join(shortfalls)})"
+                    loyalty_engine.post(
+                        customer_id=customer.id,
+                        event_type="return_clawback",
+                        source_event_key=f"return_clawback:{ret.id}",
+                        points_delta=-actual_points,
+                        cashback_delta=-actual_cashback,
+                        sale_id=sale.id,
+                        return_id=ret.id,
+                        created_by=actor_id,
+                        note=note,
+                    )
+                if restored_points > 0:
+                    loyalty_engine.post(
+                        customer_id=customer.id,
+                        event_type="adjustment",
+                        source_event_key=f"return_redemption:{ret.id}",
+                        points_delta=restored_points,
+                        cashback_delta=_ZERO,
+                        sale_id=sale.id,
+                        return_id=ret.id,
+                        created_by=actor_id,
+                        note=(
+                            f"Return {ret.return_number}: redeemed points "
+                            "restored for returned goods"
+                        ),
+                    )
 
             # 8. Audit (§21): one structured row per operation.
             self._audit(
@@ -695,8 +923,12 @@ class ReturnService(BaseService):
                         "refund_total": str(total),
                         "credit_reversed": str(credit_reversed),
                         "cash_pending": str(
-                            quantize_money(total - credit_reversed)
+                            quantize_money(credit_base - credit_reversed)
                         ),
+                        "loyalty_points_clawed": str(clawed_points),
+                        "loyalty_cashback_clawed": str(clawed_cashback),
+                        "loyalty_points_restored": str(restored_points),
+                        "loyalty_restored_value": str(restored_value),
                     },
                     ensure_ascii=True,
                 ),
@@ -1264,6 +1496,25 @@ class ReturnService(BaseService):
                 self.db, ret.client_request_id or ""
             )
         cash_pending = quantize_money(refund_total - credit_reversed)
+        # Phase D: the redeemed share of a loyalty return is settled in
+        # restored POINTS — cash must never cover it a second time.  The
+        # restoration is derived from this return's own committed ledger
+        # entry, so fresh responses and idempotent replays agree.
+        restored = restored_points_for_return(self.db, ret.id)
+        sale = ret.sale
+        if (
+            restored > 0
+            and sale is not None
+            and (sale.loyalty_points_redeemed or 0) > 0
+        ):
+            restored_value = quantize_money(
+                to_decimal(sale.loyalty_redeemed_value)
+                * restored
+                / to_decimal(sale.loyalty_points_redeemed)
+            )
+            cash_pending = max(
+                _ZERO, quantize_money(cash_pending - restored_value)
+            )
         return ReturnCreateResponse(
             return_=self._to_response(ret),
             idempotent_replay=idempotent_replay,

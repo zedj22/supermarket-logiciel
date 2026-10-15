@@ -214,8 +214,11 @@ class ReturnCreateResponse(StrictBaseModel):
     """POST /api/v1/returns result.
 
     ``credit_reversed`` is the debt portion actually forgiven (§17) and
-    ``cash_pending = refund_total − credit_reversed`` is the still-owed
-    cash/card refund, which Phase 12 records but does not execute (§18).
+    ``cash_pending`` is the still-owed cash/card refund, which Phase 12
+    records but does not execute (§18).  Phase D carves the redeemed
+    share out first: ``cash_pending = refund_total − credit_reversed −
+    restored redemption value`` — that share is settled by restoring
+    points, never by a second cash refund.
     """
 
     model_config = ConfigDict(
@@ -235,7 +238,10 @@ class VoidResponse(StrictBaseModel):
     """POST /api/v1/sales/{sale_id}/void result (§8, §18).
 
     ``refund_due`` is ``sale.total`` — the sale snapshot is never
-    rewritten, so the refund base is the original invoice total.
+    rewritten, so the refund base is the original invoice total.  Phase D:
+    ``cash_pending = refund_due − credit_reversed − redeemed value``
+    because the void restores the redeemed points instead of paying them
+    back in cash.
     """
 
     sale: SaleResponse

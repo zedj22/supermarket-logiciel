@@ -16,6 +16,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/strings.dart';
 import '../../l10n/locale_provider.dart';
 import '../auth/permission_helpers.dart';
+import '../loyalty/loyalty_history_dialog.dart';
+import '../loyalty/loyalty_models.dart';
+import '../loyalty/loyalty_providers.dart';
 import '../pos/pos_toast.dart';
 import 'clients_error.dart';
 import 'clients_providers.dart';
@@ -83,15 +86,18 @@ class _ClientsScreenState extends ConsumerState<ClientsScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Text(
+          // Wide windows keep the original single-row header (measured
+          // one-line width ≈ 1007px in Arabic); tighter windows let the
+          // title, search, chip and add button wrap instead of
+          // overflowing ("RenderFlex overflowed by 335 pixels").
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final title = Text(
                 AppStrings.t('clients', loc),
                 key: const Key('clients-title'),
                 style: theme.textTheme.headlineSmall,
-              ),
-              const SizedBox(width: 24),
-              SizedBox(
+              );
+              final searchField = SizedBox(
                 width: 260,
                 child: TextField(
                   key: const Key('clients-search'),
@@ -105,25 +111,49 @@ class _ClientsScreenState extends ConsumerState<ClientsScreen> {
                   onChanged: (value) =>
                       ref.read(customersProvider.notifier).setSearch(value),
                 ),
-              ),
-              const SizedBox(width: 16),
-              FilterChip(
+              );
+              final archivedToggle = FilterChip(
                 key: const Key('clients-archived-toggle'),
                 label: Text(AppStrings.t('show_archived', loc)),
                 selected: query.includeArchived,
                 onSelected: (value) => ref
                     .read(customersProvider.notifier)
                     .setIncludeArchived(value),
-              ),
-              const Spacer(),
-              if (canManage)
-                ElevatedButton.icon(
-                  key: const Key('clients-add-button'),
-                  onPressed: () => showCustomerFormDialog(context),
-                  icon: const Icon(Icons.person_add_alt),
-                  label: Text(AppStrings.t('add_client', loc)),
-                ),
-            ],
+              );
+              final addButton = canManage
+                  ? ElevatedButton.icon(
+                      key: const Key('clients-add-button'),
+                      onPressed: () => showCustomerFormDialog(context),
+                      icon: const Icon(Icons.person_add_alt),
+                      label: Text(AppStrings.t('add_client', loc)),
+                    )
+                  : null;
+
+              if (constraints.maxWidth >= 1050) {
+                return Row(
+                  children: [
+                    title,
+                    const SizedBox(width: 24),
+                    searchField,
+                    const SizedBox(width: 16),
+                    archivedToggle,
+                    const Spacer(),
+                    ?addButton,
+                  ],
+                );
+              }
+              return Wrap(
+                spacing: 12,
+                runSpacing: 8,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  title,
+                  searchField,
+                  archivedToggle,
+                  ?addButton,
+                ],
+              );
+            },
           ),
           if (state.error != null) ...[
             const SizedBox(height: 12),
@@ -340,12 +370,32 @@ class _CustomerDetailPaneState extends ConsumerState<_CustomerDetailPane> {
     if (!history.loading) {
       ref.read(debtHistoryProvider(widget.customerId).notifier).refresh();
     }
+    if (ref.exists(loyaltyBalanceProvider(widget.customerId))) {
+      final loyalty = ref.read(loyaltyBalanceProvider(widget.customerId));
+      if (!loyalty.loading) {
+        ref
+            .read(loyaltyBalanceProvider(widget.customerId).notifier)
+            .refresh();
+      }
+    }
+    if (ref.exists(loyaltyHistoryProvider(widget.customerId))) {
+      final ledger = ref.read(loyaltyHistoryProvider(widget.customerId));
+      if (!ledger.loading) {
+        ref.read(loyaltyHistoryProvider(widget.customerId).notifier).refresh();
+      }
+    }
   }
 
   Future<void> _reloadAll() async {
     ref.read(customerDetailProvider(widget.customerId).notifier).load();
     ref.read(debtHistoryProvider(widget.customerId).notifier).refresh();
     ref.read(customersProvider.notifier).refresh();
+    if (ref.exists(loyaltyBalanceProvider(widget.customerId))) {
+      ref.read(loyaltyBalanceProvider(widget.customerId).notifier).refresh();
+    }
+    if (ref.exists(loyaltyHistoryProvider(widget.customerId))) {
+      ref.read(loyaltyHistoryProvider(widget.customerId).notifier).refresh();
+    }
   }
 
   Future<void> _pay(CustomerModel customer) async {
@@ -453,6 +503,7 @@ class _CustomerDetailPaneState extends ConsumerState<_CustomerDetailPane> {
         final balanceMilli = moneyToMilli(customer.balance) ?? 0;
         final ceilingMilli = moneyToMilli(customer.debtCeiling) ?? 0;
         final overLimit = balanceMilli > ceilingMilli && ceilingMilli > 0;
+        final loyalty = ref.watch(loyaltyBalanceProvider(widget.customerId));
 
         return Padding(
           key: const Key('client-detail'),
@@ -518,6 +569,46 @@ class _CustomerDetailPaneState extends ConsumerState<_CustomerDetailPane> {
                             color: theme.colorScheme.error,
                           ),
                         ),
+                      // Phase E — loyalty balances (server-computed; hidden
+                      // while the read is in flight or failed — the history
+                      // dialog owns its own retry UI).
+                      if (loyalty.balance != null) ...[
+                        const SizedBox(height: 8),
+                        Row(
+                          key: const Key('client-loyalty-row'),
+                          children: [
+                            Expanded(
+                              child: Text(
+                                '${AppStrings.t('loyalty_points', loc)}: '
+                                '${formatLoyaltyPoints(loyalty.balance!.pointsBalance)}',
+                                key: const Key('client-loyalty-points'),
+                                style: theme.textTheme.bodyMedium,
+                              ),
+                            ),
+                            Expanded(
+                              child: Text(
+                                '${AppStrings.t('loyalty_cashback', loc)}: '
+                                '${formatMoney(loyalty.balance!.cashbackBalance.toStringAsFixed(2))}',
+                                key: const Key('client-loyalty-cashback'),
+                                textAlign: TextAlign.end,
+                                style: theme.textTheme.bodyMedium,
+                              ),
+                            ),
+                            const SizedBox(width: 4),
+                            IconButton(
+                              key: const Key('client-loyalty-history-button'),
+                              tooltip: AppStrings.t('loyalty_history', loc),
+                              visualDensity: VisualDensity.compact,
+                              iconSize: 20,
+                              icon: const Icon(Icons.stars_outlined),
+                              onPressed: () => showLoyaltyHistoryDialog(
+                                context,
+                                customerId: widget.customerId,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
                     ],
                   ),
                 ),

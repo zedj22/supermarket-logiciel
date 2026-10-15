@@ -133,10 +133,23 @@ void main() {
       // 4 keys (1203).  The Klick POS weight/length amount-entry pass
       // added the quantity-vs-amount mode toggle, amount input, computed
       // quantity, requested amount and the zero/invalid-price explanation —
-      // 6 keys (1209).  Update this deliberately when a subphase
+      // 6 keys (1209).  The Klick POS loyalty pass (Phase E) added the
+      // loyalty surface — balance/redeem labels, the amount-due and
+      // earned rows, the settings screen labels, the lookup/QR errors,
+      // the history dialog and the 7 ledger event-type labels —
+      // 29 new keys (1238; `amount_due` already existed in the payment
+      // section with identical wording).  The Loyalty Phase F report pass
+      // added the Reports → Loyalty surface — the tab name, the period
+      // activity / balance-snapshot KPI labels, the four section titles
+      // and the ledger table headers — 25 keys (1263).  The loyalty reward
+      // redesign pass replaced the points-as-money surface with milestone
+      // reward discounts: removed 4 legacy labels (point value, min/max
+      // redemption, reward liability) and added 3 (reward selector title,
+      // the "none" option, the max-reward-discount setting label) — 1262.
+      // Update this deliberately when a subphase
       // adds strings — an unexplained drop means keys were deleted from
       // one map only.
-      expect(_map('en').keys.length, 1209);
+      expect(_map('en').keys.length, 1262);
       expect(_map('ar').keys.length, _map('en').keys.length);
       expect(_map('fr').keys.length, _map('en').keys.length);
     });

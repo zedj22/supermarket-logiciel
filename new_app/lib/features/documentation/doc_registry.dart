@@ -817,6 +817,143 @@ final List<DocChapter> docChapters = <DocChapter>[
     ],
   ),
   DocChapter(
+    id: 'loyalty',
+    titleKey: 'chapter.loyalty.title',
+    icon: Icons.card_giftcard_outlined,
+    articles: <DocArticle>[
+      DocArticle(
+        id: 'loy_overview',
+        chapterId: 'loyalty',
+        titleKey: 'loy_overview.title',
+        summaryKey: 'loy_overview.summary',
+        sections: <DocSection>[
+          DocSection(
+            id: 'what',
+            headingKey: 'loy_overview.s1.heading',
+            blocks: const <DocBlock>[
+              DocBlock.paragraph('loy_overview.s1.p1'),
+              DocBlock.paragraph('loy_overview.s1.p2'),
+            ],
+          ),
+          DocSection(
+            id: 'permissions',
+            headingKey: 'loy_overview.s2.heading',
+            blocks: const <DocBlock>[
+              DocBlock.paragraph('loy_overview.s2.p1'),
+            ],
+          ),
+        ],
+      ),
+      DocArticle(
+        id: 'loy_settings',
+        chapterId: 'loyalty',
+        titleKey: 'loy_settings.title',
+        summaryKey: 'loy_settings.summary',
+        sections: <DocSection>[
+          DocSection(
+            id: 'rules',
+            headingKey: 'loy_settings.s1.heading',
+            blocks: const <DocBlock>[
+              DocBlock.paragraph('loy_settings.s1.p1'),
+              DocBlock.steps(<String>[
+                'loy_settings.s1.step1',
+                'loy_settings.s1.step2',
+                'loy_settings.s1.step3',
+              ]),
+            ],
+          ),
+          DocSection(
+            id: 'limits',
+            headingKey: 'loy_settings.s2.heading',
+            blocks: const <DocBlock>[
+              DocBlock.paragraph('loy_settings.s2.p1'),
+              DocBlock.warning('loy_settings.s2.warn1'),
+            ],
+          ),
+        ],
+      ),
+      DocArticle(
+        id: 'loy_earning',
+        chapterId: 'loyalty',
+        titleKey: 'loy_earning.title',
+        summaryKey: 'loy_earning.summary',
+        sections: <DocSection>[
+          DocSection(
+            id: 'sales',
+            headingKey: 'loy_earning.s1.heading',
+            blocks: const <DocBlock>[
+              DocBlock.paragraph('loy_earning.s1.p1'),
+            ],
+          ),
+          DocSection(
+            id: 'debt-settlement',
+            headingKey: 'loy_earning.s2.heading',
+            blocks: const <DocBlock>[
+              DocBlock.paragraph('loy_earning.s2.p1'),
+            ],
+          ),
+        ],
+      ),
+      DocArticle(
+        id: 'loy_redeem',
+        chapterId: 'loyalty',
+        titleKey: 'loy_redeem.title',
+        summaryKey: 'loy_redeem.summary',
+        sections: <DocSection>[
+          DocSection(
+            id: 'at-pos',
+            headingKey: 'loy_redeem.s1.heading',
+            blocks: const <DocBlock>[
+              DocBlock.steps(<String>[
+                'loy_redeem.s1.step1',
+                'loy_redeem.s1.step2',
+                'loy_redeem.s1.step3',
+              ]),
+              DocBlock.paragraph('loy_redeem.s1.p1'),
+            ],
+          ),
+          DocSection(
+            id: 'returns-voids',
+            headingKey: 'loy_redeem.s2.heading',
+            blocks: const <DocBlock>[
+              DocBlock.warning('loy_redeem.s2.warn1'),
+            ],
+          ),
+        ],
+      ),
+      DocArticle(
+        id: 'loy_report',
+        chapterId: 'loyalty',
+        titleKey: 'loy_report.title',
+        summaryKey: 'loy_report.summary',
+        sections: <DocSection>[
+          DocSection(
+            id: 'overview',
+            headingKey: 'loy_report.s1.heading',
+            blocks: const <DocBlock>[
+              DocBlock.paragraph('loy_report.s1.p1'),
+            ],
+          ),
+          DocSection(
+            id: 'sections',
+            headingKey: 'loy_report.s2.heading',
+            blocks: const <DocBlock>[
+              DocBlock.paragraph('loy_report.s2.p1'),
+              DocBlock.warning('loy_report.s2.warn1'),
+            ],
+          ),
+          DocSection(
+            id: 'access',
+            headingKey: 'loy_report.s3.heading',
+            blocks: const <DocBlock>[
+              DocBlock.paragraph('loy_report.s3.p1'),
+            ],
+          ),
+        ],
+      ),
+    ],
+  ),
+  DocChapter(
     id: 'expenses',
     titleKey: 'chapter.expenses.title',
     icon: Icons.receipt_long_outlined,

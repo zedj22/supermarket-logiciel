@@ -37,6 +37,7 @@
 // Add → focus (Phase 8 FIX #1): a successful add (new or merged line)
 // makes that line active and moves the keyboard focus to its quantity
 // field, so `+` keeps working without the mouse.
+import 'dart:async';
 import 'dart:io';
 
 import 'package:dio/dio.dart';
@@ -54,6 +55,8 @@ import '../auth/auth_provider.dart';
 import '../auth/permission_helpers.dart';
 import '../clients/clients_providers.dart';
 import '../clients/customer_models.dart';
+import '../loyalty/loyalty_models.dart';
+import '../loyalty/loyalty_providers.dart';
 import '../packs/pack_models.dart';
 import '../products/models.dart';
 import '../products/quantity_dialog.dart';
@@ -442,10 +445,15 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     );
   }
 
-  /// Enter in search: if barcode-shaped exact match, add; else load results.
+  /// Enter in search: if barcode-shaped exact match, add; a loyalty QR
+  /// payload resolves to its customer; else load results.
   Future<void> _submitSearch() async {
     final query = _searchController.text.trim();
     if (query.isEmpty) return;
+    if (query.toUpperCase().startsWith(kLoyaltyQrPrefix)) {
+      await _submitLoyaltyLookup(query);
+      return;
+    }
     final products = ref.read(posSearchProvider).items;
     ProductModel? exact;
     for (final p in products) {
@@ -461,6 +469,54 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       await _addProduct(exact);
     } else {
       await ref.read(posSearchProvider.notifier).load();
+    }
+  }
+
+  /// Phase E — barcode wedge scans a loyalty QR into the product search:
+  /// the opaque `KLICK:C:<uuid>` payload resolves server-side to exactly
+  /// one customer (404 = toast, multi-match only on the defensive path →
+  /// disambiguation picker).
+  Future<void> _submitLoyaltyLookup(String query) async {
+    final loc = ref.read(localeProvider).flutterLocale.languageCode;
+    final dio = ref.read(apiClientProvider).dio;
+    try {
+      final response = await dio.get(
+        '/api/v1/loyalty/lookup',
+        queryParameters: {'q': query},
+      );
+      final data = response.data as Map<String, dynamic>? ?? const {};
+      final items = (data['items'] as List<dynamic>? ?? const [])
+          .map((e) => PosCustomer.fromJson(e as Map<String, dynamic>))
+          .toList();
+      if (!mounted) return;
+      if (items.length == 1) {
+        ref.read(posCartProvider.notifier).setCustomer(items.single);
+        _searchController.clear();
+        ref.read(posSearchProvider.notifier).clear();
+        _searchFocusNode.requestFocus();
+        return;
+      }
+      if (items.length > 1) {
+        final customer = await showCustomerPickerDialog(context);
+        if (customer != null && mounted) {
+          ref.read(posCartProvider.notifier).setCustomer(customer);
+        }
+        return;
+      }
+      showPosToast(
+        context,
+        message: AppStrings.t('loyalty_qr_not_found', loc),
+        kind: PosToastKind.error,
+        key: const Key('pos-loyalty-qr-not-found-toast'),
+      );
+    } on DioException catch (e) {
+      if (!mounted) return;
+      showPosToast(
+        context,
+        message: posApiMessage(e, loc),
+        kind: PosToastKind.error,
+        key: const Key('pos-loyalty-qr-error-toast'),
+      );
     }
   }
 
@@ -872,6 +928,14 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       );
       return;
     }
+    // Settle the server preview BEFORE the dialog reads it — closes the
+    // debounce race between the cashier picking a percent and pressing
+    // PAY, so the pre-filled amount matches what checkout sends.
+    final loyalty = ref.read(posLoyaltyProvider);
+    if (loyalty.customerId != null && loyalty.rewardPercent > 0) {
+      await ref.read(posLoyaltyProvider.notifier).previewNow();
+    }
+    if (!mounted) return;
     final result = await showPaymentDialog(context);
     if (result != null && mounted) {
       await _afterCheckoutSuccess(result);
@@ -989,7 +1053,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     showPosToast(
       context,
       message: AppStrings.t('sale_completed', loc),
-      detail: result.invoiceNumber,
+      detail: _loyaltyReceiptDetail(result, loc),
       kind: PosToastKind.success,
       key: const Key('checkout-success-snackbar'),
     );
@@ -1001,6 +1065,38 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     // §17.6 print hook runs last: the sale is committed, the cart is gone
     // and the success toast is up — printing can never undo any of that.
     await _maybeAutoPrint(result);
+  }
+
+  /// Success-toast detail: invoice number plus the server-reported loyalty
+  /// summary when the sale carried any (reward discount, earned points,
+  /// earned cashback). Pure presentation — every value comes from the
+  /// response.
+  String _loyaltyReceiptDetail(CheckoutResult result, String loc) {
+    final details = <String>[result.invoiceNumber];
+    final currency = AppStrings.t('currency', loc);
+    final discount = loyaltyNum(result.loyaltyRedeemedValue);
+    if (discount > 0) {
+      details.add(
+        '${AppStrings.t('loyalty_redeemed', loc)}: '
+        '${PaymentMath.money(discount)} $currency',
+      );
+    }
+    final earned = loyaltyNum(result.loyaltyPointsEarned);
+    if (earned > 0) {
+      details.add(
+        '${AppStrings.t('loyalty_points_earned', loc)}: '
+        '${formatLoyaltyPoints(earned)} '
+        '${AppStrings.t('loyalty_points', loc)}',
+      );
+    }
+    final cashback = loyaltyNum(result.loyaltyCashbackEarned);
+    if (cashback > 0) {
+      details.add(
+        '${AppStrings.t('loyalty_cashback_earned', loc)}: '
+        '${PaymentMath.money(cashback)} $currency',
+      );
+    }
+    return details.join(' · ');
   }
 
   /// Post-sale print hook (POS workflow §9, Phase 17 §17.6).
@@ -1201,6 +1297,19 @@ class _PosScreenState extends ConsumerState<PosScreen> {
           key: const Key('pos-error-snackbar'),
         );
       }
+      // Phase E — keep the session loyalty state in lock-step with the
+      // cart: attaching/detaching a customer swaps the loyalty context,
+      // a total change (lines, qty, invoice discount) refreshes the
+      // server preview.  Checkout/return reset the cart, so the customer
+      // detach below also clears any redeem input in one place.
+      final loyalty = ref.read(posLoyaltyProvider.notifier);
+      if (next.customer?.id != previous?.customer?.id) {
+        unawaited(loyalty.setCustomerById(next.customer?.id));
+      }
+      if (next.totals.total != previous?.totals.total ||
+          next.customer?.id != previous?.customer?.id) {
+        loyalty.setCartTotal(next.totals.total);
+      }
     });
 
     final searchField = _SearchField(
@@ -1307,18 +1416,10 @@ class _PosScreenState extends ConsumerState<PosScreen> {
         if (layout == PosLayoutMode.wide) favoritesRow,
         Padding(
           padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              Expanded(
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(minWidth: 180),
-                  child: searchField,
-                ),
-              ),
-              const SizedBox(width: 8),
+          child: LayoutBuilder(
+            builder: (context, toolbarConstraints) {
               // Phase 10 — packs / bundles picker (own dialog, own search).
-              OutlinedButton.icon(
+              final packsButton = OutlinedButton.icon(
                 key: const Key('pos-packs-button'),
                 onPressed: _addPack,
                 icon: const Icon(Icons.local_offer_outlined, size: 18),
@@ -1338,11 +1439,10 @@ class _PosScreenState extends ConsumerState<PosScreen> {
                     color: theme.colorScheme.outline.withValues(alpha: 0.5),
                   ),
                 ),
-              ),
-              const SizedBox(width: 8),
+              );
               // Phase 17 §18 — the keyboard map needs a discoverable entry
               // point next to the tools it describes.
-              IconButton(
+              final shortcutsButton = IconButton(
                 key: const Key('pos-shortcuts-button'),
                 tooltip: AppStrings.t('shortcuts_title', loc),
                 onPressed: () => showShortcutsDialog(context),
@@ -1352,30 +1452,70 @@ class _PosScreenState extends ConsumerState<PosScreen> {
                   minWidth: 38,
                   minHeight: 38,
                 ),
-              ),
-              const SizedBox(width: 8),
-              // FIX #3: full labels when workspace allows; icons+tooltip when tight.
-              if (layout != PosLayoutMode.narrow &&
-                  (MediaQuery.sizeOf(context).width - cartWidth) < 500)
-                _ViewModeToggle(
-                  mode: viewMode,
-                  compact: true,
-                  onChanged: (m) =>
-                      ref.read(posCatalogViewModeProvider.notifier).setMode(m),
-                )
-              else
-                ConstrainedBox(
-                  // FIX #3: ≥190 when space allows; grow for full labels.
-                  constraints: const BoxConstraints(minWidth: 190),
-                  child: _ViewModeToggle(
-                    mode: viewMode,
-                    compact: false,
-                    onChanged: (m) => ref
-                        .read(posCatalogViewModeProvider.notifier)
-                        .setMode(m),
+              );
+              final compactToggle = _ViewModeToggle(
+                mode: viewMode,
+                compact: true,
+                onChanged: (m) =>
+                    ref.read(posCatalogViewModeProvider.notifier).setMode(m),
+              );
+
+              // Tight workspace (human QA: "RenderFlex overflowed by 59
+              // pixels" on this toolbar at a 1127px window): the same
+              // controls wrap instead of overflowing, and the view-mode
+              // switch drops to its compact icon form.
+              if (toolbarConstraints.maxWidth < 580) {
+                return Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    SizedBox(
+                      width:
+                          toolbarConstraints.maxWidth.clamp(160.0, 280.0),
+                      child: searchField,
+                    ),
+                    packsButton,
+                    shortcutsButton,
+                    compactToggle,
+                  ],
+                );
+              }
+
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Expanded(
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(minWidth: 180),
+                      child: searchField,
+                    ),
                   ),
-                ),
-            ],
+                  const SizedBox(width: 8),
+                  packsButton,
+                  const SizedBox(width: 8),
+                  shortcutsButton,
+                  const SizedBox(width: 8),
+                  // FIX #3: full labels when workspace allows; icons+tooltip
+                  // when tight.
+                  if (layout != PosLayoutMode.narrow &&
+                      (MediaQuery.sizeOf(context).width - cartWidth) < 500)
+                    compactToggle
+                  else
+                    ConstrainedBox(
+                      // FIX #3: ≥190 when space allows; grow for full labels.
+                      constraints: const BoxConstraints(minWidth: 190),
+                      child: _ViewModeToggle(
+                        mode: viewMode,
+                        compact: false,
+                        onChanged: (m) => ref
+                            .read(posCatalogViewModeProvider.notifier)
+                            .setMode(m),
+                      ),
+                    ),
+                ],
+              );
+            },
           ),
         ),
         Expanded(child: productCatalog),
@@ -2788,7 +2928,7 @@ class _CartPanel extends StatelessWidget {
 
 /// Dedicated totals card: Subtotal / Discount / TOTAL / PAY (UX FIX #7/#8).
 /// In POS return mode the PAY slot becomes Confirm return / Cancel return.
-class _PosTotalsPanel extends StatelessWidget {
+class _PosTotalsPanel extends ConsumerStatefulWidget {
   final PosCartState cart;
   final VoidCallback onPayment;
   final VoidCallback onConfirmReturn;
@@ -2802,13 +2942,33 @@ class _PosTotalsPanel extends StatelessWidget {
   });
 
   @override
+  ConsumerState<_PosTotalsPanel> createState() => _PosTotalsPanelState();
+}
+
+class _PosTotalsPanelState extends ConsumerState<_PosTotalsPanel> {
+  @override
   Widget build(BuildContext context) {
+    final cart = widget.cart;
+    final onPayment = widget.onPayment;
     final loc = Localizations.localeOf(context).languageCode;
     final theme = Theme.of(context);
     final totals = cart.totals;
     final cs = theme.colorScheme;
     final currency = AppStrings.t('currency', loc);
     final payEnabled = !cart.isEmpty && !cart.checkoutPending;
+
+    // Loyalty session (server-owned numbers — see posLoyaltyProvider).
+    final loyalty = ref.watch(posLoyaltyProvider);
+    final showLoyalty =
+        !cart.returnMode && cart.customer != null && loyalty.hasCustomer;
+    // Only a preview that matches the CURRENT total + selected percent
+    // may drive displayed money; anything else shows the plain total.
+    final preview = loyalty.previewMatches ? loyalty.preview : null;
+    final rewardDiscount = preview?.rewardDiscount ?? 0.0;
+    final amountDue =
+        PaymentMath.amountDueOf(total: totals.total, rewardDiscount: rewardDiscount);
+    final pointsEarned = preview?.pointsEarned ?? 0.0;
+    final cashbackEarned = preview?.cashbackEarned ?? 0.0;
 
     return Material(
       key: const Key('pos-totals-panel'),
@@ -2872,6 +3032,17 @@ class _PosTotalsPanel extends StatelessWidget {
                   fontSize: subSize,
                   verticalPad: rowPad,
                 ),
+                if (showLoyalty)
+                  _loyaltyBlock(
+                    theme: theme,
+                    cs: cs,
+                    loc: loc,
+                    loyalty: loyalty,
+                    preview: preview,
+                    currency: currency,
+                    fontSize: subSize,
+                    verticalPad: rowPad,
+                  ),
                 Divider(height: mediaH < 700 ? 10.0 : 12.0),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -2908,6 +3079,34 @@ class _PosTotalsPanel extends StatelessWidget {
                   ],
                 ),
                 SizedBox(height: gapAfterTotal),
+                if (showLoyalty && rewardDiscount > 0)
+                  _totalsRow(
+                    label: AppStrings.t('amount_due', loc),
+                    value: PaymentMath.money(amountDue),
+                    valueKey: const Key('pos-loyalty-amount-due'),
+                    color: cs.primary,
+                    fontSize: subSize,
+                    verticalPad: rowPad,
+                  ),
+                if (showLoyalty && pointsEarned > 0)
+                  _totalsRow(
+                    label: AppStrings.t('loyalty_points_earned', loc),
+                    value: '${formatLoyaltyPoints(pointsEarned)} '
+                        '${AppStrings.t('loyalty_points', loc)}',
+                    valueKey: const Key('pos-loyalty-points-earned'),
+                    color: AppColors.success,
+                    fontSize: subSize,
+                    verticalPad: rowPad,
+                  ),
+                if (showLoyalty && cashbackEarned > 0)
+                  _totalsRow(
+                    label: AppStrings.t('loyalty_cashback_earned', loc),
+                    value: '${PaymentMath.money(cashbackEarned)} $currency',
+                    valueKey: const Key('pos-loyalty-cashback-earned'),
+                    color: AppColors.success,
+                    fontSize: subSize,
+                    verticalPad: rowPad,
+                  ),
                 SafeArea(
                   top: false,
                   child: SizedBox(
@@ -2996,6 +3195,170 @@ class _PosTotalsPanel extends StatelessWidget {
     );
   }
 
+  /// Balance line + reward percent selector shown under the invoice
+  /// discount whenever a customer is attached (never in return mode).
+  /// Preview/hints are server numbers; the selected percent travels as
+  /// `loyalty_reward_percent` and the server re-validates everything.
+  /// With no reward yet the selector shows the progress toward the next
+  /// milestone (`remaining/100`) instead of the dropdown.
+  Widget _loyaltyBlock({
+    required ThemeData theme,
+    required ColorScheme cs,
+    required String loc,
+    required PosLoyaltyState loyalty,
+    required LoyaltyPreview? preview,
+    required String currency,
+    required double fontSize,
+    required double verticalPad,
+  }) {
+    final balance = loyalty.balance;
+    final points =
+        balance?.pointsBalance ?? preview?.pointsBalance ?? 0.0;
+    final cashback =
+        balance?.cashbackBalance ?? preview?.cashbackBalance ?? 0.0;
+    final rewards = loyalty.availableRewards;
+    final remaining = (loyalty.previewMatches
+            ? loyalty.preview!.remainingPoints
+            : (balance?.remainingPoints ??
+                points % loyaltyPointsPerReward))
+        .round();
+    final maxPercent = loyalty.maxRewardDiscountPercent;
+    final selected = loyalty.rewardPercent;
+    // Dropdown options: None + 5% steps up to the owner's cap, with the
+    // cap itself appended when it is not a multiple of 5 (e.g. 12%).
+    final options = <double>[
+      0,
+      for (var p = 5.0; p <= maxPercent + 0.0001; p += 5) p,
+    ];
+    if (maxPercent > 0 && !options.contains(maxPercent)) {
+      options.add(maxPercent);
+    }
+    if (selected > 0 && !options.contains(selected)) {
+      options.add(selected);
+    }
+    final hint = loyalty.exceeds
+        ? AppStrings.t('loyalty_redeem_exceeds', loc)
+        : rewards > 0
+            ? '${AppStrings.t('loyalty_redeem_max', loc)}: '
+                '${_percentLabel(maxPercent)}%'
+            : '$remaining/$loyaltyPointsPerReward';
+    return Padding(
+      padding: EdgeInsets.only(top: verticalPad, bottom: verticalPad),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Text(
+                AppStrings.t('loyalty', loc),
+                key: const Key('pos-loyalty-label'),
+                style: theme.textTheme.bodySmall?.copyWith(
+                  fontSize: fontSize,
+                  fontWeight: FontWeight.w700,
+                  color: cs.primary,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  '${formatLoyaltyPoints(points)} '
+                  '${AppStrings.t('loyalty_points', loc)}'
+                  ' · $rewards× '
+                  '${AppStrings.t('loyalty_reward', loc)}'
+                  ' · ${PaymentMath.money(cashback)} $currency',
+                  key: const Key('pos-loyalty-balance'),
+                  textAlign: TextAlign.end,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    fontSize: fontSize,
+                    color: cs.onSurface.withValues(alpha: 0.78),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          SizedBox(height: verticalPad + 1),
+          Row(
+            children: [
+              if (rewards > 0) ...[
+                SizedBox(
+                  width: 120,
+                  child: DropdownButton<double>(
+                    key: const Key('pos-loyalty-reward-select'),
+                    value: selected,
+                    isExpanded: true,
+                    isDense: true,
+                    items: [
+                      for (final p in options)
+                        DropdownMenuItem<double>(
+                          value: p,
+                          child: Text(
+                            p == 0
+                                ? AppStrings.t('loyalty_reward_none', loc)
+                                : _percentLabel(p),
+                            style: theme.textTheme.bodySmall,
+                          ),
+                        ),
+                    ],
+                    onChanged: (value) => ref
+                        .read(posLoyaltyProvider.notifier)
+                        .setRewardPercent(value ?? 0),
+                  ),
+                ),
+                if (selected > 0)
+                  InkWell(
+                    key: const Key('pos-loyalty-reward-clear'),
+                    onTap: () => ref
+                        .read(posLoyaltyProvider.notifier)
+                        .clearReward(),
+                    child: Padding(
+                      padding: const EdgeInsets.all(2),
+                      child: Icon(Icons.close,
+                          size: 16, color: cs.outline),
+                    ),
+                  ),
+              ] else
+                SizedBox(
+                  width: 120,
+                  child: Text(
+                    '$remaining/$loyaltyPointsPerReward',
+                    key: const Key('pos-loyalty-reward-progress'),
+                    textAlign: TextAlign.end,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: cs.outline,
+                    ),
+                  ),
+                ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  hint,
+                  key: const Key('pos-loyalty-redeem-hint'),
+                  textAlign: TextAlign.end,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    fontSize: fontSize,
+                    color: loyalty.exceeds ? cs.error : cs.outline,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (loyalty.error != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Text(
+                loyalty.error!,
+                key: const Key('pos-loyalty-error'),
+                textAlign: TextAlign.end,
+                style: theme.textTheme.bodySmall?.copyWith(color: cs.error),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
   /// Return-mode actions replacing PAY: Confirm return (server prices
   /// every line) + Cancel return (no API call, cart untouched). Both are
   /// locked while the attempt is in flight.
@@ -3007,6 +3370,9 @@ class _PosTotalsPanel extends StatelessWidget {
     required double payFontSize,
     required double payIconSize,
   }) {
+    final cart = widget.cart;
+    final onConfirmReturn = widget.onConfirmReturn;
+    final onCancelReturn = widget.onCancelReturn;
     final locked = cart.returnPending;
     return Row(
       key: const Key('pos-return-actions'),
@@ -3607,4 +3973,13 @@ String _fmtPrice(String? raw) {
   final v = double.tryParse(raw ?? '');
   if (v == null) return raw ?? '0';
   return v == v.roundToDouble() ? v.toInt().toString() : v.toStringAsFixed(2);
+}
+
+/// Display label for a reward percent: `20` → `"20"`, `12.5` → `"12.5"`.
+String _percentLabel(double value) {
+  if (value == value.roundToDouble()) return value.toInt().toString();
+  return value
+      .toStringAsFixed(2)
+      .replaceFirst(RegExp(r'0+$'), '')
+      .replaceFirst(RegExp(r'\.$'), '');
 }

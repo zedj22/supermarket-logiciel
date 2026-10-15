@@ -942,6 +942,209 @@ class SupplierReport {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Loyalty report (Loyalty Phase F)
+// ---------------------------------------------------------------------------
+
+/// One row per ledger event type in the window (signed net deltas).
+class LoyaltyEventTotals {
+  final String eventType;
+  final int entries;
+  final String pointsDelta;
+  final String cashbackDelta;
+
+  const LoyaltyEventTotals({
+    required this.eventType,
+    required this.entries,
+    required this.pointsDelta,
+    required this.cashbackDelta,
+  });
+
+  factory LoyaltyEventTotals.fromJson(Map<String, dynamic> json) {
+    return LoyaltyEventTotals(
+      eventType: _str(json['event_type']) ?? '',
+      entries: (json['entries'] as num?)?.toInt() ?? 0,
+      pointsDelta: _str(json['points_delta']) ?? '0',
+      cashbackDelta: _str(json['cashback_delta']) ?? '0',
+    );
+  }
+}
+
+/// One ledger entry with its transaction reference (invoice).
+class LoyaltyLedgerRow {
+  final String entryId;
+  final String createdAt;
+  final String customerId;
+  final String? customerName;
+  final String eventType;
+  final String pointsDelta;
+  final String cashbackDelta;
+  final String balanceAfterPoints;
+  final String balanceAfterCashback;
+  final String? invoiceNumber;
+  final String? saleId;
+  final String? returnId;
+  final String? note;
+
+  const LoyaltyLedgerRow({
+    required this.entryId,
+    required this.createdAt,
+    required this.customerId,
+    this.customerName,
+    required this.eventType,
+    required this.pointsDelta,
+    required this.cashbackDelta,
+    required this.balanceAfterPoints,
+    required this.balanceAfterCashback,
+    this.invoiceNumber,
+    this.saleId,
+    this.returnId,
+    this.note,
+  });
+
+  factory LoyaltyLedgerRow.fromJson(Map<String, dynamic> json) {
+    return LoyaltyLedgerRow(
+      entryId: _str(json['entry_id']) ?? '',
+      createdAt: _str(json['created_at']) ?? '',
+      customerId: _str(json['customer_id']) ?? '',
+      customerName: _str(json['customer_name']),
+      eventType: _str(json['event_type']) ?? '',
+      pointsDelta: _str(json['points_delta']) ?? '0',
+      cashbackDelta: _str(json['cashback_delta']) ?? '0',
+      balanceAfterPoints: _str(json['balance_after_points']) ?? '0',
+      balanceAfterCashback: _str(json['balance_after_cashback']) ?? '0',
+      invoiceNumber: _str(json['invoice_number']),
+      saleId: _str(json['sale_id']),
+      returnId: _str(json['return_id']),
+      note: _str(json['note']),
+    );
+  }
+}
+
+/// `GET /reports/loyalty` — window activity + balance snapshot + paginated
+/// ledger (Loyalty Phase F). Sales figures keep §5.1 semantics; rewards
+/// are reported beside sales, never inside them.
+class LoyaltyReport {
+  final String dateFrom;
+  final String dateTo;
+  final String? deviceId;
+
+  // Sales context (§5.1 semantics).
+  final String salesGross;
+  final String salesAfterDiscounts;
+  final int invoiceCount;
+
+  // Period activity (ledger, window-bounded).
+  final String pointsEarned;
+  final String cashbackEarned;
+  final int earnEntries;
+  final String settlementPoints;
+  final String pointsRedeemed;
+  final String redemptionValue;
+  final int redeemEntries;
+  final String pointsReversed;
+  final String cashbackReversed;
+  final int reversalEntries;
+  final String pointsRestored;
+  final String restoredValue;
+  final int restoreEntries;
+  final String shortfallPoints;
+  final String shortfallCashback;
+  final String adjustmentPoints;
+  final String adjustmentCashback;
+
+  // Current balances (snapshot, not a window total).
+  final String outstandingPoints;
+  final String outstandingCashback;
+  final int accountsWithBalance;
+
+  final List<LoyaltyEventTotals> events;
+  final List<LoyaltyLedgerRow> items;
+  final int total;
+  final int page;
+  final int pageSize;
+  final int pages;
+
+  const LoyaltyReport({
+    required this.dateFrom,
+    required this.dateTo,
+    this.deviceId,
+    required this.salesGross,
+    required this.salesAfterDiscounts,
+    required this.invoiceCount,
+    required this.pointsEarned,
+    required this.cashbackEarned,
+    required this.earnEntries,
+    required this.settlementPoints,
+    required this.pointsRedeemed,
+    required this.redemptionValue,
+    required this.redeemEntries,
+    required this.pointsReversed,
+    required this.cashbackReversed,
+    required this.reversalEntries,
+    required this.pointsRestored,
+    required this.restoredValue,
+    required this.restoreEntries,
+    required this.shortfallPoints,
+    required this.shortfallCashback,
+    required this.adjustmentPoints,
+    required this.adjustmentCashback,
+    required this.outstandingPoints,
+    required this.outstandingCashback,
+    required this.accountsWithBalance,
+    required this.events,
+    required this.items,
+    required this.total,
+    required this.page,
+    required this.pageSize,
+    required this.pages,
+  });
+
+  factory LoyaltyReport.fromJson(Map<String, dynamic> json) {
+    return LoyaltyReport(
+      dateFrom: _str(json['date_from']) ?? '',
+      dateTo: _str(json['date_to']) ?? '',
+      deviceId: _str(json['device_id']),
+      salesGross: _str(json['sales_gross']) ?? '0',
+      salesAfterDiscounts: _str(json['sales_after_discounts']) ?? '0',
+      invoiceCount: (json['invoice_count'] as num?)?.toInt() ?? 0,
+      pointsEarned: _str(json['points_earned']) ?? '0',
+      cashbackEarned: _str(json['cashback_earned']) ?? '0',
+      earnEntries: (json['earn_entries'] as num?)?.toInt() ?? 0,
+      settlementPoints: _str(json['settlement_points']) ?? '0',
+      pointsRedeemed: _str(json['points_redeemed']) ?? '0',
+      redemptionValue: _str(json['redemption_value']) ?? '0',
+      redeemEntries: (json['redeem_entries'] as num?)?.toInt() ?? 0,
+      pointsReversed: _str(json['points_reversed']) ?? '0',
+      cashbackReversed: _str(json['cashback_reversed']) ?? '0',
+      reversalEntries: (json['reversal_entries'] as num?)?.toInt() ?? 0,
+      pointsRestored: _str(json['points_restored']) ?? '0',
+      restoredValue: _str(json['restored_value']) ?? '0',
+      restoreEntries: (json['restore_entries'] as num?)?.toInt() ?? 0,
+      shortfallPoints: _str(json['shortfall_points']) ?? '0',
+      shortfallCashback: _str(json['shortfall_cashback']) ?? '0',
+      adjustmentPoints: _str(json['adjustment_points']) ?? '0',
+      adjustmentCashback: _str(json['adjustment_cashback']) ?? '0',
+      outstandingPoints: _str(json['outstanding_points']) ?? '0',
+      outstandingCashback: _str(json['outstanding_cashback']) ?? '0',
+      accountsWithBalance:
+          (json['accounts_with_balance'] as num?)?.toInt() ?? 0,
+      events: [
+        for (final row in (json['events'] as List? ?? const []))
+          LoyaltyEventTotals.fromJson(row as Map<String, dynamic>),
+      ],
+      items: [
+        for (final row in (json['items'] as List? ?? const []))
+          LoyaltyLedgerRow.fromJson(row as Map<String, dynamic>),
+      ],
+      total: (json['total'] as num?)?.toInt() ?? 0,
+      page: (json['page'] as num?)?.toInt() ?? 1,
+      pageSize: (json['page_size'] as num?)?.toInt() ?? 0,
+      pages: (json['pages'] as num?)?.toInt() ?? 1,
+    );
+  }
+}
+
 /// Localization key for a payment method code (`label_<code>`).
 String reportPaymentMethodKey(String method) => 'label_$method';
 

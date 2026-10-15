@@ -38,6 +38,7 @@ from app.repositories.debt import DebtLedgerEntryRepository
 from app.repositories.party import CustomerRepository
 from app.schemas.party import DebtPaymentRequest, DebtPaymentResponse
 from app.services.base import BaseService
+from app.services.loyalty import LoyaltyEngine
 
 logger = structlog.get_logger(__name__)
 
@@ -194,6 +195,32 @@ class DebtService(BaseService):
             )
             tx.flush()
             entry_id = entry.id
+
+            # Phase D: loyalty earn on the amount actually applied to the
+            # debt, in the SAME transaction as the payment.  Lock order:
+            # customer row (FOR UPDATE, above) → loyalty account (inside
+            # engine.post) — sale/customer always before the account.
+            # Idempotency: a replayed client_request_id returns before
+            # _record ever runs, a unique-id race fails at the flush
+            # above before this block, and source_event_key
+            # ``debt_settle:{entry_id}`` makes a second award for the same
+            # ledger entry impossible even if a caller retries the post.
+            engine = LoyaltyEngine(self.db)
+            settings = engine.settings_snapshot()
+            if settings["earn_on_debt_settlement"]:
+                rewards = engine.calculate_earn(
+                    qualifying_amount=amount, settings=settings
+                )
+                if rewards.points > 0 or rewards.cashback > 0:
+                    engine.post(
+                        customer_id=customer.id,
+                        event_type="debt_settlement_earn",
+                        source_event_key=f"debt_settle:{entry_id}",
+                        points_delta=rewards.points,
+                        cashback_delta=rewards.cashback,
+                        created_by=actor_id,
+                        note=f"Debt payment {amount}",
+                    )
 
         # Re-read after commit so the server-side entry_date default is
         # populated (same pattern as SaleService re-reading the sale).

@@ -40,6 +40,15 @@ const _dynamicKeyFamilies = <String, Set<String>>{
   'lan_status_': {'pending', 'approved', 'rejected', 'revoked'},
   'entry_type_': {'sale', 'payment', 'adjustment', 'sale_void', 'sale_refund'},
   'supplier_entry_type_': {'purchase', 'payment', 'purchase_cancel'},
+  'loyalty_event_': {
+    'sale_earn',
+    'debt_settlement_earn',
+    'redeem',
+    'return_clawback',
+    'void_clawback',
+    'adjustment',
+    'expiry',
+  },
 };
 
 Iterable<File> _dartFiles() => Directory('lib')

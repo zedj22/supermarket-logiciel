@@ -399,8 +399,13 @@ void main() {
       );
 
       expect(find.byKey(const Key('settings-load-error')), findsOneWidget);
+      // Phase E: the loyalty card loads through the same adapter and shows
+      // its OWN load error here — scope the message to the store card.
       expect(
-        find.text(AppStrings.t('settings_load_failed', 'en')),
+        find.descendant(
+          of: find.byKey(const Key('settings-load-error')),
+          matching: find.text(AppStrings.t('settings_load_failed', 'en')),
+        ),
         findsOneWidget,
       );
 
