@@ -613,6 +613,24 @@ const Map<String, Map<String, String>> docContent = <String, Map<String, String>
     'purch_docs.s1.step3':
         'Save as draft to keep editing, or Save and receive to finish in '
         'one step.',
+    'purch_docs.s4.heading': 'Unit cost or total cost',
+    'purch_docs.s4.p1':
+        'Each line stores the cost per purchase unit. By default the '
+        'amount you type is that per-unit cost. Switch on "Total cost" '
+        'when the supplier quotes one amount for the whole line: the app '
+        'divides it by the entered quantity and shows the derived unit '
+        'cost before you save.',
+    'purch_docs.s4.p2':
+        'Boxes are converted as usual. Example: 10 boxes of 5 pieces '
+        'with a total cost of 100 DA → 10 DA per box, 2 DA per piece; '
+        'receiving adds 50 pieces to stock and values them at 2 DA per '
+        'piece. With "Total cost" off, 100 DA stays the price per box '
+        '(20 DA per piece).',
+    'purch_docs.s4.tip1':
+        'The line preview (total quantity, unit cost, line total) '
+        'updates live while you type; it is a calculation preview only '
+        '— nothing is saved or added to stock until the purchase is '
+        'saved (and received).',
     'purch_docs.s2.heading': 'What receiving does',
     'purch_docs.s2.p1':
         'Receiving is one atomic action: stock quantities increase, the '
@@ -1712,6 +1730,21 @@ const Map<String, Map<String, String>> docContent = <String, Map<String, String>
         'الكمية حينها بالعبوات الصحيحة، مع إظهار المكافئ الأساسي.',
     'purch_docs.s1.step3':
         'احفظ كمسودة للمتابعة، أو احفظ واستلم للإنهاء بخطوة واحدة.',
+    'purch_docs.s4.heading': 'تكلفة الوحدة أو التكلفة الإجمالية',
+    'purch_docs.s4.p1':
+        'كل سطر يخزن تكلفة وحدة الشراء. افترياً، المبلغ الذي تدخله هو '
+        'تكلفة الوحدة. فعّل «التكلفة الإجمالية» عندما يذكر المورد مبلغاً '
+        'واحداً للسطر كاملاً: يقسمه التطبيق على الكمية المدخلة ويعرض '
+        'تكلفة الوحدة المشتقة قبل الحفظ.',
+    'purch_docs.s4.p2':
+        'العبوات تُحوَّل كالمعتاد. مثال: 10 علب من 5 قطع بكلفة إجمالية '
+        '100 دج ← 10 دج للعلبة، 2 دج للقطعة؛ الاستلام يضيف 50 قطعة '
+        'للمخزون ويقيّمها بـ 2 دج للقطعة. وعند إيقاف «التكلفة الإجمالية» '
+        'يبقى 100 دج سعر العلبة (20 دج للقطعة).',
+    'purch_docs.s4.tip1':
+        'معاينة السطر (الكمية الإجمالية، تكلفة الوحدة، الإجمالي) تتحدث '
+        'أثناء الكتابة؛ إنها معاينة حسابية فقط — لا يُحفظ شيء ولا يدخل '
+        'المخزون حتى تُحفظ فاتورة الشراء (وتُستلم).',
     'purch_docs.s2.heading': 'ما يفعله الاستلام',
     'purch_docs.s2.p1':
         'الاستلام فعل ذرّي واحد: تزداد كميات المخزون ويُحدَّث متوسط '
@@ -2890,6 +2923,25 @@ const Map<String, Map<String, String>> docContent = <String, Map<String, String>
     'purch_docs.s1.step3':
         'Enregistrez en brouillon pour continuer à modifier, ou '
         'Enregistrer et recevoir pour finir en une étape.',
+    'purch_docs.s4.heading': 'Coût unitaire ou coût total',
+    'purch_docs.s4.p1':
+        'Chaque ligne enregistre le coût de l\u2019unité d\u2019achat. Par '
+        'défaut, le montant saisi est ce coût unitaire. Activez « Coût '
+        'total » lorsque le fournisseur annonce un montant unique pour '
+        'toute la ligne : l\u2019application le divise par la quantité '
+        'saisie et affiche le coût unitaire dérivé avant '
+        'l\u2019enregistrement.',
+    'purch_docs.s4.p2':
+        'Les cartons sont convertis comme d\u2019habitude. Exemple : 10 '
+        'cartons de 5 pièces pour un coût total de 100 DA → 10 DA par '
+        'carton, 2 DA par pièce ; la réception ajoute 50 pièces au stock '
+        'valorisées à 2 DA la pièce. Avec « Coût total » désactivé, 100 '
+        'DA reste le prix du carton (20 DA la pièce).',
+    'purch_docs.s4.tip1':
+        'L\u2019aperçu de la ligne (quantité totale, coût unitaire, total) '
+        'se met à jour en direct ; c\u2019est un aperçu de calcul uniquement '
+        '— rien n\u2019est enregistré ni ajouté au stock avant '
+        'l\u2019enregistrement (et la réception) de l\u2019achat.',
     'purch_docs.s2.heading': 'Ce que fait la réception',
     'purch_docs.s2.p1':
         'La réception est une action atomique : les quantités de stock '

@@ -839,6 +839,47 @@ def test_report_pdf_empty_message():
     assert "Products" in text  # header still rendered
 
 
+def _footer_band_text(raw: bytes) -> str:
+    """Text drawn in the bottom 20 pt band (the footer zone) of each page."""
+    import pymupdf
+
+    parts: list[str] = []
+    doc = pymupdf.open(stream=raw, filetype="pdf")
+    try:
+        for page in doc:
+            height = page.rect.height
+            parts.append(
+                " ".join(
+                    span["text"]
+                    for block in page.get_text("dict")["blocks"]
+                    for line in block.get("lines", [])
+                    for span in line["spans"]
+                    if height - span["bbox"][3] < 20.0
+                )
+            )
+    finally:
+        doc.close()
+    return " | ".join(parts)
+
+
+def test_a4_sale_invoice_and_report_keep_page_number_footer():
+    """Regression guard: only the facturation PDF dropped its page
+    numbers — A4 sales invoices and report PDFs still stamp
+    `store · Page N / M` in the bottom footer band."""
+    data = build_sale_document(_sale_payload(), locale="en")
+    invoice_footer = _footer_band_text(
+        render_invoice(data, "A4", compress=False)
+    )
+    assert "Page 1 / 1" in invoice_footer
+    assert settings.STORE_NAME in invoice_footer
+
+    report_footer = _footer_band_text(
+        render_report_pdf(_report_input(), compress=False)
+    )
+    assert "Page 1 / 1" in report_footer
+    assert "Store X" in report_footer
+
+
 def test_invoice_geometry_80mm_and_a4():
     data = build_sale_document(_sale_payload(), locale="en")
     raw_80 = render_invoice(data, "80mm")

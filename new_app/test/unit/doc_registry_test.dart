@@ -155,6 +155,18 @@ void main() {
       expect(docT('totally.unknown.key', 'en'), 'totally.unknown.key');
     });
 
+    test('purch_docs carries the cost-entry section', () {
+      final article = findDocArticle('purch_docs')!;
+      expect(
+        [for (final s in article.sections) s.id],
+        contains('cost_entry'),
+      );
+      // The new section explains both modes + the box conversion.
+      final section =
+          article.sections.firstWhere((s) => s.id == 'cost_entry');
+      expect(section.blocks.length, greaterThanOrEqualTo(3));
+    });
+
     test('content blocks only use supported kinds', () {
       for (final article in allDocArticles()) {
         for (final section in article.sections) {

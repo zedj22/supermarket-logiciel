@@ -374,8 +374,23 @@ class SaleService(BaseService):
         self._promotion_cache[product_id] = promotion
         return promotion
 
-    def _resolve_line(self, item, index: int, *, validate_stock: bool = True) -> _ResolvedLine:
-        """Load product/variant/selling unit, resolve price, convert quantity."""
+    def _resolve_line(
+        self,
+        item,
+        index: int,
+        *,
+        validate_stock: bool = True,
+        honor_requested_price: bool = False,
+    ) -> _ResolvedLine:
+        """Load product/variant/selling unit, resolve price, convert quantity.
+
+        ``honor_requested_price`` (facturation post-as-sale only) makes
+        the REQUEST's ``unit_price`` the applied price instead of the
+        catalog server price — the document was previewed and validated
+        at that exact amount, so its own posting must never reprice.
+        Stock conversion/validation and discount validation are
+        unaffected; the POS endpoint never passes this flag.
+        """
         line = _ResolvedLine()
         line.index = index
 
@@ -509,15 +524,22 @@ class SaleService(BaseService):
 
         # Price policy: server authoritative price always wins.
         # Client unit_price is a display hint; mismatch is reported, not fatal.
+        # Exception (facturation post): honor_requested_price pins the line
+        # to the invoice's own price — the document is the price authority
+        # for its own posting, and the applied price equals the requested
+        # one, so there is no client-hint divergence to report.
         requested = to_decimal(item.unit_price)
-        line.unit_price = _money(server_price)
-        if requested != line.unit_price:
-            line.price_override = PriceOverride(
-                line_index=index,
-                product_id=product.id,
-                requested_unit_price=_money(requested),
-                applied_unit_price=line.unit_price,
-            )
+        if honor_requested_price:
+            line.unit_price = _money(requested)
+        else:
+            line.unit_price = _money(server_price)
+            if requested != line.unit_price:
+                line.price_override = PriceOverride(
+                    line_index=index,
+                    product_id=product.id,
+                    requested_unit_price=_money(requested),
+                    applied_unit_price=line.unit_price,
+                )
 
         # Cost snapshot: variant cost if set, else product.avg_cost (PMP).
         # Never used to recompute PMP.
@@ -606,6 +628,7 @@ class SaleService(BaseService):
         *,
         validate_stock: bool = True,
         demand: dict[tuple[uuid.UUID, uuid.UUID | None], Decimal] | None = None,
+        honor_requested_price: bool = False,
     ) -> list[_ResolvedLine]:
         """Resolve one request line into the persisted line set.
 
@@ -620,9 +643,15 @@ class SaleService(BaseService):
                 index,
                 validate_stock=validate_stock,
                 demand=demand if demand is not None else {},
+                honor_requested_price=honor_requested_price,
             )
         return [
-            self._resolve_line(item, index, validate_stock=validate_stock)
+            self._resolve_line(
+                item,
+                index,
+                validate_stock=validate_stock,
+                honor_requested_price=honor_requested_price,
+            )
         ]
 
     def _resolve_pack_line(
@@ -632,6 +661,7 @@ class SaleService(BaseService):
         *,
         validate_stock: bool = True,
         demand: dict[tuple[uuid.UUID, uuid.UUID | None], Decimal],
+        honor_requested_price: bool = False,
     ) -> list[_ResolvedLine]:
         """Resolve a pack cart line into [pack summary, component...].
 
@@ -668,15 +698,20 @@ class SaleService(BaseService):
 
         server_price = _money(to_decimal(pack.price))
         requested = to_decimal(item.unit_price)
-        summary.unit_price = server_price
-        if requested != server_price:
-            summary.price_override = PriceOverride(
-                line_index=index,
-                product_id=None,
-                pack_id=pack.id,
-                requested_unit_price=_money(requested),
-                applied_unit_price=server_price,
-            )
+        if honor_requested_price:
+            # Facturation post-as-sale: the invoice's pack line price is
+            # authoritative for its own posting (never repriced to pack.price).
+            summary.unit_price = _money(requested)
+        else:
+            summary.unit_price = server_price
+            if requested != server_price:
+                summary.price_override = PriceOverride(
+                    line_index=index,
+                    product_id=None,
+                    pack_id=pack.id,
+                    requested_unit_price=_money(requested),
+                    applied_unit_price=server_price,
+                )
 
         # --- component lines (not charged) + aggregate stock check ---------
         shortages: list[dict[str, Any]] = []
@@ -969,12 +1004,18 @@ class SaleService(BaseService):
         device_id: str | None = None,
         require_pos_discount: bool = False,
         require_pos_credit: bool = False,
+        honor_requested_price: bool = False,
         enable_loyalty: bool = True,
     ) -> SaleCreateResponse:
         """Create a sale atomically.
 
         Idempotency: if client_request_id already exists, return the original
         sale with idempotent_replay=True and do NOT create a second sale.
+
+        ``honor_requested_price`` is server-side only (never part of the
+        request schema): the facturation post-as-sale flow passes True so
+        the posted sale keeps the invoice's previewed line prices instead
+        of repricing to the catalog. The POS endpoint never passes it.
 
         ``enable_loyalty=False`` (facturation post-as-sale, server-side
         only) bypasses the loyalty flow entirely: no preview, no ledger
@@ -1011,7 +1052,13 @@ class SaleService(BaseService):
         demand: dict[tuple[uuid.UUID, uuid.UUID | None], Decimal] = {}
         for idx, item in enumerate(request.items):
             lines.extend(
-                self._resolve_item(item, idx, validate_stock=True, demand=demand)
+                self._resolve_item(
+                    item,
+                    idx,
+                    validate_stock=True,
+                    demand=demand,
+                    honor_requested_price=honor_requested_price,
+                )
             )
         del prefetched  # strong refs only needed while resolving (see helper)
 
@@ -1663,7 +1710,18 @@ class SaleService(BaseService):
     # Cart validate (stateless revalidation before payment)
     # ------------------------------------------------------------------
 
-    def validate_cart(self, request: CartValidateRequest) -> CartValidateResponse:
+    def validate_cart(
+        self,
+        request: CartValidateRequest,
+        *,
+        honor_requested_price: bool = False,
+    ) -> CartValidateResponse:
+        """Read-only cart dry-run: resolution + totals, zero mutation.
+
+        ``honor_requested_price`` mirrors :meth:`create_sale` (facturation
+        post-as-sale quotes its exact payable total at the invoice's own
+        line prices); the POS endpoint never passes it.
+        """
         lines_out: list[CartLineValidation] = []
         errors: list[str] = []
         resolved: list[_ResolvedLine] = []
@@ -1675,7 +1733,11 @@ class SaleService(BaseService):
         for idx, item in enumerate(request.items):
             try:
                 resolved_lines = self._resolve_item(
-                    item, idx, validate_stock=True, demand=demand
+                    item,
+                    idx,
+                    validate_stock=True,
+                    demand=demand,
+                    honor_requested_price=honor_requested_price,
                 )
                 resolved.extend(resolved_lines)
                 for ln in resolved_lines:

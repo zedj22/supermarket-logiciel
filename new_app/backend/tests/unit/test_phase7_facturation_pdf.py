@@ -20,7 +20,9 @@ Covers the required Phase 7 scenarios:
   rate matrix cells, stamp duty only for FAC + cash + show_timbre.
 - Default locale ar (shaped Arabic title), explicit fr, allowed en,
   unsupported locale → structured 422 before any render/audit.
-- Multi-page documents repeat the items header and number the footer.
+- Multi-page documents repeat the items header; the footer area is
+  left blank (no ``Page N / M`` stamp, no company-name prefix) while
+  sales-invoice / report PDFs keep their numbering.
 - 401 / Cashier and role-less guest denied with ``required_permission``
   ``facturation_view`` / structured 404.
 - Exactly one ``print`` audit row per attempt: success (bytes, filename,
@@ -397,6 +399,34 @@ def _print_audit_rows(db) -> list[AuditLog]:
     return list(db.scalars(select(AuditLog).where(AuditLog.action == "print")).all())
 
 
+def _footer_band_texts(raw: bytes) -> list[str]:
+    """Joined text of each page's bottom band (the footer zone, < 20 pt)."""
+    import pymupdf
+
+    bands: list[str] = []
+    doc = pymupdf.open(stream=raw, filetype="pdf")
+    try:
+        for page in doc:
+            height = page.rect.height
+            bands.append(
+                " ".join(
+                    span["text"]
+                    for block in page.get_text("dict")["blocks"]
+                    for line in block.get("lines", [])
+                    for span in line["spans"]
+                    if height - span["bbox"][3] < 20.0
+                )
+            )
+    finally:
+        doc.close()
+    return bands
+
+
+def _page_number_hits(text: str) -> list[str]:
+    """Every ``Page N / M`` occurrence drawn in the extracted text."""
+    return re.findall(r"Page \d+ / \d+", text)
+
+
 # ---------------------------------------------------------------------------
 # Structure
 # ---------------------------------------------------------------------------
@@ -688,7 +718,12 @@ def test_unsupported_locale_is_structured_422_before_any_render(
 # ---------------------------------------------------------------------------
 
 
-def test_multi_page_repeats_items_header_and_numbers_footer(client, admin_headers, db):
+def test_multi_page_repeats_items_header_without_page_numbers(
+    client, admin_headers, db
+):
+    """Multi-page facturation: the items header repeats on every page,
+    but NO ``Page N / M`` stamp is drawn anywhere — the footer band is
+    blank on each page."""
     body = _create(
         client,
         admin_headers,
@@ -714,8 +749,13 @@ def test_multi_page_repeats_items_header_and_numbers_footer(client, admin_header
     assert text.split("\n").count("Désignation") >= 2  # repeated table header
     assert "Article numero 0" in text
     assert "Article numero 119" in text  # continuation page carries rows
-    assert f"Page 1 / {pages}" in text
-    assert f"Page {pages} / {pages}" in text
+    # No page-number footer on ANY page.
+    assert _page_number_hits(text) == []
+    assert "Page" not in text
+    for pno, band in enumerate(_footer_band_texts(raw), start=1):
+        assert band.strip() == "", (
+            f"page {pno}: footer band must be blank, got {band!r}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -864,8 +904,9 @@ def test_signature_drawn_after_notes_on_short_document(client, admin_headers, db
 
 
 def test_signature_label_drawn_in_lower_region_of_flowable_box():
-    """Unit: draw() pins label + rule to the bottom of the flowable box
-    (local y near 0), not the top — the box itself sits at the page bottom."""
+    """Unit: draw() places the label at the bottom of the flowable box
+    (local y = 30 pt above the box edge) and draws NO rule — the
+    horizontal signature line was removed in the layout cleanup."""
     from app.printing.facture_data import FactureData, IdentityBlock
     from app.printing.templates.facture_a4 import _BottomSignature
 
@@ -888,6 +929,7 @@ def test_signature_label_drawn_in_lower_region_of_flowable_box():
     flow.wrap(500.0, 400.0)
 
     drawn: list[tuple[float, float]] = []
+    ruled: list[tuple[float, float, float, float]] = []
 
     class _FakePara:
         def wrap(self, w, h):
@@ -904,7 +946,7 @@ def test_signature_label_drawn_in_lower_region_of_flowable_box():
             pass
 
         def line(self, x1, y1, x2, y2):  # noqa: ANN001
-            drawn.append((x1, y1))
+            ruled.append((x1, y1, x2, y2))
 
     import app.printing.templates.facture_a4 as tmpl
 
@@ -917,13 +959,10 @@ def test_signature_label_drawn_in_lower_region_of_flowable_box():
         tmpl._p = original_p
 
     assert drawn, "draw() produced no canvas calls"
-    # Legacy rhythm: rule at local y=0 (box bottom), label 30 pt above
-    # it (the signing gap). Everything sits in the lower ~45 pt.
-    ys = sorted({y for _x, y in drawn})
-    assert ys[0] == 0.0, f"rule not at flowable bottom: ys={ys}"
-    assert any(25 <= y <= 40 for y in ys), f"label not in signing gap: ys={ys}"
-    for y in ys:
-        assert 0 <= y <= 45, f"drawn Y={y:.1f} not pinned to flowable bottom"
+    # Label-only block: nothing else is drawn — no signature rule.
+    assert ruled == [], f"signature rule must be absent, got lines={ruled}"
+    ys = {y for _x, y in drawn}
+    assert ys == {30.0}, f"label not at legacy 30 pt gap: ys={ys}"
 
 
 def test_multi_page_signature_on_final_page_only(client, admin_headers, db):
@@ -988,34 +1027,51 @@ def _signature_rule_y_from_bottom(raw: bytes, page_index: int = -1) -> float | N
         doc.close()
 
 
-def test_signature_rule_at_frame_content_bottom_in_rendered_pdf(
+def _signature_label_y_from_bottom(raw: bytes, locale: str) -> float | None:
+    """Absolute Y (pt from paper bottom) of the Signature label's bottom."""
+    import pymupdf
+
+    shaped = shape_text(label("signature", locale))
+    expected = {shaped, shaped[::-1]}
+    doc = pymupdf.open(stream=raw, filetype="pdf")
+    try:
+        page = doc[-1]
+        h = page.rect.height
+        for block in page.get_text("dict")["blocks"]:
+            for line in block.get("lines", []):
+                for span in line["spans"]:
+                    if span["text"].strip() in expected:
+                        return h - span["bbox"][3]
+        return None
+    finally:
+        doc.close()
+
+
+def test_signature_rule_absent_and_label_stays_at_bottom(
     client, admin_headers, db
 ):
-    """Regression: the rendered signature rule sits at the frame content
-    bottom (~20 mm from the paper edge), not ~30 mm. This inspects the
-    actual PDF drawing coordinates via PyMuPDF, not the Flowable alone.
-
-    Frame content bottom = 18 mm page margin + 6 pt Frame padding
-    ≈ 57.0 pt ≈ 20.1 mm. The old inverted layout put the rule ~10 mm
-    higher (≈ 85 pt / 30 mm) because the signing gap was below it.
-    """
+    """Final layout cleanup: the horizontal rule under the Signature
+    label is GONE; the label itself keeps its bottom-pinned position
+    (bottom edge ≈ 86 pt from the paper edge, above the footer)."""
     body = _create(client, admin_headers, str(_invoice_client(db).id))
     resp = _print(client, admin_headers, body["id"], locale="fr")
     assert resp.status_code == 200, resp.text
-    y = _signature_rule_y_from_bottom(resp.content)
-    assert y is not None, "signature rule not found in rendered PDF"
-    # Frame content bottom ≈ 57.0 pt; allow a small tolerance.
-    assert 50.0 <= y <= 65.0, (
-        f"signature rule at {y:.1f} pt from bottom "
-        f"({y * 25.4 / 72:.1f} mm); expected frame content bottom ~57 pt (20.1 mm)"
+    assert _signature_rule_y_from_bottom(resp.content) is None, (
+        "signature rule must be absent from the rendered PDF"
+    )
+    y = _signature_label_y_from_bottom(resp.content, "fr")
+    assert y is not None, "signature label not found in rendered PDF"
+    assert 70.0 <= y <= 100.0, (
+        f"signature label at {y:.1f} pt from bottom; "
+        f"expected bottom-pinned position ~86 pt"
     )
 
 
-def test_signature_rule_at_bottom_on_long_document(
+def test_signature_rule_absent_on_all_pages_of_long_document(
     client, admin_headers, db
 ):
-    """Multi-page: the final page's signature rule is also at the frame
-    content bottom; earlier pages have no signature rule at all."""
+    """Multi-page: no signature rule on ANY page; the label appears once,
+    at the bottom of the final page."""
     body = _create(
         client,
         admin_headers,
@@ -1036,15 +1092,13 @@ def test_signature_rule_at_bottom_on_long_document(
     raw = resp.content
     pages = _page_count(raw)
     assert pages >= 3
-    # Intermediate pages: no signature-sized short rule near the bottom.
     import pymupdf
 
     doc = pymupdf.open(stream=raw, filetype="pdf")
     try:
-        for pno in range(pages - 1):
+        for pno in range(pages):
             page = doc[pno]
             h = page.rect.height
-            found = False
             for drawing in page.get_drawings():
                 for item in drawing["items"]:
                     if item[0] != "l":
@@ -1053,14 +1107,17 @@ def test_signature_rule_at_bottom_on_long_document(
                     if abs(p1.y - p2.y) > 0.5:
                         continue
                     span = abs(p2.x - p1.x)
-                    if 140 < span < 220 and 0 < (h - p1.y) < 80:
-                        found = True
-            assert not found, f"unexpected signature rule on page {pno + 1}"
+                    assert not (
+                        140 < span < 220 and 0 < (h - p1.y) < 80
+                    ), f"unexpected signature rule on page {pno + 1}"
     finally:
         doc.close()
-    y = _signature_rule_y_from_bottom(raw)
+    text = _pdf_text(raw)
+    assert text.count(label("signature", "fr")) == 1
+    assert text.find(label("signature", "fr")) > text.find("Article numero 119")
+    y = _signature_label_y_from_bottom(raw, "fr")
     assert y is not None
-    assert 50.0 <= y <= 65.0, f"last-page rule at {y:.1f} pt from bottom"
+    assert 70.0 <= y <= 100.0, f"last-page label at {y:.1f} pt from bottom"
 
 
 def test_bottom_signature_flowable_wrap_contract():
@@ -1094,3 +1151,208 @@ def test_bottom_signature_flowable_wrap_contract():
     w, h = flow.wrap(500.0, MIN_SIGNATURE_AREA - 1)
     assert h == MIN_SIGNATURE_AREA
     assert h > MIN_SIGNATURE_AREA - 1
+
+
+def _signature_block_geometry(raw: bytes, locale: str) -> dict[str, object]:
+    """Signature label geometry on the last page (PyMuPDF).
+
+    Returns ``{"label": (x0, x1) | None, "label_y0": float | None,
+    "has_rule": bool, "content_max_y1": float, "page_width": float}``
+    in PDF coordinates (y grows down). ``content_max_y1`` is the lowest
+    text bottom excluding the footer and the signature label itself, so
+    overlap can be asserted; ``has_rule`` reports whether a signature-
+    sized rule (≈60 mm hairline in the bottom 80 pt) is still drawn.
+    """
+    import pymupdf
+
+    shaped = shape_text(label("signature", locale))
+    # ``shape_text`` emits reversed presentation forms for RTL (the
+    # ReportLab wordWrap='RTL' convention); PyMuPDF extracts them in
+    # logical order — accept either orientation.
+    expected = {shaped, shaped[::-1]}
+    doc = pymupdf.open(stream=raw, filetype="pdf")
+    try:
+        page = doc[-1]
+        height = page.rect.height
+        label_span: tuple[float, float] | None = None
+        label_y0: float | None = None
+        has_rule = False
+        content_max_y1 = 0.0
+        for block in page.get_text("dict")["blocks"]:
+            for line in block.get("lines", []):
+                for span in line["spans"]:
+                    text = span["text"].strip()
+                    if not text:
+                        continue
+                    x0, y0, x1, y1 = span["bbox"]
+                    if text in expected:
+                        label_span = (x0, x1)
+                        label_y0 = y0
+                        continue
+                    # Footer sits within the bottom 20 pt, centered.
+                    if height - y1 < 20.0 and 200 < x0 < 400:
+                        continue
+                    content_max_y1 = max(content_max_y1, y1)
+        for drawing in page.get_drawings():
+            for item in drawing["items"]:
+                if item[0] != "l":
+                    continue
+                p1, p2 = item[1], item[2]
+                if abs(p1.y - p2.y) > 0.5:
+                    continue
+                span = abs(p2.x - p1.x)
+                if 140 < span < 220 and 0 < (height - p1.y) < 80:
+                    has_rule = True
+        return {
+            "label": label_span,
+            "label_y0": label_y0,
+            "has_rule": has_rule,
+            "content_max_y1": content_max_y1,
+            "page_width": page.rect.width,
+        }
+    finally:
+        doc.close()
+
+
+def test_signature_label_centered_on_block_span_fr_and_ar(
+    client, admin_headers, db):
+    """The label stays centered on the block's 60 mm span (legacy
+    ``pdf_invoice.dart`` Align+Column centering) for both LTR and RTL,
+    and no signature rule is drawn anymore."""
+    from reportlab.lib.units import mm
+
+    body = _create(client, admin_headers, str(_invoice_client(db).id))
+    for locale in ("fr", "ar"):
+        resp = _print(client, admin_headers, body["id"], locale=locale)
+        assert resp.status_code == 200, resp.text
+        geo = _signature_block_geometry(resp.content, locale)
+        label_span = geo["label"]
+        assert label_span is not None, f"label not found ({locale})"
+        assert geo["has_rule"] is False, f"rule must be absent ({locale})"
+        # Frame content edges: 15 mm margin + 6 pt Frame padding.
+        edge = 15 * mm + 6
+        page_width = float(geo["page_width"])
+        if locale == "ar":
+            block_center = edge + 30 * mm
+        else:
+            block_center = page_width - edge - 30 * mm
+        label_center = (label_span[0] + label_span[1]) / 2
+        assert abs(label_center - block_center) <= 5.0, (
+            f"{locale}: label center {label_center:.1f} vs block center "
+            f"{block_center:.1f} (label={label_span})"
+        )
+
+
+def test_signature_block_never_overlaps_content(client, admin_headers, db):
+    """The bottom-pinned signature block keeps its own area: the label
+    starts below the lowest content line (notes / payment / words), on
+    both a short document and a nearly-full final page."""
+    for lines in (None, 16):
+        kwargs = {"notes": "Bottom pin check"}
+        if lines is not None:
+            kwargs["lines"] = [
+                {
+                    "description": f"Article numero {i}",
+                    "quantity": "1",
+                    "unit_price_ht": "100.000",
+                    "tva_rate": "19",
+                    "discount_pct": "0",
+                }
+                for i in range(lines)
+            ]
+        body_i = _create(client, admin_headers, str(_invoice_client(db).id), **kwargs)
+        resp = _print(client, admin_headers, body_i["id"], locale="fr")
+        assert resp.status_code == 200, resp.text
+        geo = _signature_block_geometry(resp.content, "fr")
+        label_y0 = geo["label_y0"]
+        assert label_y0 is not None
+        content_bottom = float(geo["content_max_y1"])
+        assert label_y0 > content_bottom - 2.0, (
+            f"signature label top {label_y0:.1f} overlaps content "
+            f"(lowest content bottom {content_bottom:.1f}) for lines={lines}"
+        )
+
+
+def test_facture_footer_blank_no_page_numbers_company_in_header(
+    client, admin_headers, db):
+    """Final layout cleanup: the A4 facturation footer is EMPTY — no
+    ``Page N / M`` stamp and no company-name prefix on ANY page. The
+    seller identity still prints in the page header block, and the
+    signature label keeps its bottom-pinned position."""
+    _put_settings(client, admin_headers, COMPANY)
+    body = _create(
+        client,
+        admin_headers,
+        str(_invoice_client(db).id),
+        lines=[
+            {
+                "description": f"Article numero {i}",
+                "quantity": "1",
+                "unit_price_ht": "100.000",
+                "tva_rate": "19",
+                "discount_pct": "0",
+            }
+            for i in range(120)
+        ],
+    )
+    resp = _print(client, admin_headers, body["id"], locale="fr")
+    assert resp.status_code == 200, resp.text
+    raw = resp.content
+    pages = _page_count(raw)
+    assert pages >= 3
+
+    text = _pdf_text(raw)
+    # No `Page N / M` text anywhere in the document.
+    assert _page_number_hits(text) == [], (
+        f"page numbering must be absent, got {_page_number_hits(text)}"
+    )
+    assert "Page" not in text
+    # Every page's footer band is completely blank (no prefix either).
+    for pno, band in enumerate(_footer_band_texts(raw), start=1):
+        assert band.strip() == "", (
+            f"page {pno}: footer band must be blank, got {band!r}"
+        )
+
+    import pymupdf
+
+    doc = pymupdf.open(stream=raw, filetype="pdf")
+    try:
+        page = doc[0]
+        header_texts = [
+            span["text"]
+            for block in page.get_text("dict")["blocks"]
+            for line in block.get("lines", [])
+            for span in line["spans"]
+            if span["bbox"][1] < 150.0
+        ]
+        assert "SARL Print Test" in " ".join(header_texts), (
+            "company name must stay in the page header block"
+        )
+    finally:
+        doc.close()
+    # The seller identity is still printed in the document text…
+    assert "SARL Print Test" in text
+    # …and the signature label keeps its bottom-pinned spot.
+    y = _signature_label_y_from_bottom(raw, "fr")
+    assert y is not None, "signature label not found in rendered PDF"
+    assert 70.0 <= y <= 100.0, f"signature label at {y:.1f} pt from bottom"
+
+
+def test_facture_footer_blank_in_arabic_too(client, admin_headers, db):
+    """Arabic (RTL) facturation PDF: the shaped ``صفحة`` page label is
+    never drawn and every footer band stays blank — while the header
+    company block and the signature label are untouched."""
+    _put_settings(client, admin_headers, COMPANY)
+    body = _create(client, admin_headers, str(_invoice_client(db).id))
+    resp = _print(client, admin_headers, body["id"], locale="ar")
+    assert resp.status_code == 200, resp.text
+    raw = resp.content
+    text = _pdf_text(raw)
+    assert shape_text(label("page", "ar")) not in text
+    assert _page_number_hits(text) == []
+    for pno, band in enumerate(_footer_band_texts(raw), start=1):
+        assert band.strip() == "", (
+            f"page {pno}: footer band must be blank, got {band!r}"
+        )
+    assert shape_text(COMPANY["store_name"]) in text  # header block
+    assert shape_text(label("signature", "ar")) in text

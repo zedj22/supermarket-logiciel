@@ -1,11 +1,13 @@
 """A4 facturation document template (Phase 7 — factura_simple parity).
 
 Geometry: the shared A4 profile (portrait, margins 15/15/18/18mm, body
-180mm) so page numbering, footer and font registration in ``render.py``
-are reused untouched. Story: company + bordered title box → client box →
-items table (repeating header row) → totals block → amount in words /
-payment method / notes → signature block pinned to the bottom of the
-final page.
+180mm) so font registration in ``render.py`` is reused untouched. The
+facturation path there passes ``draw_footer=False`` to the
+``NumberedCanvas``, so no `Page N / M` stamp (nor any footer text) is
+drawn — the bottom footer area stays blank. Story: company + bordered
+title box → client box → items table (repeating header row) → totals
+block → amount in words / payment method / notes → signature block
+pinned to the bottom of the final page.
 
 Every value arrives pre-formatted and flag-gated in ``FactureData``
 (``show_discount`` / ``show_tva`` drop a column, ``show_timbre`` /
@@ -268,10 +270,12 @@ class _BottomSignature(Flowable):  # type: ignore[misc]
 
     Consumes all remaining page height so the block's bottom edge lands
     exactly on the frame content bottom (~20 mm from the paper edge,
-    just above the 18 mm page margin and the footer). Legacy rhythm
-    top→bottom (``pdf_invoice.dart``): bold label, ~30 pt of empty
-    signing space, then the horizontal rule at the block's bottom edge
-    — the client signs *above* the line. When the remaining height is
+    just above the 18 mm page margin and the blank footer band — the
+    facturation PDF draws no page-number footer). The block is the
+    bold localized label only — 30 pt above that edge (the legacy
+    ``pdf_invoice.dart`` signing-gap spacing), centered across the
+    block's 60 mm span for both LTR and RTL; the horizontal rule was
+    removed in the final layout cleanup. When the remaining height is
     below ``MIN_SIGNATURE_AREA``, reports a taller height so the layout
     engine wraps to the next page instead of squeezing the block.
     """
@@ -296,23 +300,17 @@ class _BottomSignature(Flowable):  # type: ignore[misc]
         rtl = data.rtl
         width = self._width
         # Drawing origin is the flowable's bottom-left corner (y grows up).
-        # Legacy pdf_invoice.dart: label, SizedBox(30), rule (border-top)
-        # — so the rule is at local y=0 (the box bottom = frame content
-        # bottom) and the signing space is the 30 pt gap above it.
-        label_flow = _p(label("signature", data.locale), 9, rtl, bold=True)
-        label_w, _label_h = label_flow.wrap(60 * mm, 20)
-        signing_gap = 30  # pt — legacy SizedBox(height: 30)
-        rule_y = 0.0
-        label_bottom = rule_y + signing_gap
-        label_flow.drawOn(canvas, 0 if rtl else width - label_w, label_bottom)
-        canvas.setStrokeColorRGB(0.5, 0.5, 0.5)
-        canvas.setLineWidth(0.6)
-        canvas.line(
-            0 if rtl else width - 60 * mm,
-            rule_y,
-            60 * mm if rtl else width,
-            rule_y,
+        # Label-only block: 30 pt above the block edge (frame content
+        # bottom), unchanged spacing. Paragraph.wrap returns the full box
+        # width (not the text width), so the label is drawn centered
+        # across the block's 60 mm span instead of being left-anchored.
+        label_flow = _p(
+            label("signature", data.locale), 9, rtl, bold=True, align="center"
         )
+        label_flow.wrap(60 * mm, 20)
+        label_gap = 30  # pt — unchanged spacing from the block's bottom edge
+        block_x = 0.0 if rtl else width - 60 * mm
+        label_flow.drawOn(canvas, block_x, label_gap)
 
 
 def build_flowables(data: FactureData) -> list[Flowable]:

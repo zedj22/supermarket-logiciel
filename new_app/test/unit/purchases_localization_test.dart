@@ -54,6 +54,13 @@ const _phase11PurchaseKeys = [
   'change_product',
 ];
 
+/// Purchase total-cost mode keys (checkbox, hint, live preview).
+const _totalCostKeys = [
+  'purchase_total_cost',
+  'purchase_total_cost_hint',
+  'purchase_preview_total_qty',
+];
+
 /// Existing keys Phase 11 purchase screens depend on (must not regress).
 const _reusedKeys = [
   'search',
@@ -237,6 +244,22 @@ void main() {
           expect(value, isNot(key), reason: 'untranslated: $key@$locale');
         }
       }
+    });
+
+    test('total-cost mode labels exist in every locale', () {
+      for (final key in _totalCostKeys) {
+        for (final locale in _locales) {
+          final value = AppStrings.t(key, locale);
+          expect(value, isNotEmpty, reason: 'missing/empty: $key@$locale');
+          expect(value, isNot(key), reason: 'untranslated: $key@$locale');
+        }
+      }
+    });
+
+    test('total-cost checkbox label matches the feature spec', () {
+      expect(AppStrings.t('purchase_total_cost', 'ar'), 'التكلفة الإجمالية');
+      expect(AppStrings.t('purchase_total_cost', 'fr'), 'Coût total');
+      expect(AppStrings.t('purchase_total_cost', 'en'), 'Total cost');
     });
   });
 }

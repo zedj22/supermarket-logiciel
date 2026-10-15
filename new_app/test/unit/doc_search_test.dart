@@ -57,6 +57,24 @@ void main() {
       expect(ids, contains('lan_pairing'));
     });
 
+    test('finds the purchase total-cost explanation in three locales', () {
+      final en = searchDocContent('Total cost', locale: 'en');
+      expect(
+        [for (final h in en) h.article.id],
+        contains('purch_docs'),
+      );
+      final fr = searchDocContent('Coût total', locale: 'fr');
+      expect(
+        [for (final h in fr) h.article.id],
+        contains('purch_docs'),
+      );
+      final ar = searchDocContent('التكلفة الإجمالية', locale: 'ar');
+      expect(
+        [for (final h in ar) h.article.id],
+        contains('purch_docs'),
+      );
+    });
+
     test('unknown term returns an empty result set', () {
       expect(searchDocContent('zzzz-not-a-real-term', locale: 'en'),
           isEmpty);

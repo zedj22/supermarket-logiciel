@@ -188,7 +188,7 @@ from app.schemas.facturation import (
     InvoiceLineRequest,
     InvoiceLineResponse,
 )
-from app.schemas.sale import CreateSaleRequest, SaleLineRequest
+from app.schemas.sale import CartValidateRequest, CreateSaleRequest, SaleLineRequest
 from app.services.base import BaseService
 from app.services.catalog import ProductService
 from app.services.sale import SaleService
@@ -1172,7 +1172,11 @@ class InvoiceDocumentService(BaseService):
         2. Build a ``CreateSaleRequest`` from the document's snapshotted
            lines and call ``SaleService.create_sale`` with the
            deterministic idempotency key ``facture:{document_id}`` so a
-           concurrent retry never creates a second sale.
+           concurrent retry never creates a second sale. The posted sale
+           keeps the invoice's line prices (``honor_requested_price=True``
+           — no silent repricing after preview) and ``paid`` is quoted
+           from the sale's own payable total, so cash posts satisfy
+           ``paid >= total`` exactly.
         3. On success, re-open a short transaction to set
            ``sale_id`` / ``posted_at`` on the document.
 
@@ -1205,12 +1209,33 @@ class InvoiceDocumentService(BaseService):
 
         # 2. Authoritative sale creation (SaleService owns the tx).
         sale_service = SaleService(self.db)
+        # The posted sale keeps the invoice's OWN line prices: the
+        # document was previewed and validated at these amounts, so the
+        # SaleService resolves with honor_requested_price=True — the
+        # catalog price is never silently substituted after preview.
+        # Quote the exact payable total through the read-only cart dry-run
+        # under the SAME price authority (`credit` + paid=0 is the only
+        # payment shape that validates for any total) and initialize
+        # `paid` to it, so a cash post always lands on paid == total.
+        quote = sale_service.validate_cart(
+            CartValidateRequest(
+                items=sale_request.items,
+                payment_method="credit",
+                paid=Decimal("0"),
+            ),
+            honor_requested_price=True,
+        )
+        if quote.ok:
+            sale_request = sale_request.model_copy(
+                update={"paid": quote.total}
+            )
         try:
             sale_result = sale_service.create_sale(
                 sale_request,
                 user=None,
                 require_pos_discount=False,
                 require_pos_credit=False,
+                honor_requested_price=True,
                 # Phase C: an invoice post is never a loyalty event — the
                 # five loyalty sales columns stay NULL on this sale.
                 enable_loyalty=False,
@@ -1275,10 +1300,13 @@ class InvoiceDocumentService(BaseService):
 
         Every line must carry product_id or pack_id (free-text is not
         postable). The document's ``unit_price_ht`` is passed as the
-        requested ``unit_price``; SaleService's catalog resolution is
-        the price authority (it may report a PriceOverride). The
-        ``discount_pct`` is converted to an absolute ``line_discount``
-        against the HT line amount so the discount is preserved.
+        requested ``unit_price`` and ``post_as_sale`` resolves the sale
+        with ``honor_requested_price=True``: the document's own previewed
+        price IS the price authority for its own posting — the catalog is
+        never substituted after preview. The ``discount_pct`` is converted
+        to an absolute ``line_discount`` against the HT line amount so the
+        discount is preserved. ``paid`` starts at the document's HT net and
+        is replaced by the quoted sale payable total in ``post_as_sale``.
         """
         ordered = sorted(document.lines, key=lambda line: line.position)
         items: list[SaleLineRequest] = []

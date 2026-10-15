@@ -10,6 +10,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
+import 'package:supermarket_pos/core/colors.dart';
 import 'package:supermarket_pos/core/strings.dart';
 import 'package:supermarket_pos/features/auth/auth_provider.dart';
 import 'package:supermarket_pos/features/auth/credential_storage.dart';
@@ -1047,6 +1048,22 @@ void main() {
         ),
       );
       expect(pill.style?.fontSize, greaterThanOrEqualTo(12));
+      // The pill foreground is contrast-selected against the composited
+      // 14% wash — it must clear WCAG AA, not merely exist. The pill's
+      // hue is hashed from the category ID (default theme is dark).
+      final pillColor =
+          AppColors.categoryIdentity('00000000-0000-0000-0000-0000000000c1');
+      final pillBg = Color.lerp(
+        AppColors.darkSurface,
+        pillColor,
+        0.14,
+      )!;
+      expect(pill.style?.color, isNotNull);
+      expect(
+        AppColors.contrastRatio(pill.style!.color!, pillBg),
+        greaterThanOrEqualTo(4.5),
+        reason: 'category pill text must clear WCAG AA on its wash',
+      );
 
       final badge = tester.widgetList<Text>(
         find.descendant(

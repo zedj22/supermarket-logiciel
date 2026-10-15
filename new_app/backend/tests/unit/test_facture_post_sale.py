@@ -517,6 +517,134 @@ def test_discount_is_preserved_on_sale_line(client, db, admin_headers):
     assert Decimal(str(line.line_discount)) == Decimal("20.00")
 
 
+# ---------------------------------------------------------------------------
+# Price consistency: previewed document price is the price of the sale
+# ---------------------------------------------------------------------------
+
+
+def _catalog_mismatch_payload(client_id: str, product_id: str, **overrides):
+    """Document line priced BELOW the catalog price (500 vs 900)."""
+    payload = {
+        "doc_type": "FAC",
+        "client_id": client_id,
+        "document_date": DAY,
+        "payment_method": "cash",
+        "lines": [
+            {
+                "product_id": product_id,
+                "quantity": "3",
+                "unit_price_ht": "500",
+                "tva_rate": "0",
+                "discount_pct": "0",
+            }
+        ],
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_post_honors_document_price_and_pays_exact_total(
+    client, db, admin_headers
+):
+    """Catalog price must never silently replace the invoice price.
+
+    Document: 3 x 500 HT (tva 0) while the catalog sells at 900.
+    Preview shows the DOCUMENT amounts (1500 HT + 15 timbre = 1515);
+    the posted sale must keep 500/unit — total = paid = 1500, cash OK.
+    """
+    fiscal = _invoice_client(db)
+    product = _product(db, price=Decimal("900.000"), quantity=Decimal("50"))
+    payload = _catalog_mismatch_payload(str(fiscal.id), str(product.id))
+
+    # Displayed total: the preview uses the entered document price.
+    preview = client.post(
+        "/api/v1/factures/preview", json=payload, headers=admin_headers
+    )
+    assert preview.status_code == 200, preview.text
+    totals = preview.json()["totals"]
+    assert Decimal(totals["total_ht"]) == Decimal("1500")
+    assert Decimal(totals["net_a_payer"]) == Decimal("1515")  # +1% timbre
+
+    create = client.post("/api/v1/factures", json=payload, headers=admin_headers)
+    assert create.status_code == 201, create.text
+    doc_id = create.json()["id"]
+
+    post = client.post(f"/api/v1/factures/{doc_id}/post", headers=admin_headers)
+    assert post.status_code == 200, post.text
+
+    sale = db.execute(
+        select(Sale).where(Sale.client_request_id == f"facture:{doc_id}")
+    ).scalars().one()
+    line = db.execute(
+        select(SaleLine).where(SaleLine.sale_id == sale.id)
+    ).scalars().one()
+
+    # The sale kept the invoice price — NOT the catalog price (900).
+    assert Decimal(str(line.unit_price)) == Decimal("500")
+    assert Decimal(str(line.quantity)) == Decimal("3")
+    assert Decimal(str(sale.total)) == Decimal("1500")
+    # paid == total exactly: no silent repricing, no cash underpayment.
+    assert Decimal(str(sale.paid)) == Decimal("1500")
+    assert Decimal(str(sale.change)) == Decimal("0")
+    assert sale.payment_method == "cash"
+
+
+def test_register_as_sale_keeps_document_price(client, db, admin_headers):
+    """Same consistency on the dialog's exact path (create + register)."""
+    fiscal = _invoice_client(db)
+    product = _product(db, price=Decimal("900.000"), quantity=Decimal("50"))
+    payload = _catalog_mismatch_payload(str(fiscal.id), str(product.id))
+    payload["register_as_sale"] = True
+
+    resp = client.post("/api/v1/factures", json=payload, headers=admin_headers)
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    assert body["sale_id"] is not None
+
+    sale = db.execute(
+        select(Sale).where(Sale.client_request_id == f"facture:{body['id']}")
+    ).scalars().one()
+    line = db.execute(
+        select(SaleLine).where(SaleLine.sale_id == sale.id)
+    ).scalars().one()
+    assert Decimal(str(line.unit_price)) == Decimal("500")
+    assert Decimal(str(sale.total)) == Decimal("1500")
+    assert Decimal(str(sale.paid)) == Decimal("1500")
+    assert Decimal(str(sale.change)) == Decimal("0")
+
+
+def test_post_discount_and_price_stay_consistent(client, db, admin_headers):
+    """Line discount converts against the honored price; paid == total."""
+    fiscal = _invoice_client(db)
+    product = _product(db, price=Decimal("900.000"), quantity=Decimal("50"))
+    payload = _catalog_mismatch_payload(str(fiscal.id), str(product.id))
+    payload["lines"][0]["discount_pct"] = "10"
+
+    preview = client.post(
+        "/api/v1/factures/preview", json=payload, headers=admin_headers
+    )
+    assert preview.status_code == 200, preview.text
+    assert Decimal(preview.json()["totals"]["total_ht"]) == Decimal("1350")
+
+    create = client.post("/api/v1/factures", json=payload, headers=admin_headers)
+    assert create.status_code == 201, create.text
+    doc_id = create.json()["id"]
+    post = client.post(f"/api/v1/factures/{doc_id}/post", headers=admin_headers)
+    assert post.status_code == 200, post.text
+
+    sale = db.execute(
+        select(Sale).where(Sale.client_request_id == f"facture:{doc_id}")
+    ).scalars().one()
+    line = db.execute(
+        select(SaleLine).where(SaleLine.sale_id == sale.id)
+    ).scalars().one()
+    # 3 x 500 x 10% = 150.00 discount on the honored gross of 1500.
+    assert Decimal(str(line.line_discount)) == Decimal("150.00")
+    assert Decimal(str(sale.total)) == Decimal("1350")
+    assert Decimal(str(sale.paid)) == Decimal("1350")
+    assert Decimal(str(sale.change)) == Decimal("0")
+
+
 def test_posted_document_detail_exposes_sale_id(client, db, admin_headers):
     fiscal = _invoice_client(db)
     product = _product(db, quantity=Decimal("50"))

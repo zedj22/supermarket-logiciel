@@ -1933,6 +1933,13 @@ class _CategoryPill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Foreground must stay legible on the 14% wash in every theme: the
+    // helper darkens/lightens the same category hue until it clears
+    // WCAG AA against the composited background (see AppColors).
+    final foreground = AppColors.categoryPillForeground(
+      color,
+      Theme.of(context).brightness,
+    );
     return Container(
       key: Key('product-category-pill-$label'),
       padding: compact
@@ -1949,7 +1956,7 @@ class _CategoryPill extends StatelessWidget {
         style: TextStyle(
           fontSize: fontSize,
           fontWeight: FontWeight.w600,
-          color: Color.lerp(color, Colors.white, 0.15),
+          color: foreground,
         ),
       ),
     );

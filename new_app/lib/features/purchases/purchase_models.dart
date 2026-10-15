@@ -263,6 +263,53 @@ class DraftLine {
   }
 }
 
+/// Effective cost per DOCUMENT unit in thousandths.
+///
+/// Total-cost mode off: the entered cost IS the per-document-unit cost
+/// (existing behavior, returned unchanged). On: the entered cost is the
+/// TOTAL for the entered [quantity], so the per-unit cost is derived —
+/// total ÷ qty, integer half-up to thousandths. Returns null when the
+/// cost is unparsable, or when the derivation would divide by a
+/// missing/non-positive quantity (division by zero never happens).
+int? effectiveUnitCostMilli({
+  required String quantity,
+  required String cost,
+  required bool totalCostMode,
+}) {
+  final c = moneyToMilli(cost);
+  if (c == null) return null;
+  if (!totalCostMode) return c;
+  final q = qtyToMilli(quantity);
+  if (q == null || q <= 0) return null;
+  return (c * 1000 + q ~/ 2) ~/ q;
+}
+
+/// Document quantity expressed in BASE units: qty × multiplier,
+/// integer half-up to thousandths. A null/empty multiplier means the
+/// line already is in base units, so the quantity passes through
+/// unchanged. Null when the quantity (or a provided multiplier) is
+/// unparsable or non-positive.
+int? baseQtyEquivalentMilli(String quantity, String? multiplier) {
+  final q = qtyToMilli(quantity);
+  if (q == null) return null;
+  if (multiplier == null || multiplier.trim().isEmpty) return q;
+  final m = moneyToMilli(multiplier);
+  if (m == null || m <= 0) return null;
+  return (q * m + 500) ~/ 1000;
+}
+
+/// BASE-unit cost from a per-DOCUMENT-unit cost: cost ÷ multiplier,
+/// integer half-up to thousandths — the same convention the server
+/// uses in `base_unit_cost_from_package`. A null/empty multiplier means
+/// the line already is in base units, so the cost passes through.
+int? baseUnitCostMilli(int? unitCostMilli, String? multiplier) {
+  if (unitCostMilli == null) return null;
+  if (multiplier == null || multiplier.trim().isEmpty) return unitCostMilli;
+  final m = moneyToMilli(multiplier);
+  if (m == null || m <= 0) return null;
+  return (unitCostMilli * 1000 + m ~/ 2) ~/ m;
+}
+
 final RegExp _qtyPattern = RegExp(r'^(\d+)(?:\.(\d{1,3}))?$');
 
 /// Quantity in thousandths (same shape as moneyToMilli, separate regex

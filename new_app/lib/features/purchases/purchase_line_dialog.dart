@@ -6,6 +6,12 @@
 // total. Integer milli math only — NO PMP math ever happens here; the
 // server is authoritative for all valuation.
 //
+// Per-line "Total cost" mode: when the checkbox is on, the amount typed
+// in the cost field is the TOTAL cost of the whole entered quantity and
+// the per-document-unit cost is derived (total ÷ qty, half-up). The
+// staged line always stores the canonical per-unit cost — the checkbox
+// is transient UI state only, never persisted or sent to the server.
+//
 // Keyboard-first: Enter in quantity/cost submits the line when valid.
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
@@ -47,6 +53,12 @@ class _PurchaseLineDialogState extends ConsumerState<PurchaseLineDialog> {
 
   String? _variantId;
   String? _unitId;
+
+  /// When true the amount typed in the cost field is the TOTAL cost of
+  /// the whole entered quantity; the per-unit cost used everywhere
+  /// downstream is derived from it (never persisted as a flag — the
+  /// staged/saved line always stores the canonical per-unit cost).
+  bool _totalCostMode = false;
 
   late final TextEditingController _qty;
   late final TextEditingController _cost;
@@ -190,6 +202,23 @@ class _PurchaseLineDialogState extends ConsumerState<PurchaseLineDialog> {
     final product = _product!;
     final variant = _selectedVariant;
     final unit = _selectedUnit;
+    // Canonical stored cost is ALWAYS per document unit. In total-cost
+    // mode the typed amount is divided by the quantity here — _validate
+    // already guarantees qty > 0 and a parsable cost, so the derivation
+    // cannot fail or divide by zero.
+    var unitCost = _cost.text.trim();
+    if (_totalCostMode) {
+      final derived = effectiveUnitCostMilli(
+        quantity: _qty.text.trim(),
+        cost: unitCost,
+        totalCostMode: true,
+      );
+      if (derived == null) {
+        setState(() => _error = AppStrings.t('invalid_amount', loc));
+        return;
+      }
+      unitCost = milliToMoney(derived);
+    }
     Navigator.pop(
       context,
       DraftLine(
@@ -201,7 +230,7 @@ class _PurchaseLineDialogState extends ConsumerState<PurchaseLineDialog> {
         purchaseUnitName: unit?.name,
         multiplier: unit?.multiplier,
         quantity: _qty.text.trim(),
-        unitCost: _cost.text.trim(),
+        unitCost: unitCost,
       ),
     );
   }
@@ -211,19 +240,23 @@ class _PurchaseLineDialogState extends ConsumerState<PurchaseLineDialog> {
     final loc = ref.watch(localeProvider).flutterLocale.languageCode;
     final theme = Theme.of(context);
 
-    final previewLine = _product == null
-        ? null
-        : DraftLine(
-            productId: _product!.id,
-            productName: _product!.name,
-            variantId: _variantId,
-            variantName: _selectedVariant?.name,
-            purchaseUnitId: _unitId,
-            purchaseUnitName: _selectedUnit?.name,
-            multiplier: _selectedUnit?.multiplier,
-            quantity: _qty.text,
-            unitCost: _cost.text,
-          );
+    // Live preview — pure milli arithmetic over the raw field text, so it
+    // updates on every keystroke and never mutates anything: the derived
+    // per-unit cost, the base-quantity equivalent, and the line total
+    // that would be persisted if the line were saved right now.
+    final qtyText = _qty.text.trim();
+    final costText = _cost.text.trim();
+    final multiplier = _selectedUnit?.multiplier;
+    final qtyMilli = qtyToMilli(qtyText);
+    final unitCostMilli = effectiveUnitCostMilli(
+      quantity: qtyText,
+      cost: costText,
+      totalCostMode: _totalCostMode,
+    );
+    final baseQtyMilli = baseQtyEquivalentMilli(qtyText, multiplier);
+    final baseCostMilli = baseUnitCostMilli(unitCostMilli, multiplier);
+    final multiplierMilli = multiplier == null ? null : moneyToMilli(multiplier);
+    final showsBaseUnits = multiplierMilli != null && multiplierMilli != 1000;
 
     return AlertDialog(
       key: const Key('purchase-line-dialog'),
@@ -363,7 +396,13 @@ class _PurchaseLineDialogState extends ConsumerState<PurchaseLineDialog> {
                         LengthLimitingTextInputFormatter(15),
                       ],
                       decoration: InputDecoration(
-                        labelText: AppStrings.t('unit_cost', loc),
+                        labelText: AppStrings.t(
+                          _totalCostMode ? 'purchase_total_cost' : 'unit_cost',
+                          loc,
+                        ),
+                        helperText: _totalCostMode
+                            ? AppStrings.t('purchase_total_cost_hint', loc)
+                            : null,
                         isDense: true,
                       ),
                       onSubmitted: (_) => _submit(loc),
@@ -372,14 +411,42 @@ class _PurchaseLineDialogState extends ConsumerState<PurchaseLineDialog> {
                   ),
                 ],
               ),
+              CheckboxListTile(
+                key: const Key('purchase-line-total-cost-toggle'),
+                value: _totalCostMode,
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                controlAffinity: ListTileControlAffinity.leading,
+                title: Text(AppStrings.t('purchase_total_cost', loc)),
+                onChanged: _saving
+                    ? null
+                    : (value) => setState(() {
+                          _totalCostMode = value ?? false;
+                          _error = null;
+                        }),
+              ),
             ],
-            if (previewLine != null &&
-                moneyToMilli(previewLine.unitCost) != null &&
-                qtyToMilli(previewLine.quantity) != null) ...[
+            if (unitCostMilli != null &&
+                qtyMilli != null &&
+                qtyMilli > 0 &&
+                baseQtyMilli != null &&
+                baseCostMilli != null) ...[
               const SizedBox(height: 12),
               Text(
-                '${AppStrings.t('line_total', loc)}: '
-                '${formatMoney(previewLine.lineTotal)}',
+                [
+                  if (showsBaseUnits)
+                    '${AppStrings.t('purchase_preview_total_qty', loc)}: '
+                    '${formatMoney(milliToMoney(baseQtyMilli))} '
+                    '${AppStrings.unitLabel(_product?.unit, loc)}',
+                  '${AppStrings.t('unit_cost', loc)}: '
+                  '${formatMoney(milliToMoney(baseCostMilli))} '
+                  '${AppStrings.t('currency', loc)}',
+                  '${AppStrings.t('line_total', loc)}: '
+                  '${formatMoney(milliToMoney(
+                    (qtyMilli * unitCostMilli + 500) ~/ 1000,
+                  ))} '
+                  '${AppStrings.t('currency', loc)}',
+                ].join(' · '),
                 key: const Key('purchase-line-total'),
                 style: theme.textTheme.titleMedium,
               ),

@@ -813,6 +813,7 @@ class TestFacturationIsolation:
         response = SaleService(db).create_sale(
             request,
             user=None,
+            honor_requested_price=True,
             enable_loyalty=False,
         )
 

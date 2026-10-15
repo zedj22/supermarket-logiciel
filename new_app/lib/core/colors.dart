@@ -130,4 +130,45 @@ class AppColors {
     }
     return categoryPalette[hash % categoryPalette.length];
   }
+
+  /// WCAG contrast ratio (1–21) between two opaque colors.
+  static double contrastRatio(Color a, Color b) {
+    final la = a.computeLuminance();
+    final lb = b.computeLuminance();
+    final lighter = la > lb ? la : lb;
+    final darker = la > lb ? lb : la;
+    return (lighter + 0.05) / (darker + 0.05);
+  }
+
+  /// Readable foreground for a category pill's text.
+  ///
+  /// The pill paints [category] as a 14% wash over the theme surface, so
+  /// the composited background is mostly surface: light themes get a pale
+  /// background (darken the hue), dark and grey themes a deep one (lift
+  /// the hue). The same category hue is stepped in HSL lightness — hue
+  /// and saturation preserved, identity intact — until it clears WCAG AA
+  /// (4.5:1) against the composited background. Deterministic: identical
+  /// inputs always give identical output; both extremes guarantee
+  /// convergence, so the fallback below is never reached in practice.
+  static Color categoryPillForeground(Color category, Brightness brightness) {
+    final surface =
+        brightness == Brightness.light ? lightSurface : darkSurface;
+    final background = Color.lerp(surface, category, 0.14)!;
+    final start = HSLColor.fromColor(category);
+    // Pure black clears 4.5:1 once the background luminance is above
+    // 4.5×0.05 − 0.05 = 0.175; pure white once it is below 0.183. The
+    // 0.18 pivot sits inside both safe zones.
+    final darken = background.computeLuminance() > 0.18;
+    var lightness = start.lightness;
+    const step = 0.04;
+    for (var i = 0; i < 32; i++) {
+      lightness = darken ? lightness - step : lightness + step;
+      final clamped = lightness.clamp(0.0, 1.0);
+      final candidate = start.withLightness(clamped).toColor();
+      if (contrastRatio(candidate, background) >= 4.5) return candidate;
+      lightness = clamped;
+      if (lightness <= 0.0 || lightness >= 1.0) break;
+    }
+    return darken ? const Color(0xFF1B1B1B) : Colors.white;
+  }
 }

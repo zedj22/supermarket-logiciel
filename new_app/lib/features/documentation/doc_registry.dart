@@ -729,6 +729,15 @@ final List<DocChapter> docChapters = <DocChapter>[
             ],
           ),
           DocSection(
+            id: 'cost_entry',
+            headingKey: 'purch_docs.s4.heading',
+            blocks: const <DocBlock>[
+              DocBlock.paragraph('purch_docs.s4.p1'),
+              DocBlock.paragraph('purch_docs.s4.p2'),
+              DocBlock.tip('purch_docs.s4.tip1'),
+            ],
+          ),
+          DocSection(
             id: 'receiving',
             headingKey: 'purch_docs.s2.heading',
             blocks: const <DocBlock>[

@@ -1,7 +1,8 @@
 """PDF render entry points (Phase 15 §4.4, §7.6, §9.1, §16).
 
 Single place that owns page geometry, font registration, continuation
-headers (80mm) and `store · page N of M` footers (A4 / reports). Returns
+headers (80mm) and `store · page N of M` footers (A4 sales invoices /
+reports — facturation PDFs opt out, their footer stays blank). Returns
 PDF bytes; any unexpected failure is mapped to `PRINT_RENDER_FAILED` /
 `EXPORT_RENDER_FAILED` by the calling service. `compress=False` is a
 test profile for byte-level Arabic assertions (§19.1).
@@ -36,12 +37,19 @@ MARGIN_TB_REPORT = 15 * mm
 
 
 class NumberedCanvas(canvas.Canvas):
-    """Canvas that stamps `store · page N of M` on every finished page."""
+    """Canvas that stamps `store · page N of M` on every finished page.
+
+    ``draw_footer=False`` keeps the same page-stamping machinery but
+    draws nothing: the bottom footer area stays blank. Facturation A4
+    invoices (``render_facture``) opt out via that flag; A4 sales
+    invoices and report PDFs keep the default (``True``).
+    """
 
     def __init__(self, *args, **kwargs):
         self._page_label = kwargs.pop("page_label", "Page")
         self._page_rtl = kwargs.pop("page_rtl", False)
         self._footer_prefix = kwargs.pop("footer_prefix", "")
+        self._footer_enabled = kwargs.pop("draw_footer", True)
         super().__init__(*args, **kwargs)
         self._saved_page_states: list[dict] = []
 
@@ -53,7 +61,8 @@ class NumberedCanvas(canvas.Canvas):
         total = len(self._saved_page_states)
         for state in self._saved_page_states:
             self.__dict__.update(state)
-            self._draw_footer(total)
+            if self._footer_enabled:
+                self._draw_footer(total)
             super().showPage()
         canvas.Canvas.save(self)
 
@@ -144,6 +153,9 @@ def render_facture(data: FactureData, *, compress: bool = True) -> bytes:
 
     Fiscal documents are A4-only (legacy ``pdf_invoice.dart`` and the
     Algeria paper format) — there is deliberately no 80 mm path. The
+    footer/page-number stamp is disabled for this path (``draw_footer=
+    False``): the bottom footer area stays blank while the bottom-pinned
+    ``Signature`` label and the header company block are unchanged. The
     ``compress`` flag is the same test profile ``render_invoice`` /
     ``render_report_pdf`` expose: uncompressed streams let tests assert
     the drawn text byte-for-byte.
@@ -165,9 +177,10 @@ def render_facture(data: FactureData, *, compress: bool = True) -> bytes:
         facture_a4.build_flowables(data),
         canvasmaker=lambda *args, **kwargs: NumberedCanvas(
             *args,
-            page_label=label("page", data.locale),
-            page_rtl=data.rtl,
-            footer_prefix=data.company.name,
+            # Final layout cleanup: no footer at all — neither the
+            # company-name prefix nor the `Page N / M` stamp (the
+            # seller identity stays in the page header block).
+            draw_footer=False,
             **kwargs,
         ),
     )

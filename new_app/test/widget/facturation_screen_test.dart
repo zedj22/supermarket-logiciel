@@ -180,6 +180,7 @@ void stubRequests(
   List<Map<String, dynamic>>? postLog,
   List<Map<String, dynamic>>? putLog,
   List<Map<String, dynamic>>? listItems,
+  List<Map<String, dynamic>>? productItems,
 }) {
   final log = listQueryLog ?? <Map<String, dynamic>>[];
   final posts = postLog ?? <Map<String, dynamic>>[];
@@ -295,6 +296,21 @@ void stubRequests(
         data: {
           'items': [_clientRef()],
           'total': 1,
+          'page': 1,
+          'page_size': 40,
+          'pages': 1,
+        },
+      );
+    }
+    // Product picker search — only active when the test provides items,
+    // so every existing test keeps the catch-all {} behavior.
+    if (path == '/api/v1/products/search' && productItems != null) {
+      return Response(
+        requestOptions: RequestOptions(path: path),
+        statusCode: 200,
+        data: {
+          'items': productItems,
+          'total': productItems.length,
           'page': 1,
           'page_size': 40,
           'pages': 1,
@@ -914,6 +930,126 @@ void main() {
             .data,
         '101 DA',
       );
+    });
+
+    testWidgets(
+        'preview and create carry the chosen unit price + register_as_sale',
+        (tester) async {
+      final dio = MockDio();
+      final postLog = <Map<String, dynamic>>[];
+      stubRequests(
+        dio,
+        postLog: postLog,
+        productItems: [
+          {
+            'id': 'prod-1',
+            'name': 'Kawkaw',
+            'barcode': null,
+            'sku': null,
+            'description': null,
+            'unit': 'piece',
+            'price': '500',
+            'cost': 0,
+            'avg_cost': 0,
+            'quantity': 50,
+            'low_stock_threshold': 5,
+            'allow_negative_stock': false,
+            'wholesale_price': '400',
+            'wholesale_min_qty': '10',
+            'vat_rate': 0,
+            'promotion': null,
+            'expiry_date': null,
+            'image_path': null,
+            'category_id': null,
+            'category_name': null,
+            'is_archived': false,
+          },
+        ],
+      );
+
+      await pumpApp(
+        tester,
+        dio,
+        navLabel: AppStrings.t('facturation', 'en'),
+        locale: AppLocale.en,
+      );
+
+      // Open the create form.
+      await tester.tap(find.byKey(const Key('facturation-add-button')));
+      await tester.pumpAndSettle();
+
+      // Pick a date (same flow as the ISO test).
+      await tester.tap(find.byKey(const Key('invoice-form-date')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('15').first);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('OK'));
+      await tester.pumpAndSettle();
+
+      // Pick the invoice client.
+      await tester.tap(find.byKey(const Key('invoice-form-pick-client')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('invoice-client-option-ic1')));
+      await tester.pumpAndSettle();
+
+      // Product line at the WHOLESALE reference price (field drives all
+      // totals — 3 × 400).
+      await tester.tap(find.byKey(const Key('invoice-form-add-line')));
+      await tester.pumpAndSettle();
+      expect(find.text('Unit Price (DA)'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('invoice-line-pick-product')));
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const Key('facturation-product-option-prod-1')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('invoice-line-ref-wholesale')));
+      await tester.pump();
+      await tester.enterText(find.byKey(const Key('invoice-line-qty')), '3');
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('invoice-line-submit')));
+      await tester.pumpAndSettle();
+
+      // The form's line tile shows the chosen price.
+      final lineTexts = tester.widgetList<Text>(
+        find.descendant(
+          of: find.byKey(const Key('invoice-form-line-0')),
+          matching: find.byType(Text),
+        ),
+      );
+      expect(lineTexts.last.data, contains('3 × 400 DA'));
+
+      // Preview — the REQUEST carries the chosen price.
+      await tester.tap(find.byKey(const Key('invoice-form-preview-button')));
+      await tester.pumpAndSettle();
+
+      final previewPost = postLog.lastWhere(
+        (p) => p['path'] == '$_facturesPath/preview',
+      );
+      final previewBody = previewPost['data'] as Map<String, dynamic>;
+      final previewLines = previewBody['lines'] as List<dynamic>;
+      expect(previewLines, hasLength(1));
+      expect(previewLines.first['product_id'], 'prod-1');
+      expect(previewLines.first['unit_price_ht'], '400');
+      expect(previewLines.first['quantity'], '3');
+
+      // Register as a POS sale and submit — the create body must carry
+      // the SAME price the preview showed (no silent repricing) and the
+      // register_as_sale flag the dialog promises.
+      await tester.tap(find.byKey(const Key('invoice-form-register-as-sale')));
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('invoice-form-submit')));
+      await tester.pumpAndSettle();
+
+      final createPost = postLog.lastWhere((p) => p['path'] == _facturesPath);
+      final createBody = createPost['data'] as Map<String, dynamic>;
+      expect(createBody['register_as_sale'], isTrue);
+      final createLines = createBody['lines'] as List<dynamic>;
+      expect(createLines, hasLength(1));
+      expect(createLines.first['product_id'], 'prod-1');
+      expect(createLines.first['unit_price_ht'], '400');
+      expect(createLines.first['quantity'], '3');
+      expect(tester.takeException(), isNull);
     });
 
     testWidgets('update payload never carries document_date (edit mode)',
