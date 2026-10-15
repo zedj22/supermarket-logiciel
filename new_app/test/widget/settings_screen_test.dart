@@ -447,6 +447,33 @@ void main() {
       final body = Map<String, dynamic>.from(put.data as Map);
       expect(body['allow_debt'], isFalse);
     });
+
+    testWidgets('shows the Storage & Data Usage entry for settings_manage',
+        (tester) async {
+      await pumpSettingsApp(
+        tester,
+        user: _userWith(const [settingsManageScope]),
+        adapter: _echoAdapter(),
+      );
+
+      expect(find.byKey(const Key('settings-storage-title')), findsOneWidget);
+      expect(find.byKey(const Key('settings-storage-open')), findsOneWidget);
+      expect(find.text(AppStrings.t('storage_usage', 'ar')), findsOneWidget);
+      expect(find.text(AppStrings.t('storage_open', 'ar')), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('hides the storage entry from users without settings_manage',
+        (tester) async {
+      await pumpSettingsApp(
+        tester,
+        user: _userWith(const ['pos_sale']),
+      );
+
+      expect(find.byKey(const Key('settings-storage-title')), findsNothing);
+      expect(find.byKey(const Key('settings-storage-open')), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
   });
 }
 

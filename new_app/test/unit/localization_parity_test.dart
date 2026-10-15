@@ -146,10 +146,16 @@ void main() {
       // reward discounts: removed 4 legacy labels (point value, min/max
       // redemption, reward liability) and added 3 (reward selector title,
       // the "none" option, the max-reward-discount setting label) — 1262.
+      // The Storage & Data Usage pass added the storage page chrome
+      // (title, measuring/failed/permission states, totals + partial chip,
+      // the two scope titles, last-measured/disk rows) plus the seven
+      // category labels, the six measurement-reason labels, the
+      // unavailable fallback, the settings entry-button label and its
+      // description — 28 keys (1290).
       // Update this deliberately when a subphase
       // adds strings — an unexplained drop means keys were deleted from
       // one map only.
-      expect(_map('en').keys.length, 1262);
+      expect(_map('en').keys.length, 1290);
       expect(_map('ar').keys.length, _map('en').keys.length);
       expect(_map('fr').keys.length, _map('en').keys.length);
     });

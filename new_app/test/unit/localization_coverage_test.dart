@@ -49,6 +49,25 @@ const _dynamicKeyFamilies = <String, Set<String>>{
     'adjustment',
     'expiry',
   },
+  // Storage & Data Usage: the screen resolves category/reason labels
+  // through `storageCategoryLabelKey` / `storageReasonLabelKey`.
+  'storage_cat_': {
+    'database',
+    'application',
+    'backups',
+    'data',
+    'cache_temp',
+    'logs',
+    'exports',
+  },
+  'storage_reason_': {
+    'missing',
+    'in_memory',
+    'permission',
+    'timeout',
+    'error',
+    'not_stored',
+  },
 };
 
 Iterable<File> _dartFiles() => Directory('lib')

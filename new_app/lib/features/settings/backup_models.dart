@@ -77,15 +77,16 @@ List<BackupInfo> parseBackupList(dynamic data) {
 }
 
 /// Human-readable byte size — a backup is tens of MB, so raw bytes are noise.
+/// Storage pages can report full volumes, so the scale reaches TB.
 String formatBytes(int bytes) {
   if (bytes < 1024) return '$bytes B';
   const kb = 1024.0;
   const mb = kb * 1024;
+  const gb = mb * 1024;
   if (bytes < mb) return '${(bytes / kb).toStringAsFixed(1)} KB';
-  if (bytes < mb * 1024) {
-    return '${(bytes / mb).toStringAsFixed(1)} MB';
-  }
-  return '${(bytes / (mb * 1024)).toStringAsFixed(2)} GB';
+  if (bytes < gb) return '${(bytes / mb).toStringAsFixed(1)} MB';
+  if (bytes < gb * 1024) return '${(bytes / gb).toStringAsFixed(2)} GB';
+  return '${(bytes / (gb * 1024)).toStringAsFixed(2)} TB';
 }
 
 /// `YYYY-MM-DD HH:mm` in the device's local time, deliberately

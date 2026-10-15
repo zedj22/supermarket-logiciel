@@ -32,6 +32,7 @@ import '../features/promotions/promotions_screen.dart';
 import '../features/purchases/purchases_screen.dart';
 import '../features/reports/reports_screen.dart';
 import '../features/settings/settings_screen.dart';
+import '../features/storage/storage_screen.dart';
 import '../features/users/users_screen.dart';
 import '../features/facturation/facturation_screen.dart';
 import '../features/invoice_clients/invoice_clients_screen.dart';
@@ -228,6 +229,11 @@ final routerProvider = Provider<GoRouter>((ref) {
             path: '/about',
             name: 'about',
             builder: (context, state) => const AboutScreen(),
+          ),
+          GoRoute(
+            path: '/storage-usage',
+            name: 'storage-usage',
+            builder: (context, state) => const StorageUsageScreen(),
           ),
           GoRoute(
             path: '/documentation',

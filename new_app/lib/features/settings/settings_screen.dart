@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../core/strings.dart';
 import '../../l10n/locale_provider.dart';
@@ -132,6 +134,8 @@ class SettingsScreen extends ConsumerWidget {
               const _CompanySettingsSection(),
               const SizedBox(height: 16),
               const _LoyaltySettingsSection(),
+              const SizedBox(height: 16),
+              const _StorageSection(),
             ],
             if (canBackup) ...[
               const SizedBox(height: 16),
@@ -1220,6 +1224,52 @@ class _LoyaltySettingsSectionState
               onPressed: () =>
                   ref.read(loyaltySettingsProvider.notifier).load(),
               child: Text(AppStrings.t('retry', loc)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Entry point to the read-only Storage & Data Usage page.
+///
+/// Visible only under `settings_manage`, the same permission the backend
+/// enforces on `GET /api/v1/storage` — a lower-privileged operator never
+/// sees the button, and the page itself re-checks the permission too.
+class _StorageSection extends ConsumerWidget {
+  const _StorageSection();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    final loc = ref.watch(localeProvider).flutterLocale.languageCode;
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              AppStrings.t('storage_usage', loc),
+              key: const Key('settings-storage-title'),
+              style: theme.textTheme.titleMedium,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              AppStrings.t('storage_usage_desc', loc),
+              key: const Key('settings-storage-desc'),
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(height: 12),
+            FilledButton.tonalIcon(
+              key: const Key('settings-storage-open'),
+              onPressed: () => context.go('/storage-usage'),
+              icon: const Icon(Icons.storage),
+              label: Text(AppStrings.t('storage_open', loc)),
             ),
           ],
         ),
