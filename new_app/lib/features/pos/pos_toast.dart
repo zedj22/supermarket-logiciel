@@ -11,6 +11,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/colors.dart';
+import '../../core/numeric_text.dart';
 import 'pos_layout.dart';
 
 /// Semantic toast category — drives background, icon and duration.
@@ -262,7 +263,7 @@ class _PosToastState extends State<PosToast> {
                   ),
                   if (widget.detail != null) ...[
                     const SizedBox(height: 2),
-                    Text(
+                    numericText(
                       widget.detail!,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,

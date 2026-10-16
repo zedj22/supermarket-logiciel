@@ -9,7 +9,7 @@ library;
 import '../clients/customer_models.dart' show moneyToMilli;
 
 export '../clients/customer_models.dart'
-    show moneyToMilli, milliToMoney, formatMoney;
+    show moneyToMilli, milliToMoney, formatMoney, formatMoneyPlain;
 
 class SupplierModel {
   final String id;

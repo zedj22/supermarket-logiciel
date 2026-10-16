@@ -15,6 +15,7 @@ both of which break the digit-order promises of §17 A8.
 
 from __future__ import annotations
 
+import re
 from decimal import Decimal
 
 import arabic_reshaper
@@ -90,20 +91,36 @@ def _dec(value: Decimal | float | int | str) -> Decimal:
     return Decimal(str(value))
 
 
+def _group_digits(int_part: str) -> str:
+    """Insert a regular space between every group of three digits (right to left)."""
+    return re.sub(r"(?<=\d)(?=(\d{3})+(?!\d))", " ", int_part)
+
+
+def group_thousands(text: str) -> str:
+    """Space-group the integer part of a plain decimal string; pass through anything else."""
+    negative = text.startswith("-")
+    unsigned = text[1:] if negative else text
+    if not unsigned or not unsigned.replace(".", "", 1).isdigit() or unsigned.count(".") > 1:
+        return text
+    int_part, _, fraction = unsigned.partition(".")
+    fraction = f".{fraction}" if "." in unsigned else ""
+    return f"{'-' if negative else ''}{_group_digits(int_part)}{fraction}"
+
+
 def format_money(value: Decimal | float | int | str) -> str:
-    """Display money: 2 decimals + localized `DA` suffix (§15.4)."""
-    return f"{_dec(value):.2f} {CURRENCY}"
+    """Display money: space-grouped thousands, 2 decimals + localized `DA` suffix (§15.4)."""
+    return f"{group_thousands(f'{_dec(value):.2f}')} {CURRENCY}"
 
 
 def format_qty(value: Decimal | float | int | str) -> str:
-    """Display quantity: up to 3 decimals, trailing zeros stripped."""
+    """Display quantity: space-grouped thousands, up to 3 decimals, trailing zeros stripped."""
     d = _dec(value)
     text = f"{d:.3f}".rstrip("0").rstrip(".")
-    return text or "0"
+    return group_thousands(text or "0")
 
 
 def format_amount(value: Decimal | float | int | str) -> str:
-    """Report value on documents: 3 decimals, trailing zeros stripped."""
+    """Report value on documents: 3 decimals, trailing zeros stripped, grouped."""
     return format_qty(value)
 
 

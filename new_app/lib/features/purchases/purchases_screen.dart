@@ -16,6 +16,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/numeric_text.dart';
 import '../../core/strings.dart';
 import '../../core/widgets/table_header.dart';
 import '../../l10n/locale_provider.dart';
@@ -363,7 +364,9 @@ class _PurchasesScreenState extends ConsumerState<PurchasesScreen> {
           purchase.supplierName ?? '',
           AppStrings.t('purchase_status_${purchase.status}', loc),
           if (purchase.purchaseDate != null)
-            _timestampOf(purchase.purchaseDate),
+            // Isolated: the "date time" pair must stay one LTR unit in
+            // the RTL subtitle (its two numeric groups would swap).
+            bidiIsolateLtr(_timestampOf(purchase.purchaseDate)),
         ].where((part) => part.isNotEmpty).join(' · '),
         key: Key('purchase-meta-$index'),
       ),
@@ -371,15 +374,18 @@ class _PurchasesScreenState extends ConsumerState<PurchasesScreen> {
         mainAxisAlignment: MainAxisAlignment.center,
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
-          Text(
+          numericText(
             formatMoney(purchase.total),
             key: Key('purchase-total-$index'),
             style: theme.textTheme.titleMedium,
           ),
           if (purchase.unpaidMilli > 0)
+            // Bidi: Arabic "Remaining:" label + amount — only the money
+            // is an LTR isolate (whole-string LTR still reverses the
+            // grouped digits after the Arabic label — W7).
             Text(
               '${AppStrings.t('remaining', loc)}: '
-              '${formatMoney(purchase.unpaid)}',
+              '${bidiIsolateLtr(formatMoney(purchase.unpaid))}',
               key: Key('purchase-remaining-$index'),
               style: theme.textTheme.bodySmall?.copyWith(
                 color: theme.colorScheme.error,
@@ -488,7 +494,7 @@ class _PurchasesScreenState extends ConsumerState<PurchasesScreen> {
             ),
             Expanded(
               flex: 2,
-              child: Text(
+              child: numericText(
                 formatMoney(purchase.total),
                 key: Key('purchase-total-$index'),
                 textAlign: TextAlign.end,
@@ -497,7 +503,7 @@ class _PurchasesScreenState extends ConsumerState<PurchasesScreen> {
             ),
             Expanded(
               flex: 2,
-              child: Text(
+              child: numericText(
                 purchase.unpaidMilli > 0
                     ? formatMoney(purchase.unpaid)
                     : '—',
@@ -512,7 +518,9 @@ class _PurchasesScreenState extends ConsumerState<PurchasesScreen> {
               Expanded(
                 flex: 3,
                 child: Text(
-                  _timestampOf(purchase.purchaseDate),
+                  // Isolated: keeps "YYYY-MM-DD HH:MM:SS" one LTR unit
+                  // (the date/time groups would otherwise swap under RTL).
+                  bidiIsolateLtr(_timestampOf(purchase.purchaseDate)),
                   key: Key('purchase-date-$index'),
                   textAlign: TextAlign.end,
                   style: theme.textTheme.bodySmall,

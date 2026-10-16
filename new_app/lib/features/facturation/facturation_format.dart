@@ -4,8 +4,8 @@
 // to construct API payloads, persisted values, or fiscal calculations.
 // Dates stay ISO `YYYY-MM-DD` in requests/persistence; money strings stay
 // the server's `.`-decimal form in models. PDF formatting is owned by the
-// backend (`app/printing/text.py`) and is intentionally frozen at
-// `%.2f DA` + ISO dates + French amount-in-words.
+// backend (`app/printing/text.py`) and renders space-grouped thousands
+// with `%.2f DA` + ISO dates + French amount-in-words.
 //
 // Approved display policy:
 // - Dates render `DD/MM/YYYY` with Latin digits in ar / fr / en.

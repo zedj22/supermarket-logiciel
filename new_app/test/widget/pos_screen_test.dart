@@ -12,12 +12,14 @@ import 'dart:io';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supermarket_pos/core/colors.dart';
+import 'package:supermarket_pos/core/numeric_text.dart';
 import 'package:supermarket_pos/core/strings.dart';
 import 'package:supermarket_pos/features/auth/auth_models.dart';
 import 'package:supermarket_pos/features/auth/auth_provider.dart';
@@ -34,6 +36,9 @@ import 'package:supermarket_pos/network/api_client.dart';
 import 'package:supermarket_pos/theme/app_theme.dart';
 
 class MockDio extends Mock implements Dio {}
+
+/// Mirrors the LTR isolate the app wraps numeric segments in (W7).
+String _m(String v) => bidiIsolateLtr(v);
 
 class _FakePrintService implements PrintService {
   _FakePrintService({this.fail = false});
@@ -1619,7 +1624,7 @@ void main() {
         findsOneWidget,
       );
       expect(
-        find.text('${AppStrings.t('base_price', 'en')}: 60 / Piece'),
+        find.text('${AppStrings.t('base_price', 'en')}: ${_m('60')} / Piece'),
         findsOneWidget,
       );
       expect(
@@ -1631,6 +1636,12 @@ void main() {
             .widget<Text>(find.byKey(Key('cart-line-total-$cartLineKey')))
             .data,
         '550.00',
+      );
+      expect(
+        tester
+            .widget<Text>(find.byKey(Key('cart-line-total-$cartLineKey')))
+            .textDirection,
+        TextDirection.ltr,
       );
       expect(tester.takeException(), isNull);
     });
@@ -1683,11 +1694,11 @@ void main() {
         tester
             .widget<Text>(find.byKey(Key('cart-line-total-$cartLineKey')))
             .data,
-        '1100.00',
+        '1 100.00',
       );
       // Base price displayed independently, does not change total.
       expect(
-        find.text('${AppStrings.t('base_price', 'en')}: 60 / Piece'),
+        find.text('${AppStrings.t('base_price', 'en')}: ${_m('60')} / Piece'),
         findsOneWidget,
       );
     });
@@ -1723,7 +1734,7 @@ void main() {
       expect(find.text('1 Box × 550'), findsOneWidget);
       expect(find.text('10 Piece'), findsOneWidget);
       expect(
-        find.text('${AppStrings.t('base_price', 'en')}: 12 / Piece'),
+        find.text('${AppStrings.t('base_price', 'en')}: ${_m('12')} / Piece'),
         findsOneWidget,
       );
       final varLineKey = '$_productId|var-only|$boxUnitId';
@@ -1760,7 +1771,7 @@ void main() {
       expect(
         find.text(
           '${AppStrings.t('base_price', 'ar')}: '
-          '60 / ${AppStrings.unitLabel('piece', 'ar')}',
+          '${_m('60')} / ${AppStrings.unitLabel('piece', 'ar')}',
         ),
         findsOneWidget,
       );
@@ -1776,7 +1787,7 @@ void main() {
       expect(
         find.text(
           '${AppStrings.t('base_price', 'fr')}: '
-          '60 / ${AppStrings.unitLabel('piece', 'fr')}',
+          '${_m('60')} / ${AppStrings.unitLabel('piece', 'fr')}',
         ),
         findsOneWidget,
       );
@@ -1790,7 +1801,7 @@ void main() {
       await pickSellingUnit(tester);
 
       expect(
-        find.text('${AppStrings.t('base_price', 'en')}: 60 / Piece'),
+        find.text('${AppStrings.t('base_price', 'en')}: ${_m('60')} / Piece'),
         findsOneWidget,
       );
       expect(tester.takeException(), isNull);
@@ -2111,15 +2122,21 @@ void main() {
         tester
             .widget<Text>(find.byKey(const Key('sale-detail-subtotal')))
             .data,
-        '1100.00',
+        '1 100.00',
       );
+      final subtotal = tester
+          .widget<Text>(find.byKey(const Key('sale-detail-subtotal')));
+      expect(subtotal.textDirection, TextDirection.ltr);
       expect(
         tester.widget<Text>(find.byKey(const Key('sale-detail-total'))).data,
-        '1000.00',
+        '1 000.00',
       );
+      final total =
+          tester.widget<Text>(find.byKey(const Key('sale-detail-total')));
+      expect(total.textDirection, TextDirection.ltr);
       expect(
         tester.widget<Text>(find.byKey(const Key('sale-detail-paid'))).data,
-        '1000.00',
+        '1 000.00',
       );
     });
 
@@ -2217,7 +2234,7 @@ void main() {
       );
       expect(
         tester.widget<Text>(find.byKey(const Key('sale-detail-total'))).data,
-        '1000.00',
+        '1 000.00',
       );
       expect(find.byKey(const Key('print-error')), findsOneWidget);
     });
@@ -2707,14 +2724,18 @@ void main() {
       addBread(containerOf(tester), qty: '3');
       await tester.pump();
 
-      final payText = find.descendant(
-        of: find.byKey(const Key('pos-pay-button')),
-        matching: find.byType(Text),
-      );
-      final data = tester.widget<Text>(payText).data ?? '';
-      expect(data, contains(AppStrings.t('payment_shortcut', 'en')));
-      expect(data, contains('30.00'));
-      expect(data, contains('DA'));
+      final payTexts = tester
+          .widgetList<Text>(
+            find.descendant(
+              of: find.byKey(const Key('pos-pay-button')),
+              matching: find.byType(Text),
+            ),
+          )
+          .map((t) => t.data ?? '')
+          .join(' ');
+      expect(payTexts, contains(AppStrings.t('payment_shortcut', 'en')));
+      expect(payTexts, contains('30.00'));
+      expect(payTexts, contains('DA'));
     });
 
     testWidgets('subtotal/total update when line added', (tester) async {
@@ -2899,6 +2920,129 @@ void main() {
     });
   });
 
+  group('RTL bidi currency order (Windows screenshots acceptance)', () {
+    // Regression for the authoritative Windows screenshots run under the
+    // Arabic locale: grouped money must render "20 235.00 DA" (digits
+    // left of DA) on the POS grand total and the PAY button, while the
+    // surrounding layout and the Arabic labels stay RTL. The box
+    // assertions use RenderParagraph — real ICU bidi glyph placement
+    // under the Ahem test font — layout evidence, not a Windows golden
+    // screenshot.
+    ProviderContainer containerOf(WidgetTester tester) =>
+        ProviderScope.containerOf(
+          tester.element(find.byKey(const Key('pos-screen'))),
+          listen: false,
+        );
+
+    bool digitsLeftOfDa(RenderParagraph paragraph, String text) {
+      final daStart = text.lastIndexOf(' DA');
+      final daBoxes = paragraph.getBoxesForSelection(TextSelection(
+        baseOffset: daStart + 1,
+        extentOffset: text.length,
+      ));
+      final digitIdx =
+          text.substring(0, daStart).lastIndexOf(RegExp('[0-9]'));
+      final digitBoxes = paragraph.getBoxesForSelection(TextSelection(
+        baseOffset: digitIdx,
+        extentOffset: digitIdx + 1,
+      ));
+      return digitBoxes.first.left < daBoxes.first.left;
+    }
+
+    void addBigLine(ProviderContainer container) {
+      container.read(posCartProvider.notifier).addLine(
+            CartLine(
+              productId: 'p1',
+              name: 'Bread',
+              quantity: '2023.5',
+              unitPrice: '10',
+            ),
+          );
+    }
+
+    testWidgets(
+        'grand total & PAY amount render 20 235.00 DA in LTR order under RTL',
+        (tester) async {
+      await _pumpApp(
+        tester,
+        dio: dio,
+        locale: AppLocale.ar,
+        direction: TextDirection.rtl,
+      );
+      addBigLine(containerOf(tester));
+      await tester.pump();
+
+      const money = '20 235.00 DA';
+
+      final totalText = tester.widget<Text>(
+        find.byKey(const Key('pos-total-value')),
+      );
+      expect(totalText.data, money);
+      expect(totalText.textDirection, TextDirection.ltr);
+      final totalParagraph = tester.renderObject<RenderParagraph>(
+        find.byKey(const Key('pos-total-value')),
+      );
+      expect(
+        digitsLeftOfDa(totalParagraph, money),
+        isTrue,
+        reason: 'POS grand total must render digits left of DA under RTL',
+      );
+
+      final payText = tester.widget<Text>(
+        find.byKey(const Key('pos-pay-amount')),
+      );
+      expect(payText.data, money);
+      expect(payText.textDirection, TextDirection.ltr);
+      final payParagraph = tester.renderObject<RenderParagraph>(
+        find.byKey(const Key('pos-pay-amount')),
+      );
+      expect(
+        digitsLeftOfDa(payParagraph, money),
+        isTrue,
+        reason: 'PAY amount must render digits left of DA under RTL',
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('PAY Arabic label sits right of the amount under RTL',
+        (tester) async {
+      await _pumpApp(
+        tester,
+        dio: dio,
+        locale: AppLocale.ar,
+        direction: TextDirection.rtl,
+      );
+      addBigLine(containerOf(tester));
+      await tester.pump();
+
+      final payTexts = tester.widgetList<Text>(
+        find.descendant(
+          of: find.byKey(const Key('pos-pay-button')),
+          matching: find.byType(Text),
+        ),
+      );
+      final label = payTexts.singleWhere(
+        (t) => t.key != const Key('pos-pay-amount'),
+      );
+      expect(
+        label.data,
+        contains(AppStrings.t('payment_shortcut', 'ar')),
+      );
+
+      final labelRect = tester.getRect(find.byWidget(label));
+      final amountRect = tester.getRect(
+        find.byKey(const Key('pos-pay-amount')),
+      );
+      expect(
+        labelRect.left,
+        greaterThan(amountRect.left),
+        reason: 'RTL row: the Arabic PAY label must sit right of the '
+            'amount so the money stays one LTR visual unit',
+      );
+      expect(tester.takeException(), isNull);
+    });
+  });
+
   group('cart header, empty state & line controls (UX FIX #7)', () {
     ProviderContainer containerOf(WidgetTester tester) =>
         ProviderScope.containerOf(
@@ -2939,7 +3083,7 @@ void main() {
       final counts = tester
           .widget<Text>(find.byKey(const Key('pos-cart-counts')))
           .data;
-      expect(counts, '2 lines · 5 units');
+      expect(counts, '${_m('2')} lines · ${_m('5')} units');
     });
 
     testWidgets('empty state: icon, title, hint and F4 shortcut hint',
@@ -3187,8 +3331,8 @@ void main() {
         tester
             .widget<Text>(find.byKey(const Key('pos-cart-counts')))
             .data,
-        '1 ${AppStrings.t('lines_word', 'ar')} · '
-            '2 ${AppStrings.t('units_word', 'ar')}',
+        '${_m('1')} ${AppStrings.t('lines_word', 'ar')} · '
+            '${_m('2')} ${AppStrings.t('units_word', 'ar')}',
       );
       expect(tester.takeException(), isNull);
     });
@@ -3210,8 +3354,8 @@ void main() {
         tester
             .widget<Text>(find.byKey(const Key('pos-cart-counts')))
             .data,
-        '1 ${AppStrings.t('lines_word', 'fr')} · '
-            '1 ${AppStrings.t('units_word', 'fr')}',
+        '${_m('1')} ${AppStrings.t('lines_word', 'fr')} · '
+            '${_m('1')} ${AppStrings.t('units_word', 'fr')}',
       );
       expect(
         tester.widget<Text>(find.byKey(const Key('pos-total-value'))).data,
@@ -3235,7 +3379,7 @@ void main() {
         tester
             .widget<Text>(find.byKey(const Key('pos-cart-counts')))
             .data,
-        '1 lines · 4 units',
+        '${_m('1')} lines · ${_m('4')} units',
       );
       expect(tester.takeException(), isNull);
     });
@@ -3332,7 +3476,7 @@ void main() {
       expect(cart.totals.total, closeTo(1100, 0.001));
       expect(
         tester.widget<Text>(find.byKey(const Key('pos-total-value'))).data,
-        '1100.00 DA',
+        '1 100.00 DA',
       );
       final key = cart.lines.first.key;
       expect(find.byKey(Key('cart-line-summary-$key')), findsOneWidget);
@@ -3895,7 +4039,7 @@ void main() {
         tester
             .widget<Text>(find.byKey(const Key('pos-cart-counts')))
             .data,
-        '1 lines · 4 units',
+        '${_m('1')} lines · ${_m('4')} units',
       );
       expect(tester.takeException(), isNull);
     });
@@ -5110,7 +5254,7 @@ void main() {
       expect(find.text('10 Piece'), findsOneWidget);
       expect(find.byKey(Key('cart-line-base-price-$key')), findsOneWidget);
       expect(
-        find.text('${AppStrings.t('base_price', 'en')}: 55 / Piece'),
+        find.text('${AppStrings.t('base_price', 'en')}: ${_m('55')} / Piece'),
         findsOneWidget,
       );
       expect(tester.takeException(), isNull);
@@ -6899,7 +7043,7 @@ void main() {
       expect(find.byKey(const Key('sale-detail-line-0')), findsOneWidget);
       expect(
         textOf(tester, const Key('sale-detail-line-qty-0')),
-        '2 Piece × 550.00 DA',
+        '2 Piece × ${_m('550.00 DA')}',
       );
       // Variant name comes from the stored snapshot, not the catalog.
       expect(
@@ -6908,18 +7052,18 @@ void main() {
       );
       expect(
         textOf(tester, const Key('sale-detail-line-qty-1')),
-        '1 Piece × 70.00 DA',
+        '1 Piece × ${_m('70.00 DA')}',
       );
       // Selling unit label is the historical name (raw, not localized).
       expect(
         textOf(tester, const Key('sale-detail-line-qty-2')),
-        '2 Box × 550.00 DA',
+        '2 Box × ${_m('550.00 DA')}',
       );
       expect(
         textOf(tester, const Key('sale-detail-line-base-2')),
-        'Base: 48 Piece',
+        'Base: ${_m('48')} Piece',
       );
-      expect(textOf(tester, const Key('sale-detail-line-total-2')), '1100.00');
+      expect(textOf(tester, const Key('sale-detail-line-total-2')), '1 100.00');
       expect(tester.takeException(), isNull);
     });
 
@@ -6955,7 +7099,7 @@ void main() {
       expect(find.byKey(const Key('sale-detail-line-0')), findsOneWidget);
       expect(
         textOf(tester, const Key('sale-detail-line-qty-0')),
-        '2 Piece × 550.00 DA',
+        '2 Piece × ${_m('550.00 DA')}',
       );
       expect(find.byKey(const Key('sale-detail-line-base-2')), findsNothing);
       expect(tester.takeException(), isNull);
@@ -6968,7 +7112,7 @@ void main() {
       // Localized base-unit label, raw stored selling unit name.
       expect(
         textOf(tester, const Key('sale-detail-line-qty-2')),
-        '2 Box × 550.00 DA',
+        '2 Box × ${_m('550.00 DA')}',
       );
       expect(
         textOf(tester, const Key('sale-detail-line-base-2')),
@@ -9568,8 +9712,8 @@ void main() {
       await tester.pump();
       await tester.enterText(find.byKey(const Key('amount-input')), '100');
       await tester.pump();
-      expect(find.text('Computed quantity: 0.4 kg'), findsOneWidget);
-      expect(find.text('Line total: 100'), findsOneWidget);
+      expect(find.text('Computed quantity: ${_m('0.4')} kg'), findsOneWidget);
+      expect(find.text('Line total: ${_m('100')}'), findsOneWidget);
 
       await tester.tap(find.byKey(const Key('quantity-submit')));
       await tester.pumpAndSettle();
@@ -9644,7 +9788,7 @@ void main() {
       await tester.pump();
       await tester.enterText(find.byKey(const Key('amount-input')), '50');
       await tester.pump();
-      expect(find.text('Computed quantity: 2.5 meter'), findsOneWidget);
+      expect(find.text('Computed quantity: ${_m('2.5')} meter'), findsOneWidget);
 
       await tester.tap(find.byKey(const Key('quantity-submit')));
       await tester.pumpAndSettle();
@@ -9691,8 +9835,8 @@ void main() {
       await tester.pump();
       await tester.enterText(find.byKey(const Key('amount-input')), '100');
       await tester.pump();
-      expect(find.text('Computed quantity: 0.4 Kg'), findsOneWidget);
-      expect(find.text('Line total: 100'), findsOneWidget);
+      expect(find.text('Computed quantity: ${_m('0.4')} Kg'), findsOneWidget);
+      expect(find.text('Line total: ${_m('100')}'), findsOneWidget);
 
       await tester.tap(find.byKey(const Key('quantity-submit')));
       await tester.pumpAndSettle();

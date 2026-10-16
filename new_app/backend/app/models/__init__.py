@@ -104,6 +104,9 @@ from app.models.facturation import (  # noqa: F401
     InvoiceDocumentLine,
 )
 
+# Zakat (calculation snapshots + payments) - read-only w.r.t. the business
+from app.models.zakat import ZakatCalculation, ZakatPayment  # noqa: F401
+
 # Base (re-export for convenience)
 from app.db.base import Base, BaseModel, DocumentModel, MasterModel  # noqa: F401
 
@@ -175,6 +178,9 @@ __all__ = [
     "InvoiceDocument",
     "InvoiceDocumentLine",
     "InvoiceDocumentCounter",
+    # Zakat
+    "ZakatCalculation",
+    "ZakatPayment",
     # Base
     "Base",
     "BaseModel",

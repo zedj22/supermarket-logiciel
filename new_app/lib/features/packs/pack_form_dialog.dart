@@ -24,6 +24,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/number_format.dart';
+import '../../core/numeric_text.dart';
 import '../../core/strings.dart';
 import '../../l10n/locale_provider.dart';
 import '../../network/api_client.dart';
@@ -87,11 +89,16 @@ class _ComponentRow {
 
 /// Formats a display number without introducing float noise: integers stay
 /// integers, fractional values keep at most 3 decimals (NUMERIC(18,3)).
+/// Integer digits are space-grouped (presentation only).
 String _fmt(double value) {
-  if (value == value.roundToDouble()) return value.toStringAsFixed(0);
+  if (value == value.roundToDouble()) {
+    return formatGrouped(value.toStringAsFixed(0));
+  }
   final text = value.toStringAsFixed(3);
-  if (!text.contains('.')) return text;
-  return text.replaceFirst(RegExp(r'0+$'), '').replaceFirst(RegExp(r'\.$'), '');
+  if (!text.contains('.')) return formatGrouped(text);
+  return formatGrouped(
+    text.replaceFirst(RegExp(r'0+$'), '').replaceFirst(RegExp(r'\.$'), ''),
+  );
 }
 
 class PackFormDialog extends ConsumerStatefulWidget {
@@ -700,7 +707,7 @@ class _PackFormDialogState extends ConsumerState<PackFormDialog> {
                 key: const Key('pack-estimated-cost-label'),
                 style: theme.textTheme.bodySmall,
               ),
-              Text(
+              numericText(
                 _fmt(cost),
                 key: const Key('pack-estimated-cost'),
                 style: theme.textTheme.bodySmall?.copyWith(
@@ -717,7 +724,7 @@ class _PackFormDialogState extends ConsumerState<PackFormDialog> {
                 key: const Key('pack-estimated-profit-label'),
                 style: theme.textTheme.bodySmall,
               ),
-              Text(
+              numericText(
                 _fmt(profit),
                 key: const Key('pack-estimated-profit'),
                 style: theme.textTheme.bodySmall?.copyWith(
@@ -736,7 +743,7 @@ class _PackFormDialogState extends ConsumerState<PackFormDialog> {
                   key: const Key('pack-estimated-margin-label'),
                   style: theme.textTheme.bodySmall,
                 ),
-                Text(
+                numericText(
                   '${_fmt(margin)}%',
                   key: const Key('pack-estimated-margin'),
                   style: theme.textTheme.bodySmall?.copyWith(
@@ -892,19 +899,21 @@ class _PackProductPickerState extends ConsumerState<PackProductPicker> {
                                   key: Key('pack-product-option-${p.id}'),
                                   dense: true,
                                   title: Text(p.name),
+                                  // Bidi: Arabic label natural; barcode and
+                                  // grouped stock are LTR isolates (W7).
                                   subtitle: Text(
                                     [
                                       if (p.barcode != null &&
                                           p.barcode!.isNotEmpty)
-                                        p.barcode!,
+                                        bidiIsolateLtr(p.barcode!),
                                       '${AppStrings.t('stock_quantity', loc)}: '
-                                          '${p.quantity}',
+                                          '${bidiIsolateLtr(formatGrouped(p.quantity))}',
                                     ].join(' · '),
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
                                   ),
-                                  trailing: Text(
-                                    p.price,
+                                  trailing: numericText(
+                                    formatGrouped(p.price),
                                     style: theme.textTheme.titleSmall?.copyWith(
                                       color: theme.colorScheme.primary,
                                       fontWeight: FontWeight.w700,

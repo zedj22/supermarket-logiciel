@@ -141,7 +141,8 @@ void main() {
       expect(receipt, contains('Rice Bag'));
       expect(receipt, contains('2 piece'));
       expect(receipt, contains('550.00'));
-      expect(receipt, contains('1100.00'));
+      // Presentation-only grouping: 1100.00 renders as `1 100.00`.
+      expect(receipt, contains('1 100.00'));
       expect(receipt, isNot(contains('Box')));
       expect(receipt, isNot(contains('Base:')));
     });
@@ -183,7 +184,7 @@ void main() {
       expect(receipt, contains('2 Box'));
       expect(receipt, contains('550.00'));
       expect(receipt, contains('Base: 48 piece'));
-      expect(receipt, contains('1100.00'));
+      expect(receipt, contains('1 100.00'));
     });
 
     test('selling unit line in Arabic uses the localized base unit label', () {
@@ -230,7 +231,7 @@ void main() {
       );
       final receipt = buildReceiptText(sale, 'en');
 
-      expect(receipt, contains('1100.00'));
+      expect(receipt, contains('1 100.00'));
       expect(sale.total, '1100.00');
     });
   });

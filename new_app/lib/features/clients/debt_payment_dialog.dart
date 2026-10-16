@@ -9,6 +9,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/numeric_text.dart';
 import '../../core/strings.dart';
 import '../../l10n/locale_provider.dart';
 import 'clients_providers.dart';
@@ -134,10 +135,12 @@ class _DebtPaymentDialogState extends ConsumerState<DebtPaymentDialog> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // Bidi: Arabic label natural; the grouped balance is one LTR
+            // isolate (whole-string forced LTR still reverses it — W7).
             Text(
               '${widget.customer.name} · '
               '${AppStrings.t('balance', loc)}: '
-              '${formatMoney(widget.customer.balance)}',
+              '${bidiIsolateLtr(formatMoney(widget.customer.balance))}',
               key: const Key('debt-payment-balance'),
             ),
             const SizedBox(height: 12),
@@ -162,7 +165,9 @@ class _DebtPaymentDialogState extends ConsumerState<DebtPaymentDialog> {
                   onPressed: _submitting
                       ? null
                       : () => setState(() {
-                            _amount.text = formatMoney(
+                            // Plain (ungrouped): the amount field's text is
+                            // sent verbatim in the payment payload.
+                            _amount.text = formatMoneyPlain(
                               widget.customer.balance,
                             );
                             _error = null;
@@ -195,7 +200,7 @@ class _DebtPaymentDialogState extends ConsumerState<DebtPaymentDialog> {
               const SizedBox(height: 8),
               Text(
                 '${AppStrings.t('remaining_after', loc)}: '
-                '${formatMoney(milliToMoney(remaining))}',
+                '${bidiIsolateLtr(formatMoney(milliToMoney(remaining)))}',
                 key: const Key('debt-remaining'),
                 style: Theme.of(context).textTheme.bodySmall,
               ),

@@ -1,4 +1,4 @@
-"""Integration tests for migration 0028 — Phase 6 facturation settings.
+﻿"""Integration tests for migration 0028 — Phase 6 facturation settings.
 
 PostgreSQL only (real ``supermarket_pro_test`` database, Alembic CLI, raw
 psycopg2 — same harness as ``test_migrations.py``).  The production
@@ -33,7 +33,7 @@ pytestmark = pytest.mark.skipif(
     reason="PostgreSQL test database (supermarket_pro_test) not available",
 )
 
-HEAD_REV = "b4d5e6f7a8c1"  # 0030_facture_sale_posting
+HEAD_REV = "dbdff6c3ec7f"  # 0030_facture_sale_posting
 PREV_REV = "b2e603d5c016"  # 0027_phase2_facturation_year_numbering
 # The 0028 revision is a FIXED historical fact — it revises 0027 forever,
 # regardless of which revision is currently the head (0029+).

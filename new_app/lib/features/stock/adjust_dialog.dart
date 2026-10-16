@@ -9,6 +9,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/number_format.dart';
+import '../../core/numeric_text.dart';
 import '../../core/strings.dart';
 import '../../l10n/locale_provider.dart';
 import 'inventory_models.dart';
@@ -213,9 +215,13 @@ class _AdjustDialogState extends ConsumerState<AdjustDialog> {
                   borderRadius: BorderRadius.circular(8),
                   border: Border.all(color: cs.primary.withValues(alpha: 0.2)),
                 ),
+                // Bidi: the Arabic label stays natural; the grouped
+                // quantity + unit label flows after it (a forced-LTR
+                // whole-string still reverses the digits — W7).
                 child: Text(
                   '${AppStrings.t('current_stock', loc)}: '
-                  '$_currentStock $_baseUnitLabel',
+                  '${bidiIsolateLtr(formatGrouped(_currentStock))} '
+                  '$_baseUnitLabel',
                   style: theme.textTheme.bodyMedium?.copyWith(
                     fontWeight: FontWeight.w600,
                   ),
@@ -278,7 +284,7 @@ class _AdjustDialogState extends ConsumerState<AdjustDialog> {
                     final preview = _newStockPreview();
                     return Text(
                       '${AppStrings.t('new_stock', loc)}: '
-                      '${preview.toStringAsFixed(3)} $_baseUnitLabel',
+                      '${formatGrouped(preview.toStringAsFixed(3))} $_baseUnitLabel',
                       key: const Key('adjust-new-stock-preview'),
                       textDirection: TextDirection.ltr,
                       style: theme.textTheme.bodyMedium?.copyWith(

@@ -151,11 +151,15 @@ void main() {
       // the two scope titles, last-measured/disk rows) plus the seven
       // category labels, the six measurement-reason labels, the
       // unavailable fallback, the settings entry-button label and its
-      // description — 28 keys (1290).
+      // description — 28 keys (1290).  The Zakat (Zakat al-Tijarah) pass
+      // added the calculator surface — the report labels mirroring
+      // backend printing/labels.py, the 21 warning codes, the screen
+      // sections/fields/actions, the payment dialog and history labels,
+      // the missing-field and eligibility chips — 130 keys (1420).
       // Update this deliberately when a subphase
       // adds strings — an unexplained drop means keys were deleted from
       // one map only.
-      expect(_map('en').keys.length, 1290);
+      expect(_map('en').keys.length, 1420);
       expect(_map('ar').keys.length, _map('en').keys.length);
       expect(_map('fr').keys.length, _map('en').keys.length);
     });

@@ -28,9 +28,11 @@ the timestamp) → source invoice → supplier → device → cashier → status
 from __future__ import annotations
 
 from reportlab.lib.units import mm
+from reportlab.pdfbase.pdfmetrics import stringWidth
 from reportlab.platypus import Flowable, Paragraph, Spacer, Table, TableStyle
 
 from app.printing.document_data import DocumentData, TotalsBlock
+from app.printing.fonts import FONT_REGULAR
 from app.printing.labels import label
 from app.printing.styles import paragraph_style
 from app.printing.text import shape_text
@@ -45,6 +47,17 @@ COL_WIDTHS = [0.34 * CONTENT_WIDTH, 0.33 * CONTENT_WIDTH, 0.33 * CONTENT_WIDTH]
 #: usable, which is narrower than "1600.00 DA" — every amount wrapped.
 CELL_PAD = 2.0
 HAIRLINE = 0.6
+#: Money-cell font steps.  The space-grouped thousands separator widened
+#: amounts like ``1 000 000.00 DA`` (65.4pt) past the 33% money column
+#: (63.4pt usable) — they fit *ungrouped* (61.4pt), so grouping alone made
+#: them wrap.  A wrapped amount is unreadable on 80mm paper, so money cells
+#: shrink (never below 7pt, the meta-row size already used on receipts)
+#: until they fit; every other cell keeps the fixed 8.5pt body size.
+_MONEY_SIZE = 8.5
+_MONEY_SIZE_MIN = 7.0
+#: Totals value column: 38% of the content width, reportlab's default 6pt
+#: padding on each side (this table overrides only TOP/BOTTOMPADDING).
+_TOTALS_VALUE_WIDTH = CONTENT_WIDTH * 0.38 - 12.0
 
 
 def _p(text: str, size: float, rtl: bool, *, bold: bool = False, align: str | None = None) -> Paragraph:
@@ -61,6 +74,26 @@ def _p(text: str, size: float, rtl: bool, *, bold: bool = False, align: str | No
         align=align,
     )
     return Paragraph(shape_text(text), style)
+
+
+def _money_cell(text: str, rtl: bool, usable: float, *, bold: bool = False) -> Paragraph:
+    """A money cell that shrinks instead of wrapping.
+
+    ``usable`` is the column width minus its horizontal padding.  Starting
+    from the 8.5pt body size, the font steps down (0.5pt at a time, never
+    below 7pt) until the shaped text fits on one line.  Amounts up to
+    ``999 999.99 DA`` keep the full body size; grouped seven/eight-digit
+    totals (``1 000 000.00 DA``, ``12 345 678.90 DA``) render slightly
+    smaller but never split across lines.
+    """
+    size = _MONEY_SIZE
+    shaped = shape_text(text)
+    while (
+        size > _MONEY_SIZE_MIN
+        and stringWidth(shaped, FONT_REGULAR, size) > usable
+    ):
+        size -= 0.5
+    return _p(text, size, rtl, bold=bold, align="left")
 
 
 def _label_value_rows(data: DocumentData, rows: list[tuple[str, str | None]]) -> list[list[str]]:
@@ -95,15 +128,16 @@ def _totals_table(data: DocumentData) -> Flowable | None:
 
     body: list[list[Paragraph]] = []
     for lab, val in pairs:
-        label_cell = _p(lab, 8.5, rtl, bold=(lab == label("total", locale)))
-        value_cell = _p(val or "", 8.5, rtl, bold=(lab == label("total", locale)), align="left")
+        bold = lab == label("total", locale)
+        label_cell = _p(lab, 8.5, rtl, bold=bold)
+        value_cell = _money_cell(val or "", rtl, _TOTALS_VALUE_WIDTH, bold=bold)
         body.append([value_cell, label_cell] if rtl else [label_cell, value_cell])
 
     extra_styles: list[tuple] = []
     if len(data.payments) > 1:
         for payment in data.payments:
             cells = [
-                _p(payment.amount, 8.5, rtl, align="left"),
+                _money_cell(payment.amount, rtl, _TOTALS_VALUE_WIDTH),
                 _p(payment.method_label, 8.5, rtl),
             ]
             body.append(cells if rtl else [cells[1], cells[0]])
@@ -134,6 +168,9 @@ def _items_table(data: DocumentData) -> Flowable | None:
     rtl = data.rtl
     locale = data.meta.locale  # meta is always set by builders
     text_align = "right" if rtl else "left"
+    #: Both money columns share the 33% ratio (COL_WIDTHS[1] == COL_WIDTHS[2]),
+    #: so one usable width covers unit price and line total in either locale.
+    money_usable = COL_WIDTHS[1] - 2 * CELL_PAD
 
     body: list[list[Paragraph]] = []
     span_rows: list[int] = []
@@ -147,8 +184,8 @@ def _items_table(data: DocumentData) -> Flowable | None:
 
         value_row = [
             _p(f"{line.qty} × {line.unit_label}", 8.5, rtl, align="center"),
-            _p(line.unit_price if line.show_money else "", 8.5, rtl, align="left"),
-            _p(line.line_total if line.show_money else "", 8.5, rtl, align="left"),
+            _money_cell(line.unit_price if line.show_money else "", rtl, money_usable),
+            _money_cell(line.line_total if line.show_money else "", rtl, money_usable),
         ]
         body.append(value_row if not rtl else list(reversed(value_row)))
         last_row = len(body) - 1

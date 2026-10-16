@@ -18,6 +18,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/numeric_text.dart';
 import '../../core/strings.dart';
 import '../../l10n/locale_provider.dart';
 import '../auth/auth_provider.dart';
@@ -432,20 +433,28 @@ class _PurchaseLineDialogState extends ConsumerState<PurchaseLineDialog> {
                 baseQtyMilli != null &&
                 baseCostMilli != null) ...[
               const SizedBox(height: 12),
+              // Bidi: Arabic segment labels stay natural RTL; each money
+              // amount + currency suffix is ONE LTR isolate so grouped
+              // digits (`1 000 DA`, `2 000 DA`) never reverse. Wrapping
+              // the whole sentence in a forced-LTR paragraph would still
+              // reorder the groups (bidi rule W7) — see numeric_text.dart.
               Text(
                 [
                   if (showsBaseUnits)
                     '${AppStrings.t('purchase_preview_total_qty', loc)}: '
-                    '${formatMoney(milliToMoney(baseQtyMilli))} '
+                    '${bidiIsolateLtr(formatMoney(milliToMoney(baseQtyMilli)))} '
                     '${AppStrings.unitLabel(_product?.unit, loc)}',
                   '${AppStrings.t('unit_cost', loc)}: '
-                  '${formatMoney(milliToMoney(baseCostMilli))} '
-                  '${AppStrings.t('currency', loc)}',
+                  '${bidiIsolateLtr(
+                    '${formatMoney(milliToMoney(baseCostMilli))} '
+                    '${AppStrings.t('currency', loc)}',
+                  )}',
                   '${AppStrings.t('line_total', loc)}: '
-                  '${formatMoney(milliToMoney(
-                    (qtyMilli * unitCostMilli + 500) ~/ 1000,
-                  ))} '
-                  '${AppStrings.t('currency', loc)}',
+                  '${bidiIsolateLtr(
+                    '${formatMoney(milliToMoney(
+                      (qtyMilli * unitCostMilli + 500) ~/ 1000,
+                    ))} ${AppStrings.t('currency', loc)}',
+                  )}',
                 ].join(' · '),
                 key: const Key('purchase-line-total'),
                 style: theme.textTheme.titleMedium,

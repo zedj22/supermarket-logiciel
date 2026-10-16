@@ -343,6 +343,127 @@ def test_value_cells_fit_their_columns_without_wrapping(locale: str) -> None:
             assert width <= usable[col] + 0.01, f"{locale} {text!r} wraps in column {col}"
 
 
+# ─── 4. grouped thousands vs the money column ──────────────────────────────
+#
+# `format_money` space-groups integer digits, which widens an amount by
+# ~2pt per thousands group.  `1 000 000.00 DA` measured 65.4pt at the 8.5pt
+# body size — past the 63.4pt usable money column — so a total that fit
+# *ungrouped* (`1000000.00 DA`, 61.4pt) wrapped once grouping landed.  These
+# tests drive the REAL formatting path (`build_sale_document` →
+# `format_money` → the 80mm template) and pin that every money cell stays on
+# one readable line for en/fr/ar.
+
+
+def _grouped_large_sale():
+    """A realistic wholesale-scale sale: one amount per grouping boundary."""
+    return _sale_payload(
+        subtotal=Decimal("14345678.89"),
+        discount=Decimal("0.000"),
+        total=Decimal("12345678.90"),
+        paid=Decimal("12345678.90"),
+        change=Decimal("0.000"),
+        debt=Decimal("0.000"),
+        lines=[
+            _sale_line(
+                product_name="Cola",
+                unit_price=Decimal("999999.99"),
+                quantity=Decimal("1"),
+                line_total=Decimal("999999.99"),
+            ),
+            _sale_line(
+                product_name="Water",
+                unit_price=Decimal("1000000.00"),
+                quantity=Decimal("1"),
+                line_total=Decimal("1000000.00"),
+            ),
+            _sale_line(
+                product_name="Milk",
+                unit_price=Decimal("12345678.90"),
+                quantity=Decimal("1"),
+                line_total=Decimal("12345678.90"),
+            ),
+        ],
+    )
+
+
+def _assert_single_line_money_cell(cell: Paragraph, usable: float, where: str) -> None:
+    """The cell's text, at its ACTUAL font size, fits [usable] on one line."""
+    width = stringWidth(shape_text(cell.text), FONT_REGULAR, cell.style.fontSize)
+    assert width <= usable + 0.01, (
+        f"{where} {cell.text!r} wraps ({width:.2f} > {usable:.2f})"
+    )
+    assert cell.style.fontSize >= 7.0, (
+        f"{where} {cell.text!r} shrunk below the readable 7pt floor"
+    )
+
+
+@pytest.mark.parametrize("locale", LOCALES)
+def test_grouped_large_amounts_stay_on_one_line_in_the_items_table(locale: str) -> None:
+    data = build_sale_document(_grouped_large_sale(), locale=locale)
+
+    # The real path emitted space-grouped amounts (not hand-written fixtures).
+    assert [line.line_total for line in data.lines] == [
+        "999 999.99 DA",
+        "1 000 000.00 DA",
+        "12 345 678.90 DA",
+    ]
+    assert data.totals is not None
+    assert data.totals.subtotal == "14 345 678.89 DA"
+    assert data.totals.total == "12 345 678.90 DA"
+    assert data.totals.paid == "12 345 678.90 DA"
+
+    table = _items(data)
+    widths = invoice_80mm.COL_WIDTHS if not data.rtl else list(reversed(invoice_80mm.COL_WIDTHS))
+    usable = [w - 2 * invoice_80mm.CELL_PAD for w in widths]
+    # RTL reverses the row AND the column widths: the two money cells still
+    # live in the 33% columns, just at different indices.
+    money_cols = (0, 1) if data.rtl else (1, 2)
+
+    _, values, _ = _expected(data)
+    for row in values:
+        cells = table._cellvalues[row]
+        texts = _texts(table, row)
+        # The value row never collapses and never drops a field.
+        assert len(texts) == 3 and all(texts), f"{locale} row {row}: {texts}"
+        for col in money_cols:
+            cell = cells[col]
+            assert isinstance(cell, Paragraph)
+            _assert_single_line_money_cell(cell, usable[col], f"{locale} r{row}c{col}")
+
+
+@pytest.mark.parametrize("locale", LOCALES)
+def test_grouped_large_totals_stay_on_one_line_in_the_totals_block(locale: str) -> None:
+    data = build_sale_document(_grouped_large_sale(), locale=locale)
+    totals = invoice_80mm._totals_table(data)
+    assert totals is not None
+
+    col_widths = [
+        invoice_80mm.CONTENT_WIDTH * 0.62,
+        invoice_80mm.CONTENT_WIDTH * 0.38,
+    ]
+    wanted = {"14 345 678.89 DA", "12 345 678.90 DA"}
+    seen: set[str] = set()
+    for row_index, row in enumerate(totals._cellvalues):
+        for col, cell in enumerate(row):
+            if not isinstance(cell, Paragraph) or cell.text not in wanted:
+                continue
+            seen.add(cell.text)
+            # Reportlab default 6pt padding per side (only TOP/BOTTOM are overridden).
+            _assert_single_line_money_cell(
+                cell, col_widths[col] - 12.0, f"{locale} totals r{row_index}c{col}"
+            )
+    assert seen == wanted
+
+
+@pytest.mark.parametrize("locale", LOCALES)
+def test_rendered_receipt_with_grouped_large_amounts_is_a_valid_pdf(locale: str) -> None:
+    """End-to-end: real payload → format_money → 80mm canvas, no crash."""
+    data = build_sale_document(_grouped_large_sale(), locale=locale)
+    pdf = render_invoice(data, "80mm", compress=False)
+    assert pdf.startswith(b"%PDF")
+    assert len(pdf) > 1000
+
+
 def test_rtl_and_ltr_share_the_same_row_structure() -> None:
     lines = _varied_lines()
     ltr = _items(_doc(lines, locale="en"))

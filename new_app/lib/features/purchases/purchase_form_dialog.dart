@@ -15,6 +15,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/numeric_text.dart';
 import '../../core/strings.dart';
 import '../../l10n/locale_provider.dart';
 import '../pos/pos_toast.dart';
@@ -80,14 +81,16 @@ class _PurchaseFormDialogState extends ConsumerState<PurchaseFormDialog> {
         ),
       );
     }
+    // Plain (ungrouped) prefills: both fields are re-parsed by moneyToMilli
+    // AND sent verbatim in the purchase payload.
     _discount = TextEditingController(
       text: draft != null && formatMoney(draft.discount) != '0'
-          ? formatMoney(draft.discount)
+          ? formatMoneyPlain(draft.discount)
           : '',
     );
     _paid = TextEditingController(
       text: draft != null && formatMoney(draft.paid) != '0'
-          ? formatMoney(draft.paid)
+          ? formatMoneyPlain(draft.paid)
           : '',
     );
     _note = TextEditingController(text: draft?.note ?? '');
@@ -397,15 +400,19 @@ class _PurchaseFormDialogState extends ConsumerState<PurchaseFormDialog> {
                             line.labelForDisplay ?? '',
                             key: Key('purchase-form-line-name-$index'),
                           ),
+                          // Bidi: quantity/unit stay natural; the grouped
+                          // unit cost is one LTR isolate (after an Arabic
+                          // unit label a forced-LTR paragraph would still
+                          // reverse the digits — W7).
                           subtitle: Text(
                             '${line.quantity}$unitLabel × '
-                            '${formatMoney(line.unitCost)}',
+                            '${bidiIsolateLtr(formatMoney(line.unitCost))}',
                             key: Key('purchase-form-line-math-$index'),
                           ),
                           trailing: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              Text(
+                              numericText(
                                 formatMoney(line.lineTotal),
                                 key: Key('purchase-form-line-total-$index'),
                                 style: theme.textTheme.titleSmall?.copyWith(
@@ -604,7 +611,7 @@ class _SummaryRow extends StatelessWidget {
                 ? theme.textTheme.titleSmall
                 : theme.textTheme.bodyMedium,
           ),
-          Text(
+          numericText(
             value,
             key: Key('$testKey-value'),
             style: emphasized

@@ -2,6 +2,7 @@
 //
 // Server remains authoritative for prices, stock, and totals. Client
 // models only hold display state and the request payload shape.
+import '../../core/number_format.dart';
 import '../../core/quantity_expression.dart';
 import '../../core/strings.dart';
 
@@ -625,13 +626,15 @@ class SaleHistoryItem {
   }
 
   static String _qtyText(double value) {
-    if (value == value.roundToDouble()) return value.toStringAsFixed(0);
+    if (value == value.roundToDouble()) {
+      return formatGrouped(value.toStringAsFixed(0));
+    }
     var text = value.toStringAsFixed(6);
     if (text.contains('.')) {
       text = text.replaceFirst(RegExp(r'0+$'), '');
       if (text.endsWith('.')) text = text.substring(0, text.length - 1);
     }
-    return text;
+    return formatGrouped(text);
   }
 }
 
@@ -868,18 +871,25 @@ class CartTotals {
     this.lineCount = 0,
   });
 
-  String get subtotalDisplay => subtotal.toStringAsFixed(2);
-  String get totalDisplay => total.toStringAsFixed(2);
-  String get invoiceDiscountDisplay => invoiceDiscount.toStringAsFixed(2);
+  String get subtotalDisplay => formatGrouped(subtotal.toStringAsFixed(2));
+  String get totalDisplay => formatGrouped(total.toStringAsFixed(2));
+  String get invoiceDiscountDisplay =>
+      formatGrouped(invoiceDiscount.toStringAsFixed(2));
 }
 
 /// Payment math helpers (pure — unit tested).
 class PaymentMath {
   const PaymentMath._();
 
-  static double parse(String raw) => double.tryParse(raw.trim()) ?? 0;
+  /// Parses user-entered payment text. Grouped display spaces are stripped
+  /// defensively so a pasted/pre-filled `1 500` parses as `1500`, never 0.
+  static double parse(String raw) =>
+      double.tryParse(stripGrouping(raw).trim()) ?? 0;
 
-  static String money(double value) => value.toStringAsFixed(2);
+  /// Display form of a monetary double: 2 decimals + space thousands
+  /// grouping (`4000000.0` → `'4 000 000.00'`). Display only — the raw
+  /// double remains the value used for calculations.
+  static String money(double value) => formatGroupedFixed(value, 2);
 
   /// Payable after the loyalty reward discount: `total - rewardDiscount`,
   /// floored at 0 (the server caps the discount, the client only mirrors).

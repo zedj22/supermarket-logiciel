@@ -17,7 +17,7 @@ library;
 import '../clients/customer_models.dart' show milliToMoney, moneyToMilli;
 
 export '../clients/customer_models.dart'
-    show formatMoney, moneyToMilli, milliToMoney;
+    show formatMoney, formatMoneyPlain, moneyToMilli, milliToMoney;
 
 /// Backend `purchase_status` values (Phase 11 lifecycle).
 abstract final class PurchaseStatusValue {

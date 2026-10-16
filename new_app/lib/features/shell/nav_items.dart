@@ -227,7 +227,7 @@ List<NavGroup> buildNavGroups({required bool Function(String scope) can}) {
     NavGroup(
       titleKey: 'nav_group_insights',
       items: [
-        if (can(NavScopes.reportFinancial))
+        if (can(NavScopes.reportFinancial)) ...[
           const NavItem(
             path: '/reports',
             labelKey: 'reports',
@@ -235,6 +235,16 @@ List<NavGroup> buildNavGroups({required bool Function(String scope) can}) {
             selectedIcon: Icons.summarize,
             scope: NavScopes.reportFinancial,
           ),
+          // Zakat al-Tijarah calculator — same `report_financial` scope
+          // as Reports (the backend gates every /zakat endpoint on it).
+          const NavItem(
+            path: '/zakat',
+            labelKey: 'zakat',
+            icon: Icons.account_balance_outlined,
+            selectedIcon: Icons.account_balance,
+            scope: NavScopes.reportFinancial,
+          ),
+        ],
       ],
     ),
     NavGroup(

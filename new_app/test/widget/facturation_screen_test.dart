@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
+import 'package:supermarket_pos/core/numeric_text.dart';
 import 'package:supermarket_pos/core/strings.dart';
 import 'package:supermarket_pos/features/auth/auth_provider.dart';
 import 'package:supermarket_pos/features/auth/credential_storage.dart';
@@ -17,6 +18,9 @@ import 'package:supermarket_pos/main.dart';
 import 'package:supermarket_pos/network/api_client.dart';
 
 class MockDio extends Mock implements Dio {}
+
+/// Mirrors the LTR isolate the app wraps money segments in (W7).
+String _m(String v) => bidiIsolateLtr(v);
 
 class FakeCredentialStorage extends SecureCredentialStorage {
   String? _token;
@@ -897,10 +901,10 @@ void main() {
         find.descendant(of: lineTile, matching: find.byType(Text)),
       );
       final subtitle = lineTexts.last.data ?? '';
-      expect(subtitle, contains('1 × 100 DA'));
+      expect(subtitle, contains('1 × ${_m('100 DA')}'));
       expect(
         subtitle,
-        contains('${AppStrings.t('line_total', 'en')}: 100 DA'),
+        contains('${AppStrings.t('line_total', 'en')}: ${_m('100 DA')}'),
       );
 
       // Run the preview — this sends the create payload.
@@ -1017,7 +1021,7 @@ void main() {
           matching: find.byType(Text),
         ),
       );
-      expect(lineTexts.last.data, contains('3 × 400 DA'));
+      expect(lineTexts.last.data, contains('3 × ${_m('400 DA')}'));
 
       // Preview — the REQUEST carries the chosen price.
       await tester.tap(find.byKey(const Key('invoice-form-preview-button')));

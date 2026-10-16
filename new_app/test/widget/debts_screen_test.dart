@@ -301,7 +301,7 @@ void main() {
       expect(find.byKey(const Key('debts-summary')), findsOneWidget);
       expect(find.byKey(const Key('debts-total')), findsOneWidget);
       // formatMoney('4500.000') → '4500'
-      expect(find.text('4500'), findsOneWidget);
+      expect(find.text('4 500'), findsOneWidget);
       expect(find.text('3'), findsOneWidget);
 
       expect(find.byKey(const Key('debtor-tile-0')), findsOneWidget);
@@ -399,7 +399,7 @@ void main() {
       );
       // formatMoney('1500.000') → '1500' (stale pre-payment value).
       expect(find.byKey(const Key('debtor-balance-0')), findsOneWidget);
-      expect(find.text('1500'), findsOneWidget);
+      expect(find.text('1 500'), findsOneWidget);
       final listLoadsBefore = queryLog.length;
 
       await tester.tap(find.byKey(const Key('debtor-pay-button-0')));
@@ -421,8 +421,8 @@ void main() {
       );
       expect(queryLog.length, greaterThan(listLoadsBefore));
       // The refreshed row shows the AGGREGATE after the payment.
-      expect(find.text('1400'), findsOneWidget);
-      expect(find.text('1500'), findsNothing);
+      expect(find.text('1 400'), findsOneWidget);
+      expect(find.text('1 500'), findsNothing);
 
       // Guard: no detail provider was created for a screen never opened.
       expect(container.exists(customerDetailProvider('c1')), isFalse);

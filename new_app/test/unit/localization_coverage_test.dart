@@ -68,6 +68,49 @@ const _dynamicKeyFamilies = <String, Set<String>>{
     'error',
     'not_stored',
   },
+  // Zakat (Zakat al-Tijarah): warning codes, method/basis/status/nisab
+  // enums, payment methods, missing-field codes and eligibility reasons —
+  // all resolved through `zakat_*` key helpers on the zakat screen.
+  'zakat_warn_': {
+    'missing_nisab',
+    'missing_hawl_start',
+    'hawl_start_after_date',
+    'hawl_not_completed',
+    'missing_inventory',
+    'inventory_override_applied',
+    'inventory_override_no_reason',
+    'inventory_excluded_lines',
+    'negative_stock_lines',
+    'missing_cash',
+    'cash_provided_empty',
+    'missing_receivables',
+    'doubtful_excluded',
+    'receivables_exceed_ledger',
+    'debt_due_only_skipped',
+    'debt_no_deduction_applied',
+    'duplicate_label',
+    'negative_net_clamped',
+    'provisional_result',
+    'below_nisab',
+    'gold_price_manual',
+  },
+  'zakat_method_': {'deduct_all', 'deduct_due_only', 'no_deduction'},
+  'zakat_basis_': {'market', 'cost', 'override'},
+  'zakat_status_': {'final', 'provisional'},
+  'zakat_nisab_source_': {'gold_price', 'manual', 'none'},
+  'zakat_pay_': {'cash', 'transfer', 'cheque', 'other'},
+  'zakat_missing_': {
+    'nisab',
+    'hawl_start',
+    'inventory',
+    'cash',
+    'receivables',
+  },
+  'zakat_eligibility_': {
+    'below_nisab',
+    'hawl_incomplete',
+    'not_eligible',
+  },
 };
 
 Iterable<File> _dartFiles() => Directory('lib')

@@ -10,6 +10,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/number_format.dart';
+import '../../core/numeric_text.dart';
 import '../../core/strings.dart';
 import '../../core/widgets/adaptive_title_row.dart';
 import '../../l10n/locale_provider.dart';
@@ -136,7 +138,7 @@ class _ReturnsScreenState extends ConsumerState<ReturnsScreen> {
         children: [
           Text(AppStrings.t(labelKey, loc), style: theme.textTheme.bodySmall),
           const SizedBox(width: 16),
-          Text(value, key: key, style: theme.textTheme.bodyMedium),
+          numericText(value, key: key, style: theme.textTheme.bodyMedium),
         ],
       ),
     );
@@ -350,20 +352,24 @@ class _ReturnsScreenState extends ConsumerState<ReturnsScreen> {
           ),
           subtitle: Text(
             [
+              // Bidi: Arabic labels natural; the invoice number and the
+              // date/time pair are LTR isolates (their numeric groups
+              // would otherwise swap in the RTL subtitle).
               if (doc.invoiceNumber != null && doc.invoiceNumber!.isNotEmpty)
-                '${AppStrings.t('invoice_number', loc)}: ${doc.invoiceNumber}',
+                '${AppStrings.t('invoice_number', loc)}: '
+                '${bidiIsolateLtr(doc.invoiceNumber!)}',
               // Reason is optional (fix round 1): only shown when given.
               if (doc.reason.isNotEmpty)
                 AppStrings.t(returnReasonKey(doc.reason), loc),
-              doc.returnDate.toLocal().toString().substring(0, 16),
+              bidiIsolateLtr(doc.returnDate.toLocal().toString().substring(0, 16)),
             ].join(' · '),
             key: Key('return-meta-$index'),
           ),
           trailing: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text(
-                doc.total,
+              numericText(
+                formatGrouped(doc.total),
                 key: Key('return-total-$index'),
                 style: theme.textTheme.titleMedium,
               ),

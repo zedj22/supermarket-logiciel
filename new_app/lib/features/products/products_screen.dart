@@ -15,6 +15,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/colors.dart';
+import '../../core/number_format.dart';
+import '../../core/numeric_text.dart';
 import '../../core/shortcuts.dart';
 import '../../core/strings.dart';
 import '../../core/widgets/table_header.dart';
@@ -1200,8 +1202,8 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
       cells.add(
         cell(
           i++,
-          _fitEnd(Text(
-            product.price,
+          _fitEnd(numericText(
+            formatGrouped(product.price),
             // Tabular figures so prices line up down the column.
             style: AppTheme.numeric(theme, size: 15).copyWith(
               fontWeight: FontWeight.w700,
@@ -1213,8 +1215,8 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
         cells.add(
           cell(
             i++,
-            _fitEnd(Text(
-              product.cost,
+            _fitEnd(numericText(
+              formatGrouped(product.cost),
               style: AppTheme.numeric(theme, size: 14).copyWith(
                 fontWeight: FontWeight.w500,
                 color: cs.onSurface.withValues(alpha: 0.75),
@@ -1228,8 +1230,8 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
           cells.add(
             cell(
               i++,
-              _fitEnd(Text(
-                profit ?? '—',
+              _fitEnd(numericText(
+                profit == null ? '—' : formatGrouped(profit),
                 key: Key('product-profit-${product.id}'),
                 style: AppTheme.numeric(theme, size: 14).copyWith(
                   fontWeight: FontWeight.w600,
@@ -1243,7 +1245,7 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
           cells.add(
             cell(
               i++,
-              _fitEnd(Text(
+              _fitEnd(numericText(
                 margin ?? '—',
                 key: Key('product-margin-${product.id}'),
                 style: AppTheme.numeric(theme, size: 14).copyWith(
@@ -1257,8 +1259,8 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
           cells.add(
             cell(
               i++,
-              _fitEnd(Text(
-                wholesale ?? '—',
+              _fitEnd(numericText(
+                wholesale == null ? '—' : formatGrouped(wholesale),
                 key: Key('product-wholesale-${product.id}'),
                 style: AppTheme.numeric(theme, size: 14).copyWith(
                   fontWeight: FontWeight.w500,
@@ -1279,8 +1281,8 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
       cells.add(
         cell(
           i++,
-          _fitEnd(Text(
-            product.quantity,
+          _fitEnd(numericText(
+            formatGrouped(product.quantity),
             key: Key('product-qty-${product.id}'),
             style: AppTheme.numeric(theme, size: 15).copyWith(
               fontWeight: status == ProductStockStatus.active
@@ -1476,7 +1478,7 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
                         child: _metricBlock(
                           theme,
                           AppStrings.t('price', loc),
-                          product.price,
+                          formatGrouped(product.price),
                           color: cs.onSurface,
                           strong: true,
                         ),
@@ -1487,13 +1489,13 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
                         color: cs.outline.withValues(alpha: 0.18),
                       ),
                       Expanded(
-                        child: _metricBlock(
-                          theme,
-                          AppStrings.t('quantity', loc),
-                          product.quantity,
-                          color: qtyColor,
-                          strong: true,
-                        ),
+                          child: _metricBlock(
+                            theme,
+                            AppStrings.t('quantity', loc),
+                            formatGrouped(product.quantity),
+                            color: qtyColor,
+                            strong: true,
+                          ),
                       ),
                       if (canUpdate) ...[
                         Container(
@@ -1505,7 +1507,7 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
                           child: _metricBlock(
                             theme,
                             AppStrings.t('cost', loc),
-                            product.cost,
+                            formatGrouped(product.cost),
                             color: cs.onSurface.withValues(alpha: 0.72),
                           ),
                         ),
@@ -1554,7 +1556,7 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
           ),
         ),
         const SizedBox(height: 2),
-        Text(
+        numericText(
           value,
           style: theme.textTheme.bodyMedium?.copyWith(
             fontSize: strong ? 15 : 14,

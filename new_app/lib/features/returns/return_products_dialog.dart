@@ -25,6 +25,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/number_format.dart';
+import '../../core/numeric_text.dart';
 import '../../core/strings.dart';
 import '../../l10n/locale_provider.dart';
 import 'return_models.dart';
@@ -485,7 +487,7 @@ class _ReturnProductsDialogState extends ConsumerState<ReturnProductsDialog> {
             key: Key('return-product-$index'),
             dense: true,
             title: Text(product.name, key: Key('return-product-name-$index')),
-            subtitle: Text(
+            subtitle: numericText(
               '${product.price} ${AppStrings.t('currency', loc)} · '
               '${AppStrings.unitLabel(product.unit, loc)}',
               key: Key('return-product-price-$index'),
@@ -610,10 +612,12 @@ class _ReturnProductsDialogState extends ConsumerState<ReturnProductsDialog> {
   }
 
   static String _fmtQty(double value) {
-    if (value == value.roundToDouble()) return value.toInt().toString();
+    if (value == value.roundToDouble()) {
+      return formatGrouped(value.toInt().toString());
+    }
     final fixed = value.toStringAsFixed(3);
-    return fixed
-        .replaceFirst(RegExp(r'0+$'), '')
-        .replaceFirst(RegExp(r'\.$'), '');
+    return formatGrouped(
+      fixed.replaceFirst(RegExp(r'0+$'), '').replaceFirst(RegExp(r'\.$'), ''),
+    );
   }
 }

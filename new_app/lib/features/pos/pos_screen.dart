@@ -48,6 +48,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/amount_entry.dart';
 import '../../core/colors.dart';
 import '../../core/keyboard.dart';
+import '../../core/number_format.dart';
+import '../../core/numeric_text.dart';
 import '../../core/shortcuts.dart';
 import '../../core/strings.dart';
 import '../../l10n/locale_provider.dart';
@@ -1076,16 +1078,20 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     final currency = AppStrings.t('currency', loc);
     final discount = loyaltyNum(result.loyaltyRedeemedValue);
     if (discount > 0) {
+      // Bidi: Arabic labels natural; each grouped value is its own LTR
+      // isolate (the toast renders the joined detail in a forced-LTR
+      // paragraph, which still reverses digits after an Arabic label —
+      // W7 — unless the amount itself is isolated).
       details.add(
         '${AppStrings.t('loyalty_redeemed', loc)}: '
-        '${PaymentMath.money(discount)} $currency',
+        '${bidiIsolateLtr('${PaymentMath.money(discount)} $currency')}',
       );
     }
     final earned = loyaltyNum(result.loyaltyPointsEarned);
     if (earned > 0) {
       details.add(
         '${AppStrings.t('loyalty_points_earned', loc)}: '
-        '${formatLoyaltyPoints(earned)} '
+        '${bidiIsolateLtr(formatLoyaltyPoints(earned))} '
         '${AppStrings.t('loyalty_points', loc)}',
       );
     }
@@ -1093,7 +1099,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     if (cashback > 0) {
       details.add(
         '${AppStrings.t('loyalty_cashback_earned', loc)}: '
-        '${PaymentMath.money(cashback)} $currency',
+        '${bidiIsolateLtr('${PaymentMath.money(cashback)} $currency')}',
       );
     }
     return details.join(' · ');
@@ -1561,9 +1567,11 @@ class _PosScreenState extends ConsumerState<PosScreen> {
                           icon: const Icon(Icons.close),
                         ),
                         Expanded(
+                          // Bidi: Arabic "Total:" label natural; the grouped
+                          // total is one LTR isolate (W7).
                           child: Text(
                             '${AppStrings.t('total_label', loc)}: '
-                            '${cart.totals.totalDisplay}',
+                            '${bidiIsolateLtr(cart.totals.totalDisplay)}',
                             style: theme.textTheme.titleMedium,
                             overflow: TextOverflow.ellipsis,
                           ),
@@ -1585,9 +1593,11 @@ class _PosScreenState extends ConsumerState<PosScreen> {
                         Expanded(
                           child: Padding(
                             padding: const EdgeInsets.symmetric(horizontal: 8),
+                            // Bidi: Arabic label natural; grouped total is
+                            // one LTR isolate (W7).
                             child: Text(
                               '${AppStrings.t('total_label', loc)}: '
-                              '${cart.totals.totalDisplay}',
+                              '${bidiIsolateLtr(cart.totals.totalDisplay)}',
                               style: theme.textTheme.titleMedium,
                               overflow: TextOverflow.ellipsis,
                             ),
@@ -1966,8 +1976,8 @@ class _ProductCatalog extends StatelessWidget {
     final promo = product.promotion;
     final badge = promo == null ? '' : promo.discountBadgeFor(product.price);
     if (promo == null || badge.isEmpty) {
-      return Text(
-        product.price,
+      return numericText(
+        formatGrouped(product.price),
         key: Key('pos-product-price-${product.id}'),
         style: theme.textTheme.titleMedium?.copyWith(
           color: theme.colorScheme.primary,
@@ -1986,8 +1996,8 @@ class _ProductCatalog extends StatelessWidget {
         // they keep their natural size while there is room, ellipsize only
         // when there is not); the effective promo price never yields.
         Flexible(
-          child: Text(
-            product.price,
+          child: numericText(
+            formatGrouped(product.price),
             key: Key('pos-product-retail-price-${product.id}'),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
@@ -1998,8 +2008,8 @@ class _ProductCatalog extends StatelessWidget {
           ),
         ),
         const SizedBox(width: 4),
-        Text(
-          promo.price,
+        numericText(
+          formatGrouped(promo.price),
           key: Key('pos-product-price-${product.id}'),
           style: theme.textTheme.titleMedium?.copyWith(
             color: theme.colorScheme.primary,
@@ -2008,7 +2018,7 @@ class _ProductCatalog extends StatelessWidget {
         ),
         const SizedBox(width: 4),
         Flexible(
-          child: Text(
+          child: numericText(
             badge,
             key: Key('pos-product-promo-${product.id}'),
             maxLines: 1,
@@ -2494,8 +2504,12 @@ class _CartPanel extends StatelessWidget {
         cart.lines.fold<double>(0, (sum, line) => sum + line.qty);
     final counts = cart.isEmpty
         ? AppStrings.t('cart_no_items', loc)
-        : '${cart.lines.length} ${AppStrings.t('lines_word', loc)} · '
-            '${_fmtQty(unitCount)} ${AppStrings.t('units_word', loc)}';
+        // Bidi: each numeric segment is an LTR isolate so the grouped
+        // unit count never swaps with the Arabic words (W7).
+        : '${bidiIsolateLtr('${cart.lines.length}')} '
+            '${AppStrings.t('lines_word', loc)} · '
+            '${bidiIsolateLtr(_fmtQty(unitCount))} '
+            '${AppStrings.t('units_word', loc)}';
     final headerHeight = compact ? 64.0 : 72.0;
     final customerHeight = compact ? 48.0 : 52.0;
 
@@ -2531,7 +2545,7 @@ class _CartPanel extends StatelessWidget {
                           overflow: TextOverflow.ellipsis,
                         ),
                         const SizedBox(height: 2),
-                        Text(
+                        numericText(
                           counts,
                           key: const Key('pos-cart-counts'),
                           style: theme.textTheme.bodyMedium?.copyWith(
@@ -3064,7 +3078,7 @@ class _PosTotalsPanelState extends ConsumerState<_PosTotalsPanel> {
                       child: FittedBox(
                         fit: BoxFit.scaleDown,
                         alignment: AlignmentDirectional.centerEnd,
-                        child: Text(
+                        child: numericText(
                           '${totals.totalDisplay} $currency',
                           key: const Key('pos-total-value'),
                           style: theme.textTheme.headlineSmall?.copyWith(
@@ -3176,10 +3190,30 @@ class _PosTotalsPanelState extends ConsumerState<_PosTotalsPanel> {
                                       ),
                                       const SizedBox(width: 8),
                                       Flexible(
-                                        child: Text(
-                                          '${AppStrings.t('payment_shortcut', loc)}'
-                                          ' — ${totals.totalDisplay} $currency',
-                                          overflow: TextOverflow.ellipsis,
+                                        // Bidi contract: the Arabic shortcut
+                                        // label and the amount+currency unit
+                                        // are separate widgets — the label
+                                        // stays RTL, the money renders as one
+                                        // LTR unit (`20 235.00 DA`).
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          mainAxisAlignment:
+                                              MainAxisAlignment.center,
+                                          children: [
+                                            Flexible(
+                                              child: Text(
+                                                '${AppStrings.t('payment_shortcut', loc)} —',
+                                                overflow:
+                                                    TextOverflow.ellipsis,
+                                              ),
+                                            ),
+                                            const SizedBox(width: 6),
+                                            numericText(
+                                              '${totals.totalDisplay} $currency',
+                                              key: const Key('pos-pay-amount'),
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                          ],
                                         ),
                                       ),
                                     ],
@@ -3259,13 +3293,19 @@ class _PosTotalsPanelState extends ConsumerState<_PosTotalsPanel> {
                 ),
               ),
               const SizedBox(width: 8),
+              // Bidi: Arabic words stay natural; each numeric segment is
+              // its own LTR isolate (the points value is grouped, and the
+              // rewards count follows an Arabic word — both would swap
+              // inside a whole-string forced-LTR paragraph — W7).
               Expanded(
                 child: Text(
-                  '${formatLoyaltyPoints(points)} '
+                  '${bidiIsolateLtr(formatLoyaltyPoints(points))} '
                   '${AppStrings.t('loyalty_points', loc)}'
-                  ' · $rewards× '
+                  ' · ${bidiIsolateLtr('$rewards×')} '
                   '${AppStrings.t('loyalty_reward', loc)}'
-                  ' · ${PaymentMath.money(cashback)} $currency',
+                  ' · ${bidiIsolateLtr(
+                    '${PaymentMath.money(cashback)} $currency',
+                  )}',
                   key: const Key('pos-loyalty-balance'),
                   textAlign: TextAlign.end,
                   overflow: TextOverflow.ellipsis,
@@ -3331,7 +3371,7 @@ class _PosTotalsPanelState extends ConsumerState<_PosTotalsPanel> {
                 ),
               const SizedBox(width: 8),
               Expanded(
-                child: Text(
+                child: numericText(
                   hint,
                   key: const Key('pos-loyalty-redeem-hint'),
                   textAlign: TextAlign.end,
@@ -3486,7 +3526,7 @@ class _PosTotalsPanelState extends ConsumerState<_PosTotalsPanel> {
             ),
           ),
           const SizedBox(width: 8),
-          Text(
+          numericText(
             value,
             key: valueKey,
             style: TextStyle(
@@ -3722,8 +3762,8 @@ class _CartLineTileState extends State<_CartLineTile> {
                     ),
                   ),
                   const SizedBox(width: 6),
-                  Text(
-                    line.lineTotal.toStringAsFixed(2),
+                  numericText(
+                    formatGroupedFixed(line.lineTotal, 2),
                     key: Key('cart-line-total-${line.key}'),
                     style: theme.textTheme.titleMedium?.copyWith(
                       fontSize: short ? 16.0 : 17.0,
@@ -3879,7 +3919,7 @@ class _CartLineTileState extends State<_CartLineTile> {
                         ],
                         if (showBaseInfo) ...[
                           // Secondary: base-quantity equivalence (multiplier).
-                          Text(
+                          numericText(
                             '${_fmtQty(baseQty)} $baseUnit',
                             key: Key('cart-line-base-qty-${line.key}'),
                             style: theme.textTheme.bodySmall?.copyWith(
@@ -3889,9 +3929,12 @@ class _CartLineTileState extends State<_CartLineTile> {
                             ),
                           ),
                           // Informational only — never feeds the cart total.
+                          // Bidi: Arabic "Base price:" label natural; the
+                          // grouped price is one LTR isolate (W7).
                           Text(
                             '${AppStrings.t('base_price', loc)}: '
-                            '${_fmtPrice(line.baseUnitPrice)} / $baseUnit',
+                            '${bidiIsolateLtr(_fmtPrice(line.baseUnitPrice))} '
+                            '/ $baseUnit',
                             key: Key('cart-line-base-price-${line.key}'),
                             style: theme.textTheme.bodySmall?.copyWith(
                               fontSize: 13,
@@ -3964,22 +4007,28 @@ class _CartLineTileState extends State<_CartLineTile> {
 }
 
 /// Display helpers for cart-line unit presentation (UX FIX #3).
-/// Whole numbers render without decimals (10 not 10.0).
-String _fmtQty(double v) => v == v.roundToDouble()
-    ? v.toInt().toString()
-    : v.toStringAsFixed(2);
+/// Whole numbers render without decimals (10 not 10.0). Integer digits are
+/// space-grouped for readability (presentation only — the cart still holds
+/// raw numeric strings).
+String _fmtQty(double v) => formatGrouped(
+      v == v.roundToDouble() ? v.toInt().toString() : v.toStringAsFixed(2),
+    );
 
 String _fmtPrice(String? raw) {
   final v = double.tryParse(raw ?? '');
   if (v == null) return raw ?? '0';
-  return v == v.roundToDouble() ? v.toInt().toString() : v.toStringAsFixed(2);
+  return formatGrouped(
+    v == v.roundToDouble() ? v.toInt().toString() : v.toStringAsFixed(2),
+  );
 }
 
 /// Display label for a reward percent: `20` → `"20"`, `12.5` → `"12.5"`.
 String _percentLabel(double value) {
   if (value == value.roundToDouble()) return value.toInt().toString();
-  return value
-      .toStringAsFixed(2)
-      .replaceFirst(RegExp(r'0+$'), '')
-      .replaceFirst(RegExp(r'\.$'), '');
+  return formatGrouped(
+    value
+        .toStringAsFixed(2)
+        .replaceFirst(RegExp(r'0+$'), '')
+        .replaceFirst(RegExp(r'\.$'), ''),
+  );
 }

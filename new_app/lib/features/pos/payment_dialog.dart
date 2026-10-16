@@ -9,6 +9,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/colors.dart';
+import '../../core/number_format.dart';
+import '../../core/numeric_text.dart';
 import '../../core/strings.dart';
 import '../../l10n/locale_provider.dart';
 import '../auth/permission_helpers.dart';
@@ -19,10 +21,12 @@ import 'pos_providers.dart';
 /// Display label for a reward percent: `20` → `"20"`, `12.5` → `"12.5"`.
 String _percentLabel(double value) {
   if (value == value.roundToDouble()) return value.toInt().toString();
-  return value
-      .toStringAsFixed(2)
-      .replaceFirst(RegExp(r'0+$'), '')
-      .replaceFirst(RegExp(r'\.$'), '');
+  return formatGrouped(
+    value
+        .toStringAsFixed(2)
+        .replaceFirst(RegExp(r'0+$'), '')
+        .replaceFirst(RegExp(r'\.$'), ''),
+  );
 }
 
 class PaymentDialog extends ConsumerStatefulWidget {
@@ -402,7 +406,7 @@ class _SummaryRow extends StatelessWidget {
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           Text(label, style: style),
-          Text(value, style: style),
+          numericText(value, style: style),
         ],
       ),
     );

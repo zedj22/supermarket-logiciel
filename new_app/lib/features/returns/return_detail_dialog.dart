@@ -7,6 +7,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/number_format.dart';
+import '../../core/numeric_text.dart';
 import '../../core/strings.dart';
 import '../../l10n/locale_provider.dart';
 import '../pos/pos_toast.dart';
@@ -87,7 +89,7 @@ class _ReturnDetailDialogState extends ConsumerState<ReturnDetailDialog> {
 
   String _fmtMoney(String raw) {
     final v = double.tryParse(raw);
-    return v == null ? raw : v.toStringAsFixed(2);
+    return v == null ? formatGrouped(raw) : formatGroupedFixed(v, 2);
   }
 
   @override
@@ -231,16 +233,20 @@ class _ReturnDetailDialogState extends ConsumerState<ReturnDetailDialog> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(title, style: theme.textTheme.bodyMedium),
+                // Bidi: the grouped quantity+unit and the grouped price +
+                // currency are each ONE LTR isolate (both would swap in
+                // the mixed RTL sentence — W7).
                 Text(
-                  '${line.quantity} $unit × ${_fmtMoney(line.unitPrice)} '
-                  '${AppStrings.t('currency', loc)}',
+                  '${bidiIsolateLtr('${formatGrouped(line.quantity)} $unit')} × '
+                  '${bidiIsolateLtr('${_fmtMoney(line.unitPrice)} '
+                      '${AppStrings.t('currency', loc)}')}',
                   key: Key('return-detail-line-qty-$index'),
                   style: theme.textTheme.bodySmall,
                 ),
               ],
             ),
           ),
-          Text(
+          numericText(
             _fmtMoney(line.lineTotal),
             key: Key('return-detail-line-total-$index'),
             style: theme.textTheme.bodyMedium,
@@ -263,7 +269,7 @@ class _ReturnDetailDialogState extends ConsumerState<ReturnDetailDialog> {
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           Text(AppStrings.t(labelKey, loc), style: theme.textTheme.bodySmall),
-          Text(value, key: key, style: theme.textTheme.bodyMedium),
+          numericText(value, key: key, style: theme.textTheme.bodyMedium),
         ],
       ),
     );

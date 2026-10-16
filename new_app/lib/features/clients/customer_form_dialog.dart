@@ -53,7 +53,9 @@ class _CustomerFormDialogState extends ConsumerState<CustomerFormDialog> {
     _phone = TextEditingController(text: c?.phone ?? '');
     _address = TextEditingController(text: c?.address ?? '');
     _ceiling = TextEditingController(
-      text: c != null ? formatMoney(c.debtCeiling) : '',
+      // Plain (ungrouped) prefill: the field text is re-parsed by
+      // moneyToMilli AND sent verbatim in the API payload.
+      text: c != null ? formatMoneyPlain(c.debtCeiling) : '',
     );
   }
 

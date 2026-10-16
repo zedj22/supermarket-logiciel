@@ -9,6 +9,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/numeric_text.dart';
 import '../../core/strings.dart';
 import '../../l10n/locale_provider.dart';
 import 'suppliers_providers.dart';
@@ -137,10 +138,13 @@ class _SupplierPaymentDialogState extends ConsumerState<SupplierPaymentDialog> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // Bidi: supplier name + Arabic balance label stay natural;
+            // only the amount is an LTR isolate (whole-string LTR still
+            // reverses grouped digits after the Arabic label — W7).
             Text(
               '${widget.supplier.name} · '
               '${AppStrings.t('balance', loc)}: '
-              '${formatMoney(widget.supplier.balance)}',
+              '${bidiIsolateLtr(formatMoney(widget.supplier.balance))}',
               key: const Key('supplier-payment-balance'),
             ),
             const SizedBox(height: 12),
@@ -165,7 +169,9 @@ class _SupplierPaymentDialogState extends ConsumerState<SupplierPaymentDialog> {
                   onPressed: _submitting
                       ? null
                       : () => setState(() {
-                            _amount.text = formatMoney(
+                            // Plain (ungrouped): the amount field's text is
+                            // sent verbatim in the payment payload.
+                            _amount.text = formatMoneyPlain(
                               widget.supplier.balance,
                             );
                             _error = null;
@@ -198,7 +204,7 @@ class _SupplierPaymentDialogState extends ConsumerState<SupplierPaymentDialog> {
               const SizedBox(height: 8),
               Text(
                 '${AppStrings.t('remaining_after', loc)}: '
-                '${formatMoney(milliToMoney(remaining))}',
+                '${bidiIsolateLtr(formatMoney(milliToMoney(remaining)))}',
                 key: const Key('supplier-remaining'),
                 style: Theme.of(context).textTheme.bodySmall,
               ),

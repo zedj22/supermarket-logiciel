@@ -30,6 +30,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/amount_entry.dart';
 import '../../core/quantity_expression.dart';
+import '../../core/number_format.dart';
+import '../../core/numeric_text.dart';
 import '../../core/strings.dart';
 import '../../l10n/locale_provider.dart';
 import 'models.dart';
@@ -326,9 +328,15 @@ class _QuantityDialogState extends ConsumerState<QuantityDialog> {
                     return Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
+                        // Bidi: Arabic labels stay natural; each grouped
+                        // value is its own LTR isolate (a forced-LTR
+                        // whole-string still reverses digits after an
+                        // Arabic label — W7).
                         Text(
                           '${AppStrings.t('computed_quantity', loc)}: '
-                          '${posScaledText(quantityScaled ?? 0)} ${_unit.name}',
+                          '${bidiIsolateLtr(
+                            formatGrouped(posScaledText(quantityScaled ?? 0)),
+                          )} ${_unit.name}',
                           key: const Key('amount-computed-quantity'),
                           style: theme.textTheme.bodyMedium,
                         ),
@@ -339,7 +347,9 @@ class _QuantityDialogState extends ConsumerState<QuantityDialog> {
                         // less than what is displayed here).
                         Text(
                           '${AppStrings.t('line_total', loc)}: '
-                          '${posScaledText(actualScaled ?? 0)}',
+                          '${bidiIsolateLtr(
+                            formatGrouped(posScaledText(actualScaled ?? 0)),
+                          )}',
                           key: const Key('amount-line-total'),
                           style: theme.textTheme.bodySmall?.copyWith(
                             color: theme.colorScheme.outline,
@@ -350,7 +360,9 @@ class _QuantityDialogState extends ConsumerState<QuantityDialog> {
                           const SizedBox(height: 4),
                           Text(
                             '${AppStrings.t('requested_amount', loc)}: '
-                            '${posScaledText(amountScaled)}',
+                            '${bidiIsolateLtr(
+                              formatGrouped(posScaledText(amountScaled)),
+                            )}',
                             key: const Key('amount-requested'),
                             style: theme.textTheme.bodySmall?.copyWith(
                               color: theme.colorScheme.outline,
@@ -399,9 +411,12 @@ class _QuantityDialogState extends ConsumerState<QuantityDialog> {
                     return Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
+                        // Bidi: Arabic label natural; each grouped value is
+                        // its own LTR isolate (W7).
                         Text(
                           '${AppStrings.t('available_quantity', loc)}: '
-                          '${widget.productQuantity} → ${base.toStringAsFixed(3)}',
+                          '${bidiIsolateLtr(formatGrouped(widget.productQuantity))}'
+                          ' → ${bidiIsolateLtr(formatGrouped(base.toStringAsFixed(3)))}',
                           key: const Key('quantity-base-preview'),
                           style: theme.textTheme.bodySmall,
                         ),
@@ -410,7 +425,9 @@ class _QuantityDialogState extends ConsumerState<QuantityDialog> {
                           // Mode A line total: quantity × effective price.
                           Text(
                             '${AppStrings.t('line_total', loc)}: '
-                            '${posScaledText(totalScaled)}',
+                            '${bidiIsolateLtr(
+                              formatGrouped(posScaledText(totalScaled)),
+                            )}',
                             key: const Key('quantity-line-total'),
                             style: theme.textTheme.bodySmall?.copyWith(
                               color: theme.colorScheme.outline,

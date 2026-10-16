@@ -1,4 +1,4 @@
-"""Integration tests for Phase 2 Alembic migrations â€” PostgreSQL only.
+﻿"""Integration tests for Phase 2 Alembic migrations â€” PostgreSQL only.
 
 These tests run against the dedicated supermarket_pro_test database.
 The production database is NEVER touched.
@@ -237,7 +237,7 @@ class TestPhase6SellingUnitsMigration:
     """Migration 0005/0006 â€” product_selling_units + purchase packaging tables."""
 
     SELLING_UNITS_REV = "c3d4e5f6a7b8"
-    HEAD_REV = "b4d5e6f7a8c1"  # 0029 facturation option identity head
+    HEAD_REV = "dbdff6c3ec7f"  # 0029 facturation option identity head
 
     @pytest.fixture(autouse=True)
     def _setup_db(self):
@@ -395,7 +395,7 @@ class TestPhase6SellingUnitsMigration:
 class TestPhase6PurchasePackagingMigration:
     """Migration 0006 (d4e5f6a7b8c9) â€” purchase packaging / stock-breaking."""
 
-    HEAD_REV = "b4d5e6f7a8c1"  # linear chain head after 0029
+    HEAD_REV = "dbdff6c3ec7f"  # linear chain head after 0029
 
     @pytest.fixture(autouse=True)
     def _setup_db(self):
@@ -585,7 +585,7 @@ class TestPhase6PurchasePackagingMigration:
 class TestPhase7InventoryPMPMigration:
     """Migration 0008 (f1a2b3c4d5e6) â€” products.avg_cost + movement cost cols."""
 
-    HEAD_REV = "b4d5e6f7a8c1"
+    HEAD_REV = "dbdff6c3ec7f"
 
     @pytest.fixture(autouse=True)
     def _setup_db(self):
@@ -727,7 +727,7 @@ class TestPhase10AvgCostBackfillMigration:
     exactly 100%.
     """
 
-    HEAD_REV = "b4d5e6f7a8c1"
+    HEAD_REV = "dbdff6c3ec7f"
     PREV_REV = "b7c8d9e0f1a2"
 
     @pytest.fixture(autouse=True)
@@ -863,7 +863,7 @@ class TestPhase10AvgCostBackfillMigration:
 class TestPhase12ReturnsVoidsMigration:
     """0016_phase12_returns_voids â€” void columns + return snapshot columns."""
 
-    HEAD_REV = "b4d5e6f7a8c1"
+    HEAD_REV = "dbdff6c3ec7f"
     PREVIOUS_REV = "d3e4f5a6b7c8"
 
     @pytest.fixture(autouse=True)
@@ -1088,7 +1088,7 @@ class TestPhase17ReturnReasonOptionalMigration:
     ``tests/unit/test_void.py::test_reason_is_mandatory``).
     """
 
-    HEAD_REV = "b4d5e6f7a8c1"
+    HEAD_REV = "dbdff6c3ec7f"
     PREVIOUS_REV = "e4f5a6b7c8d9"
     TEST_RETURN_NUMBER = "RET-TEST-0017-NO-REASON"
 
@@ -1202,7 +1202,7 @@ class TestPhase13ExpensesMigration:
     and never rewrites an existing value (decision record section 5).
     """
 
-    HEAD_REV = "b4d5e6f7a8c1"
+    HEAD_REV = "dbdff6c3ec7f"
     PREVIOUS_REV = "f5a6b7c8d9e0"
     TEST_TITLE = "PHASE13-MIGRATION-TEST"
 
@@ -1441,7 +1441,7 @@ class TestPhase13TitleOptionalMigration:
     expense title can be stored as NULL (decision record B1).
     """
 
-    HEAD_REV = "b4d5e6f7a8c1"
+    HEAD_REV = "dbdff6c3ec7f"
     PREVIOUS_REV = "1a2b3c4d5e6f"
     NULL_ROW_MARKER = "PHASE19-TITLE-NULL-TEST"
 
@@ -1548,7 +1548,7 @@ class TestPhase17PricingMigration:
     vat_rate lands 0. Sale, invoice and report tables are untouched.
     """
 
-    HEAD_REV = "b4d5e6f7a8c1"
+    HEAD_REV = "dbdff6c3ec7f"
     PREVIOUS_REV = "5c8d2e1f4a73"
 
     @pytest.fixture(autouse=True)
@@ -1662,7 +1662,7 @@ class TestPhaseLoyaltyMigration:
     intact so no history is rewritten.
     """
 
-    HEAD_REV = "b4d5e6f7a8c1"
+    HEAD_REV = "dbdff6c3ec7f"
     PREVIOUS_REV = "f3c8a21d9e05"
     CANARY = "phase32-loyalty-canary"
 
@@ -2275,3 +2275,226 @@ class TestPhaseLoyaltyMigration:
         cols = self._columns("sales")
         assert "loyalty_points_earned" in cols
         assert "amount_due" in cols
+
+
+class TestZakatMigration:
+    """Migration 0034 (dbdff6c3ec7f) — zakat calculation snapshots.
+
+    Purely additive: two new tables (zakat_calculations + zakat_payments).
+    No existing column is rewritten and no row is read — the feature is
+    read-only with respect to sales / inventory / accounting.  Regression
+    guard for the production incident where 0034 had been applied to the
+    test database only, leaving GET /api/v1/zakat failing with
+    UndefinedTable on the live database.
+    """
+
+    HEAD_REV = "dbdff6c3ec7f"
+    PREVIOUS_REV = "b4d5e6f7a8c1"
+    ZAKAT_TABLES = ("zakat_calculations", "zakat_payments")
+
+    @pytest.fixture(autouse=True)
+    def _setup_db(self):
+        """Ensure head before, and head after, every test."""
+        result = _run_alembic("upgrade head")
+        assert result.returncode == 0, f"Setup upgrade failed: {result.stderr}"
+        yield
+        result = _run_alembic("upgrade head")
+        assert result.returncode == 0, f"Restore upgrade failed: {result.stderr}"
+
+    @staticmethod
+    def _zakat_tables() -> set:
+        conn = _get_test_conn()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT tablename FROM pg_tables "
+            "WHERE schemaname = 'public' AND tablename IN "
+            "('zakat_calculations', 'zakat_payments')"
+        )
+        tables = {row[0] for row in cur.fetchall()}
+        cur.close()
+        conn.close()
+        return tables
+
+    @staticmethod
+    def _columns(table: str) -> dict:
+        conn = _get_test_conn()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT column_name, data_type, is_nullable,
+                   numeric_precision, numeric_scale, column_default
+            FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = %s
+            """,
+            (table,),
+        )
+        columns = {row[0]: row for row in cur.fetchall()}
+        cur.close()
+        conn.close()
+        return columns
+
+    @staticmethod
+    def _indexes(table: str) -> set:
+        conn = _get_test_conn()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT indexname FROM pg_indexes "
+            "WHERE schemaname = 'public' AND tablename = %s",
+            (table,),
+        )
+        names = {row[0] for row in cur.fetchall()}
+        cur.close()
+        conn.close()
+        return names
+
+    @staticmethod
+    def _check_constraints(table: str) -> set:
+        conn = _get_test_conn()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT conname FROM pg_constraint "
+            "WHERE conrelid = %s::regclass AND contype = 'c'",
+            (table,),
+        )
+        names = {row[0] for row in cur.fetchall()}
+        cur.close()
+        conn.close()
+        return names
+
+    @staticmethod
+    def _foreign_keys(table: str) -> dict:
+        conn = _get_test_conn()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT kcu.column_name, ccu.table_name, rc.delete_rule
+            FROM information_schema.table_constraints tc
+            JOIN information_schema.key_column_usage kcu
+                ON tc.constraint_name = kcu.constraint_name
+            JOIN information_schema.constraint_column_usage ccu
+                ON ccu.constraint_name = tc.constraint_name
+            JOIN information_schema.referential_constraints rc
+                ON rc.constraint_name = tc.constraint_name
+            WHERE tc.table_schema = 'public'
+              AND tc.table_name = %s
+              AND tc.constraint_type = 'FOREIGN KEY'
+            """,
+            (table,),
+        )
+        fks = {row[0]: (row[1], row[2]) for row in cur.fetchall()}
+        cur.close()
+        conn.close()
+        return fks
+
+    def test_single_head_is_0034(self):
+        current = _run_alembic("current")
+        assert current.returncode == 0, current.stderr
+        assert self.HEAD_REV in current.stdout, current.stdout
+
+        heads = _run_alembic("heads")
+        assert heads.returncode == 0, heads.stderr
+        assert self.HEAD_REV in heads.stdout, heads.stdout
+        assert heads.stdout.count("(head)") == 1, heads.stdout
+
+    def test_zakat_tables_exist(self):
+        assert self._zakat_tables() == set(self.ZAKAT_TABLES)
+
+    def test_zakat_calculations_shape_and_checks(self):
+        cols = self._columns("zakat_calculations")
+        for name in (
+            "id",
+            "zakat_date",
+            "inventory_basis",
+            "debt_treatment",
+            "net_zakatable",
+            "zakat_rate",
+            "zakat_due",
+            "status",
+            "warnings",
+            "missing_fields",
+            "result",
+            "inputs",
+            "client_request_id",
+            "created_by",
+        ):
+            assert name in cols, f"zakat_calculations.{name} missing"
+
+        assert cols["zakat_date"][2] == "NO"
+        assert cols["inventory_basis"][2] == "NO"
+        assert cols["net_zakatable"][1] == "numeric"
+        assert cols["zakat_rate"][1] == "numeric"
+        assert cols["warnings"][1] == "json"
+        assert cols["result"][1] == "json"
+        assert cols["inputs"][1] == "json"
+        assert cols["zakat_due"][2] == "YES"  # NULL = provisional
+
+        checks = self._check_constraints("zakat_calculations")
+        for name in (
+            "ck_zakat_calculations_debt_treatment",
+            "ck_zakat_calculations_inventory_basis",
+            "ck_zakat_calculations_status",
+            "ck_zakat_calculations_zakat_rate",
+        ):
+            assert name in checks, f"{name} missing: {checks}"
+
+        idx = self._indexes("zakat_calculations")
+        for name in (
+            "ix_zakat_calculations_client_request_id",
+            "ix_zakat_calculations_created_at",
+            "ix_zakat_calculations_created_by",
+            "ix_zakat_calculations_id",
+        ):
+            assert name in idx, f"{name} missing: {idx}"
+
+        fks = self._foreign_keys("zakat_calculations")
+        assert "created_by" in fks, fks
+        assert fks["created_by"][0] == "users", fks
+
+    def test_zakat_payments_shape_and_checks(self):
+        cols = self._columns("zakat_payments")
+        for name in (
+            "id",
+            "calculation_id",
+            "amount",
+            "method",
+            "paid_at",
+            "client_request_id",
+        ):
+            assert name in cols, f"zakat_payments.{name} missing"
+
+        assert cols["amount"][1] == "numeric"
+        assert cols["paid_at"][2] == "NO"
+        assert cols["amount"][2] == "NO"
+
+        checks = self._check_constraints("zakat_payments")
+        for name in ("ck_zakat_payments_amount", "ck_zakat_payments_method"):
+            assert name in checks, f"{name} missing: {checks}"
+
+        idx = self._indexes("zakat_payments")
+        for name in (
+            "ix_zakat_payments_calculation_id",
+            "ix_zakat_payments_client_request_id",
+            "ix_zakat_payments_id",
+        ):
+            assert name in idx, f"{name} missing: {idx}"
+
+        fks = self._foreign_keys("zakat_payments")
+        assert "calculation_id" in fks, fks
+        assert fks["calculation_id"][0] == "zakat_calculations", fks
+        assert fks["calculation_id"][1] == "CASCADE", fks
+
+    def test_upgrade_downgrade_upgrade(self):
+        """Downgrade removes ONLY the zakat tables; re-upgrade restores them."""
+        result = _run_alembic(f"downgrade {self.PREVIOUS_REV}")
+        assert result.returncode == 0, result.stderr
+        try:
+            assert self._zakat_tables() == set(), (
+                "downgrade must drop both zakat tables"
+            )
+        finally:
+            result = _run_alembic("upgrade head")
+            assert result.returncode == 0, result.stderr
+
+        assert self._zakat_tables() == set(self.ZAKAT_TABLES)
+        current = _run_alembic("current")
+        assert self.HEAD_REV in current.stdout, current.stdout

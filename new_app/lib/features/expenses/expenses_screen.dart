@@ -10,6 +10,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/numeric_text.dart';
 import '../../core/strings.dart';
 import '../../core/widgets/adaptive_title_row.dart';
 import '../../l10n/locale_provider.dart';
@@ -463,7 +464,10 @@ class _ExpensesScreenState extends ConsumerState<ExpensesScreen> {
         final item = expenses.items[index];
         final meta = <String>[
           AppStrings.t(expenseCategoryKey(item.category), loc),
-          item.expenseDate.toLocal().toString().substring(0, 16),
+          // Isolated: the date/time pair stays one LTR unit in the RTL
+          // subtitle (its two numeric groups would otherwise swap next
+          // to the Arabic category label).
+          bidiIsolateLtr(item.expenseDate.toLocal().toString().substring(0, 16)),
           AppStrings.t(expenseStatusKey(item.status), loc),
           if (item.isCancelled && (item.cancelReason ?? '').isNotEmpty)
             item.cancelReason!,
@@ -478,7 +482,7 @@ class _ExpensesScreenState extends ConsumerState<ExpensesScreen> {
           trailing: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text(
+              numericText(
                 formatMoney(item.amount),
                 key: Key('expense-amount-$index'),
                 style: theme.textTheme.titleMedium?.copyWith(
@@ -600,7 +604,7 @@ class _SummaryItem extends StatelessWidget {
             AppStrings.t(labelKey, loc),
             style: theme.textTheme.bodySmall,
           ),
-          Text(
+          numericText(
             value,
             key: Key(testKey),
             style: theme.textTheme.titleMedium?.copyWith(

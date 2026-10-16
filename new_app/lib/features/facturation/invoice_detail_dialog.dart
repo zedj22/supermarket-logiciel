@@ -10,6 +10,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/numeric_text.dart';
 import '../../core/strings.dart';
 import '../../l10n/locale_provider.dart';
 import '../../network/byte_download.dart';
@@ -284,14 +285,14 @@ class _InvoiceDetailDialogState extends ConsumerState<InvoiceDetailDialog> {
                           key: ValueKey('invoice-detail-line-${line.id}'),
                           cells: [
                             DataCell(Text(line.description)),
-                            DataCell(Text(formatMoney(line.quantity))),
+                            DataCell(numericText(formatMoney(line.quantity))),
                             DataCell(
-                              Text(formatDisplayMoney(line.unitPriceHt, loc)),
+                              numericText(formatDisplayMoney(line.unitPriceHt, loc)),
                             ),
-                            DataCell(Text('${formatMoney(line.tvaRate)}%')),
-                            DataCell(Text('${formatMoney(line.discountPct)}%')),
+                            DataCell(numericText('${formatMoney(line.tvaRate)}%')),
+                            DataCell(numericText('${formatMoney(line.discountPct)}%')),
                             DataCell(
-                              Text(formatDisplayMoney(line.totalHt, loc)),
+                              numericText(formatDisplayMoney(line.totalHt, loc)),
                             ),
                           ],
                         ),
@@ -412,7 +413,7 @@ class _InvoiceDetailDialogState extends ConsumerState<InvoiceDetailDialog> {
             AppStrings.t(labelKey, loc),
             style: emphasis ? theme.textTheme.titleSmall : null,
           ),
-          Text(
+          numericText(
             value,
             key: Key('invoice-detail-total-$labelKey'),
             style: emphasis

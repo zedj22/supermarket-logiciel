@@ -25,6 +25,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/number_format.dart';
+import '../../core/numeric_text.dart';
 import '../../core/strings.dart';
 import '../../l10n/locale_provider.dart';
 import '../auth/permission_helpers.dart';
@@ -955,10 +957,14 @@ class _ProductFormDialogState extends ConsumerState<ProductFormDialog> {
               child: Row(
                 children: [
                   Expanded(
+                    // Bidi: variant name / archived label stay natural;
+                    // the grouped price and the barcode are LTR isolates
+                    // (they would otherwise swap after an Arabic name —
+                    // W7).
                     child: Text(
                       '${v.name}'
-                      '${v.price != null ? ' · ${v.price}' : ''}'
-                      '${v.barcode != null ? ' · ${v.barcode}' : ''}'
+                      '${v.price != null ? ' · ${bidiIsolateLtr(formatGrouped(v.price!))}' : ''}'
+                      '${v.barcode != null ? ' · ${bidiIsolateLtr(v.barcode!)}' : ''}'
                       '${v.isArchived ? ' · ${AppStrings.t('archived_variant', loc)}' : ''}',
                       overflow: TextOverflow.ellipsis,
                     ),

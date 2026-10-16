@@ -44,6 +44,7 @@ from app.api.v1.storage import router as storage_router
 from app.api.v1.suppliers import router as suppliers_router
 from app.api.v1.system import router as system_router
 from app.api.v1.users import router as users_router
+from app.api.v1.zakat import router as zakat_router
 from app.core.rate_limit import api_rate_guard
 
 api_router = APIRouter(dependencies=[Depends(api_rate_guard), Depends(device_guard)])
@@ -79,3 +80,4 @@ api_router.include_router(audit_router, prefix="/audit", tags=["audit"])
 api_router.include_router(settings_router, prefix="/settings", tags=["settings"])
 api_router.include_router(backups_router, prefix="/backups", tags=["backups"])
 api_router.include_router(storage_router, prefix="/storage", tags=["storage"])
+api_router.include_router(zakat_router, prefix="/zakat", tags=["zakat"])

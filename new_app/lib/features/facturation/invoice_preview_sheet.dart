@@ -26,6 +26,7 @@
 // reversed explicitly. Latin-digit dates/money are unaffected.
 import 'package:flutter/material.dart';
 
+import '../../core/numeric_text.dart';
 import '../../core/strings.dart';
 import '../settings/settings_models.dart';
 import 'facturation_format.dart';
@@ -111,7 +112,7 @@ class InvoicePreviewSheet extends StatelessWidget {
   }) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
-      child: Text(
+      child: numericText(
         s,
         textAlign: align,
         style: TextStyle(
@@ -138,11 +139,14 @@ class InvoicePreviewSheet extends StatelessWidget {
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           _text(_t(labelKey), size: bold ? 11 : 9, bold: bold),
-          _text(
+          numericText(
             value,
-            size: bold ? 11 : 9,
-            bold: bold,
             key: Key('invoice-form-total-$keyName'),
+            style: TextStyle(
+              fontSize: bold ? 11 : 9,
+              fontWeight: bold ? FontWeight.bold : FontWeight.normal,
+              color: Colors.black,
+            ),
           ),
         ],
       ),

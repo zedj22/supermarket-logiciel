@@ -13,6 +13,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/numeric_text.dart';
 import '../../core/strings.dart';
 import '../../l10n/locale_provider.dart';
 import '../clients/customer_models.dart';
@@ -110,9 +111,12 @@ class _ExpenseCancelDialogState extends ConsumerState<ExpenseCancelDialog> {
               style: theme.textTheme.titleMedium,
             ),
             const SizedBox(height: 4),
+            // Bidi: the Arabic category label stays natural; the grouped
+            // amount is one LTR isolate (forced-LTR whole-string still
+            // reverses it — W7).
             Text(
               '${AppStrings.t(expenseCategoryKey(expense.category), loc)} · '
-              '${formatMoney(expense.amount)}',
+              '${bidiIsolateLtr(formatMoney(expense.amount))}',
               key: const Key('expense-cancel-item-meta'),
               style: theme.textTheme.bodyMedium,
             ),

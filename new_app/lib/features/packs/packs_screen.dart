@@ -10,6 +10,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/colors.dart';
+import '../../core/number_format.dart';
+import '../../core/numeric_text.dart';
 import '../../core/strings.dart';
 import '../../core/widgets/table_header.dart';
 import '../../l10n/locale_provider.dart';
@@ -482,7 +484,8 @@ class _PacksScreenState extends ConsumerState<PacksScreen> {
           ),
           Expanded(
             flex: 1,
-            child: Text(pack.price, textAlign: TextAlign.end, style: body),
+            child: numericText(
+                formatGrouped(pack.price), textAlign: TextAlign.end, style: body),
           ),
           Expanded(
             flex: 2,
@@ -494,7 +497,7 @@ class _PacksScreenState extends ConsumerState<PacksScreen> {
           ),
           Expanded(
             flex: 2,
-            child: Text(
+            child: numericText(
               pack.sumOfParts ?? '—',
               key: Key('pack-row-sum-${pack.id}'),
               textAlign: TextAlign.end,
@@ -574,8 +577,8 @@ class _PacksScreenState extends ConsumerState<PacksScreen> {
                         overflow: TextOverflow.ellipsis,
                       ),
                     ),
-                    Text(
-                      pack.price,
+                    numericText(
+                      formatGrouped(pack.price),
                       style: theme.textTheme.titleMedium?.copyWith(
                         color: theme.colorScheme.primary,
                         fontWeight: FontWeight.w700,
@@ -584,9 +587,13 @@ class _PacksScreenState extends ConsumerState<PacksScreen> {
                   ],
                 ),
                 const SizedBox(height: 4),
+                // Bidi: Arabic labels stay natural; each numeric segment is
+                // an LTR isolate (whole-string forced LTR still reverses
+                // grouped digits after an Arabic label — W7).
                 Text(
-                  '${AppStrings.t('components', loc)}: ${pack.componentsCount}'
-                  '${pack.sumOfParts != null ? '  ·  ${AppStrings.t('sum_of_parts', loc)}: ${pack.sumOfParts}' : ''}',
+                  '${AppStrings.t('components', loc)}: '
+                  '${bidiIsolateLtr('${pack.componentsCount}')}'
+                  '${pack.sumOfParts != null ? '  ·  ${AppStrings.t('sum_of_parts', loc)}: ${bidiIsolateLtr(pack.sumOfParts!)}' : ''}',
                   style: theme.textTheme.bodySmall?.copyWith(
                     color: theme.colorScheme.outline,
                   ),

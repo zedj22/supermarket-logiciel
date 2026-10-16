@@ -11,6 +11,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/numeric_text.dart';
 import '../../core/strings.dart';
 import '../../l10n/locale_provider.dart';
 import '../auth/permission_helpers.dart';
@@ -255,7 +256,7 @@ class _DebtsScreenState extends ConsumerState<DebtsScreen> {
           children: [
             Text(label, style: theme.textTheme.bodySmall),
             const SizedBox(height: 4),
-            Text(value, style: theme.textTheme.headlineSmall),
+            numericText(value, style: theme.textTheme.headlineSmall),
           ],
         ),
       ),
@@ -318,7 +319,7 @@ class _DebtsScreenState extends ConsumerState<DebtsScreen> {
                 mainAxisAlignment: MainAxisAlignment.center,
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
-                  Text(
+                  numericText(
                     formatMoney(customer.balance),
                     key: Key('debtor-balance-$index'),
                     style: theme.textTheme.titleMedium,

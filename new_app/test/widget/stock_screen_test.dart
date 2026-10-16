@@ -495,7 +495,7 @@ void main() {
       await pumpApp(tester, dio, size: const Size(1920, 1080));
 
       expect(find.byKey(const Key('kpi-total-value')), findsOneWidget);
-      expect(find.text('1056.0'), findsOneWidget);
+      expect(find.text('1 056.0'), findsOneWidget);
       expectNoOverflow(tester);
     });
 
@@ -510,7 +510,7 @@ void main() {
       expect(find.byKey(const Key('kpi-low-stock')), findsOneWidget);
       expect(find.byKey(const Key('kpi-out-stock')), findsOneWidget);
       // total_stock_value from list body
-      expect(find.text('1056.0'), findsWidgets);
+      expect(find.text('1 056.0'), findsWidgets);
       // Product count = total (2)
       expect(find.byKey(const Key('kpi-product-count')), findsOneWidget);
       // Bread is low (3 <= 5) → at least 1 low; Apple Juice ok → 0 out

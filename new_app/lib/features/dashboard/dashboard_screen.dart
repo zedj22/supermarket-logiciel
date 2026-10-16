@@ -10,6 +10,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/numeric_text.dart';
 import '../../core/strings.dart';
 import '../../core/widgets/page_title.dart';
 import '../../core/widgets/section_header.dart';
@@ -374,8 +375,8 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     return ListTile(
       key: Key('dashboard-recent-$index'),
       title: Text(sale.invoiceNumber),
-      subtitle: Text(meta.join(' · '), key: Key('dashboard-recent-meta-$index')),
-      trailing: Text(
+      subtitle: numericText(meta.join(' · '), key: Key('dashboard-recent-meta-$index')),
+      trailing: numericText(
         formatMoney(sale.total),
         key: Key('dashboard-recent-total-$index'),
         style: theme.textTheme.titleMedium
@@ -393,12 +394,17 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     return ListTile(
       key: Key('dashboard-top-$index'),
       title: Text(product.name, key: Key('dashboard-top-name-$index')),
+      // Bidi: the Arabic KPI labels stay natural; each grouped value is
+      // its own LTR isolate (a forced-LTR paragraph still reverses digits
+      // after an Arabic label — W7).
       subtitle: Text(
-        '${AppStrings.t('kpi_items_sold', loc)}: ${formatMoney(product.qtySold)}'
-        ' · ${AppStrings.t('kpi_net_sales', loc)}: ${formatMoney(product.netRevenue)}',
+        '${AppStrings.t('kpi_items_sold', loc)}: '
+        '${bidiIsolateLtr(formatMoney(product.qtySold))}'
+        ' · ${AppStrings.t('kpi_net_sales', loc)}: '
+        '${bidiIsolateLtr(formatMoney(product.netRevenue))}',
         key: Key('dashboard-top-meta-$index'),
       ),
-      trailing: Text(
+      trailing: numericText(
         formatMoney(product.grossProfit),
         key: Key('dashboard-top-profit-$index'),
         style: theme.textTheme.titleMedium

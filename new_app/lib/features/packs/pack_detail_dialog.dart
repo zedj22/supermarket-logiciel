@@ -9,6 +9,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/colors.dart';
+import '../../core/number_format.dart';
+import '../../core/numeric_text.dart';
 import '../../core/strings.dart';
 import '../../l10n/locale_provider.dart';
 import 'pack_models.dart';
@@ -105,14 +107,21 @@ class _PackDetailDialogState extends ConsumerState<PackDetailDialog> {
                 ),
               ),
               const SizedBox(height: 4),
+              // Bidi: Arabic labels stay natural; each numeric segment is
+              // an LTR isolate (forced-LTR whole strings still reverse
+              // grouped digits after an Arabic label — W7).
               Text(
                 [
-                  '${AppStrings.t('price', loc)}: ${pack.price}',
+                  '${AppStrings.t('price', loc)}: '
+                  '${bidiIsolateLtr(formatGrouped(pack.price))}',
                   if (pack.barcode != null && pack.barcode!.isNotEmpty)
-                    '${AppStrings.t('barcode', loc)}: ${pack.barcode}',
-                  '${AppStrings.t('components', loc)}: ${pack.componentsCount}',
+                    '${AppStrings.t('barcode', loc)}: '
+                    '${bidiIsolateLtr(pack.barcode!)}',
+                  '${AppStrings.t('components', loc)}: '
+                  '${bidiIsolateLtr('${pack.componentsCount}')}',
                   if (pack.sumOfParts != null)
-                    '${AppStrings.t('sum_of_parts', loc)}: ${pack.sumOfParts}',
+                    '${AppStrings.t('sum_of_parts', loc)}: '
+                    '${bidiIsolateLtr(formatGrouped(pack.sumOfParts!))}',
                 ].join('  ·  '),
                 key: const Key('pack-detail-summary'),
                 style: theme.textTheme.bodySmall?.copyWith(
@@ -126,11 +135,14 @@ class _PackDetailDialogState extends ConsumerState<PackDetailDialog> {
                 Text(
                   [
                     if (pack.estimatedCost != null)
-                      '${AppStrings.t('estimated_cost', loc)}: ${pack.estimatedCost}',
+                      '${AppStrings.t('estimated_cost', loc)}: '
+                      '${bidiIsolateLtr(formatGrouped(pack.estimatedCost!))}',
                     if (pack.estimatedProfit != null)
-                      '${AppStrings.t('estimated_profit', loc)}: ${pack.estimatedProfit}',
+                      '${AppStrings.t('estimated_profit', loc)}: '
+                      '${bidiIsolateLtr(formatGrouped(pack.estimatedProfit!))}',
                     if (pack.estimatedMarginPercent != null)
-                      '${AppStrings.t('estimated_margin', loc)}: ${pack.estimatedMarginPercent}%',
+                      '${AppStrings.t('estimated_margin', loc)}: '
+                      '${bidiIsolateLtr('${pack.estimatedMarginPercent}%')}',
                   ].join('  ·  '),
                   key: const Key('pack-detail-estimate'),
                   style: theme.textTheme.bodySmall?.copyWith(

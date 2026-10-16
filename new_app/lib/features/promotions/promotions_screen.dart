@@ -13,6 +13,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/numeric_text.dart';
 import '../../core/strings.dart';
 import '../../core/widgets/adaptive_title_row.dart';
 import '../../l10n/locale_provider.dart';
@@ -349,8 +350,12 @@ class _PromotionsScreenState extends ConsumerState<PromotionsScreen> {
         final item = promotions.items[index];
         final meta = <String>[
           AppStrings.t(promotionTypeKey(item.promotionType), loc),
-          promotionValueLabel(item),
-          '${item.productCount} ${AppStrings.t('products', loc)}',
+          // Bidi: Arabic labels stay natural; each numeric segment is its
+          // own LTR isolate (the value label is a grouped amount/percent
+          // and would swap after the Arabic type label — W7).
+          bidiIsolateLtr(promotionValueLabel(item)),
+          '${bidiIsolateLtr('${item.productCount}')} '
+          '${AppStrings.t('products', loc)}',
           AppStrings.t(item.isActive ? 'active' : 'inactive', loc),
         ];
         return ListTile(

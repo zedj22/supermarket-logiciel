@@ -10,6 +10,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/colors.dart';
+import '../../core/numeric_text.dart';
+import '../../core/number_format.dart';
 import '../../core/strings.dart';
 import '../../core/widgets/status_chip.dart';
 import '../../core/widgets/table_header.dart';
@@ -91,12 +93,13 @@ Color movementQuantityColor(String quantityChange) {
 }
 
 /// Ensure positive deltas keep a visible `+` sign (e.g. `5.000` → `+5.000`).
-/// Negative / zero / unparseable values are returned unchanged.
+/// Negative / zero / unparseable values keep their sign as-is. Integer
+/// digits are space-grouped for readability (presentation only).
 String formatSignedQuantityChange(String quantityChange) {
   final raw = quantityChange.trim();
   final value = double.tryParse(raw);
-  if (value == null || value <= 0) return raw;
-  return raw.startsWith('+') ? raw : '+$raw';
+  if (value == null || value <= 0) return formatGrouped(raw);
+  return '+${formatGrouped(raw.replaceFirst(RegExp(r'^\+'), ''))}';
 }
 
 /// Badge / icon color for a movement type.
@@ -367,7 +370,7 @@ class _StockScreenState extends ConsumerState<StockScreen>
         theme,
         key: const Key('kpi-total-value'),
         label: AppStrings.t('total_stock_value', loc),
-        value: state.totalStockValue,
+        value: formatGrouped(state.totalStockValue),
         color: theme.colorScheme.primary,
         icon: Icons.account_balance_wallet_outlined,
       ),
@@ -460,7 +463,7 @@ class _StockScreenState extends ConsumerState<StockScreen>
                   ),
                 ),
                 const SizedBox(height: 2),
-                Text(
+                numericText(
                   value,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
@@ -492,7 +495,7 @@ class _StockScreenState extends ConsumerState<StockScreen>
           theme,
           key: const Key('kpi-total-value'),
           label: AppStrings.t('total_stock_value', loc),
-          value: state.totalStockValue,
+          value: formatGrouped(state.totalStockValue),
           color: theme.colorScheme.primary,
         ),
         _miniChip(
@@ -863,8 +866,8 @@ class _StockScreenState extends ConsumerState<StockScreen>
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.end,
                             children: [
-                              Text(
-                                item.quantity,
+                              numericText(
+                                formatGrouped(item.quantity),
                                 textAlign: TextAlign.end,
                                 style: theme.textTheme.titleSmall?.copyWith(
                                   color: statusColor,
@@ -883,16 +886,16 @@ class _StockScreenState extends ConsumerState<StockScreen>
                         ),
                         SizedBox(
                           width: 100,
-                          child: Text(
-                            item.avgCost,
+                          child: numericText(
+                            formatGrouped(item.avgCost),
                             textAlign: TextAlign.end,
                             style: theme.textTheme.bodySmall,
                           ),
                         ),
                         SizedBox(
                           width: 110,
-                          child: Text(
-                            item.stockValue,
+                          child: numericText(
+                            formatGrouped(item.stockValue),
                             textAlign: TextAlign.end,
                             style: theme.textTheme.bodyMedium?.copyWith(
                               fontWeight: FontWeight.w600,
@@ -1036,7 +1039,7 @@ class _StockScreenState extends ConsumerState<StockScreen>
                       child: _cardStat(
                         theme,
                         AppStrings.t('quantity', loc),
-                        '${item.quantity} '
+                        '${formatGrouped(item.quantity)} '
                         '${AppStrings.unitLabel(item.unit, loc)}',
                         color: statusColor,
                       ),
@@ -1045,14 +1048,14 @@ class _StockScreenState extends ConsumerState<StockScreen>
                       child: _cardStat(
                         theme,
                         AppStrings.t('avg_cost', loc),
-                        item.avgCost,
+                        formatGrouped(item.avgCost),
                       ),
                     ),
                     Expanded(
                       child: _cardStat(
                         theme,
                         AppStrings.t('stock_value', loc),
-                        item.stockValue,
+                        formatGrouped(item.stockValue),
                         emphasize: true,
                       ),
                     ),
@@ -1084,7 +1087,7 @@ class _StockScreenState extends ConsumerState<StockScreen>
             color: theme.colorScheme.onSurface.withValues(alpha: 0.72),
           ),
         ),
-        Text(
+        numericText(
           value,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
@@ -1225,7 +1228,7 @@ class _StockScreenState extends ConsumerState<StockScreen>
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  '${detail.quantity} '
+                  '${formatGrouped(detail.quantity)} '
                   '${AppStrings.unitLabel(detail.unit, loc)}',
                   key: const Key('detail-quantity'),
                   textDirection: TextDirection.ltr,
@@ -1235,9 +1238,10 @@ class _StockScreenState extends ConsumerState<StockScreen>
                   ),
                 ),
                 const SizedBox(height: 12),
-                _detailRow(theme, loc, 'avg_cost', detail.avgCost),
-                _detailRow(theme, loc, 'cost', detail.cost),
-                _detailRow(theme, loc, 'stock_value', detail.stockValue),
+                _detailRow(theme, loc, 'avg_cost', formatGrouped(detail.avgCost)),
+                _detailRow(theme, loc, 'cost', formatGrouped(detail.cost)),
+                _detailRow(
+                    theme, loc, 'stock_value', formatGrouped(detail.stockValue)),
                 const SizedBox(height: 12),
                 if (canAdjust)
                   SizedBox(
@@ -1569,7 +1573,7 @@ class _StockScreenState extends ConsumerState<StockScreen>
                         ),
                         if (m.avgCostAfter != null)
                           Text(
-                            'PMP: ${m.avgCostAfter}',
+                            'PMP: ${formatGrouped(m.avgCostAfter!)}',
                             textDirection: TextDirection.ltr,
                             style: theme.textTheme.labelSmall
                                 ?.copyWith(color: cs.outline),

@@ -8,6 +8,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/numeric_text.dart';
 import '../../core/strings.dart';
 import '../../l10n/locale_provider.dart';
 import '../pos/pos_models.dart';
@@ -113,21 +114,25 @@ class _LoyaltyHistoryDialogState extends ConsumerState<LoyaltyHistoryDialog> {
         itemCount: state.items.length,
         itemBuilder: (context, index) {
           final entry = state.items[index];
-          final points =
+          final pointsValue =
               '${entry.pointsDelta > 0 ? '+' : ''}'
-              '${formatLoyaltyPoints(entry.pointsDelta)} '
-              '${AppStrings.t('loyalty_points', loc)}';
+              '${formatLoyaltyPoints(entry.pointsDelta)}';
           final cashbackPart = entry.cashbackDelta == 0
               ? ''
-              : ' · ${entry.cashbackDelta > 0 ? '+' : ''}'
-                  '${PaymentMath.money(entry.cashbackDelta)} $currency';
+              : ' · ${bidiIsolateLtr(
+                  '${entry.cashbackDelta > 0 ? '+' : ''}'
+                  '${PaymentMath.money(entry.cashbackDelta)} $currency',
+                )}';
           final meta = <String>[
             if (entry.createdAt != null)
-              entry.createdAt!.toLocal().toString().substring(0, 16),
+              // Isolated: the date/time pair stays one LTR unit (its two
+              // numeric groups would otherwise swap in the RTL subtitle).
+              bidiIsolateLtr(entry.createdAt!.toLocal().toString().substring(0, 16)),
             if (entry.invoiceNumber != null)
-              '${AppStrings.t('invoice_number', loc)}: ${entry.invoiceNumber}',
+              '${AppStrings.t('invoice_number', loc)}: '
+              '${bidiIsolateLtr(entry.invoiceNumber!)}',
             '${AppStrings.t('loyalty_balance', loc)}: '
-            '${formatLoyaltyPoints(entry.balanceAfterPoints)}',
+            '${bidiIsolateLtr(formatLoyaltyPoints(entry.balanceAfterPoints))}',
             if (entry.note != null && entry.note!.isNotEmpty) entry.note!,
           ].join(' · ');
           return ListTile(
@@ -140,9 +145,13 @@ class _LoyaltyHistoryDialogState extends ConsumerState<LoyaltyHistoryDialog> {
                   ? theme.colorScheme.primary
                   : theme.colorScheme.tertiary,
             ),
+            // Bidi: the Arabic event label stays natural; the signed
+            // points value is one LTR isolate (forced-LTR whole-string
+            // still reverses grouped digits after an Arabic label — W7).
             title: Text(
               '${AppStrings.t(loyaltyEventTypeKey(entry.eventType), loc)}'
-              ' · $points$cashbackPart',
+              ' · ${bidiIsolateLtr(pointsValue)} '
+              '${AppStrings.t('loyalty_points', loc)}$cashbackPart',
               key: Key('loyalty-history-title-$index'),
             ),
             subtitle: meta.isEmpty
@@ -180,16 +189,24 @@ class _LoyaltyHistoryDialogState extends ConsumerState<LoyaltyHistoryDialog> {
                   : Row(
                       children: [
                         Expanded(
+                          // Bidi: Arabic labels natural; each numeric
+                          // segment is its own LTR isolate (W7).
                           child: Text(
                             '${AppStrings.t('loyalty_points', loc)}: '
-                            '${formatLoyaltyPoints(balance.balance!.pointsBalance)}',
+                            '${bidiIsolateLtr(
+                              formatLoyaltyPoints(
+                                balance.balance!.pointsBalance,
+                              ),
+                            )}',
                             style: theme.textTheme.titleSmall,
                           ),
                         ),
                         Text(
                           '${AppStrings.t('loyalty_cashback', loc)}: '
-                          '${PaymentMath.money(balance.balance!.cashbackBalance)} '
-                          '$currency',
+                          '${bidiIsolateLtr(
+                            '${PaymentMath.money(balance.balance!.cashbackBalance)} '
+                            '$currency',
+                          )}',
                           style: theme.textTheme.titleSmall,
                         ),
                       ],

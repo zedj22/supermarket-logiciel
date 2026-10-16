@@ -7,6 +7,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/number_format.dart';
+import '../../core/numeric_text.dart';
 import '../../core/strings.dart';
 import '../../l10n/locale_provider.dart';
 import 'pos_providers.dart';
@@ -98,7 +100,10 @@ class _SaleHistoryDialogState extends ConsumerState<SaleHistoryDialog> {
                                     ),
                                   ),
                                 Text(
-                                  '$date · '
+                                  // Bidi: the date/time pair is one LTR
+                                  // isolate so its two numeric groups never
+                                  // swap next to the Arabic labels.
+                                  '${bidiIsolateLtr(date)} · '
                                   '${AppStrings.t('payment_method', loc)}: '
                                   '${sale.paymentMethod}'
                                   '${sale.customerId != null ? ' · ${AppStrings.t('customer', loc)}' : ''}'
@@ -109,8 +114,8 @@ class _SaleHistoryDialogState extends ConsumerState<SaleHistoryDialog> {
                                 ),
                               ],
                             ),
-                            trailing: Text(
-                              sale.total,
+                            trailing: numericText(
+                              formatGrouped(sale.total),
                               key: Key('sale-row-total-${sale.id}'),
                               style: theme.textTheme.titleSmall,
                             ),

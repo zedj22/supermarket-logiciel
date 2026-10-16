@@ -8,6 +8,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/number_format.dart';
+import '../../core/numeric_text.dart';
 import '../../core/strings.dart';
 import '../../l10n/locale_provider.dart';
 import '../packs/pack_models.dart';
@@ -233,8 +235,8 @@ class _PackPickerDialogState extends ConsumerState<PackPickerDialog> {
                                             overflow: TextOverflow.ellipsis,
                                           )
                                         : null,
-                                  trailing: Text(
-                                    pack.price,
+                                  trailing: numericText(
+                                    formatGrouped(pack.price),
                                     key: Key('pack-option-price-${pack.id}'),
                                     style: theme.textTheme.titleSmall?.copyWith(
                                       color: theme.colorScheme.primary,

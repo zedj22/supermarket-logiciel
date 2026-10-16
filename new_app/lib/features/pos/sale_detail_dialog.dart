@@ -20,6 +20,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/number_format.dart';
+import '../../core/numeric_text.dart';
 import '../../core/strings.dart';
 import '../../l10n/locale_provider.dart';
 import '../auth/auth_provider.dart';
@@ -52,10 +54,13 @@ Future<void> showSaleDetailDialog(
 }
 
 /// Formats a base-unit quantity for display (48 → "48", 4.5 → "4.5").
+/// Integer digits are space-grouped (presentation only).
 String _fmtQty(double value) {
-  if (value == value.roundToDouble()) return value.toInt().toString();
+  if (value == value.roundToDouble()) return formatGrouped(value.toInt().toString());
   final fixed = value.toStringAsFixed(3);
-  return fixed.replaceFirst(RegExp(r'0+$'), '').replaceFirst(RegExp(r'\.$'), '');
+  return formatGrouped(
+    fixed.replaceFirst(RegExp(r'0+$'), '').replaceFirst(RegExp(r'\.$'), ''),
+  );
 }
 
 /// Builds the plain-text receipt (legacy-internal since Phase 15 — the
@@ -87,9 +92,9 @@ String buildReceiptText(SaleDetail sale, String locale) {
         : line.productName;
     buffer.writeln(
       '$title  '
-      '${line.quantity} $unitLabel  '
-      '${line.unitPrice}  '
-      '${line.lineTotal}',
+      '${formatGrouped(line.quantity)} $unitLabel  '
+      '${formatGrouped(line.unitPrice)}  '
+      '${formatGrouped(line.lineTotal)}',
     );
     final baseQty = line.baseQuantity;
     if (baseQty != null) {
@@ -100,13 +105,17 @@ String buildReceiptText(SaleDetail sale, String locale) {
     }
   }
   buffer.writeln('-' * 32);
-  buffer.writeln('${AppStrings.t('subtotal', locale)}: ${sale.subtotal}');
-  buffer.writeln('${AppStrings.t('discount', locale)}: ${sale.discount}');
-  buffer.writeln('${AppStrings.t('total', locale)}: ${sale.total}');
-  buffer.writeln('${AppStrings.t('amount_paid', locale)}: ${sale.paid}');
-  buffer.writeln('${AppStrings.t('change', locale)}: ${sale.change}');
+  buffer.writeln(
+      '${AppStrings.t('subtotal', locale)}: ${formatGrouped(sale.subtotal)}');
+  buffer.writeln(
+      '${AppStrings.t('discount', locale)}: ${formatGrouped(sale.discount)}');
+  buffer.writeln('${AppStrings.t('total', locale)}: ${formatGrouped(sale.total)}');
+  buffer.writeln(
+      '${AppStrings.t('amount_paid', locale)}: ${formatGrouped(sale.paid)}');
+  buffer.writeln(
+      '${AppStrings.t('change', locale)}: ${formatGrouped(sale.change)}');
   if ((double.tryParse(sale.debt) ?? 0) > 0) {
-    buffer.writeln('${AppStrings.t('debt', locale)}: ${sale.debt}');
+    buffer.writeln('${AppStrings.t('debt', locale)}: ${formatGrouped(sale.debt)}');
   }
   buffer.writeln(
     '${AppStrings.t('payment_method', locale)}: ${sale.paymentMethod}',
@@ -256,8 +265,10 @@ class _SaleDetailDialogState extends ConsumerState<SaleDetailDialog> {
     }
     final cashDetail = result == null || result.cashPending == '0'
         ? null
+        // Bidi: Arabic label natural; the amount is one LTR isolate (the
+        // toast detail is rendered in a forced-LTR paragraph — W7).
         : '${AppStrings.t('return_cash_pending', loc)}: '
-            '${result.cashPending}';
+            '${bidiIsolateLtr(result.cashPending)}';
     showPosToast(
       context,
       message: AppStrings.t('void_success', loc),
@@ -291,7 +302,7 @@ class _SaleDetailDialogState extends ConsumerState<SaleDetailDialog> {
           ? AppStrings.t('return_replay', loc)
           : AppStrings.t('return_success', loc),
       detail: '${AppStrings.t('return_refund_total', loc)}: '
-          '${result.refundTotal}',
+          '${bidiIsolateLtr(result.refundTotal)}',
       kind: PosToastKind.success,
       key: const Key('sale-return-success-toast'),
     );
@@ -363,7 +374,7 @@ class _SaleDetailDialogState extends ConsumerState<SaleDetailDialog> {
 
   String _fmtMoney(String raw) {
     final v = double.tryParse(raw);
-    return v == null ? raw : v.toStringAsFixed(2);
+    return v == null ? formatGrouped(raw) : formatGroupedFixed(v, 2);
   }
 
   @override
@@ -567,20 +578,26 @@ class _SaleDetailDialogState extends ConsumerState<SaleDetailDialog> {
                     key: Key('sale-detail-line-variant-$index'),
                     style: theme.textTheme.bodySmall,
                   ),
+                // Bidi: quantity/unit stay natural; the grouped unit price
+                // + currency is ONE LTR isolate (a forced-LTR paragraph
+                // would still reverse the digits — W7).
                 Text(
                   '${line.quantity} $unitLabel × '
-                  '${_fmtMoney(line.unitPrice)} '
-                  '${AppStrings.t('currency', loc)}',
+                  '${bidiIsolateLtr(
+                    '${_fmtMoney(line.unitPrice)} '
+                    '${AppStrings.t('currency', loc)}',
+                  )}',
                   key: Key('sale-detail-line-qty-$index'),
                   style: theme.textTheme.bodyMedium?.copyWith(
                     fontWeight: FontWeight.w500,
                   ),
                 ),
                 if (hasSellingUnit && baseQty != null)
+                  // Bidi: the Arabic "Base:" label stays natural; only the
+                  // grouped quantity is an LTR isolate.
                   Text(
-                    // Short "Base:" label (UX FIX #12 — human QA wording).
                     '${AppStrings.t('base', loc)}: '
-                    '${_fmtQty(baseQty)} '
+                    '${bidiIsolateLtr(_fmtQty(baseQty))} '
                     '${AppStrings.unitLabel(line.productUnit, loc)}',
                     key: Key('sale-detail-line-base-$index'),
                     style: theme.textTheme.labelMedium,
@@ -588,7 +605,7 @@ class _SaleDetailDialogState extends ConsumerState<SaleDetailDialog> {
               ],
             ),
           ),
-          Text(
+          numericText(
             _fmtMoney(line.lineTotal),
             key: Key('sale-detail-line-total-$index'),
             style: theme.textTheme.bodyMedium?.copyWith(
@@ -612,7 +629,7 @@ class _SaleDetailDialogState extends ConsumerState<SaleDetailDialog> {
                   fontWeight: FontWeight.w500,
                 ),
               ),
-              Text(
+              numericText(
                 value,
                 key: key,
                 style: theme.textTheme.bodyMedium?.copyWith(

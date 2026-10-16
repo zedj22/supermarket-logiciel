@@ -5,6 +5,8 @@
 /// [moneyToMilli] / [formatMoney] for exact 3-decimal math.
 library;
 
+import '../../core/number_format.dart';
+
 class CustomerModel {
   final String id;
   final String name;
@@ -173,7 +175,9 @@ final RegExp _moneyPattern = RegExp(r'^(\d+)(?:\.(\d{1,3}))?$');
 /// negative, or more-than-3-decimal input (reject instead of rounding
 /// client-side — the backend is authoritative).
 int? moneyToMilli(String raw) {
-  final value = raw.trim();
+  // Accept space-grouped display values defensively (`'1 500'` → `'1500'`):
+  // grouping is presentation-only and must never change the parsed value.
+  final value = raw.replaceAll(' ', '').trim();
   if (value.isEmpty) return null;
   final match = _moneyPattern.firstMatch(value);
   if (match == null) return null;
@@ -194,9 +198,21 @@ String milliToMoney(int milli) {
   return '${negative ? '-' : ''}$whole.$fraction';
 }
 
-/// Display form without trailing zeros: `'300.000'` → `'300'`,
-/// `'120.500'` → `'120.5'`.
-String formatMoney(String raw) {
+/// Display form: trailing zeros trimmed and thousands grouped with a regular
+/// space — `'300.000'` → `'300'`, `'120.500'` → `'120.5'`,
+/// `'218095577.85'` → `'218 095 577.85'`.
+///
+/// Presentation only — never feed the result into [moneyToMilli] payload
+/// builders without [stripGrouping] (or use [formatMoneyPlain] for values
+/// that will be re-parsed).
+String formatMoney(String raw) => formatGrouped(formatMoneyPlain(raw));
+
+/// Presentation trim WITHOUT thousands grouping: `'300.000'` → `'300'`,
+/// `'120.500'` → `'120.5'`. Output stays a plain decimal string that
+/// [moneyToMilli] and `double.tryParse` accept verbatim — use this (not
+/// [formatMoney]) to prefill editable fields whose text is re-parsed or
+/// sent to the API.
+String formatMoneyPlain(String raw) {
   final value = raw.trim();
   if (!value.contains('.')) return value;
   return value.replaceFirst(RegExp(r'\.?0+$'), '');

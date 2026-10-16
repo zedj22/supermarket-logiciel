@@ -22,6 +22,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/number_format.dart';
+import '../../core/numeric_text.dart';
 import '../../core/strings.dart';
 import '../../l10n/locale_provider.dart';
 import '../pos/pos_models.dart';
@@ -396,21 +398,25 @@ class _ReturnCreateDialogState extends ConsumerState<ReturnCreateDialog> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(title, style: theme.textTheme.bodyMedium),
+                // Bidi: Arabic labels stay natural; each (possibly
+                // grouped) quantity is one LTR isolate (a forced-LTR
+                // whole-string still reverses digits after an Arabic
+                // label — W7).
                 Text(
                   '${AppStrings.t('return_sold_quantity', loc)}: '
-                  '${_fmtQty(sold)} $unit',
+                  '${bidiIsolateLtr(_fmtQty(sold))} $unit',
                   key: Key('return-line-sold-$index'),
                   style: theme.textTheme.bodySmall,
                 ),
                 Text(
                   '${AppStrings.t('return_already', loc)}: '
-                  '${_fmtQty(returned)} $unit',
+                  '${bidiIsolateLtr(_fmtQty(returned))} $unit',
                   key: Key('return-line-returned-$index'),
                   style: theme.textTheme.bodySmall,
                 ),
                 Text(
                   '${AppStrings.t('return_returnable', loc)}: '
-                  '${_fmtQty(remaining)} $unit',
+                  '${bidiIsolateLtr(_fmtQty(remaining))} $unit',
                   key: Key('return-line-remaining-$index'),
                   style: theme.textTheme.bodyMedium?.copyWith(
                     fontWeight: FontWeight.w600,
@@ -487,10 +493,12 @@ class _ReturnCreateDialogState extends ConsumerState<ReturnCreateDialog> {
   }
 
   static String _fmtQty(double value) {
-    if (value == value.roundToDouble()) return value.toInt().toString();
+    if (value == value.roundToDouble()) {
+      return formatGrouped(value.toInt().toString());
+    }
     final fixed = value.toStringAsFixed(3);
-    return fixed
-        .replaceFirst(RegExp(r'0+$'), '')
-        .replaceFirst(RegExp(r'\.$'), '');
+    return formatGrouped(
+      fixed.replaceFirst(RegExp(r'0+$'), '').replaceFirst(RegExp(r'\.$'), ''),
+    );
   }
 }

@@ -8,6 +8,8 @@
 import 'package:flutter/material.dart';
 
 import '../../core/colors.dart';
+import '../../core/number_format.dart';
+import '../../core/numeric_text.dart';
 import '../../core/strings.dart';
 import 'pos_models.dart';
 
@@ -124,8 +126,8 @@ class _PriceRow extends StatelessWidget {
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           Text(label, style: style),
-          Text(
-            value,
+          numericText(
+            formatGrouped(value),
             key: Key(keyPrefix),
             style: style,
           ),

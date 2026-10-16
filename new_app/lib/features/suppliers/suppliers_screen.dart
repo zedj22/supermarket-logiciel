@@ -13,6 +13,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/numeric_text.dart';
 import '../../core/strings.dart';
 import '../../l10n/locale_provider.dart';
 import '../auth/permission_helpers.dart';
@@ -294,7 +295,7 @@ class _SuppliersScreenState extends ConsumerState<SuppliersScreen> {
             mainAxisAlignment: MainAxisAlignment.center,
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              Text(
+              numericText(
                 formatMoney(supplier.balance),
                 key: Key('supplier-balance-$index'),
                 style: theme.textTheme.titleMedium,
@@ -546,9 +547,12 @@ class _SupplierDetailPaneState extends ConsumerState<_SupplierDetailPane> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      // Bidi: Arabic label + amount — the money is its
+                      // own LTR isolate (whole-string LTR would still
+                      // reverse the groups after the Arabic label, W7).
                       Text(
                         '${AppStrings.t('balance', loc)}: '
-                        '${formatMoney(supplier.balance)}',
+                        '${bidiIsolateLtr(formatMoney(supplier.balance))}',
                         key: const Key('supplier-detail-balance'),
                         style: theme.textTheme.headlineSmall,
                       ),
@@ -679,12 +683,14 @@ class _SupplierLedgerSection extends ConsumerWidget {
               AppStrings.t('supplier_entry_type_${entry.entryType}', loc);
           final sign = entry.entryType == 'purchase' ? '+' : '-';
           final meta = <String>[
-            if (entry.entryDate != null) _timestampOf(entry.entryDate),
+            if (entry.entryDate != null)
+              bidiIsolateLtr(_timestampOf(entry.entryDate)),
             if (entry.balanceAfter != null)
               '${AppStrings.t('balance_after', loc)}: '
-              '${formatMoney(entry.balanceAfter!)}',
+              '${bidiIsolateLtr(formatMoney(entry.balanceAfter!))}',
             if (entry.invoiceNumber != null)
-              '${AppStrings.t('invoice_number', loc)}: ${entry.invoiceNumber}',
+              '${AppStrings.t('invoice_number', loc)}: '
+              '${bidiIsolateLtr(entry.invoiceNumber!)}',
             if (entry.userName != null) entry.userName!,
             if (entry.note != null && entry.note!.isNotEmpty) entry.note!,
           ].join(' · ');
@@ -695,8 +701,12 @@ class _SupplierLedgerSection extends ConsumerWidget {
               _iconFor(entry.entryType),
               color: _colorFor(context, entry.entryType),
             ),
+            // Bidi: Arabic type label stays RTL; the signed amount is one
+            // LTR isolate so `+2 000` / `-1 500` never reverse their
+            // groups (whole-string LTR still fails — bidi W7).
             title: Text(
-              '$typeLabel · $sign${formatMoney(entry.amount)}',
+              '$typeLabel · '
+              '${bidiIsolateLtr('$sign${formatMoney(entry.amount)}')}',
               key: Key('supplier-ledger-amount-$index'),
             ),
             subtitle: meta.isEmpty

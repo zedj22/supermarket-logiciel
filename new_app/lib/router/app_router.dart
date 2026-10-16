@@ -31,6 +31,7 @@ import '../features/expenses/expenses_screen.dart';
 import '../features/promotions/promotions_screen.dart';
 import '../features/purchases/purchases_screen.dart';
 import '../features/reports/reports_screen.dart';
+import '../features/zakat/zakat_screen.dart';
 import '../features/settings/settings_screen.dart';
 import '../features/storage/storage_screen.dart';
 import '../features/users/users_screen.dart';
@@ -204,6 +205,11 @@ final routerProvider = Provider<GoRouter>((ref) {
             path: '/reports',
             name: 'reports',
             builder: (context, state) => const ReportsScreen(),
+          ),
+          GoRoute(
+            path: '/zakat',
+            name: 'zakat',
+            builder: (context, state) => const ZakatScreen(),
           ),
           GoRoute(
             path: '/users',

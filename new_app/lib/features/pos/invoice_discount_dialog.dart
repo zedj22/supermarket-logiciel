@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/numeric_text.dart';
 import '../../core/strings.dart';
 import '../../l10n/locale_provider.dart';
 import 'pos_providers.dart';
@@ -73,9 +74,11 @@ class _InvoiceDiscountDialogState extends ConsumerState<InvoiceDiscountDialog> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // Bidi: Arabic label natural; the grouped subtotal is one LTR
+            // isolate (forced-LTR whole-string still reverses it — W7).
             Text(
               '${AppStrings.t('subtotal_label', loc)}: '
-              '${totals.subtotalDisplay}',
+              '${bidiIsolateLtr(totals.subtotalDisplay)}',
               style: theme.textTheme.bodyMedium,
             ),
             const SizedBox(height: 12),

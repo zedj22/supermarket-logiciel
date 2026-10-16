@@ -16,6 +16,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/numeric_text.dart';
 import '../../core/strings.dart';
 import '../../l10n/locale_provider.dart';
 import '../auth/auth_provider.dart';
@@ -547,9 +548,11 @@ class _InvoiceLineDialogState extends ConsumerState<InvoiceLineDialog> {
                   children: [
                     ChoiceChip(
                       key: const Key('invoice-line-ref-regular'),
+                      // Bidi: Arabic label natural; the grouped money is
+                      // one LTR isolate (W7).
                       label: Text(
                         '${AppStrings.t('regular_price', loc)}: '
-                        '${formatDisplayMoney(_regularReference!, loc)}',
+                        '${bidiIsolateLtr(formatDisplayMoney(_regularReference!, loc))}',
                       ),
                       selected: _regularSelected,
                       onSelected: _saving
@@ -559,10 +562,11 @@ class _InvoiceLineDialogState extends ConsumerState<InvoiceLineDialog> {
                     if (_isPlainProductLine)
                       ChoiceChip(
                         key: const Key('invoice-line-ref-wholesale'),
+                        // Bidi: same isolate treatment as the regular chip.
                         label: Text(
                           _wholesaleConfigured
                               ? '${AppStrings.t('wholesale_price', loc)}: '
-                                    '${formatDisplayMoney(_product!.wholesalePrice!, loc)}'
+                                    '${bidiIsolateLtr(formatDisplayMoney(_product!.wholesalePrice!, loc))}'
                               : AppStrings.t('wholesale_price', loc),
                         ),
                         selected: _wholesaleSelected,
@@ -706,10 +710,12 @@ class _InvoiceLineDialogState extends ConsumerState<InvoiceLineDialog> {
               ),
               if (previewLine.lineHtMilli > 0) ...[
                 const SizedBox(height: 12),
+                // Bidi: Arabic labels natural; each grouped money segment
+                // is its own LTR isolate (W7).
                 Text(
                   '${AppStrings.t('line_total', loc)}: '
-                  '${formatDisplayMoney(previewLine.lineHt, loc)}'
-                  '${previewLine.lineTvaMilli > 0 ? ' + ${AppStrings.t('tva', loc)} ${formatDisplayMoney(previewLine.lineTva, loc)}' : ''}',
+                  '${bidiIsolateLtr(formatDisplayMoney(previewLine.lineHt, loc))}'
+                  '${previewLine.lineTvaMilli > 0 ? ' + ${AppStrings.t('tva', loc)} ${bidiIsolateLtr(formatDisplayMoney(previewLine.lineTva, loc))}' : ''}',
                   key: const Key('invoice-line-total'),
                   style: theme.textTheme.titleMedium,
                 ),

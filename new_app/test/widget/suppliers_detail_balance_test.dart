@@ -17,9 +17,11 @@
 //      and the payment action disables at 0 (no negative balance)
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
+import 'package:supermarket_pos/core/numeric_text.dart';
 import 'package:supermarket_pos/core/strings.dart';
 import 'package:supermarket_pos/features/auth/auth_provider.dart';
 import 'package:supermarket_pos/features/auth/credential_storage.dart';
@@ -308,13 +310,15 @@ void main() {
       await openSupplier(tester);
 
       final detail = detailBalanceText(tester);
-      expect(detail.contains('1000'), isTrue, reason: 'detail=$detail');
-      expect(detail.trim().endsWith(': 0'), isFalse, reason: 'detail=$detail');
+      expect(detail.contains(bidiIsolateLtr('1 000')), isTrue,
+          reason: 'detail=$detail');
+      expect(detail.trim().endsWith(': ${bidiIsolateLtr('0')}'), isFalse,
+          reason: 'detail=$detail');
 
       // List and detail agree.
       final listBalance =
           tester.widget<Text>(find.byKey(const Key('supplier-balance-0'))).data!;
-      expect(listBalance, '1000');
+      expect(listBalance, '1 000');
     });
 
     testWidgets(
@@ -332,7 +336,8 @@ void main() {
       );
       final container = await pumpApp(tester, dio);
       await openSupplier(tester);
-      expect(detailBalanceText(tester).endsWith(': 0'), isTrue,
+      expect(detailBalanceText(tester).endsWith(': ${bidiIsolateLtr('0')}'),
+          isTrue,
           reason: 'first open happens before the payable exists');
 
       // Leave the screen (purchase happens elsewhere), then come back.
@@ -343,13 +348,14 @@ void main() {
       await openSupplier(tester);
 
       final detail = detailBalanceText(tester);
-      expect(detail.contains('1000'), isTrue,
+      expect(detail.contains(bidiIsolateLtr('1 000')), isTrue,
           reason: 'stale 0 after reopen — detail=$detail');
-      expect(detail.trim().endsWith(': 0'), isFalse, reason: 'detail=$detail');
+      expect(detail.trim().endsWith(': ${bidiIsolateLtr('0')}'), isFalse,
+          reason: 'detail=$detail');
 
       final listBalance =
           tester.widget<Text>(find.byKey(const Key('supplier-balance-0'))).data!;
-      expect(listBalance, '1000', reason: 'list and detail must agree');
+      expect(listBalance, '1 000', reason: 'list and detail must agree');
     });
   });
 
@@ -407,12 +413,12 @@ void main() {
       final row1 = tester
           .widget<Text>(find.byKey(const Key('supplier-ledger-amount-1')))
           .data!;
-      expect(row1.contains('+1000'), isTrue, reason: 'row1=$row1');
+      expect(row1.contains('+1 000'), isTrue, reason: 'row1=$row1');
 
       // balance_after comes from the backend read model.
       final meta1 =
           tester.widget<Text>(find.byKey(const Key('supplier-ledger-meta-1'))).data!;
-      expect(meta1.contains('1000'), isTrue, reason: 'meta1=$meta1');
+      expect(meta1.contains('1 000'), isTrue, reason: 'meta1=$meta1');
       expect(meta1.contains('PUR-2026-0001'), isTrue, reason: 'meta1=$meta1');
       final meta0 =
           tester.widget<Text>(find.byKey(const Key('supplier-ledger-meta-0'))).data!;
@@ -457,7 +463,8 @@ void main() {
       await pumpApp(tester, dio);
       await openSupplier(tester);
 
-      expect(detailBalanceText(tester).endsWith(': 0'), isTrue);
+      expect(
+          detailBalanceText(tester).endsWith(': ${bidiIsolateLtr('0')}'), isTrue);
       expect(find.byKey(const Key('supplier-ledger-list')), findsOneWidget,
           reason: 'history must remain at balance 0');
 
@@ -468,12 +475,247 @@ void main() {
       final row2 = tester
           .widget<Text>(find.byKey(const Key('supplier-ledger-amount-2')))
           .data!;
-      expect(row2.contains('+1000'), isTrue, reason: 'row2=$row2');
+      expect(row2.contains('+1 000'), isTrue, reason: 'row2=$row2');
 
       // No negative balance: payment action disabled at 0.
       final payButton =
           tester.widget<ElevatedButton>(find.byKey(const Key('supplier-pay-button')));
       expect(payButton.onPressed, isNull);
+    });
+  });
+
+  group('RTL bidi currency order (Windows screenshots acceptance)', () {
+    // Screenshot B: the supplier balance and the purchase/payment ledger
+    // rows must render grouped amounts in logical left-to-right order
+    // (`2 000`, `+2 000`, `-500`) while the Arabic labels and the
+    // sentence stay natural RTL. The app runs in Arabic (RTL) here. Box
+    // assertions use RenderParagraph — real ICU bidi glyph placement
+    // under the Ahem test font — layout evidence, not a Windows golden.
+    double? leftOf(RenderParagraph p, int base, int extent) => p
+        .getBoxesForSelection(
+          TextSelection(baseOffset: base, extentOffset: extent),
+        )
+        .first
+        .left;
+
+    /// True when the isolated [money] segment inside [text] is laid out
+    /// in logical left-to-right order: first digit box left of the last
+    /// digit box, and the last digit left of `DA` when present.
+    bool moneyOrderOk(RenderParagraph p, String text, String money) {
+      // +1 skips the leading LRI so digit offsets line up with the money.
+      final start = text.indexOf(bidiIsolateLtr(money)) + 1;
+      if (start <= 0) return false;
+      final digits = RegExp('[0-9]').allMatches(money).toList();
+      final first = leftOf(
+        p,
+        start + digits.first.start,
+        start + digits.first.start + 1,
+      )!;
+      final last = leftOf(
+        p,
+        start + digits.last.start,
+        start + digits.last.start + 1,
+      )!;
+      if (first > last) return false;
+      final daAt = money.lastIndexOf(' DA');
+      if (daAt >= 0) {
+        final da = leftOf(p, start + daAt + 1, start + daAt + 3)!;
+        if (last > da) return false;
+      }
+      return true;
+    }
+
+    RenderParagraph paragraphOf(WidgetTester tester, Key key) =>
+        tester.renderObject<RenderParagraph>(find.byKey(key));
+
+    testWidgets('supplier balance 2 000 renders in order under RTL',
+        (tester) async {
+      final dio = MockDio();
+      stubRequests(
+        dio,
+        detailSeq: [_supplierJson(balance: '2000.000')],
+        ledgerSeq: [_ledgerBody([])],
+        listBalance: '2000.000',
+      );
+      await pumpApp(tester, dio);
+      await openSupplier(tester);
+
+      final balance = tester
+          .widget<Text>(find.byKey(const Key('supplier-detail-balance')));
+      expect(
+        balance.data,
+        contains(bidiIsolateLtr('2 000')),
+        reason: 'balance amount must be one isolated LTR unit — '
+            'actual=${balance.data}',
+      );
+      // The Arabic "Balance:" label is a plain RTL sentence, not a
+      // forced-LTR paragraph.
+      expect(balance.textDirection, isNull);
+      expect(
+        moneyOrderOk(
+          paragraphOf(tester, const Key('supplier-detail-balance')),
+          balance.data!,
+          '2 000',
+        ),
+        isTrue,
+        reason: 'digits of 2 000 must render left-to-right under RTL',
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'purchase + payment ledger rows: signed amounts and balance-after '
+        'stay in order (screenshot B rows)', (tester) async {
+      final dio = MockDio();
+      stubRequests(
+        dio,
+        detailSeq: [_supplierJson(balance: '1500.000')],
+        ledgerSeq: [
+          _ledgerBody([
+            _ledgerEntry(
+              id: 'e2',
+              type: 'payment',
+              amount: '500.000',
+              balanceAfter: '1500.000',
+              note: 'cash',
+            ),
+            _ledgerEntry(
+              id: 'e1',
+              type: 'purchase',
+              amount: '2000.000',
+              balanceAfter: '2000.000',
+              invoice: 'PUR-2026-0001',
+            ),
+          ]),
+        ],
+        listBalance: '1500.000',
+      );
+      await pumpApp(tester, dio);
+      await openSupplier(tester);
+
+      // Row 0 — outgoing payment: "-500" as one LTR unit.
+      final row0 = tester
+          .widget<Text>(find.byKey(const Key('supplier-ledger-amount-0')));
+      expect(row0.data, contains(bidiIsolateLtr('-500')),
+          reason: 'row0=${row0.data}');
+      expect(
+        moneyOrderOk(
+          paragraphOf(tester, const Key('supplier-ledger-amount-0')),
+          row0.data!,
+          '-500',
+        ),
+        isTrue,
+      );
+
+      // Row 1 — purchase: "+2 000" as one LTR unit.
+      final row1 = tester
+          .widget<Text>(find.byKey(const Key('supplier-ledger-amount-1')));
+      expect(row1.data, contains(bidiIsolateLtr('+2 000')),
+          reason: 'row1=${row1.data}');
+      expect(
+        moneyOrderOk(
+          paragraphOf(tester, const Key('supplier-ledger-amount-1')),
+          row1.data!,
+          '+2 000',
+        ),
+        isTrue,
+      );
+
+      // Meta row 1 — Arabic description with invoice reference, date and
+      // the balance-after amount.
+      final meta1 = tester
+          .widget<Text>(find.byKey(const Key('supplier-ledger-meta-1')));
+      expect(meta1.data, contains(bidiIsolateLtr('2 000')),
+          reason: 'meta1=${meta1.data}'); // balance_after
+      expect(meta1.data, contains('PUR-2026-0001'),
+          reason: 'meta1=${meta1.data}');
+      expect(
+        meta1.data,
+        contains(bidiIsolateLtr('2026-09-27 10:00:00')),
+        reason: 'the timestamp must stay one LTR unit — meta1=${meta1.data}',
+      );
+      expect(meta1.textDirection, isNull);
+      expect(
+        moneyOrderOk(
+          paragraphOf(tester, const Key('supplier-ledger-meta-1')),
+          meta1.data!,
+          '2 000',
+        ),
+        isTrue,
+      );
+      expect(
+        moneyOrderOk(
+          paragraphOf(tester, const Key('supplier-ledger-meta-1')),
+          meta1.data!,
+          '2026-09-27 10:00:00',
+        ),
+        isTrue,
+      );
+
+      // Meta row 0 — balance after the payment.
+      final meta0 = tester
+          .widget<Text>(find.byKey(const Key('supplier-ledger-meta-0')));
+      expect(meta0.data, contains(bidiIsolateLtr('1 500')),
+          reason: 'meta0=${meta0.data}');
+      expect(
+        moneyOrderOk(
+          paragraphOf(tester, const Key('supplier-ledger-meta-0')),
+          meta0.data!,
+          '1 500',
+        ),
+        isTrue,
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'payment dialog: balance line and remaining-after stay in order '
+        'when an amount is typed', (tester) async {
+      final dio = MockDio();
+      stubRequests(
+        dio,
+        detailSeq: [_supplierJson(balance: '2000.000')],
+        ledgerSeq: [_ledgerBody([])],
+        listBalance: '2000.000',
+      );
+      await pumpApp(tester, dio);
+      await openSupplier(tester);
+
+      await tester.tap(find.byKey(const Key('supplier-pay-button')));
+      await tester.pumpAndSettle();
+
+      final balance = tester
+          .widget<Text>(find.byKey(const Key('supplier-payment-balance')));
+      expect(balance.data, contains(bidiIsolateLtr('2 000')),
+          reason: 'balance=${balance.data}');
+      expect(
+        moneyOrderOk(
+          paragraphOf(tester, const Key('supplier-payment-balance')),
+          balance.data!,
+          '2 000',
+        ),
+        isTrue,
+      );
+
+      await tester.enterText(
+        find.byKey(const Key('supplier-amount-field')),
+        '500',
+      );
+      await tester.pump();
+
+      final remaining = tester
+          .widget<Text>(find.byKey(const Key('supplier-remaining')));
+      expect(remaining.data, contains(bidiIsolateLtr('1 500')),
+          reason: 'remaining=${remaining.data}');
+      expect(
+        moneyOrderOk(
+          paragraphOf(tester, const Key('supplier-remaining')),
+          remaining.data!,
+          '1 500',
+        ),
+        isTrue,
+      );
+      expect(tester.takeException(), isNull);
     });
   });
 }

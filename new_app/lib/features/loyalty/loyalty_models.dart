@@ -6,6 +6,8 @@
 // depending on the serializer, so money parsing accepts both.
 import 'package:flutter/foundation.dart';
 
+import '../../core/number_format.dart';
+
 /// Milestone: every 100 points unlock exactly one reward (mirrors the
 /// server's `POINTS_PER_REWARD`; display-only — the server still owns
 /// every computation).
@@ -27,13 +29,15 @@ int loyaltyPoints(dynamic value) {
 }
 
 /// Compact points display: `60` → `"60"`, `0.5` → `"0.5"` (server points
-/// may arrive quantized like `"60.000"`).
+/// may arrive quantized like `"60.000"`). Large counts are space-grouped.
 String formatLoyaltyPoints(double value) {
-  if (value == value.roundToDouble()) return value.toInt().toString();
+  if (value == value.roundToDouble()) {
+    return formatGrouped(value.toInt().toString());
+  }
   final fixed = value.toStringAsFixed(2);
-  return fixed
-      .replaceFirst(RegExp(r'0+$'), '')
-      .replaceFirst(RegExp(r'\.$'), '');
+  return formatGrouped(
+    fixed.replaceFirst(RegExp(r'0+$'), '').replaceFirst(RegExp(r'\.$'), ''),
+  );
 }
 
 /// `GET/PUT /api/v1/loyalty/settings` — the store's loyalty rules.

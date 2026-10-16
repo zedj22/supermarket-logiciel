@@ -8,6 +8,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/numeric_text.dart';
 import '../../core/strings.dart';
 import '../../l10n/locale_provider.dart';
 import '../auth/permission_helpers.dart';
@@ -311,13 +312,13 @@ class _PurchaseDetailDialogState extends ConsumerState<PurchaseDetailDialog> {
                       '${purchase.supplierName}',
                     if (purchase.purchaseDate != null)
                       '${AppStrings.t('date', loc)}: '
-                      '${_timestampOf(purchase.purchaseDate)}',
+                      '${bidiIsolateLtr(_timestampOf(purchase.purchaseDate))}',
                     if (purchase.receivedAt != null)
                       '${AppStrings.t('received_at', loc)}: '
-                      '${_timestampOf(purchase.receivedAt)}',
+                      '${bidiIsolateLtr(_timestampOf(purchase.receivedAt))}',
                     if (purchase.cancelledAt != null)
                       '${AppStrings.t('cancelled_at', loc)}: '
-                      '${_timestampOf(purchase.cancelledAt)}',
+                      '${bidiIsolateLtr(_timestampOf(purchase.cancelledAt))}',
                   ].join(' · '),
                   key: const Key('purchase-detail-meta'),
                   style: theme.textTheme.bodySmall,
@@ -404,15 +405,19 @@ class _PurchaseDetailDialogState extends ConsumerState<PurchaseDetailDialog> {
                                 ].join(' · '),
                                 key: Key('purchase-detail-line-name-$index'),
                               ),
+                              // Bidi: the optional Arabic "Base:" segment
+                              // stays natural; each grouped amount is its
+                              // own LTR isolate (whole-string LTR still
+                              // reverses digits after Arabic — W7).
                               subtitle: Text(
                                 '${line.quantity} $unit × '
-                                '${formatMoney(line.unitCost)}'
+                                '${bidiIsolateLtr(formatMoney(line.unitCost))}'
                                 '${line.baseQtyEquivalent == null ? '' : ' '
                                     '· ${AppStrings.t('base', loc)}: '
-                                    '${line.baseQtyEquivalent}'}',
+                                    '${bidiIsolateLtr(line.baseQtyEquivalent!)}'}',
                                 key: Key('purchase-detail-line-math-$index'),
                               ),
-                              trailing: Text(
+                              trailing: numericText(
                                 formatMoney(line.lineTotal),
                                 key: Key('purchase-detail-line-total-$index'),
                                 style: theme.textTheme.titleSmall?.copyWith(
@@ -497,7 +502,7 @@ class _DetailTotal extends StatelessWidget {
               AppStrings.t(labelKey, loc),
               style: theme.textTheme.bodySmall,
             ),
-            Text(
+            numericText(
               value,
               key: Key('$testKey-value'),
               style: emphasized

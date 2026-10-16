@@ -12,10 +12,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:supermarket_pos/core/numeric_text.dart';
 import 'package:supermarket_pos/features/pos/pos_models.dart';
 import 'package:supermarket_pos/features/products/models.dart';
 import 'package:supermarket_pos/features/products/quantity_dialog.dart';
 import 'package:supermarket_pos/l10n/locale_provider.dart';
+
+/// Mirrors the LTR isolate the app wraps quantity segments in (W7).
+String _m(String v) => bidiIsolateLtr(v);
 
 /// kg selling unit — weight, explicit price, 5 kg per unit.
 const kgUnit = SellingUnitModel(
@@ -238,10 +242,10 @@ void main() {
         findsOneWidget,
       );
       // 'Computed quantity: 0.4 Kg'
-      expect(find.text('Computed quantity: 0.4 Kg'), findsOneWidget);
+      expect(find.text('Computed quantity: ${_m('0.4')} Kg'), findsOneWidget);
       // Exact division → actual == requested, no requested-amount note.
-      expect(find.text('Line total: 100'), findsOneWidget);
-      expect(find.byKey(const Key('amount-requested')), findsNothing);
+    expect(find.text('Line total: ${_m('100')}'), findsOneWidget);
+    expect(find.byKey(const Key('amount-requested')), findsNothing);
 
       await tester.tap(find.byKey(const Key('quantity-submit')));
       await tester.pumpAndSettle();
@@ -283,10 +287,10 @@ void main() {
       await tester.enterText(find.byKey(const Key('amount-input')), '100');
       await tester.pump();
 
-      expect(find.text('Computed quantity: 0.333 Kg'), findsOneWidget);
+      expect(find.text('Computed quantity: ${_m('0.333')} Kg'), findsOneWidget);
       // The ACTUAL charge from the rounded quantity — never a silent 100.
-      expect(find.text('Line total: 99.9'), findsOneWidget);
-      expect(find.text('Requested amount: 100'), findsOneWidget);
+    expect(find.text('Line total: ${_m('99.9')}'), findsOneWidget);
+    expect(find.text('Requested amount: ${_m('100')}'), findsOneWidget);
 
       await tester.tap(find.byKey(const Key('quantity-submit')));
       await tester.pumpAndSettle();
@@ -322,7 +326,7 @@ void main() {
       await tester.pump();
       await tester.enterText(find.byKey(const Key('amount-input')), '50');
       await tester.pump();
-      expect(find.text('Computed quantity: 2.5 Meter'), findsOneWidget);
+      expect(find.text('Computed quantity: ${_m('2.5')} Meter'), findsOneWidget);
 
       await tester.tap(find.byKey(const Key('quantity-submit')));
       await tester.pumpAndSettle();
@@ -367,7 +371,7 @@ void main() {
       await tester.enterText(find.byKey(const Key('amount-input')), '2000');
       await tester.pump();
       // In SELLING units (sacks) — not base kilograms.
-      expect(find.text('Computed quantity: 2 Sack'), findsOneWidget);
+      expect(find.text('Computed quantity: ${_m('2')} Sack'), findsOneWidget);
 
       await tester.tap(find.byKey(const Key('quantity-submit')));
       await tester.pumpAndSettle();

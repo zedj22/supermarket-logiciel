@@ -23,6 +23,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/numeric_text.dart';
 import '../../core/strings.dart';
 import '../../l10n/locale_provider.dart';
 import '../pos/pos_toast.dart';
@@ -716,12 +717,17 @@ class _InvoiceFormDialogState extends ConsumerState<InvoiceFormDialog> {
                             ? (_lines[i].productName ?? '')
                             : _lines[i].description,
                       ),
+                      // Bidi: quantity stays natural; each grouped money
+                      // / percent segment is its own LTR isolate (the
+                      // Arabic "line total" label would otherwise reverse
+                      // the digits — W7).
                       subtitle: Text(
-                        '${_lines[i].quantity} × ${formatDisplayMoney(_lines[i].unitPriceHt, loc)}'
-                        '${_lines[i].tvaRate != null ? ' · TVA ${_lines[i].tvaRate}%' : ''}'
-                        '${_lines[i].discountPct != '0' ? ' · -${_lines[i].discountPct}%' : ''}'
+                        '${_lines[i].quantity} × '
+                        '${bidiIsolateLtr(formatDisplayMoney(_lines[i].unitPriceHt, loc))}'
+                        '${_lines[i].tvaRate != null ? ' · TVA ${bidiIsolateLtr('${_lines[i].tvaRate}%')}' : ''}'
+                        '${_lines[i].discountPct != '0' ? ' · ${bidiIsolateLtr('-${_lines[i].discountPct}%')}' : ''}'
                         ' · ${AppStrings.t('line_total', loc)}: '
-                        '${formatDisplayMoney(_lines[i].lineHt, loc)}',
+                        '${bidiIsolateLtr(formatDisplayMoney(_lines[i].lineHt, loc))}',
                       ),
                       trailing: Row(
                         mainAxisSize: MainAxisSize.min,
@@ -774,11 +780,13 @@ class _InvoiceFormDialogState extends ConsumerState<InvoiceFormDialog> {
                 )
               else
                 // Display-only fallback before the first preview.
+                // Bidi: Arabic labels natural; each grouped total is its
+                // own LTR isolate (W7).
                 Text(
                   '${AppStrings.t('subtotal', loc)}: '
-                  '${formatDisplayMoney(milliToMoney(_subtotalHtMilli), loc)} · '
+                  '${bidiIsolateLtr(formatDisplayMoney(milliToMoney(_subtotalHtMilli), loc))} · '
                   '${AppStrings.t('tva', loc)}: '
-                  '${formatDisplayMoney(milliToMoney(_subtotalTvaMilli), loc)}',
+                  '${bidiIsolateLtr(formatDisplayMoney(milliToMoney(_subtotalTvaMilli), loc))}',
                   key: const Key('invoice-form-display-totals'),
                   style: theme.textTheme.titleSmall,
                 ),

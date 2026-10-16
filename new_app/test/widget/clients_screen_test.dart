@@ -10,6 +10,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
+import 'package:supermarket_pos/core/numeric_text.dart';
 import 'package:supermarket_pos/core/strings.dart';
 import 'package:supermarket_pos/features/auth/auth_provider.dart';
 import 'package:supermarket_pos/features/auth/credential_storage.dart';
@@ -18,6 +19,10 @@ import 'package:supermarket_pos/features/clients/clients_screen.dart';
 import 'package:supermarket_pos/main.dart';
 import 'package:supermarket_pos/network/api_client.dart';
 import 'package:supermarket_pos/router/app_router.dart';
+
+/// Wraps a value in the same LTR isolate the app renders (W7: mixed
+/// Arabic + number strings).
+String _m(String v) => bidiIsolateLtr(v);
 
 class MockDio extends Mock implements Dio {}
 
@@ -493,7 +498,7 @@ void main() {
       expect(find.text('Bob Wholesale'), findsOneWidget);
       expect(find.byKey(const Key('client-balance-0')), findsOneWidget);
       // formatMoney('1500.000') → '1500'
-      expect(find.text('1500'), findsOneWidget);
+      expect(find.text('1 500'), findsOneWidget);
       expect(find.byKey(const Key('clients-total')), findsOneWidget);
       expect(
         find.text('${AppStrings.t('total', 'ar')}: 2'),
@@ -583,10 +588,10 @@ void main() {
         find.text('Alice Market'),
         findsWidgets,
       );
-      // balance card: 'Balance: 1500'
+      // balance card: 'Balance: 1 500'
       expect(
         find.text(
-          '${AppStrings.t('balance', 'ar')}: 1500',
+          '${AppStrings.t('balance', 'ar')}: ${_m('1 500')}',
         ),
         findsOneWidget,
       );
@@ -622,21 +627,21 @@ void main() {
       );
       await openAlice(tester);
 
-      // Newest first: Pay All payment -> full-payment label, '-1000'.
+      // Newest first: Pay All payment -> full-payment label, '-1 000'.
       expect(
         find.text(
-          '${AppStrings.t('entry_type_full_payment', 'ar')} · -1000',
+          '${AppStrings.t('entry_type_full_payment', 'ar')} · ${_m('-1 000')}',
         ),
         findsOneWidget,
       );
       // Normal partial payment keeps the payment label, '-500'.
       expect(
-        find.text('${AppStrings.t('entry_type_payment', 'ar')} · -500'),
+        find.text('${AppStrings.t('entry_type_payment', 'ar')} · ${_m('-500')}'),
         findsOneWidget,
       );
-      // Credit sale: '+1500' with the spec label.
+      // Credit sale: '+1 500' with the spec label.
       expect(
-        find.text('${AppStrings.t('entry_type_sale', 'ar')} · +1500'),
+        find.text('${AppStrings.t('entry_type_sale', 'ar')} · ${_m('+1 500')}'),
         findsOneWidget,
       );
       expect(tester.takeException(), isNull);
@@ -661,14 +666,14 @@ void main() {
       final saleMeta = tester
           .widget<Text>(find.byKey(const Key('client-hist-meta-2')))
           .data!;
-      expect(saleMeta, contains('2026-02-01 10:00:00'));
+      expect(saleMeta, contains(_m('2026-02-01 10:00:00')));
       expect(
         saleMeta,
-        contains('${AppStrings.t('balance_after', 'ar')}: 1500'),
+        contains('${AppStrings.t('balance_after', 'ar')}: ${_m('1 500')}'),
       );
       expect(
         saleMeta,
-        contains('${AppStrings.t('invoice_number', 'ar')}: INV-0001'),
+        contains('${AppStrings.t('invoice_number', 'ar')}: ${_m('INV-0001')}'),
       );
       expect(saleMeta, contains('Admin'));
       expect(saleMeta, contains('credit sale'));
@@ -677,10 +682,10 @@ void main() {
       final payAllMeta = tester
           .widget<Text>(find.byKey(const Key('client-hist-meta-0')))
           .data!;
-      expect(payAllMeta, contains('2026-02-03 10:00:00'));
+      expect(payAllMeta, contains(_m('2026-02-03 10:00:00')));
       expect(
         payAllMeta,
-        contains('${AppStrings.t('balance_after', 'ar')}: 0'),
+        contains('${AppStrings.t('balance_after', 'ar')}: ${_m('0')}'),
       );
       expect(payAllMeta, contains('Pay all'));
     });
@@ -709,7 +714,7 @@ void main() {
       await openAlice(tester);
 
       expect(
-        find.text('${AppStrings.t('balance', 'ar')}: 0'),
+        find.text('${AppStrings.t('balance', 'ar')}: ${_m('0')}'),
         findsOneWidget,
       );
       // Full lifecycle (3 entries) still rendered with a zero balance.
@@ -839,7 +844,7 @@ void main() {
       expect(find.byKey(const Key('debt-amount-error')), findsNothing);
       expect(
         find.text(
-          '${AppStrings.t('remaining_after', 'ar')}: 1000',
+          '${AppStrings.t('remaining_after', 'ar')}: ${_m('1 000')}',
         ),
         findsOneWidget,
       );
@@ -1057,14 +1062,14 @@ void main() {
         find.byKey(const Key('client-balance-0')),
         findsOneWidget,
       );
-      expect(find.text('1500'), findsWidgets);
+      expect(find.text('1 500'), findsWidgets);
       expect(
         find.byKey(const Key('client-detail-balance')),
         findsOneWidget,
       );
       expect(
         find.text(
-          '${AppStrings.t('balance', 'ar')}: 1500',
+          '${AppStrings.t('balance', 'ar')}: ${_m('1 500')}',
         ),
         findsOneWidget,
       );
@@ -1091,7 +1096,7 @@ void main() {
       );
       await openAlice(tester);
       expect(
-        find.text('${AppStrings.t('balance', 'ar')}: 1500'),
+        find.text('${AppStrings.t('balance', 'ar')}: ${_m('1 500')}'),
         findsOneWidget,
       );
 
@@ -1109,7 +1114,7 @@ void main() {
         reason: 'silent refresh must not flash a spinner',
       );
       expect(
-        find.text('${AppStrings.t('balance', 'ar')}: 2034'),
+        find.text('${AppStrings.t('balance', 'ar')}: ${_m('2 034')}'),
         findsOneWidget,
       );
       expect(
@@ -1135,7 +1140,7 @@ void main() {
       );
       await openAlice(tester);
       expect(
-        find.text('${AppStrings.t('balance', 'ar')}: 1500'),
+        find.text('${AppStrings.t('balance', 'ar')}: ${_m('1 500')}'),
         findsOneWidget,
       );
 
@@ -1172,7 +1177,7 @@ void main() {
         await openAlice(tester);
       }
       expect(
-        find.text('${AppStrings.t('balance', 'ar')}: 1400'),
+        find.text('${AppStrings.t('balance', 'ar')}: ${_m('1 400')}'),
         findsOneWidget,
       );
       expect(tester.takeException(), isNull);
@@ -1202,7 +1207,7 @@ void main() {
 
       // Aggregate = 1500 + 500 (two credit sales) = 2000.
       expect(
-        find.text('${AppStrings.t('balance', 'ar')}: 2000'),
+        find.text('${AppStrings.t('balance', 'ar')}: ${_m('2 000')}'),
         findsOneWidget,
       );
       expect(find.byKey(const Key('client-hist-amount-0')), findsOneWidget);
@@ -1216,7 +1221,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(
-        find.text('${AppStrings.t('balance', 'ar')}: 1500'),
+        find.text('${AppStrings.t('balance', 'ar')}: ${_m('1 500')}'),
         findsOneWidget,
       );
       // No debt row disappeared and no row was re-labelled as "paid".
