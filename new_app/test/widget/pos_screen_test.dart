@@ -11,6 +11,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:dio/dio.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -9867,4 +9868,1869 @@ void main() {
     });
   });
 
+  group('POS layout switch', () {
+    ProviderContainer containerOf(WidgetTester tester) =>
+        ProviderScope.containerOf(
+          tester.element(find.byKey(const Key('pos-screen'))),
+          listen: false,
+        );
+
+    void addLine(WidgetTester tester, CartLine line) {
+      containerOf(tester).read(posCartProvider.notifier).addLine(line);
+    }
+
+    Future<void> focusSearchField(WidgetTester tester) async {
+      await tester.tap(find.byKey(const Key('pos-search-field')));
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+
+    Future<void> pressPlus(WidgetTester tester) async {
+      await tester.sendKeyEvent(LogicalKeyboardKey.equal, character: '+');
+      await tester.pump();
+    }
+
+    Future<void> pressStar(WidgetTester tester) async {
+      await tester.sendKeyEvent(LogicalKeyboardKey.digit8, character: '*');
+      await tester.pump();
+    }
+
+    String? focusedFieldKey(WidgetTester tester) {
+      final context = FocusManager.instance.primaryFocus?.context;
+      if (context == null) return null;
+      final field = context.widget is TextField
+          ? context.widget as TextField
+          : context.findAncestorWidgetOfExactType<TextField>();
+      final key = field?.key;
+      return key is ValueKey<String> ? key.value : null;
+    }
+
+    /// Horizontal centers — the switch swaps the panels' left/right order.
+    double catalogCenterX(WidgetTester tester) =>
+        tester.getRect(find.byKey(const Key('pos-search-field'))).center.dx;
+
+    double cartCenterX(WidgetTester tester) =>
+        tester.getRect(find.byKey(const Key('pos-cart-panel'))).center.dx;
+
+    Future<void> toggleLayout(WidgetTester tester) async {
+      await tester.tap(find.byKey(const Key('pos-layout-switch')));
+      await tester.pumpAndSettle();
+    }
+
+    const bread = CartLine(
+      productId: 'p1',
+      name: 'Bread',
+      quantity: '2',
+      unitPrice: '10',
+    );
+
+    testWidgets('default layout is standard (cart on the right)',
+        (tester) async {
+      await _pumpApp(tester, dio: dio);
+      await tester.pump(const Duration(milliseconds: 500));
+      expect(find.byKey(const Key('pos-layout-switch')), findsOneWidget);
+      expect(cartCenterX(tester), greaterThan(catalogCenterX(tester)));
+      // Standard mode keeps the stacked card (summary line present).
+      addLine(tester, bread);
+      await tester.pump();
+      expect(
+        find.byKey(Key('cart-line-summary-${bread.key}')),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('tap toggle swaps catalog and cart to reversed',
+        (tester) async {
+      await _pumpApp(tester, dio: dio);
+      await tester.pump(const Duration(milliseconds: 500));
+      addLine(tester, bread);
+      await tester.pump();
+
+      await toggleLayout(tester);
+
+      expect(cartCenterX(tester), lessThan(catalogCenterX(tester)));
+      // Reversed mode renders the dense row (price cell; no card summary).
+      expect(find.byKey(Key('cart-line-price-${bread.key}')), findsOneWidget);
+      expect(find.byKey(Key('cart-line-summary-${bread.key}')), findsNothing);
+      expect(find.byKey(const Key('pos-cart-panel')), findsOneWidget);
+      expect(find.byKey(const Key('pos-pay-button')), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('second tap restores the standard layout', (tester) async {
+      await _pumpApp(tester, dio: dio);
+      await tester.pump(const Duration(milliseconds: 500));
+
+      await toggleLayout(tester);
+      expect(cartCenterX(tester), lessThan(catalogCenterX(tester)));
+
+      await toggleLayout(tester);
+      expect(cartCenterX(tester), greaterThan(catalogCenterX(tester)));
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('cart lines, selection and qty text survive the switch',
+        (tester) async {
+      await _pumpApp(tester, dio: dio);
+      await tester.pump(const Duration(milliseconds: 500));
+      // Real catalog add (screen-driven) — leaves focus on the qty field.
+      await tester.tap(find.byKey(Key('pos-product-$_productId')));
+      await tester.pumpAndSettle();
+      final cart = containerOf(tester).read(posCartProvider);
+      final key = cart.lines.single.key;
+      final qtyBefore = tester.widget<TextField>(
+        find.byKey(Key('cart-line-qty-$key')),
+      );
+      expect(qtyBefore.controller!.text, '1');
+      expect(focusedFieldKey(tester), 'cart-line-qty-$key');
+
+      await toggleLayout(tester);
+
+      final afterCart = containerOf(tester).read(posCartProvider);
+      expect(afterCart.lines.single.quantity, '1');
+      final qtyAfter = tester.widget<TextField>(
+        find.byKey(Key('cart-line-qty-$key')),
+      );
+      // The tile State is rebuilt with the new element tree; the qty text
+      // is re-seeded from the committed quantity, never lost.
+      expect(qtyAfter.controller!.text, '1');
+      // Selection follows the provider (lastActiveKey), not the tile State.
+      expect(
+        find.byKey(Key('cart-line-selected-$key')),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'barcode scan add in reversed mode selects and focuses the new line',
+        (tester) async {
+      await _pumpApp(tester, dio: dio);
+      await tester.pump(const Duration(milliseconds: 500));
+      await toggleLayout(tester);
+
+      await focusSearchField(tester);
+      await tester.enterText(
+        find.byKey(const Key('pos-search-field')),
+        '111',
+      );
+      await tester.pump(const Duration(milliseconds: 300));
+      // Real devices translate Enter into TextInputAction.done.
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+
+      final cart = containerOf(tester).read(posCartProvider);
+      expect(cart.lines, hasLength(1));
+      final key = cart.lines.single.key;
+      expect(cart.lastActiveKey, key);
+      expect(find.byKey(Key('cart-line-selected-$key')), findsOneWidget);
+      expect(focusedFieldKey(tester), 'cart-line-qty-$key');
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('keyboard shortcuts (+, *) target the selected line in '
+        'reversed mode', (tester) async {
+      await _pumpApp(tester, dio: dio);
+      await tester.pump(const Duration(milliseconds: 500));
+      await toggleLayout(tester);
+      addLine(tester, bread);
+      await tester.pump();
+
+      await pressPlus(tester);
+      expect(
+        containerOf(tester).read(posCartProvider).lines.single.quantity,
+        '3',
+      );
+
+      await pressStar(tester);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('qty-multiplier-dialog')), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('many lines scroll vertically inside the dense table',
+        (tester) async {
+      await _pumpApp(tester, dio: dio);
+      await tester.pump(const Duration(milliseconds: 500));
+      await toggleLayout(tester);
+      for (var i = 0; i < 40; i++) {
+        addLine(
+          tester,
+          CartLine(
+            productId: 'p$i',
+            name: 'Line $i',
+            quantity: '1',
+            unitPrice: '1',
+          ),
+        );
+      }
+      await tester.pump();
+
+      expect(find.byKey(const Key('pos-cart-lines')), findsOneWidget);
+      await tester.drag(
+        find.byKey(const Key('pos-cart-lines')),
+        const Offset(0, -400),
+      );
+      await tester.pump();
+      expect(find.byKey(const Key('pos-cart-panel')), findsOneWidget);
+      expect(find.byKey(const Key('pos-pay-button')), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('reversed mode compacts the cart chrome; TOTAL and PAY stay '
+        'prominent', (tester) async {
+      await _pumpApp(tester, dio: dio);
+      await tester.pump(const Duration(milliseconds: 500));
+
+      Size sizeOf(Key k) => tester.getSize(find.byKey(k));
+      final stdHeader = sizeOf(const Key('pos-cart-header'));
+      final stdCustomer = sizeOf(const Key('pos-customer-row'));
+      final stdHold = sizeOf(const Key('pos-hold-button'));
+      final stdActions = sizeOf(const Key('pos-cart-actions'));
+      final stdTotals = sizeOf(const Key('pos-totals-panel'));
+      final stdPay = sizeOf(const Key('pos-pay-button'));
+
+      await toggleLayout(tester);
+
+      final revHeader = sizeOf(const Key('pos-cart-header'));
+      final revCustomer = sizeOf(const Key('pos-customer-row'));
+      final revHold = sizeOf(const Key('pos-hold-button'));
+      final revActions = sizeOf(const Key('pos-cart-actions'));
+      final revTotals = sizeOf(const Key('pos-totals-panel'));
+      final revPay = sizeOf(const Key('pos-pay-button'));
+
+      // Header/customer rows give their slack back to the lines region
+      // (72 → 56, 52 → 44).
+      expect(revHeader.height, lessThan(stdHeader.height));
+      expect(revHeader.height, inInclusiveRange(50, 56));
+      expect(revCustomer.height, lessThan(stdCustomer.height));
+      expect(revCustomer.height, greaterThanOrEqualTo(44));
+      // Action buttons (Hold/F7/F9/F10 rows): 46 → 40, whole block 112 → 88.
+      expect(revHold.height, lessThan(stdHold.height));
+      expect(revHold.height, inInclusiveRange(36, 40));
+      expect(revActions.height, lessThan(stdActions.height));
+      // Totals panel trims padding/row gaps only…
+      expect(revTotals.height, lessThan(stdTotals.height));
+      // …while TOTAL and PAY keep their prominence (60px PAY, unchanged).
+      expect(revPay.height, greaterThanOrEqualTo(56));
+      expect(revPay.height, greaterThanOrEqualTo(stdPay.height));
+
+      // Labels stay readable: every action button still renders its text.
+      for (final key in [
+        const Key('pos-discount-button'),
+        const Key('pos-hold-button'),
+        const Key('pos-holds-button'),
+        const Key('pos-history-button'),
+      ]) {
+        expect(
+          find.descendant(of: find.byKey(key), matching: find.byType(Text)),
+          findsWidgets,
+          reason: '$key keeps its visible label',
+        );
+      }
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('compact chrome holds in AR RTL and FR LTR reversed mode',
+        (tester) async {
+      final cases = <(TextDirection, AppLocale)>[
+        (TextDirection.rtl, AppLocale.ar),
+        (TextDirection.ltr, AppLocale.fr),
+      ];
+      for (final c in cases) {
+        await tester.pumpWidget(const SizedBox());
+        await _pumpApp(
+          tester,
+          dio: dio,
+          direction: c.$1,
+          locale: c.$2,
+        );
+        await tester.pump(const Duration(milliseconds: 500));
+        await toggleLayout(tester);
+
+        final hold =
+            tester.getSize(find.byKey(const Key('pos-hold-button')));
+        expect(hold.height, inInclusiveRange(36, 40), reason: '${c.$2}');
+        expect(
+          tester.getSize(find.byKey(const Key('pos-cart-header'))).height,
+          inInclusiveRange(50, 56),
+          reason: '${c.$2}',
+        );
+        expect(find.byKey(const Key('pos-cart-panel')), findsOneWidget);
+        expect(tester.takeException(), isNull, reason: '${c.$2}');
+      }
+    });
+
+    testWidgets('overflowing dense list scrolls the last row fully into view '
+        'above the checkout section', (tester) async {
+      await _pumpApp(tester, dio: dio, size: const Size(1280, 800));
+      await tester.pump(const Duration(milliseconds: 500));
+      await toggleLayout(tester);
+      for (var i = 0; i < 40; i++) {
+        addLine(
+          tester,
+          CartLine(
+            productId: 'p$i',
+            name: 'Line $i',
+            quantity: '1',
+            unitPrice: '1',
+          ),
+        );
+      }
+      await tester.pump();
+
+      await tester.drag(
+        find.byKey(const Key('pos-cart-lines')),
+        const Offset(0, -5000),
+      );
+      await tester.pumpAndSettle();
+
+      final lines =
+          tester.getRect(find.byKey(const Key('pos-cart-lines')));
+      final actions =
+          tester.getRect(find.byKey(const Key('pos-cart-actions')));
+      final totals =
+          tester.getRect(find.byKey(const Key('pos-totals-panel')));
+      final cart = containerOf(tester).read(posCartProvider);
+      expect(cart.lines.length, greaterThanOrEqualTo(40));
+      final lastTile = tester
+          .getRect(find.byKey(Key('cart-line-${cart.lines.last.key}')));
+
+      // The lines region ends where the fixed chrome begins — the checkout
+      // section can never overlay it (0.75px subpixel slack only).
+      expect(lines.bottom, lessThanOrEqualTo(actions.top + 0.75));
+      // The final row scrolls COMPLETELY into the region…
+      expect(lastTile.top, greaterThanOrEqualTo(lines.top - 0.75));
+      expect(lastTile.bottom, lessThanOrEqualTo(lines.bottom + 0.75));
+      // …and sits clear of the actions/totals/PAY block below it.
+      expect(lastTile.bottom, lessThanOrEqualTo(actions.top + 0.75));
+      expect(actions.bottom, lessThanOrEqualTo(totals.top + 0.75));
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('scan-added product lands fully visible above the checkout '
+        'section with focus preserved', (tester) async {
+      await _pumpApp(tester, dio: dio, size: const Size(1280, 800));
+      await tester.pump(const Duration(milliseconds: 500));
+      await toggleLayout(tester);
+      for (var i = 0; i < 40; i++) {
+        addLine(
+          tester,
+          CartLine(
+            productId: 'p$i',
+            name: 'Line $i',
+            quantity: '1',
+            unitPrice: '1',
+          ),
+        );
+      }
+      await tester.pump();
+
+      // Real barcode scan flow (search field → Enter) — the screen-driven
+      // add path that issues the post-add focus + ensureVisible request.
+      // The list sits at the TOP, so the new row (appended at the END) is
+      // far below the fold when the request fires.
+      await focusSearchField(tester);
+      await tester.enterText(
+        find.byKey(const Key('pos-search-field')),
+        '111',
+      );
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+
+      final cart = containerOf(tester).read(posCartProvider);
+      expect(cart.lines, hasLength(41));
+      final key = cart.lines.last.key;
+      expect(cart.lastActiveKey, key);
+
+      final lines =
+          tester.getRect(find.byKey(const Key('pos-cart-lines')));
+      final actions =
+          tester.getRect(find.byKey(const Key('pos-cart-actions')));
+      final tile = tester.getRect(find.byKey(Key('cart-line-$key')));
+
+      // ensureVisible brought the new row fully into the bounded lines
+      // region, clear of the fixed action/totals/PAY section.
+      expect(tile.top, greaterThanOrEqualTo(lines.top - 0.75));
+      expect(tile.bottom, lessThanOrEqualTo(lines.bottom + 0.75));
+      expect(tile.bottom, lessThanOrEqualTo(actions.top + 0.75));
+      // Focus stays on the new line's qty field — continuous scanning and
+      // quantity editing are untouched.
+      expect(focusedFieldKey(tester), 'cart-line-qty-$key');
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('reversed with a full cart: totals and PAY stay visible and '
+        'functional', (tester) async {
+      await _pumpApp(tester, dio: dio, size: const Size(1280, 800));
+      await tester.pump(const Duration(milliseconds: 500));
+      await toggleLayout(tester);
+      for (var i = 0; i < 30; i++) {
+        addLine(
+          tester,
+          CartLine(
+            productId: 'p$i',
+            name: 'Line $i',
+            quantity: '1',
+            unitPrice: '1',
+          ),
+        );
+      }
+      await tester.pump();
+
+      final panel =
+          tester.getRect(find.byKey(const Key('pos-cart-panel')));
+      final actions =
+          tester.getRect(find.byKey(const Key('pos-cart-actions')));
+      final totals =
+          tester.getRect(find.byKey(const Key('pos-totals-panel')));
+      final pay = tester.getRect(find.byKey(const Key('pos-pay-button')));
+
+      // Stack order inside the panel: lines → actions → totals → PAY.
+      expect(totals.top, greaterThanOrEqualTo(actions.bottom - 0.75));
+      expect(totals.bottom, lessThanOrEqualTo(panel.bottom + 0.75));
+      expect(pay.top, greaterThanOrEqualTo(totals.top));
+      expect(pay.bottom, lessThanOrEqualTo(panel.bottom + 0.75));
+      // Every totals/payment element renders…
+      expect(find.byKey(const Key('pos-subtotal-value')), findsOneWidget);
+      expect(find.byKey(const Key('pos-total-value')), findsOneWidget);
+      expect(find.byKey(const Key('pos-pay-amount')), findsOneWidget);
+      // …and PAY is enabled while the cart has lines.
+      final payButton =
+          tester.widget<FilledButton>(find.byKey(const Key('pos-pay-button')));
+      expect(payButton.onPressed, isNotNull);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('600x500 reversed drawer: full rows fit and the last row '
+        'scrolls above the fixed section', (tester) async {
+      await _pumpApp(tester, dio: dio, size: const Size(600, 500));
+      await tester.pump(const Duration(milliseconds: 500));
+      // Reversed first — the toolbar is hidden once the drawer is open.
+      await toggleLayout(tester);
+      await tester.tap(find.byKey(const Key('toggle-cart')));
+      await tester.pumpAndSettle();
+
+      for (var i = 0; i < 40; i++) {
+        addLine(
+          tester,
+          CartLine(
+            productId: 'p$i',
+            name: 'Line $i',
+            quantity: '1',
+            unitPrice: '1',
+          ),
+        );
+      }
+      await tester.pump();
+
+      final cart = containerOf(tester).read(posCartProvider);
+      final someTile = tester
+          .getRect(find.byKey(Key('cart-line-${cart.lines.last.key}')));
+      var lines = tester.getRect(find.byKey(const Key('pos-cart-lines')));
+      // The compacted chrome leaves room for at least ONE complete dense
+      // row (previously the region shrank below the row height and every
+      // row was cut at the fixed section).
+      expect(
+        lines.height,
+        greaterThanOrEqualTo(someTile.height - 0.75),
+        reason: 'lines region fits a full row',
+      );
+
+      await tester.drag(
+        find.byKey(const Key('pos-cart-lines')),
+        const Offset(0, -5000),
+      );
+      await tester.pumpAndSettle();
+
+      lines = tester.getRect(find.byKey(const Key('pos-cart-lines')));
+      final actions =
+          tester.getRect(find.byKey(const Key('pos-cart-actions')));
+      final totals =
+          tester.getRect(find.byKey(const Key('pos-totals-panel')));
+      final panel =
+          tester.getRect(find.byKey(const Key('pos-cart-panel')));
+      final lastTile = tester
+          .getRect(find.byKey(Key('cart-line-${cart.lines.last.key}')));
+
+      expect(lastTile.top, greaterThanOrEqualTo(lines.top - 0.75));
+      expect(lastTile.bottom, lessThanOrEqualTo(lines.bottom + 0.75));
+      expect(lines.bottom, lessThanOrEqualTo(actions.top + 0.75));
+      expect(actions.bottom, lessThanOrEqualTo(totals.top + 0.75));
+      expect(totals.bottom, lessThanOrEqualTo(panel.bottom + 0.75));
+
+      final pay = tester.widget<FilledButton>(
+        find.byKey(const Key('pos-pay-button')),
+      );
+      expect(pay.onPressed, isNotNull);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('no overflow at 900x700, 1280x800, 1920x1080 in reversed mode',
+        (tester) async {
+      const sizes = <Size>[
+        Size(900, 700),
+        Size(1280, 800),
+        Size(1920, 1080),
+      ];
+      for (final size in sizes) {
+        await _pumpApp(tester, dio: dio, size: size);
+        await tester.pump(const Duration(milliseconds: 500));
+        addLine(tester, bread);
+        await tester.pump();
+        await toggleLayout(tester);
+        expect(tester.takeException(), isNull, reason: '$size reversed');
+        expect(
+          find.byKey(Key('cart-line-price-${bread.key}')),
+          findsOneWidget,
+          reason: '$size dense row',
+        );
+        await toggleLayout(tester);
+        expect(tester.takeException(), isNull, reason: '$size back');
+      }
+    });
+
+    testWidgets(
+        'panel proportions exchange roles at 900x700, 1280x800, 1920x1080',
+        (tester) async {
+      const sizes = <Size>[
+        Size(900, 700),
+        Size(1280, 800),
+        Size(1920, 1080),
+      ];
+      for (final size in sizes) {
+        // Unmount first: ProviderScope state survives a bare pumpWidget of
+        // the same type, which would leak the previous iteration's catalog
+        // state (empty results) into the next measurement.
+        await tester.pumpWidget(const SizedBox());
+        await _pumpApp(tester, dio: dio, size: size);
+        await tester.pump(const Duration(milliseconds: 500));
+
+        double workspaceW() => tester
+            .getRect(find.byKey(const Key('pos-product-grid')))
+            .width;
+        double cartW() =>
+            tester.getRect(find.byKey(const Key('pos-cart-panel'))).width;
+
+        // Standard: the workspace holds the large panel; the cart the
+        // narrow fixed slot.
+        final stdWorkspace = workspaceW();
+        final stdCart = cartW();
+        expect(stdWorkspace, greaterThan(stdCart), reason: '$size standard');
+        expect(
+          stdCart,
+          moreOrLessEquals(posCartWidthFor(size.width), epsilon: 2),
+          reason: '$size standard cart slot',
+        );
+
+        await toggleLayout(tester);
+
+        // Reversed: BOTH the position and the allocation exchanged — the
+        // cart now holds the exact panel the workspace had, and the
+        // workspace holds the cart's former slot.
+        final revWorkspace = workspaceW();
+        final revCart = cartW();
+        expect(revCart, greaterThan(revWorkspace), reason: '$size reversed');
+        expect(
+          revCart,
+          moreOrLessEquals(stdWorkspace, epsilon: 2),
+          reason: '$size cart takes the workspace panel',
+        );
+        expect(
+          revWorkspace,
+          moreOrLessEquals(stdCart, epsilon: 2),
+          reason: '$size workspace takes the cart slot',
+        );
+        expect(tester.takeException(), isNull, reason: '$size reversed');
+      }
+    });
+
+    testWidgets('reversed large cart keeps the full checkout chrome reachable',
+        (tester) async {
+      await _pumpApp(tester, dio: dio, size: const Size(1280, 800));
+      await tester.pump(const Duration(milliseconds: 500));
+      await toggleLayout(tester);
+
+      // The cart owns the wide panel…
+      expect(
+        tester.getRect(find.byKey(const Key('pos-cart-panel'))).width,
+        greaterThan(
+          tester.getRect(find.byKey(const Key('pos-product-grid'))).width,
+        ),
+      );
+      // …with its complete chrome on screen: header, customer row,
+      // action buttons, totals and PAY.
+      expect(find.byKey(const Key('pos-cart-header')), findsOneWidget);
+      expect(find.byKey(const Key('pos-customer-row')), findsOneWidget);
+      expect(find.byKey(const Key('pos-discount-button')), findsOneWidget);
+      expect(find.byKey(const Key('pos-hold-button')), findsOneWidget);
+      expect(find.byKey(const Key('pos-holds-button')), findsOneWidget);
+      expect(find.byKey(const Key('pos-history-button')), findsOneWidget);
+      expect(find.byKey(const Key('pos-clear-cart')), findsOneWidget);
+      expect(find.byKey(const Key('pos-totals-panel')), findsOneWidget);
+      expect(find.byKey(const Key('pos-pay-button')), findsOneWidget);
+
+      // Payment state machine intact: empty cart → PAY disabled.
+      expect(
+        tester
+            .widget<FilledButton>(find.byKey(const Key('pos-pay-button')))
+            .onPressed,
+        isNull,
+      );
+
+      // A line (dense row in the wide panel) enables PAY.
+      addLine(tester, bread);
+      await tester.pump();
+      expect(find.byKey(Key('cart-line-price-${bread.key}')), findsOneWidget);
+      expect(
+        tester
+            .widget<FilledButton>(find.byKey(const Key('pos-pay-button')))
+            .onPressed,
+        isNotNull,
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('narrow 600x500: toggle in toolbar, dense cart in drawer',
+        (tester) async {
+      await _pumpApp(tester, dio: dio, size: const Size(600, 500));
+      await tester.pump(const Duration(milliseconds: 500));
+      // Narrow drawer-closed state: workspace (with the toolbar toggle) is
+      // visible; the total bar swaps above it when reversed.
+      await toggleLayout(tester);
+      expect(tester.takeException(), isNull);
+
+      await tester.tap(find.byKey(const Key('toggle-cart')));
+      await tester.pumpAndSettle();
+      addLine(tester, bread);
+      await tester.pump();
+      expect(find.byKey(Key('cart-line-price-${bread.key}')), findsOneWidget);
+      expect(find.byKey(const Key('pos-pay-button')), findsOneWidget);
+      expect(tester.takeException(), isNull);
+
+      await tester.tap(find.byKey(const Key('toggle-cart')));
+      await tester.pumpAndSettle();
+      await toggleLayout(tester);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('narrow 600x500 closed stack swaps the total bar and workspace',
+        (tester) async {
+      await _pumpApp(tester, dio: dio, size: const Size(600, 500));
+      await tester.pump(const Duration(milliseconds: 500));
+
+      final grid = find.byKey(const Key('pos-product-grid'));
+      final bar = find.byKey(const Key('toggle-cart'));
+
+      // Standard closed: workspace on top, total bar at the bottom.
+      expect(tester.getRect(bar).top, greaterThan(tester.getRect(grid).top));
+
+      await toggleLayout(tester);
+      // Reversed closed: total bar on top, workspace below — the same two
+      // regions the wide/medium layout exchanges, stacked vertically.
+      expect(tester.getRect(bar).top, lessThan(tester.getRect(grid).top));
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('AR RTL and FR/EN LTR: toggle flips sides both ways',
+        (tester) async {
+      for (final entry in const {
+        'en': TextDirection.ltr,
+        'fr': TextDirection.ltr,
+        'ar': TextDirection.rtl,
+      }.entries) {
+        // Fresh container per locale — ProviderScope state survives a bare
+        // pumpWidget, so unmount first (same pattern as the view-mode
+        // persistence test).
+        await tester.pumpWidget(const SizedBox());
+        await _pumpApp(
+          tester,
+          dio: dio,
+          locale: AppLocale.values.byName(entry.key),
+          direction: entry.value,
+        );
+        await tester.pump(const Duration(milliseconds: 500));
+        addLine(tester, bread);
+        await tester.pump();
+
+        final before = cartCenterX(tester);
+        await toggleLayout(tester);
+        final after = cartCenterX(tester);
+        // LTR: cart moves right → left (negative delta). RTL mirrors the
+        // Row, so the same child order moves the cart left → right.
+        expect(
+          (after - before).sign,
+          entry.value == TextDirection.rtl ? 1 : -1,
+          reason: '${entry.key} ${entry.value}',
+        );
+        expect(
+          find.byKey(Key('cart-line-price-${bread.key}')),
+          findsOneWidget,
+          reason: '${entry.key} dense row',
+        );
+        expect(find.byKey(const Key('pos-pay-button')), findsOneWidget);
+        expect(tester.takeException(), isNull, reason: entry.key);
+      }
+    });
+
+    testWidgets('reversed choice persists and is restored on next launch',
+        (tester) async {
+      await _pumpApp(tester, dio: dio);
+      await tester.pump(const Duration(milliseconds: 500));
+
+      await toggleLayout(tester);
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString(kPosLayoutSwitchKey), 'reversed');
+
+      await tester.pumpWidget(const SizedBox());
+      await _pumpApp(
+        tester,
+        dio: dio,
+        initialPrefs: {kPosLayoutSwitchKey: 'reversed'},
+      );
+      await tester.pump(const Duration(milliseconds: 500));
+      addLine(tester, bread);
+      await tester.pump();
+      // Restored: cart renders dense/reversed without tapping the toggle.
+      expect(find.byKey(Key('cart-line-price-${bread.key}')), findsOneWidget);
+      expect(cartCenterX(tester), lessThan(catalogCenterX(tester)));
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('dense table shows header, price, total and selection cells',
+        (tester) async {
+      await _pumpApp(tester, dio: dio);
+      await tester.pump(const Duration(milliseconds: 500));
+      addLine(tester, bread);
+      await tester.pump();
+      await toggleLayout(tester);
+
+      // Header labels (EN) above the rows; the row cells share the keys.
+      expect(find.text(AppStrings.t('name', 'en')), findsWidgets);
+      expect(find.text(AppStrings.t('unit_price', 'en')), findsWidgets);
+      expect(find.text(AppStrings.t('qty', 'en')), findsWidgets);
+      expect(find.text(AppStrings.t('total_label', 'en')), findsWidgets);
+      expect(find.text(AppStrings.t('line_discount', 'en')), findsWidgets);
+
+      final key = bread.key;
+      expect(find.byKey(Key('cart-line-name-$key')), findsOneWidget);
+      expect(find.byKey(Key('cart-line-price-$key')), findsOneWidget);
+      expect(find.byKey(Key('cart-line-total-$key')), findsOneWidget);
+      expect(find.byKey(Key('cart-line-qty-$key')), findsOneWidget);
+      expect(find.byKey(Key('cart-line-discount-$key')), findsOneWidget);
+      expect(find.byKey(Key('cart-line-remove-$key')), findsOneWidget);
+      expect(find.byKey(Key('cart-line-selected-$key')), findsOneWidget);
+      expect(find.byKey(Key('cart-line-unselected-$key')), findsNothing);
+      // Standard-card-only cell is gone.
+      expect(find.byKey(Key('cart-line-summary-$key')), findsNothing);
+      // Catalog untouched: still the grid view.
+      expect(find.byKey(const Key('pos-product-grid')), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('dense row shows the stock warning when qty exceeds stock',
+        (tester) async {
+      await _pumpApp(tester, dio: dio);
+      await tester.pump(const Duration(milliseconds: 500));
+      const over = CartLine(
+        productId: 'p-stock',
+        name: 'Rice',
+        quantity: '6',
+        unitPrice: '10',
+        availableStock: '5',
+      );
+      addLine(tester, over);
+      await tester.pump();
+      await toggleLayout(tester);
+
+      final warning = find.byKey(Key('cart-line-stock-warning-${over.key}'));
+      expect(warning, findsOneWidget);
+      expect(
+        tester.widget<Text>(warning).data,
+        '${AppStrings.t('stock', 'en')}: 5',
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('layout switch and catalog view-mode are independent',
+        (tester) async {
+      await _pumpApp(tester, dio: dio);
+      await tester.pump(const Duration(milliseconds: 500));
+
+      // List view mode, then switch layout — catalog stays list.
+      await tester.tap(find.byKey(const Key('pos-view-mode-list')));
+      await tester.pumpAndSettle();
+      await toggleLayout(tester);
+      expect(find.byKey(const Key('pos-product-list')), findsOneWidget);
+      expect(cartCenterX(tester), lessThan(catalogCenterX(tester)));
+
+      // Layout stays reversed when the view mode goes back to grid.
+      await tester.tap(find.byKey(const Key('pos-view-mode-grid')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('pos-product-grid')), findsOneWidget);
+      expect(cartCenterX(tester), lessThan(catalogCenterX(tester)));
+      expect(tester.takeException(), isNull);
+    });
+  });
+
+  group('selected-line shortcuts without quantity focus', () {
+    ProviderContainer containerOf(WidgetTester tester) =>
+        ProviderScope.containerOf(
+          tester.element(find.byKey(const Key('pos-screen'))),
+          listen: false,
+        );
+
+    void addLine(WidgetTester tester, CartLine line) {
+      containerOf(tester).read(posCartProvider.notifier).addLine(line);
+    }
+
+    String qtyAt(WidgetTester tester, int index) =>
+        containerOf(tester).read(posCartProvider).lines[index].quantity;
+
+    String? focusedFieldKey(WidgetTester tester) {
+      final context = FocusManager.instance.primaryFocus?.context;
+      if (context == null) return null;
+      final field = context.widget is TextField
+          ? context.widget as TextField
+          : context.findAncestorWidgetOfExactType<TextField>();
+      final key = field?.key;
+      return key is ValueKey<String> ? key.value : null;
+    }
+
+    String controllerText(WidgetTester tester, Key key) =>
+        tester.widget<TextField>(find.byKey(key)).controller!.text;
+
+    Future<void> pressPlus(WidgetTester tester) async {
+      await tester.sendKeyEvent(LogicalKeyboardKey.equal, character: '+');
+      await tester.pump();
+    }
+
+    Future<void> pressMinus(WidgetTester tester) async {
+      await tester.sendKeyEvent(LogicalKeyboardKey.minus, character: '-');
+      await tester.pump();
+    }
+
+    Future<void> pressStar(WidgetTester tester) async {
+      await tester.sendKeyEvent(LogicalKeyboardKey.digit8, character: '*');
+      await tester.pump();
+    }
+
+    Future<void> pressDelete(WidgetTester tester) async {
+      await tester.sendKeyEvent(LogicalKeyboardKey.delete);
+      await tester.pump();
+    }
+
+    const bread = CartLine(
+      productId: 'p1',
+      name: 'Bread',
+      quantity: '1',
+      unitPrice: '10',
+      availableStock: '10',
+    );
+    const milk = CartLine(
+      productId: 'p2',
+      name: 'Milk',
+      quantity: '1',
+      unitPrice: '5',
+      availableStock: '10',
+    );
+
+    testWidgets('Delete removes the tapped line while the workspace holds '
+        'focus (no quantity focus required)', (tester) async {
+      await _pumpApp(tester, dio: dio);
+      addLine(tester, bread);
+      addLine(tester, milk);
+      await tester.pump();
+      // No text field holds focus — the screen-level workspace node does.
+      expect(focusedFieldKey(tester), isNull);
+
+      // Tap bread: the selection moves to it, focus does not.
+      await tester.tap(find.byKey(Key('cart-line-name-${bread.key}')));
+      await tester.pump();
+      expect(containerOf(tester).read(posCartProvider).lastActiveKey,
+          bread.key);
+      expect(focusedFieldKey(tester), isNull);
+
+      await pressDelete(tester);
+
+      final cart = containerOf(tester).read(posCartProvider);
+      expect(cart.lines.map((line) => line.productId).toList(), ['p2'],
+          reason: 'only the selected line is removed');
+      expect(find.byKey(Key('cart-line-remove-${bread.key}')), findsNothing);
+      expect(
+        find.byKey(Key('cart-line-remove-${milk.key}')),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('Delete targets the tapped selection and stays out of a '
+        'focused sibling quantity field', (tester) async {
+      await _pumpApp(tester, dio: dio);
+      addLine(tester, bread);
+      addLine(tester, milk);
+      await tester.pump();
+
+      // Milk's quantity field takes keyboard focus for editing. Focusing a
+      // field kicks off the framework's ensure-visible scroll — settle it
+      // (its IgnorePointer would otherwise swallow the next tap).
+      await tester.enterText(
+          find.byKey(Key('cart-line-qty-${milk.key}')), '5');
+      await tester.pumpAndSettle();
+      expect(focusedFieldKey(tester), 'cart-line-qty-${milk.key}');
+
+      // …the cashier selects bread by tapping its name (focus unchanged)…
+      await tester.tap(find.byKey(Key('cart-line-name-${bread.key}')));
+      await tester.pump();
+      expect(containerOf(tester).read(posCartProvider).lastActiveKey,
+          bread.key);
+      expect(focusedFieldKey(tester), 'cart-line-qty-${milk.key}');
+
+      // …Delete must NOT fire here: a text field is editing, so the key
+      // belongs to the quantity input — no line disappears, once or twice.
+      await pressDelete(tester);
+
+      final cart = containerOf(tester).read(posCartProvider);
+      expect(cart.lines, hasLength(2));
+      expect(qtyAt(tester, 0), '1');
+      expect(qtyAt(tester, 1), '5');
+      expect(focusedFieldKey(tester), 'cart-line-qty-${milk.key}');
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('Delete keeps editing search, quantity and discount fields',
+        (tester) async {
+      await _pumpApp(tester, dio: dio);
+      addLine(tester, bread);
+      await tester.pump();
+
+      // Search field: Delete stays a text-editing key, cart untouched.
+      await tester.tap(find.byKey(const Key('pos-search-field')));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.enterText(find.byKey(const Key('pos-search-field')), 'bre');
+      await tester.pump(const Duration(milliseconds: 400));
+      await pressDelete(tester);
+      expect(controllerText(tester, const Key('pos-search-field')), 'bre');
+      expect(containerOf(tester).read(posCartProvider).lines, hasLength(1));
+
+      // Quantity field: same rule — editing wins over line removal.
+      final qtyKey = Key('cart-line-qty-${bread.key}');
+      await tester.enterText(find.byKey(qtyKey), '4');
+      await tester.pump();
+      await pressDelete(tester);
+      expect(controllerText(tester, qtyKey), '4');
+      expect(containerOf(tester).read(posCartProvider).lines, hasLength(1));
+
+      // Line discount field: same rule.
+      final discountKey = Key('cart-line-discount-${bread.key}');
+      await tester.enterText(find.byKey(discountKey), '5');
+      await tester.pump();
+      await pressDelete(tester);
+      expect(controllerText(tester, discountKey), '5');
+      expect(containerOf(tester).read(posCartProvider).lines, hasLength(1));
+      expect(focusedFieldKey(tester), 'cart-line-discount-${bread.key}');
+
+      // Let the debounced search load triggered above settle.
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('tap selects a line and +, - and * act on it while a '
+        'sibling discount field is focused', (tester) async {
+      // Tall surface: the two cards never overflow the cart list, so
+      // focusing the discount cannot scroll the sibling's name out of the
+      // viewport (the tap below must hit the name itself).
+      await _pumpApp(tester, dio: dio, size: const Size(1366, 1080));
+      addLine(tester, bread);
+      addLine(tester, milk);
+      await tester.pump();
+
+      // Milk's DISCOUNT field takes focus — bread's quantity field never
+      // does. Settle the focus-scroll so the next tap is not swallowed.
+      await tester.enterText(
+          find.byKey(Key('cart-line-discount-${milk.key}')), '5');
+      await tester.pumpAndSettle();
+      expect(focusedFieldKey(tester), 'cart-line-discount-${milk.key}');
+
+      // Tap bread: selection moves, focus stays in the discount field.
+      await tester.tap(find.byKey(Key('cart-line-name-${bread.key}')));
+      await tester.pump();
+      expect(containerOf(tester).read(posCartProvider).lastActiveKey,
+          bread.key);
+      expect(focusedFieldKey(tester), 'cart-line-discount-${milk.key}');
+
+      // `+` / `-` claim the key (never inserted as discount text) and act
+      // on the SELECTED line.
+      await pressPlus(tester);
+      expect(qtyAt(tester, 0), '2');
+      expect(qtyAt(tester, 1), '1');
+      expect(controllerText(tester, Key('cart-line-discount-${milk.key}')),
+          '5');
+      await pressPlus(tester);
+      expect(qtyAt(tester, 0), '3');
+      await pressMinus(tester);
+      expect(qtyAt(tester, 0), '2');
+      expect(containerOf(tester).read(posCartProvider).lines[1].lineDiscount,
+          '5');
+
+      // `*` opens the quantity dialog for the selected line — the field
+      // keeps its text, the cart keeps the quantity.
+      await pressStar(tester);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('qty-multiplier-dialog')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('qty-multiplier-cancel')));
+      await tester.pumpAndSettle();
+      expect(qtyAt(tester, 0), '2');
+      expect(controllerText(tester, Key('cart-line-discount-${milk.key}')),
+          '5');
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('Delete removes the selected row in the reversed dense '
+        'layout', (tester) async {
+      await _pumpApp(
+        tester,
+        dio: dio,
+        initialPrefs: {kPosLayoutSwitchKey: 'reversed'},
+      );
+      addLine(tester, bread);
+      addLine(tester, milk);
+      await tester.pump();
+      expect(focusedFieldKey(tester), isNull);
+
+      await tester.tap(find.byKey(Key('cart-line-name-${bread.key}')));
+      await tester.pump();
+      expect(
+        find.byKey(Key('cart-line-selected-${bread.key}')),
+        findsOneWidget,
+      );
+
+      await pressDelete(tester);
+
+      final cart = containerOf(tester).read(posCartProvider);
+      expect(cart.lines.map((line) => line.productId).toList(), ['p2']);
+      expect(find.byKey(Key('cart-line-remove-${bread.key}')), findsNothing);
+      expect(
+        find.byKey(Key('cart-line-remove-${milk.key}')),
+        findsOneWidget,
+      );
+      expect(find.byKey(const Key('pos-product-grid')), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('Delete on an empty cart shows the shared empty-cart toast',
+        (tester) async {
+      await _pumpApp(tester, dio: dio);
+      await tester.pump();
+
+      await pressDelete(tester);
+
+      expect(find.byKey(const Key('pos-qty-empty-cart')), findsOneWidget);
+      expect(find.text(AppStrings.t('cart_empty', 'en')), findsWidgets);
+      expect(containerOf(tester).read(posCartProvider).isEmpty, isTrue);
+      expect(tester.takeException(), isNull);
+    });
+  });
+
+  group('Clear Cart keeps the workspace (catalog / search / views)', () {
+    ProviderContainer containerOf(WidgetTester tester) =>
+        ProviderScope.containerOf(
+          tester.element(find.byKey(const Key('pos-screen'))),
+          listen: false,
+        );
+
+    Future<void> typeSearch(WidgetTester tester, String query) async {
+      await tester.tap(find.byKey(const Key('pos-search-field')));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester
+          .enterText(find.byKey(const Key('pos-search-field')), query);
+      // Debounced page-1 load (kPosSearchDebounce) fully settles.
+      await tester.pump(const Duration(milliseconds: 500));
+      await tester.pump();
+    }
+
+    const bread = CartLine(
+      productId: 'p1',
+      name: 'Bread',
+      quantity: '1',
+      unitPrice: '10',
+    );
+
+    testWidgets(
+        'button clear empties only the cart: catalog, search, favorites '
+        'and view mode stay — no refetch, no navigation', (tester) async {
+      var searchLoads = 0;
+      final paths = <String>[];
+      final counted = MockDio();
+      _mockDio(counted, onSearch: () => searchLoads++, recordPaths: paths);
+
+      await _pumpApp(tester, dio: counted);
+      await tester.pump(const Duration(milliseconds: 500));
+      expect(searchLoads, greaterThan(0));
+      expect(find.byKey(const Key('pos-product-grid')), findsOneWidget);
+
+      // Workspace state the clear must NOT touch: list view + an active
+      // search query + non-empty catalog rows.
+      await tester.tap(find.byKey(const Key('pos-view-mode-list')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('pos-product-list')), findsOneWidget);
+      await typeSearch(tester, 'bre');
+      expect(containerOf(tester).read(posSearchProvider).items, isNotEmpty);
+
+      containerOf(tester).read(posCartProvider.notifier).addLine(bread);
+      await tester.pump();
+      expect(containerOf(tester).read(posCartProvider).isEmpty, isFalse);
+
+      final loadsBefore = searchLoads;
+      final pathsBefore = List<String>.of(paths);
+
+      await tester.tap(find.byKey(const Key('pos-clear-cart')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('clear-cart-confirm')));
+      await tester.pumpAndSettle();
+
+      // Cart state cleared …
+      expect(containerOf(tester).read(posCartProvider).isEmpty, isTrue);
+      expect(find.byKey(const Key('clear-cart-confirm')), findsNothing);
+
+      // … and NOTHING else moved: not one extra request, same catalog
+      // rows, same query (field and provider state), same list view,
+      // still on the POS screen.
+      expect(searchLoads, loadsBefore, reason: 'no catalog refetch');
+      expect(paths, pathsBefore, reason: 'no network request at all');
+      expect(
+        containerOf(tester).read(posSearchProvider).items,
+        isNotEmpty,
+        reason: 'catalog rows stay loaded',
+      );
+      expect(containerOf(tester).read(posSearchProvider).query, 'bre');
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const Key('pos-search-field')))
+            .controller!
+            .text,
+        'bre',
+        reason: 'search field text stays too',
+      );
+      expect(find.byKey(const Key('pos-product-list')), findsOneWidget);
+      expect(find.byKey(const Key('pos-product-grid')), findsNothing);
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString(kPosCatalogViewModeKey), 'list');
+      expect(find.byKey(const Key('pos-screen')), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('F12 clear keeps the catalog and search query too',
+        (tester) async {
+      var searchLoads = 0;
+      final paths = <String>[];
+      final counted = MockDio();
+      _mockDio(counted, onSearch: () => searchLoads++, recordPaths: paths);
+
+      await _pumpApp(tester, dio: counted);
+      await tester.pump(const Duration(milliseconds: 500));
+      await typeSearch(tester, 'mil');
+      containerOf(tester).read(posCartProvider.notifier).addLine(bread);
+      await tester.pump();
+
+      final loadsBefore = searchLoads;
+      final pathsBefore = List<String>.of(paths);
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.f12);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('clear-cart-confirm')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('clear-cart-confirm')));
+      await tester.pumpAndSettle();
+
+      expect(containerOf(tester).read(posCartProvider).isEmpty, isTrue);
+      expect(searchLoads, loadsBefore);
+      expect(paths, pathsBefore);
+      expect(containerOf(tester).read(posSearchProvider).query, 'mil');
+      expect(containerOf(tester).read(posSearchProvider).items, isNotEmpty);
+      expect(find.byKey(const Key('pos-product-grid')), findsOneWidget);
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const Key('pos-search-field')))
+            .controller!
+            .text,
+            'mil',
+      );
+      expect(tester.takeException(), isNull);
+    });
+  });
+
+  group('selected-line shortcuts and SPACE from the idle barcode field', () {
+    ProviderContainer containerOf(WidgetTester tester) =>
+        ProviderScope.containerOf(
+          tester.element(find.byKey(const Key('pos-screen'))),
+          listen: false,
+        );
+
+    void addLine(WidgetTester tester, CartLine line) {
+      containerOf(tester).read(posCartProvider.notifier).addLine(line);
+    }
+
+    String qtyAt(WidgetTester tester, int index) =>
+        containerOf(tester).read(posCartProvider).lines[index].quantity;
+
+    String? focusedFieldKey(WidgetTester tester) {
+      final context = FocusManager.instance.primaryFocus?.context;
+      if (context == null) return null;
+      final field = context.widget is TextField
+          ? context.widget as TextField
+          : context.findAncestorWidgetOfExactType<TextField>();
+      final key = field?.key;
+      return key is ValueKey<String> ? key.value : null;
+    }
+
+    String controllerText(WidgetTester tester, Key key) =>
+        tester.widget<TextField>(find.byKey(key)).controller!.text;
+
+    Future<bool> pressSpace(WidgetTester tester) async {
+      final handled =
+          await tester.sendKeyEvent(LogicalKeyboardKey.space, character: ' ');
+      await tester.pump();
+      return handled;
+    }
+
+    Future<void> pressPlus(WidgetTester tester) async {
+      await tester.sendKeyEvent(LogicalKeyboardKey.equal, character: '+');
+      await tester.pump();
+    }
+
+    Future<void> pressMinus(WidgetTester tester) async {
+      await tester.sendKeyEvent(LogicalKeyboardKey.minus, character: '-');
+      await tester.pump();
+    }
+
+    Future<void> pressStar(WidgetTester tester) async {
+      await tester.sendKeyEvent(LogicalKeyboardKey.digit8, character: '*');
+      await tester.pump();
+    }
+
+    Future<void> pressDelete(WidgetTester tester) async {
+      await tester.sendKeyEvent(LogicalKeyboardKey.delete);
+      await tester.pump();
+    }
+
+    Future<void> toggleLayout(WidgetTester tester) async {
+      await tester.tap(find.byKey(const Key('pos-layout-switch')));
+      await tester.pumpAndSettle();
+    }
+
+    /// Focus the POS search field and leave it EMPTY — the barcode-ready
+    /// home state (autofocus after boot / Escape), where the cashier has
+    /// not started typing a query.
+    Future<void> focusIdleSearch(WidgetTester tester) async {
+      await tester.tap(find.byKey(const Key('pos-search-field')));
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(focusedFieldKey(tester), 'pos-search-field');
+      expect(
+        controllerText(tester, const Key('pos-search-field')),
+        isEmpty,
+        reason: 'the barcode field must be empty (idle, not typing)',
+      );
+    }
+
+    Future<void> closePaymentDialog(WidgetTester tester) async {
+      await tester.tap(find.byKey(const Key('payment-cancel')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('payment-dialog')), findsNothing);
+    }
+
+    const bread = CartLine(
+      productId: 'p1',
+      name: 'Bread',
+      quantity: '1',
+      unitPrice: '10',
+      availableStock: '10',
+    );
+    const milk = CartLine(
+      productId: 'p2',
+      name: 'Milk',
+      quantity: '1',
+      unitPrice: '5',
+      availableStock: '10',
+    );
+
+    Future<void> setup(WidgetTester tester, {bool reversed = false}) async {
+      await _pumpApp(
+        tester,
+        dio: dio,
+        initialPrefs: reversed ? {kPosLayoutSwitchKey: 'reversed'} : null,
+      );
+      await tester.pump(const Duration(milliseconds: 500));
+    }
+
+    Future<void> spaceOpensPaymentFromIdleSearch(
+      WidgetTester tester, {
+      required bool reversed,
+    }) async {
+      await setup(tester, reversed: reversed);
+      addLine(tester, bread);
+      await tester.pump();
+      await focusIdleSearch(tester);
+
+      final handled = await pressSpace(tester);
+      await tester.pumpAndSettle();
+
+      expect(handled, isTrue,
+          reason: 'the idle barcode field is not typing — SPACE must pay');
+      expect(find.byKey(const Key('payment-dialog')), findsOneWidget);
+      expect(
+        controllerText(tester, const Key('pos-search-field')),
+        isEmpty,
+        reason: 'the pay key must never reach the barcode field as text',
+      );
+      expect(tester.takeException(), isNull);
+    }
+
+    testWidgets(
+        'SPACE opens payment from the idle barcode field — standard layout',
+        (tester) async {
+      await spaceOpensPaymentFromIdleSearch(tester, reversed: false);
+    });
+
+    testWidgets(
+        'SPACE opens payment from the idle barcode field — reversed layout',
+        (tester) async {
+      await spaceOpensPaymentFromIdleSearch(tester, reversed: true);
+    });
+
+    testWidgets('SPACE from the idle barcode field with an empty cart shows '
+        'cart_empty and no dialog', (tester) async {
+      await setup(tester);
+      await focusIdleSearch(tester);
+
+      final handled = await pressSpace(tester);
+      await tester.pump();
+
+      expect(handled, isTrue);
+      expect(find.byKey(const Key('payment-dialog')), findsNothing);
+      expect(find.text(AppStrings.t('cart_empty', 'en')), findsWidgets);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('row selected and no editable focused: SPACE opens the '
+        'payment dialog exactly once — both layouts', (tester) async {
+      await setup(tester);
+      addLine(tester, bread);
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pump();
+      expect(focusedFieldKey(tester), isNull);
+      await tester.tap(find.byKey(Key('cart-line-name-${bread.key}')));
+      await tester.pump();
+
+      final first = await pressSpace(tester);
+      await tester.pumpAndSettle();
+      expect(first, isTrue);
+      expect(find.byKey(const Key('payment-dialog')), findsOneWidget);
+      await closePaymentDialog(tester);
+
+      await toggleLayout(tester);
+      await tester.tap(find.byKey(Key('cart-line-name-${bread.key}')));
+      await tester.pump();
+      final second = await pressSpace(tester);
+      await tester.pumpAndSettle();
+      expect(second, isTrue);
+      expect(find.byKey(const Key('payment-dialog')), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('SPACE does not pay while a search query is being typed '
+        '(row selected)', (tester) async {
+      await setup(tester);
+      addLine(tester, bread);
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('pos-search-field')));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.enterText(find.byKey(const Key('pos-search-field')), 'bre');
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.tap(find.byKey(Key('cart-line-name-${bread.key}')));
+      await tester.pump();
+
+      final handled = await pressSpace(tester);
+      await tester.pump();
+
+      expect(handled, isFalse, reason: 'a query owns the space');
+      expect(find.byKey(const Key('payment-dialog')), findsNothing);
+      expect(
+        controllerText(tester, const Key('pos-search-field')),
+        'bre',
+        reason: 'typing state is untouched',
+      );
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('SPACE does not pay while a line discount field is focused',
+        (tester) async {
+      await setup(tester, reversed: true);
+      addLine(tester, bread);
+      await tester.pump();
+      await tester.enterText(
+        find.byKey(Key('cart-line-discount-${bread.key}')),
+        '5',
+      );
+      await tester.pumpAndSettle();
+      expect(focusedFieldKey(tester), 'cart-line-discount-${bread.key}');
+
+      final handled = await pressSpace(tester);
+      await tester.pump();
+
+      expect(handled, isFalse, reason: 'a discount being edited owns the space');
+      expect(find.byKey(const Key('payment-dialog')), findsNothing);
+      expect(
+        controllerText(tester, Key('cart-line-discount-${bread.key}')),
+        '5',
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    Future<void> lineShortcutsFromIdleSearch(
+      WidgetTester tester, {
+      required bool reversed,
+    }) async {
+      await setup(tester, reversed: reversed);
+      addLine(tester, bread);
+      addLine(tester, milk);
+      await tester.pump();
+
+      // Select bread by tapping it — selection without quantity focus.
+      await tester.tap(find.byKey(Key('cart-line-name-${bread.key}')));
+      await tester.pump();
+      expect(
+        containerOf(tester).read(posCartProvider).lastActiveKey,
+        bread.key,
+      );
+
+      // Barcode-ready focus: the empty search field, never a quantity field.
+      await focusIdleSearch(tester);
+
+      // `+` / `-` hit the SELECTED line (bread), never the other line, and
+      // run exactly once per press.
+      await pressPlus(tester);
+      expect(qtyAt(tester, 0), '2');
+      expect(qtyAt(tester, 1), '1');
+      await pressPlus(tester);
+      expect(qtyAt(tester, 0), '3');
+      expect(qtyAt(tester, 1), '1');
+      await pressMinus(tester);
+      expect(qtyAt(tester, 0), '2');
+      expect(qtyAt(tester, 1), '1');
+
+      // `*` opens the multiplier dialog for the SELECTED line.
+      await pressStar(tester);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('qty-multiplier-dialog')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('qty-multiplier-cancel')));
+      await tester.pumpAndSettle();
+      expect(qtyAt(tester, 0), '2');
+
+      // Delete removes the SELECTED line from the idle barcode field.
+      await focusIdleSearch(tester);
+      await pressDelete(tester);
+      final cart = containerOf(tester).read(posCartProvider);
+      expect(cart.lines.map((line) => line.productId).toList(), ['p2'],
+          reason: 'the selected line is removed while the barcode field is '
+              'focused but not typing');
+      expect(find.byKey(Key('cart-line-remove-${milk.key}')), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    }
+
+    testWidgets('+, -, * and Delete act on the selected line from the idle '
+        'barcode field — standard layout', (tester) async {
+      await lineShortcutsFromIdleSearch(tester, reversed: false);
+    });
+
+    testWidgets('+, -, * and Delete act on the selected line from the idle '
+        'barcode field — reversed layout', (tester) async {
+      await lineShortcutsFromIdleSearch(tester, reversed: true);
+    });
+
+    testWidgets('* with a characterless Shift+8 (hardware main row) opens '
+        'the multiplier dialog', (tester) async {
+      await setup(tester);
+      addLine(tester, bread);
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pump();
+
+      // Windows hardware press of Shift+8 with no character delivered on
+      // the event (the tester otherwise derives '8' from the logical key)
+      // — the documented main-row fallback for `*`.
+      await tester.sendKeyDownEvent(
+        LogicalKeyboardKey.shiftLeft,
+        character: '',
+      );
+      await tester.sendKeyDownEvent(
+        LogicalKeyboardKey.digit8,
+        character: '',
+      );
+      await tester.pump();
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.digit8);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('qty-multiplier-dialog')), findsOneWidget,
+          reason: 'the main-row key must reach the multiplier shortcut when '
+              'no character is delivered');
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('SPACE held down does not open a second payment dialog', (
+      tester,
+    ) async {
+      await setup(tester);
+      addLine(tester, bread);
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pump();
+
+      final first = await tester.sendKeyDownEvent(
+        LogicalKeyboardKey.space,
+        character: ' ',
+      );
+      await tester.pumpAndSettle();
+      expect(first, isTrue);
+      expect(find.byKey(const Key('payment-dialog')), findsOneWidget);
+      expect(focusedFieldKey(tester), 'payment-paid-input');
+
+      // Real key auto-repeat while SPACE is held: never a second dialog,
+      // never a stray character in the payment input.
+      await tester.sendKeyRepeatEvent(
+        LogicalKeyboardKey.space,
+        character: ' ',
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('payment-dialog')), findsOneWidget,
+          reason: 'one dialog per SPACE gesture');
+      expect(
+        controllerText(tester, const Key('payment-paid-input')),
+        '10.00',
+        reason: 'the repeat must not alter the prefilled payment amount',
+      );
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.space);
+      await tester.pump();
+
+      // A second, separate press while the dialog is open: still one
+      // dialog (the dialog route owns the keys behind a modal).
+      await pressSpace(tester);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('payment-dialog')), findsOneWidget);
+      expect(
+        controllerText(tester, const Key('payment-paid-input')),
+        '10.00',
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('stock safeguard: + from the idle barcode field at the stock '
+        'limit reports the stock error', (tester) async {
+      await setup(tester);
+      addLine(
+        tester,
+        const CartLine(
+          productId: 'p9',
+          name: 'Rice',
+          quantity: '5',
+          unitPrice: '10',
+          availableStock: '5',
+        ),
+      );
+      await tester.pump();
+      await focusIdleSearch(tester);
+
+      await pressPlus(tester);
+
+      expect(qtyAt(tester, 0), '5', reason: 'quantity never exceeds stock');
+      expect(find.byKey(const Key('pos-qty-stock-error')), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+  });
+
+  group('shortcuts keep working after clicking empty cart-panel space', () {
+    ProviderContainer containerOf(WidgetTester tester) =>
+        ProviderScope.containerOf(
+          tester.element(find.byKey(const Key('pos-screen'))),
+          listen: false,
+        );
+
+    void addLine(WidgetTester tester, CartLine line) {
+      containerOf(tester).read(posCartProvider.notifier).addLine(line);
+    }
+
+    String qtyAt(WidgetTester tester, int index) =>
+        containerOf(tester).read(posCartProvider).lines[index].quantity;
+
+    String? focusedFieldKey(WidgetTester tester) {
+      final context = FocusManager.instance.primaryFocus?.context;
+      if (context == null) return null;
+      final field = context.widget is TextField
+          ? context.widget as TextField
+          : context.findAncestorWidgetOfExactType<TextField>();
+      final key = field?.key;
+      return key is ValueKey<String> ? key.value : null;
+    }
+
+    Future<void> pressPlus(WidgetTester tester) async {
+      await tester.sendKeyEvent(LogicalKeyboardKey.equal, character: '+');
+      await tester.pump();
+    }
+
+    Future<bool> pressSpace(WidgetTester tester) async {
+      final handled =
+          await tester.sendKeyEvent(LogicalKeyboardKey.space, character: ' ');
+      await tester.pump();
+      return handled;
+    }
+
+    Future<void> pressMinus(WidgetTester tester) async {
+      await tester.sendKeyEvent(LogicalKeyboardKey.minus, character: '-');
+      await tester.pump();
+    }
+
+    Future<void> pressStar(WidgetTester tester) async {
+      await tester.sendKeyEvent(LogicalKeyboardKey.digit8, character: '*');
+      await tester.pump();
+    }
+
+    Future<void> pressDelete(WidgetTester tester) async {
+      await tester.sendKeyEvent(LogicalKeyboardKey.delete);
+      await tester.pump();
+    }
+
+    String controllerText(WidgetTester tester, Key key) =>
+        tester.widget<TextField>(find.byKey(key)).controller!.text;
+
+    Future<void> setup(WidgetTester tester, {bool reversed = false}) async {
+      await _pumpApp(
+        tester,
+        dio: dio,
+        initialPrefs: reversed ? {kPosLayoutSwitchKey: 'reversed'} : null,
+      );
+      await tester.pump(const Duration(milliseconds: 500));
+    }
+
+    /// Click the cart panel's empty, non-editable space with the desktop
+    /// MOUSE — the cashier's real input (the input that makes EditableText
+    /// unfocus the focused field on desktop). Prefers the truly blank area
+    /// below the last line; the standard card list fills the panel, so the
+    /// empty header region next to the cart title serves there. Both points
+    /// sit inside the cart panel, away from every text field and button.
+    Future<void> clickEmptyCartSpace(
+      WidgetTester tester,
+      String lastLineKey,
+    ) async {
+      final lines = tester.getRect(find.byKey(const Key('pos-cart-lines')));
+      final lastLine = tester.getRect(find.byKey(Key('cart-line-$lastLineKey')));
+      final blank = lines.bottomCenter - const Offset(0, 30);
+      if (lines.contains(blank) && blank.dy > lastLine.bottom) {
+        await tester.tapAt(
+          blank,
+          kind: PointerDeviceKind.mouse,
+          buttons: kPrimaryButton,
+        );
+      } else {
+        await tester.tap(
+          find.byKey(const Key('pos-cart-title')),
+          kind: PointerDeviceKind.mouse,
+          buttons: kPrimaryButton,
+        );
+      }
+      await tester.pumpAndSettle();
+    }
+
+    const bread = CartLine(
+      productId: 'p1',
+      name: 'Bread',
+      quantity: '1',
+      unitPrice: '10',
+      availableStock: '10',
+    );
+    const milk = CartLine(
+      productId: 'p2',
+      name: 'Milk',
+      quantity: '1',
+      unitPrice: '5',
+      availableStock: '10',
+    );
+
+    /// The screenshot's exact failure sequence, both layouts: focus a line's
+    /// quantity field (shortcuts work), then click empty cart-panel space
+    /// with the mouse — the active line must stay active, and every
+    /// shortcut must keep reaching this page's single handler.
+    Future<void> emptyCartClickKeepsShortcuts(
+      WidgetTester tester, {
+      required bool reversed,
+    }) async {
+      await setup(tester, reversed: reversed);
+      addLine(tester, bread);
+      addLine(tester, milk);
+      await tester.pump();
+
+      // Screenshot step 2: click the quantity field — focus lands there,
+      // the line becomes active, the shortcuts work.
+      await tester.tap(find.byKey(Key('cart-line-qty-${bread.key}')));
+      await tester.pumpAndSettle();
+      expect(focusedFieldKey(tester), 'cart-line-qty-${bread.key}');
+      expect(containerOf(tester).read(posCartProvider).lastActiveKey,
+          bread.key);
+      await pressPlus(tester);
+      expect(qtyAt(tester, 0), '2', reason: 'baseline: + works while focused');
+      expect(qtyAt(tester, 1), '1');
+
+      // Screenshot step 3: click an empty/non-editable area inside the
+      // cart panel, with the desktop mouse.
+      await clickEmptyCartSpace(tester, milk.key);
+
+      // The active line is PRESERVED and the quantity field did NOT keep
+      // (or regain) focus — selection and keyboard focus stay independent.
+      expect(containerOf(tester).read(posCartProvider).lastActiveKey,
+          bread.key);
+      expect(focusedFieldKey(tester), isNull);
+
+      // +, -, * and Delete each target the ACTIVE line, never the sibling.
+      await pressPlus(tester);
+      expect(qtyAt(tester, 0), '3');
+      expect(qtyAt(tester, 1), '1');
+      await pressMinus(tester);
+      expect(qtyAt(tester, 0), '2');
+      expect(qtyAt(tester, 1), '1');
+      await pressStar(tester);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('qty-multiplier-dialog')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('qty-multiplier-cancel')));
+      await tester.pumpAndSettle();
+      expect(qtyAt(tester, 0), '2');
+      expect(qtyAt(tester, 1), '1');
+      await pressDelete(tester);
+      final afterDelete = containerOf(tester).read(posCartProvider);
+      expect(afterDelete.lines.map((line) => line.productId).toList(), ['p2'],
+          reason: 'only the active line is removed — never another line');
+      expect(find.byKey(Key('cart-line-remove-${milk.key}')), findsOneWidget);
+
+      // SPACE invokes the existing payment flow exactly once; the open
+      // dialog keeps owning the keys behind the modal.
+      final handled = await pressSpace(tester);
+      await tester.pumpAndSettle();
+      expect(handled, isTrue,
+          reason: 'SPACE must reach the payment handler from the parked '
+              'in-page focus');
+      expect(find.byKey(const Key('payment-dialog')), findsOneWidget);
+      expect(focusedFieldKey(tester), 'payment-paid-input');
+      await pressSpace(tester);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('payment-dialog')), findsOneWidget,
+          reason: 'a repeat while the dialog is open never opens a second '
+              'dialog');
+      expect(
+        controllerText(tester, const Key('payment-paid-input')),
+        '5.00',
+        reason: 'prefilled with the remaining cart total (milk only - bread '
+            'was deleted)',
+      );
+      await tester.tap(find.byKey(const Key('payment-cancel')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('payment-dialog')), findsNothing);
+      expect(tester.takeException(), isNull);
+    }
+
+    testWidgets('shortcuts survive an empty cart-panel click — standard '
+        'layout', (tester) async {
+      await emptyCartClickKeepsShortcuts(tester, reversed: false);
+    });
+
+    testWidgets('shortcuts survive an empty cart-panel click — reversed '
+        'layout', (tester) async {
+      await emptyCartClickKeepsShortcuts(tester, reversed: true);
+    });
+
+    testWidgets('clicking empty catalog space keeps the selected line as the '
+        'shortcut target', (tester) async {
+      await setup(tester);
+      addLine(tester, bread);
+      addLine(tester, milk);
+      await tester.pump();
+
+      // The screenshot's start state: the line's quantity field focused
+      // (focusing a line makes it the shortcut target).
+      await tester.tap(find.byKey(Key('cart-line-qty-${bread.key}')));
+      await tester.pumpAndSettle();
+      expect(focusedFieldKey(tester), 'cart-line-qty-${bread.key}');
+      expect(containerOf(tester).read(posCartProvider).lastActiveKey,
+          bread.key);
+
+      // Empty catalog area: inside the product grid, in the blank space
+      // below the single mock product card.
+      final grid = tester.getRect(find.byKey(const Key('pos-product-grid')));
+      final card = tester.getRect(find.byKey(
+          const Key('pos-product-00000000-0000-0000-0000-0000000000p1')));
+      final blank = grid.bottomCenter - const Offset(0, 40);
+      expect(grid.contains(blank), isTrue,
+          reason: 'the click point must sit inside the catalog grid');
+      expect(card.contains(blank), isFalse,
+          reason: 'the click point must be empty space, not a product card');
+      await tester.tapAt(
+        blank,
+        kind: PointerDeviceKind.mouse,
+        buttons: kPrimaryButton,
+      );
+      await tester.pumpAndSettle();
+
+      // Selection is untouched (no stale re-target, no switch to the
+      // newest line) and no text field holds focus.
+      expect(containerOf(tester).read(posCartProvider).lastActiveKey,
+          bread.key);
+      expect(focusedFieldKey(tester), isNull);
+
+      // The shortcuts still work and still target the SELECTED line.
+      await pressPlus(tester);
+      expect(qtyAt(tester, 0), '2', reason: 'the active line is incremented');
+      expect(qtyAt(tester, 1), '1', reason: 'the sibling line is untouched');
+      await pressDelete(tester);
+      final cart = containerOf(tester).read(posCartProvider);
+      expect(cart.lines.map((line) => line.productId).toList(), ['p2'],
+          reason: 'the active line alone is removed');
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('typing keeps working in quantity, discount and search after '
+        'an empty cart-panel click', (tester) async {
+      await setup(tester);
+      addLine(tester, bread);
+      await tester.pump();
+      await tester.tap(find.byKey(Key('cart-line-qty-${bread.key}')));
+      await tester.pumpAndSettle();
+      await clickEmptyCartSpace(tester, bread.key);
+      expect(focusedFieldKey(tester), isNull);
+
+      // Quantity: digits land in the field — no shortcut steals them.
+      await tester.enterText(
+          find.byKey(Key('cart-line-qty-${bread.key}')), '4');
+      await tester.pumpAndSettle();
+      expect(focusedFieldKey(tester), 'cart-line-qty-${bread.key}');
+      expect(qtyAt(tester, 0), '4');
+
+      // Line discount: text entry stays completely normal.
+      await tester.enterText(
+          find.byKey(Key('cart-line-discount-${bread.key}')), '3');
+      await tester.pumpAndSettle();
+      expect(focusedFieldKey(tester), 'cart-line-discount-${bread.key}');
+      expect(
+        controllerText(tester, Key('cart-line-discount-${bread.key}')),
+        '3',
+      );
+      expect(qtyAt(tester, 0), '4');
+
+      // Search/barcode: a typed query is untouched text (the SPACE/DELETE
+      // rules for a typed query are covered by their own tests).
+      await tester.enterText(find.byKey(const Key('pos-search-field')), 'bre');
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(focusedFieldKey(tester), 'pos-search-field');
+      expect(controllerText(tester, const Key('pos-search-field')), 'bre');
+      expect(tester.takeException(), isNull);
+    });
+  });
 }

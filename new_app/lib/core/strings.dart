@@ -481,6 +481,9 @@ class AppStrings {
     'hold_saved': 'تم حفظ البيع المعلق',
     'pos_cart_stock_changed':
         'تم تحديث المخزون — قد تتجاوز بعض أسطر السلة الكمية المتوفرة',
+    'pos_layout_switch': 'تبديل تخطيط نقطة البيع',
+    'pos_layout_standard': 'قياسي',
+    'pos_layout_reversed': 'معكوس',
     'hold_restored': 'تمت استعادة البيع المعلق',
     'favorites': 'المفضلة',
     'add_favorite': 'إضافة للمفضلة',
@@ -1989,6 +1992,9 @@ class AppStrings {
     'hold_saved': 'Vente mise en attente',
     'pos_cart_stock_changed':
         'Stock mis à jour — certaines lignes du panier peuvent dépasser la quantité disponible',
+    'pos_layout_switch': "Changer l'affichage de la caisse",
+    'pos_layout_standard': 'Standard',
+    'pos_layout_reversed': 'Inversée',
     'hold_restored': 'Vente restaurée',
     'favorites': 'Favoris',
     'add_favorite': 'Ajouter aux favoris',
@@ -3537,6 +3543,9 @@ class AppStrings {
     'hold_saved': 'Sale held',
     'pos_cart_stock_changed':
         'Stock updated — some cart lines may now exceed the available quantity',
+    'pos_layout_switch': 'Switch POS layout',
+    'pos_layout_standard': 'Standard',
+    'pos_layout_reversed': 'Reversed',
     'hold_restored': 'Held sale restored',
     'favorites': 'Favorites',
     'add_favorite': 'Add to favorites',

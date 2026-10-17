@@ -56,8 +56,11 @@ class HScrollView extends StatefulWidget {
   /// parent gives it (the child is then stretched to that height).
   final double? height;
 
-  /// Keep the thumb painted even while the content fits. Off by default
-  /// so a row that does not overflow shows no scrollbar at all.
+  /// Keep the Scrollbar WIDGET mounted from the first build even while the
+  /// content fits. Off by default so a row that does not overflow shows no
+  /// scrollbar at all. The thumb itself still only PAINTS while there is
+  /// something to scroll (it would otherwise overlay the content's bottom
+  /// edge — the dense cart table reserves a thumb strip for that case).
   final bool alwaysShowScrollbar;
 
   @override
@@ -158,7 +161,12 @@ class _HScrollViewState extends State<HScrollView> {
 
     return Scrollbar(
       controller: _controller,
-      thumbVisibility: widget.alwaysShowScrollbar || _canScroll,
+      // The thumb is an OVERLAY: it paints above the content's bottom
+      // edge. `alwaysShowScrollbar` pins the widget's STRUCTURE from the
+      // first build (mounting it later would remount the subtree and drop
+      // keyboard focus), but the thumb only paints while the content
+      // actually overflows — never covering rows that fit.
+      thumbVisibility: _canScroll,
       interactive: true,
       child: child,
     );

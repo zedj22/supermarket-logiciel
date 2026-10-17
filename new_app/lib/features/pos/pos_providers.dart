@@ -1079,6 +1079,49 @@ final posCatalogViewModeProvider =
 });
 
 // ---------------------------------------------------------------------------
+// POS layout switch (standard | reversed) — presentation only
+// ---------------------------------------------------------------------------
+
+/// Swaps the product catalog and the cart panel. Pure presentation: the
+/// cart notifier, prices, discounts, stock validation and checkout all
+/// stay exactly as they are — this flag only decides which side each
+/// panel sits on (and which line renderer the cart uses).
+const String kPosLayoutSwitchKey = 'pos_layout_switch';
+
+enum PosScreenLayout { standard, reversed }
+
+class PosLayoutSwitchNotifier extends StateNotifier<PosScreenLayout> {
+  PosLayoutSwitchNotifier() : super(PosScreenLayout.standard) {
+    _restore();
+  }
+
+  Future<void> _restore() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(kPosLayoutSwitchKey);
+    if (raw == PosScreenLayout.reversed.name) {
+      state = PosScreenLayout.reversed;
+    }
+  }
+
+  Future<void> setLayout(PosScreenLayout layout) async {
+    state = layout;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(kPosLayoutSwitchKey, layout.name);
+  }
+
+  Future<void> toggle() => setLayout(
+        state == PosScreenLayout.standard
+            ? PosScreenLayout.reversed
+            : PosScreenLayout.standard,
+      );
+}
+
+final posLayoutSwitchProvider =
+    StateNotifierProvider<PosLayoutSwitchNotifier, PosScreenLayout>((ref) {
+  return PosLayoutSwitchNotifier();
+});
+
+// ---------------------------------------------------------------------------
 // Sale history
 // ---------------------------------------------------------------------------
 

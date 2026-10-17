@@ -4,10 +4,11 @@
 // currently typing: ask [editableTextHasFocus]. The POS quantity shortcuts
 // (`+` / `-` / `*`), the option-picker digit shortcuts and the SPACE-to-pay
 // shortcut all go through it. Each shortcut then names the fields it may
-// still claim its key from — the search field and the cart quantity field
-// for `+` / `-` / `*`, the cart quantity field alone for SPACE (see
-// [TextFreeKeyActivator.allowWhileEditing]) — so every other input (dialogs,
-// pickers, invoices) keeps normal text entry.
+// still claim its key from — the POS focus router (pos_qty_shortcuts.dart)
+// answers WHICH focused field is idle vs being typed in (barcode-ready
+// search, cart quantity, line discount, dialogs) via its
+// allowWhileEditing hooks — so every other input (dialogs, pickers,
+// invoices) keeps normal text entry.
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 

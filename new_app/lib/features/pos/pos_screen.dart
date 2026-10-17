@@ -339,9 +339,10 @@ class _PosScreenState extends ConsumerState<PosScreen> {
         ),
       );
       if (confirmed == true) {
+        // Clear Cart empties the CART only. The catalog, the search query,
+        // favorites and the view mode stay exactly as the cashier left
+        // them — no search reset, no refetch, no navigation.
         ref.read(posCartProvider.notifier).clearCart();
-        _searchController.clear();
-        ref.read(posSearchProvider.notifier).clear();
       }
       if (mounted) _searchFocusNode.requestFocus();
       return;
@@ -460,6 +461,29 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       loc: loc,
       onError: _showQtyError,
     );
+  }
+
+  /// Delete — remove the selected (last active) cart line through the SAME
+  /// [removeLine] path its remove button uses — no extra confirmation, no
+  /// second removal implementation. No quantity-field focus is required:
+  /// selection alone (`lastActiveKey`, falling back to the newest line)
+  /// names the target. Claimed only while NO text input has focus
+  /// ([TextFreeKeyActivator]), so Delete keeps editing search, quantity,
+  /// discount and every dialog/picker field.
+  void _removeActiveLine() {
+    final loc = ref.read(localeProvider).flutterLocale.languageCode;
+    final line = ref.read(posCartProvider).lastActiveLine;
+    if (line == null) {
+      if (!mounted) return;
+      showPosToast(
+        context,
+        message: AppStrings.t('cart_empty', loc),
+        kind: PosToastKind.info,
+        key: const Key('pos-qty-empty-cart'),
+      );
+      return;
+    }
+    ref.read(posCartProvider.notifier).removeLine(line.key);
   }
 
   /// Cart qty field / line +/- buttons: the ONE validating mutation path
@@ -1300,9 +1324,10 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       ),
     );
     if (confirmed == true) {
+      // Clear Cart empties the CART only. The catalog, the search query,
+      // favorites and the view mode stay exactly as the cashier left
+      // them — no search reset, no refetch, no navigation.
       ref.read(posCartProvider.notifier).clearCart();
-      _searchController.clear();
-      ref.read(posSearchProvider.notifier).clear();
     }
   }
 
@@ -1314,6 +1339,10 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     final search = ref.watch(posSearchProvider);
     final favorites = ref.watch(favoritesProvider);
     final viewMode = ref.watch(posCatalogViewModeProvider);
+    // Layout switch (standard | reversed) — presentation only; the cart
+    // provider and every checkout path are identical in both modes.
+    final screenLayout = ref.watch(posLayoutSwitchProvider);
+    final reversedLayout = screenLayout == PosScreenLayout.reversed;
     final heldCount = ref.watch(holdsProvider).items.length;
     final layout = posLayoutModeFor(MediaQuery.sizeOf(context).width);
     final cartWidth =
@@ -1410,6 +1439,9 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     );
 
     final cartPanel = _CartPanel(
+      // Reversed mode renders the lines as one compact table; standard
+      // mode keeps the existing card list untouched.
+      dense: reversedLayout,
       cart: cart,
       qtyFocusRequest: _qtyFocusRequest,
       onRemoveLine: (key) =>
@@ -1503,6 +1535,32 @@ class _PosScreenState extends ConsumerState<PosScreen> {
                 onChanged: (m) =>
                     ref.read(posCatalogViewModeProvider.notifier).setMode(m),
               );
+              // FIX #3 rule reused by the layout switch: the same
+              // "full labels when the workspace allows it" threshold,
+              // so the toolbar never overflows by adding a control.
+              // Measure the panel the workspace ACTUALLY occupies: in
+              // reversed mode it holds the narrow cartWidth slot, not
+              // (window - cartWidth).
+              final workspaceWidth = layout == PosLayoutMode.narrow
+                  ? MediaQuery.sizeOf(context).width
+                  : (reversedLayout
+                      ? cartWidth
+                      : MediaQuery.sizeOf(context).width - cartWidth);
+              final tightWorkspace =
+                  layout != PosLayoutMode.narrow && workspaceWidth < 500;
+              final layoutToggleFull = _LayoutSwitchToggle(
+                layout: screenLayout,
+                onChanged: (l) => ref
+                    .read(posLayoutSwitchProvider.notifier)
+                    .setLayout(l),
+              );
+              final layoutToggleCompact = _LayoutSwitchToggle(
+                layout: screenLayout,
+                compact: true,
+                onChanged: (l) => ref
+                    .read(posLayoutSwitchProvider.notifier)
+                    .setLayout(l),
+              );
 
               // Tight workspace (human QA: "RenderFlex overflowed by 59
               // pixels" on this toolbar at a 1127px window): the same
@@ -1522,6 +1580,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
                     packsButton,
                     shortcutsButton,
                     compactToggle,
+                    layoutToggleCompact,
                   ],
                 );
               }
@@ -1542,8 +1601,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
                   const SizedBox(width: 8),
                   // FIX #3: full labels when workspace allows; icons+tooltip
                   // when tight.
-                  if (layout != PosLayoutMode.narrow &&
-                      (MediaQuery.sizeOf(context).width - cartWidth) < 500)
+                  if (tightWorkspace)
                     compactToggle
                   else
                     ConstrainedBox(
@@ -1557,6 +1615,15 @@ class _PosScreenState extends ConsumerState<PosScreen> {
                             .setMode(m),
                       ),
                     ),
+                  const SizedBox(width: 8),
+                  // Layout switch sits with the display-mode control it
+                  // complements; full label only when even the worst case
+                  // (full view-mode labels + min search width) still fits.
+                  if (toolbarConstraints.maxWidth >=
+                      (tightWorkspace ? 560 : 700))
+                    layoutToggleFull
+                  else
+                    layoutToggleCompact,
                 ],
               );
             },
@@ -1566,112 +1633,144 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       ],
     );
 
+    // The two panel ALLOCATIONS exchange roles with the layout switch —
+    // not just their positions. Standard: the workspace holds the large
+    // (expanded) panel and the cart the narrow fixed cartWidth slot.
+    // Reversed: the cart — with its complete chrome (header, customer
+    // row, lines, action buttons, totals, PAY) — takes the large panel,
+    // and the product workspace (search, favorites, filters, catalog)
+    // takes the narrow cartWidth slot. One widget per slot, swapped
+    // whole: the cart panel and workspace are moved intact.
+    final expandedWorkspace = Expanded(child: workspace);
+    final expandedCart = Expanded(child: cartPanel);
+    final narrowWorkspace = SizedBox(width: cartWidth, child: workspace);
+    final narrowCart = SizedBox(width: cartWidth, child: cartPanel);
+
     Widget body;
     switch (layout) {
       case PosLayoutMode.wide:
-        body = Row(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Expanded(child: workspace),
-            const VerticalDivider(width: 1),
-            SizedBox(width: cartWidth, child: cartPanel),
-          ],
-        );
       case PosLayoutMode.medium:
         body = Row(
           crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Expanded(child: workspace),
-            const VerticalDivider(width: 1),
-            SizedBox(width: cartWidth, child: cartPanel),
-          ],
+          children: reversedLayout
+              ? [
+                  expandedCart,
+                  const VerticalDivider(width: 1),
+                  narrowWorkspace,
+                ]
+              : [
+                  expandedWorkspace,
+                  const VerticalDivider(width: 1),
+                  narrowCart,
+                ],
         );
       case PosLayoutMode.narrow:
         // When the cart drawer is open it owns the full height so the
         // fixed cart chrome (totals + action buttons + pay) never overflows
         // on short viewports (600×500). Workspace returns when closed.
-        body = _cartDrawerOpen
-            ? Column(
-                children: [
-                  SizedBox(
-                    height: 48,
-                    child: Row(
-                      children: [
-                        IconButton(
-                          key: const Key('toggle-cart'),
-                          tooltip: AppStrings.t('cart_empty', loc),
-                          onPressed: () =>
-                              setState(() => _cartDrawerOpen = false),
-                          icon: const Icon(Icons.close),
-                        ),
-                        Expanded(
-                          // Bidi: Arabic "Total:" label natural; the grouped
-                          // total is one LTR isolate (W7).
-                          child: Text(
-                            '${AppStrings.t('total_label', loc)}: '
-                            '${bidiIsolateLtr(cart.totals.totalDisplay)}',
-                            style: theme.textTheme.titleMedium,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      ],
+        // The open drawer is identical in both modes (the catalog is not
+        // on screen to swap); the closed stack reverses the cart bar and
+        // the workspace, mirroring the wide/medium left↔right swap.
+        if (_cartDrawerOpen) {
+          body = Column(
+            children: [
+              SizedBox(
+                height: 48,
+                child: Row(
+                  children: [
+                    IconButton(
+                      key: const Key('toggle-cart'),
+                      tooltip: AppStrings.t('cart_empty', loc),
+                      onPressed: () =>
+                          setState(() => _cartDrawerOpen = false),
+                      icon: const Icon(Icons.close),
+                    ),
+                    Expanded(
+                      // Bidi: Arabic "Total:" label natural; the grouped
+                      // total is one LTR isolate (W7).
+                      child: Text(
+                        '${AppStrings.t('total_label', loc)}: '
+                        '${bidiIsolateLtr(cart.totals.totalDisplay)}',
+                        style: theme.textTheme.titleMedium,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Divider(height: 1),
+              Expanded(child: cartPanel),
+            ],
+          );
+        } else {
+          final totalBar = SizedBox(
+            height: 56,
+            child: Row(
+              children: [
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    // Bidi: Arabic label natural; grouped total is
+                    // one LTR isolate (W7).
+                    child: Text(
+                      '${AppStrings.t('total_label', loc)}: '
+                      '${bidiIsolateLtr(cart.totals.totalDisplay)}',
+                      style: theme.textTheme.titleMedium,
+                      overflow: TextOverflow.ellipsis,
                     ),
                   ),
-                  const Divider(height: 1),
-                  Expanded(child: cartPanel),
-                ],
-              )
-            : Column(
-                children: [
-                  Expanded(child: workspace),
-                  SizedBox(
-                    height: 56,
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 8),
-                            // Bidi: Arabic label natural; grouped total is
-                            // one LTR isolate (W7).
-                            child: Text(
-                              '${AppStrings.t('total_label', loc)}: '
-                              '${bidiIsolateLtr(cart.totals.totalDisplay)}',
-                              style: theme.textTheme.titleMedium,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                        ),
-                        IconButton(
-                          key: const Key('toggle-cart'),
-                          tooltip: AppStrings.t('pos', loc),
-                          onPressed: () =>
-                              setState(() => _cartDrawerOpen = true),
-                          icon: const Icon(Icons.shopping_cart),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              );
+                ),
+                IconButton(
+                  key: const Key('toggle-cart'),
+                  tooltip: AppStrings.t('pos', loc),
+                  onPressed: () => setState(() => _cartDrawerOpen = true),
+                  icon: const Icon(Icons.shopping_cart),
+                ),
+              ],
+            ),
+          );
+          body = reversedLayout
+              ? Column(children: [totalBar, Expanded(child: workspace)])
+              : Column(children: [Expanded(child: workspace), totalBar]);
+        }
     }
 
     // Global shortcuts — Escape never clears cart; F12 requires confirm.
     // F4 / Ctrl+F focus search; after dialogs close, search remains the
     // sensible default focus for barcode/keyboard-first cashier flow.
-    // SPACE pays (Phase 17 §18, replaces legacy F8) but only when no text
-    // field is consuming the space — TextFreeKeyActivator declines it
-    // while an EditableText has primary focus, so typing is never stolen.
-    // The one exception is a focused CART QUANTITY field (every add leaves
-    // focus there, Phase 8 FIX #1): it hands SPACE to the payment shortcut
-    // instead of inserting it, so the pay key can never corrupt a quantity
-    // (see cartQtyFieldHasFocus). The search field and every dialog input
-    // keep SPACE as ordinary text.
-    // `+` / `-` / `*` act on the last active cart line: `+`, `-` and `*`
-    // are also claimed while the search or a cart qty field is focused
-    // (never inserted as text) — see PosQtyShortcutActivator. While a
-    // dialog route is open its focus scope owns the keys, so none of them
-    // reach this layer — including Escape, which therefore stays safe to
-    // bind here (dialogs keep their own route-level dismiss).
+    // SPACE pays (Phase 17 §18, replaces legacy F8) but only while no text
+    // field is being TYPED in — TextFreeKeyActivator declines it while an
+    // EditableText has primary focus unless allowWhileEditing says the
+    // focused field is not editing (see spaceMayClaimFocusedField): the
+    // cart QUANTITY field (every add leaves focus there — the pay key can
+    // never corrupt a quantity) and the EMPTY barcode field (the
+    // barcode-ready home state where the cashier selects rows: SPACE must
+    // still open the payment window there). A typed search query, a line
+    // discount and every dialog/picker/payment input keep SPACE as
+    // ordinary text.
+    // `+` / `-` / `*` act on the last active cart line: they are claimed
+    // from every non-dialog field (search, quantity, discount) — one
+    // shared focus router (posFocusRouting) decides — and Delete removes
+    // the selected line the same way its remove button does: only while no
+    // text input is being edited (empty barcode field or no field at all —
+    // deleteMayClaimFocusedField), so every field with text keeps its own
+    // Delete editing.
+    // While a dialog route is open its focus scope owns the keys, so none
+    // of them reach this layer — including Escape, which therefore stays
+    // safe to bind here (dialogs keep their own route-level dismiss).
+    // FocusScope (inside this CallbackShortcuts, above the workspace node):
+    // on desktop, a click on any NON-EDITABLE area (empty cart-panel or
+    // catalog space) makes EditableText unfocus the focused text field, and
+    // FocusNode.unfocus() parks primary focus at the NEAREST enclosing
+    // FocusScopeNode. Without an in-page scope that scope was the
+    // ModalRoute's own FocusScope — an ANCESTOR of this CallbackShortcuts —
+    // so every key event dispatched from a node ABOVE the page and none of
+    // these bindings (+ / - / *, Delete, SPACE) were ever reached, while the
+    // selected line (lastActiveKey) stayed untouched. The in-page scope
+    // keeps that parked focus INSIDE this subtree, so shortcuts keep routing
+    // through this single handler with no selection or focus coupling, and
+    // dialogs keep owning their keys (their route scopes sit outside this
+    // subtree, unchanged).
     return CallbackShortcuts(
       bindings: {
         const SingleActivator(LogicalKeyboardKey.f4): _focusSearch,
@@ -1684,13 +1783,13 @@ class _PosScreenState extends ConsumerState<PosScreen> {
         const SingleActivator(LogicalKeyboardKey.f7): () =>
             _handleShortcut(LogicalKeyboardKey.f7),
         // SPACE replaces F8 (Phase 17 §18 — "SPACE replaces F8 for payment").
-        // While a cart quantity field is focused the activator claims the
-        // key anyway (allowWhileEditing) — the callback is IDENTICAL, only
-        // the event precedence changes: handled key ⇒ the qty text input
-        // never sees the space character.
+        // While a POS-owned NON-TYPING field is focused the activator
+        // claims the key anyway (allowWhileEditing) — the callback is
+        // IDENTICAL, only the event precedence changes: handled key ⇒ the
+        // focused text input never sees the space character.
         TextFreeKeyActivator(
           LogicalKeyboardKey.space,
-          allowWhileEditing: cartQtyFieldHasFocus,
+          allowWhileEditing: spaceMayClaimFocusedField,
         ): () => _handleShortcut(LogicalKeyboardKey.space),
         const SingleActivator(LogicalKeyboardKey.f9): () =>
             _handleShortcut(LogicalKeyboardKey.f9),
@@ -1706,13 +1805,23 @@ class _PosScreenState extends ConsumerState<PosScreen> {
             _decrementActiveLine(),
         const PosQtyShortcutActivator(PosQtyShortcutKind.quantityEntry): () =>
             _setActiveLineQuantity(),
+        // Delete → remove the SELECTED line (selection alone — no quantity
+        // focus needed, the idle barcode field counts as "no editing").
+        // KeyDown only: key auto-repeat can never chain into deleting the
+        // line that became active after the first press.
+        TextFreeKeyActivator(
+          LogicalKeyboardKey.delete,
+          allowWhileEditing: deleteMayClaimFocusedField,
+        ): _removeActiveLine,
       },
-      child: Focus(
-        autofocus: true,
-        focusNode: _focusNode,
-        child: Scaffold(
-          key: const Key('pos-screen'),
-          body: body,
+      child: FocusScope(
+        child: Focus(
+          autofocus: true,
+          focusNode: _focusNode,
+          child: Scaffold(
+            key: const Key('pos-screen'),
+            body: body,
+          ),
         ),
       ),
     );
@@ -1901,6 +2010,103 @@ class _ViewModeToggle extends StatelessWidget {
             label: AppStrings.t('catalog_view_list', loc),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// POS layout switch — flips the product catalog and the cart panel to
+/// each other's side (presentation only: same cart provider, same
+/// checkout). The label shows the CURRENT mode and the tooltip names the
+/// action, so a cashier always knows what a click does; it is a real
+/// focusable button, so Tab + Enter work like on every other toolbar
+/// control.
+class _LayoutSwitchToggle extends StatelessWidget {
+  const _LayoutSwitchToggle({
+    required this.layout,
+    required this.onChanged,
+    this.compact = false,
+  });
+
+  final PosScreenLayout layout;
+  final ValueChanged<PosScreenLayout> onChanged;
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    final loc = Localizations.localeOf(context).languageCode;
+    final theme = Theme.of(context);
+    final reversed = layout == PosScreenLayout.reversed;
+    final modeLabel = AppStrings.t(
+      reversed ? 'pos_layout_reversed' : 'pos_layout_standard',
+      loc,
+    );
+    final tooltip = '${AppStrings.t('pos_layout_switch', loc)} · $modeLabel';
+    final icon = Icon(
+      reversed ? Icons.swap_horiz : Icons.splitscreen,
+      size: 18,
+      color: reversed ? theme.colorScheme.primary : theme.colorScheme.outline,
+    );
+
+    if (compact) {
+      return IconButton(
+        key: const Key('pos-layout-switch'),
+        tooltip: tooltip,
+        onPressed: () => onChanged(
+          reversed ? PosScreenLayout.standard : PosScreenLayout.reversed,
+        ),
+        icon: icon,
+        visualDensity: VisualDensity.compact,
+        constraints: const BoxConstraints(
+          minWidth: 38,
+          minHeight: 38,
+        ),
+      );
+    }
+
+    return Tooltip(
+      message: tooltip,
+      child: TextButton(
+        key: const Key('pos-layout-switch'),
+        onPressed: () => onChanged(
+          reversed ? PosScreenLayout.standard : PosScreenLayout.reversed,
+        ),
+        style: TextButton.styleFrom(
+          visualDensity: VisualDensity.compact,
+          padding: const EdgeInsets.symmetric(horizontal: 10),
+          minimumSize: const Size(0, 38),
+          backgroundColor: reversed
+              ? theme.colorScheme.primary.withValues(alpha: 0.14)
+              : Colors.transparent,
+          foregroundColor: reversed
+              ? theme.colorScheme.primary
+              : theme.colorScheme.onSurface,
+          side: BorderSide(
+            color: reversed
+                ? theme.colorScheme.primary.withValues(alpha: 0.5)
+                : theme.colorScheme.outline.withValues(alpha: 0.5),
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            icon,
+            const SizedBox(width: 4),
+            Text(
+              modeLabel,
+              maxLines: 1,
+              softWrap: false,
+              overflow: TextOverflow.clip,
+              style: theme.textTheme.labelLarge?.copyWith(
+                fontSize: 14,
+                color: reversed
+                    ? theme.colorScheme.primary
+                    : theme.colorScheme.onSurface,
+                fontWeight: reversed ? FontWeight.w700 : FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -2496,6 +2702,12 @@ class _CartPanel extends StatelessWidget {
   final PosCartState cart;
   final void Function(String) onRemoveLine;
 
+  /// Reversed layout: the lines render as one compact, single-row-per-line
+  /// table (selection · name · unit price · qty · total · discount ·
+  /// remove) inside a vertically scrolling body with a shared horizontal
+  /// region — instead of the standard stacked card list.
+  final bool dense;
+
   /// Line key that should receive keyboard focus after an add
   /// (Phase 8 FIX #1) — consumed by the matching line tile.
   final ValueNotifier<String?> qtyFocusRequest;
@@ -2528,6 +2740,7 @@ class _CartPanel extends StatelessWidget {
 
   const _CartPanel({
     required this.cart,
+    this.dense = false,
     required this.qtyFocusRequest,
     required this.onRemoveLine,
     required this.onUpdateQty,
@@ -2567,8 +2780,12 @@ class _CartPanel extends StatelessWidget {
             '${AppStrings.t('lines_word', loc)} · '
             '${bidiIsolateLtr(_fmtQty(unitCount))} '
             '${AppStrings.t('units_word', loc)}';
-    final headerHeight = compact ? 64.0 : 72.0;
-    final customerHeight = compact ? 48.0 : 52.0;
+    final headerHeight = dense
+        ? (short ? 50.0 : 56.0)
+        : compact
+            ? 64.0
+            : 72.0;
+    final customerHeight = dense ? 44.0 : compact ? 48.0 : 52.0;
 
     return Container(
       key: const Key('pos-cart-panel'),
@@ -2577,11 +2794,15 @@ class _CartPanel extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           // Header: real POS header (UX FIX #8) — 64–76px, 20–22 title.
+          // Dense (reversed) compacts it to 52–56 so the lines region
+          // below gets more of the panel (see [_denseCartLines]).
           SizedBox(
             height: headerHeight,
             child: Padding(
               key: const Key('pos-cart-header'),
-              padding: const EdgeInsetsDirectional.fromSTEB(12, 6, 8, 4),
+              padding: dense
+                  ? const EdgeInsetsDirectional.fromSTEB(10, 2, 8, 2)
+                  : const EdgeInsetsDirectional.fromSTEB(12, 6, 8, 4),
               child: Row(
                 children: [
                   Text('🛒', style: TextStyle(fontSize: compact ? 22 : 24)),
@@ -2808,7 +3029,9 @@ class _CartPanel extends StatelessWidget {
                       ),
                     ),
                   )
-                : ListView.separated(
+                : dense
+                    ? _denseCartLines(theme: theme, loc: loc)
+                    : ListView.separated(
                     key: const Key('pos-cart-lines'),
                     padding: const EdgeInsets.symmetric(
                       vertical: 6,
@@ -2851,12 +3074,17 @@ class _CartPanel extends StatelessWidget {
                 ],
               ),
             ),
-          // 2-column secondary action grid (UX FIX #8): 44–48px, 13–15px font.
+          // 2-column secondary action grid (UX FIX #8): 44–48px, 13–15px
+          // font. Dense (reversed) compacts it: 40px buttons (36 on short
+          // screens), 4px row gaps, 2px block padding — the checkout
+          // chrome must leave the lines region as much height as possible.
           Padding(
             key: const Key('pos-cart-actions'),
-            padding: compact
-                ? const EdgeInsets.fromLTRB(10, 4, 10, 4)
-                : const EdgeInsets.fromLTRB(10, 6, 10, 6),
+            padding: dense
+                ? const EdgeInsets.fromLTRB(8, 2, 8, 2)
+                : compact
+                    ? const EdgeInsets.fromLTRB(10, 4, 10, 4)
+                    : const EdgeInsets.fromLTRB(10, 6, 10, 6),
             child: Column(
               children: [
                 Row(
@@ -2869,6 +3097,7 @@ class _CartPanel extends StatelessWidget {
                         label: AppStrings.t('discount_shortcut', loc),
                         onPressed: onDiscount,
                         short: short || compact,
+                        dense: dense,
                       ),
                     ),
                     const SizedBox(width: 8),
@@ -2884,11 +3113,12 @@ class _CartPanel extends StatelessWidget {
                         onPressed:
                             (cart.isEmpty || cart.returnMode) ? null : onHold,
                         short: short || compact,
+                        dense: dense,
                       ),
                     ),
                   ],
                 ),
-                const SizedBox(height: 8),
+                SizedBox(height: dense ? (short ? 2 : 4) : 8),
                 Row(
                   children: [
                     Expanded(
@@ -2899,6 +3129,7 @@ class _CartPanel extends StatelessWidget {
                         label: AppStrings.t('holds_shortcut', loc),
                         onPressed: onHolds,
                         short: short || compact,
+                        dense: dense,
                         badgeCount: heldCount,
                       ),
                     ),
@@ -2911,6 +3142,7 @@ class _CartPanel extends StatelessWidget {
                         label: AppStrings.t('history_shortcut', loc),
                         onPressed: onHistory,
                         short: short || compact,
+                        dense: dense,
                       ),
                     ),
                   ],
@@ -2918,7 +3150,7 @@ class _CartPanel extends StatelessWidget {
                 // Return entry point (permission-gated): hidden while the
                 // mode is active — the banner + Confirm/Cancel own it.
                 if (canReturn && !cart.returnMode) ...[
-                  const SizedBox(height: 8),
+                  SizedBox(height: dense ? (short ? 2 : 4) : 8),
                   Row(
                     children: [
                       Expanded(
@@ -2929,6 +3161,7 @@ class _CartPanel extends StatelessWidget {
                           label: AppStrings.t('pos_return', loc),
                           onPressed: cart.isEmpty ? null : onReturn,
                           short: short || compact,
+                          dense: dense,
                         ),
                       ),
                     ],
@@ -2941,10 +3174,146 @@ class _CartPanel extends StatelessWidget {
           // PAY slot becomes Confirm return / Cancel return.
           _PosTotalsPanel(
             cart: cart,
+            dense: dense,
             onPayment: onPayment,
             onConfirmReturn: onConfirmReturn,
             onCancelReturn: onCancelReturn,
           ),
+        ],
+      ),
+    );
+  }
+
+  /// Reversed-layout cart body: one compact header + one single-row line
+  /// per cart entry.
+  ///
+  /// Structure (wheel behaviour depends on it — see HScrollView docs): the
+  /// horizontal region WRAPS header + vertical list, so a wheel over a row
+  /// is claimed by the inner vertical view first, while a wheel over the
+  /// header (outside the vertical list's hit path) falls through to the
+  /// horizontal bridge. The header lives INSIDE the table so the columns
+  /// stay aligned: the table FILLS the panel the reversed cart now owns
+  /// (the name column absorbs the extra width) and only keeps the
+  /// [kPosDenseRowWidth] minimum + sideways scroll when the panel is
+  /// narrower than the column set (e.g. 900×700 reversed).
+  /// The parent provides the bounded height (lines-region Expanded).
+  ///
+  /// `alwaysShowScrollbar: true` pins the HScrollView structure from the
+  /// FIRST build: without it, the Scrollbar mounting a frame after the
+  /// layout flips (thumb appears on overflow — a 692px-minimum table in a
+  /// narrow panel) remounts every line tile and drops the keyboard focus
+  /// FIX #1 just placed in the new line's qty field. The thumb only
+  /// PAINTS while the table actually overflows horizontally (see
+  /// HScrollView), and the [kPosDenseThumbGutter] strip reserves the
+  /// bottom of the region for it — so a row scrolled flush to the end of
+  /// the list never sits under the thumb, the divider, or the fixed
+  /// action/totals/PAY section below. The parent provides the bounded
+  /// height (lines-region Expanded): header + customer row + actions +
+  /// totals are all fixed/ intrinsic Column siblings, so the region
+  /// receives exactly the remaining height and the checkout section can
+  /// never overlay the rows.
+  Widget _denseCartLines({required ThemeData theme, required String loc}) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final tableWidth = constraints.maxWidth.isFinite &&
+                constraints.maxWidth > kPosDenseRowWidth
+            ? constraints.maxWidth
+            : kPosDenseRowWidth;
+        return HScrollView(
+          alwaysShowScrollbar: true,
+          child: SizedBox(
+            width: tableWidth,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _denseCartHeader(theme: theme, loc: loc),
+                const Divider(height: 1),
+                Expanded(
+                  child: SingleChildScrollView(
+                    key: const Key('pos-cart-lines'),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        for (final line in cart.lines)
+                          _CartLineTile(
+                            // Same keys as the standard list — the State
+                            // (qty / discount controllers) is keyed by the
+                            // line.
+                            key: ValueKey<String>(line.key),
+                            line: line,
+                            dense: true,
+                            selected: line.key == cart.lastActiveKey,
+                            qtyFocusRequest: qtyFocusRequest,
+                            onRemove: () => onRemoveLine(line.key),
+                            onActivate: () => onActivateLine(line.key),
+                            onQty: (q) => onUpdateQty(line.key, q),
+                            onDiscount: (d) =>
+                                onUpdateLineDiscount(line.key, d),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+                // Reserved strip at the bottom of the HScrollView region:
+                // the horizontal scrollbar thumb (an overlay) paints here
+                // instead of over the last visible row, and the final row
+                // scrolls clear of the divider/actions/totals below.
+                const SizedBox(height: kPosDenseThumbGutter),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  /// Column headers for the dense table — same paddings and segment
+  /// widths as the dense line row so every column lines up.
+  Widget _denseCartHeader({required ThemeData theme, required String loc}) {
+    final style = theme.textTheme.labelSmall?.copyWith(
+      fontSize: 12,
+      fontWeight: FontWeight.w700,
+      color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
+    );
+
+    Widget segment(String labelKey, double width, {TextAlign? align}) =>
+        SizedBox(
+          width: width,
+          child: Text(
+            AppStrings.t(labelKey, loc),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: align,
+            style: style,
+          ),
+        );
+
+    return Padding(
+      // Compact in dense mode: every vertical pixel here is one the
+      // cart lines cannot use.
+      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 4),
+      child: Row(
+        children: [
+          const SizedBox(width: kPosDenseSelectWidth),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              AppStrings.t('name', loc),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: style,
+            ),
+          ),
+          const SizedBox(width: 8),
+          segment('unit_price', kPosDensePriceWidth, align: TextAlign.center),
+          const SizedBox(width: 8),
+          segment('qty', kPosDenseQtyWidth, align: TextAlign.center),
+          const SizedBox(width: 8),
+          segment('total_label', kPosDenseTotalWidth, align: TextAlign.end),
+          const SizedBox(width: 8),
+          segment('line_discount', kPosDenseDiscountWidth),
+          const SizedBox(width: 8),
+          const SizedBox(width: kPosDenseRemoveWidth),
         ],
       ),
     );
@@ -2957,9 +3326,17 @@ class _CartPanel extends StatelessWidget {
     required String label,
     required VoidCallback? onPressed,
     required bool short,
+    bool dense = false,
     int badgeCount = 0,
   }) {
-    final height = short ? 44.0 : 46.0;
+    // Dense (reversed) rows: 40px (36 on short screens) instead of the
+    // standard 44–46 — labels and shortcuts stay identical, only the
+    // chrome is compacted so the cart lines get the height back.
+    final height = dense
+        ? (short ? 36.0 : 40.0)
+        : short
+            ? 44.0
+            : 46.0;
     final theme = Theme.of(context);
     return SizedBox(
       height: height,
@@ -2971,9 +3348,9 @@ class _CartPanel extends StatelessWidget {
                 label: Text('$badgeCount'),
                 backgroundColor: theme.colorScheme.primary,
                 textColor: theme.colorScheme.onPrimary,
-                child: Icon(icon, size: short ? 18 : 20),
+                child: Icon(icon, size: dense || short ? 18 : 20),
               )
-            : Icon(icon, size: short ? 18 : 20),
+            : Icon(icon, size: dense || short ? 18 : 20),
         label: Text(
           label,
           style: theme.textTheme.labelLarge?.copyWith(
@@ -3001,12 +3378,18 @@ class _CartPanel extends StatelessWidget {
 /// In POS return mode the PAY slot becomes Confirm return / Cancel return.
 class _PosTotalsPanel extends ConsumerStatefulWidget {
   final PosCartState cart;
+
+  /// Dense (reversed) cart: trims the panel's vertical padding/row gaps so
+  /// the cart lines region above gets the height back. TOTAL and PAY stay
+  /// prominent — only breathing room is removed.
+  final bool dense;
   final VoidCallback onPayment;
   final VoidCallback onConfirmReturn;
   final VoidCallback onCancelReturn;
 
   const _PosTotalsPanel({
     required this.cart,
+    this.dense = false,
     required this.onPayment,
     required this.onConfirmReturn,
     required this.onCancelReturn,
@@ -3051,9 +3434,17 @@ class _PosTotalsPanelState extends ConsumerState<_PosTotalsPanel> {
       child: Padding(
         padding: EdgeInsets.fromLTRB(
           12,
-          MediaQuery.sizeOf(context).height < 700 ? 6 : 8,
+          widget.dense
+              ? 4
+              : MediaQuery.sizeOf(context).height < 700
+                  ? 6
+                  : 8,
           12,
-          MediaQuery.sizeOf(context).height < 700 ? 4 : 6,
+          widget.dense
+              ? 2
+              : MediaQuery.sizeOf(context).height < 700
+                  ? 4
+                  : 6,
         ),
         child: LayoutBuilder(
           builder: (context, constraints) {
@@ -3080,8 +3471,25 @@ class _PosTotalsPanelState extends ConsumerState<_PosTotalsPanel> {
             final subSize = mediaH < 700 ? 14.0 : 15.0;
             final payFontSize = mediaH < 560 ? 15.0 : 17.0;
             final payIconSize = mediaH < 560 ? 20.0 : 22.0;
-            final rowPad = mediaH < 700 ? 3.0 : 5.0;
-            final gapAfterTotal = mediaH < 700 ? 6.0 : 8.0;
+            // Dense (reversed): row padding, divider and post-TOTAL gap
+            // yield their breathing room to the cart lines above (even
+            // more so on short screens); the TOTAL size and PAY height
+            // are untouched (both prominent).
+            final rowPad = widget.dense
+                ? (mediaH < 560 ? 2.0 : 3.0)
+                : mediaH < 700
+                    ? 3.0
+                    : 5.0;
+            final gapAfterTotal = widget.dense
+                ? (mediaH < 560 ? 4.0 : 6.0)
+                : mediaH < 700
+                    ? 6.0
+                    : 8.0;
+            final dividerH = widget.dense
+                ? (mediaH < 560 ? 6.0 : 8.0)
+                : mediaH < 700
+                    ? 10.0
+                    : 12.0;
 
             return Column(
               mainAxisSize: MainAxisSize.min,
@@ -3114,7 +3522,7 @@ class _PosTotalsPanelState extends ConsumerState<_PosTotalsPanel> {
                     fontSize: subSize,
                     verticalPad: rowPad,
                   ),
-                Divider(height: mediaH < 700 ? 10.0 : 12.0),
+                Divider(height: dividerH),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   crossAxisAlignment: CrossAxisAlignment.end,
@@ -3634,7 +4042,17 @@ class _CartLineTile extends StatefulWidget {
     required this.onQty,
     required this.onDiscount,
     this.qtyFocusRequest,
+    this.dense = false,
+    this.selected = false,
   });
+
+  /// Reversed-layout single-row rendering (see [_CartPanel._denseCartLines]);
+  /// false keeps the standard stacked card untouched.
+  final bool dense;
+
+  /// Whether this line is the cart's current shortcut target
+  /// (lastActiveKey). Drives the dense row's selection marker and tint.
+  final bool selected;
 
   @override
   State<_CartLineTile> createState() => _CartLineTileState();
@@ -3672,7 +4090,20 @@ class _CartLineTileState extends State<_CartLineTile> {
     if (request == null || request.value != widget.line.key) return;
     request.value = null;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _qtyFocus.requestFocus();
+      if (!mounted) return;
+      // Dense (reversed) table: a just-added line can sit below the fold
+      // of the tall scroll body — bring it into view. Focus still goes to
+      // this line's quantity field right after (Phase 8 FIX #1 unchanged);
+      // ensureVisible never moves focus itself.
+      if (widget.dense) {
+        Scrollable.ensureVisible(
+          context,
+          duration: const Duration(milliseconds: 160),
+          curve: Curves.easeOut,
+          alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtEnd,
+        );
+      }
+      _qtyFocus.requestFocus();
     });
   }
 
@@ -3733,6 +4164,7 @@ class _CartLineTileState extends State<_CartLineTile> {
 
   @override
   Widget build(BuildContext context) {
+    if (widget.dense) return _buildDenseRow(context);
     final loc = Localizations.localeOf(context).languageCode;
     final theme = Theme.of(context);
     final line = widget.line;
@@ -3754,8 +4186,6 @@ class _CartLineTileState extends State<_CartLineTile> {
     final minHeight = showBaseInfo
         ? (short ? 100.0 : 112.0)
         : (short ? 88.0 : 96.0);
-    final discountValue = double.tryParse(line.lineDiscount) ?? 0;
-    final discountActive = discountValue > 0;
 
     return Padding(
       key: Key('cart-line-${line.key}'),
@@ -3838,80 +4268,15 @@ class _CartLineTileState extends State<_CartLineTile> {
                     ),
                   ),
                   const SizedBox(width: 2),
-                  IconButton(
-                    key: Key('cart-line-remove-${line.key}'),
-                    tooltip: AppStrings.t('remove_line', loc),
-                    constraints:
-                        const BoxConstraints(minWidth: 40, minHeight: 40),
-                    padding: EdgeInsets.zero,
-                    iconSize: 20,
-                    icon: const Icon(Icons.close),
-                    onPressed: widget.onRemove,
-                  ),
+                  _removeButton(loc: loc),
                 ],
               ),
               const SizedBox(height: 4),
               Row(
                 children: [
-                  SizedBox(
-                    width: 44,
-                    height: 44,
-                    child: IconButton(
-                      key: Key('cart-line-qty-dec-${line.key}'),
-                      tooltip: AppStrings.t('qty_decrease', loc),
-                      constraints:
-                          const BoxConstraints(minWidth: 44, minHeight: 44),
-                      padding: EdgeInsets.zero,
-                      iconSize: 26,
-                      icon:
-                          const Icon(Icons.remove_circle_outline),
-                      onPressed: (double.tryParse(_qty.text) ?? 0) <= 1
-                          ? null
-                          : () => _bumpQty(-1),
-                    ),
-                  ),
-                  SizedBox(
-                    width: short ? 48.0 : 56.0,
-                    child: TextField(
-                      key: Key('cart-line-qty-${line.key}'),
-                      controller: _qty,
-                      focusNode: _qtyFocus,
-                      textAlign: TextAlign.center,
-                      keyboardType: const TextInputType.numberWithOptions(
-                        decimal: true,
-                      ),
-                      style: TextStyle(
-                        fontSize: short ? 15.0 : 16.0,
-                        fontWeight: FontWeight.w700,
-                      ),
-                      decoration: InputDecoration(
-                        isDense: true,
-                        labelText: AppStrings.t('qty', loc),
-                        contentPadding: EdgeInsets.symmetric(
-                          horizontal: 6,
-                          vertical: 12,
-                        ),
-                      ),
-                      // Quantity expressions (`10*24` → 240) are parsed by
-                      // the shared funnel in pos_quantity.dart.
-                      onSubmitted: _handleQtySubmitted,
-                      onChanged: _handleQtyChanged,
-                    ),
-                  ),
-                  SizedBox(
-                    width: 44,
-                    height: 44,
-                    child: IconButton(
-                      key: Key('cart-line-qty-inc-${line.key}'),
-                      tooltip: AppStrings.t('qty_increase', loc),
-                      constraints:
-                          const BoxConstraints(minWidth: 44, minHeight: 44),
-                      padding: EdgeInsets.zero,
-                      iconSize: 26,
-                      icon: const Icon(Icons.add_circle_outline),
-                      onPressed: () => _bumpQty(1),
-                    ),
-                  ),
+                  _qtyDecButton(loc: loc),
+                  _qtyField(loc: loc, short: short),
+                  _qtyIncButton(loc: loc),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Column(
@@ -4016,53 +4381,408 @@ class _CartLineTileState extends State<_CartLineTile> {
               ),
               const SizedBox(height: 6),
               // Compact line discount 36–40px, warning when > 0 (UX FIX #8).
+              _discountField(loc: loc, width: short ? 120 : 140),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Shared cell widgets — the standard card and the reversed-layout dense
+  /// row build the exact same qty/discount/remove controls (same keys,
+  /// same controllers), so behaviour and tests hold in both layouts.
+
+  Widget _qtyDecButton({required String loc}) {
+    final line = widget.line;
+    return SizedBox(
+      width: 44,
+      height: 44,
+      child: IconButton(
+        key: Key('cart-line-qty-dec-${line.key}'),
+        tooltip: AppStrings.t('qty_decrease', loc),
+        constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+        padding: EdgeInsets.zero,
+        iconSize: 26,
+        icon: const Icon(Icons.remove_circle_outline),
+        onPressed:
+            (double.tryParse(_qty.text) ?? 0) <= 1 ? null : () => _bumpQty(-1),
+      ),
+    );
+  }
+
+  /// The shared qty field. The dense row pins it to 52px (44+52+44 = the
+  /// 140px qty column); the card keeps the short/tall 48/56 widths.
+  Widget _qtyField({
+    required String loc,
+    required bool short,
+    double? width,
+  }) {
+    final line = widget.line;
+    return SizedBox(
+      width: width ?? (short ? 48.0 : 56.0),
+      child: TextField(
+        key: Key('cart-line-qty-${line.key}'),
+        controller: _qty,
+        focusNode: _qtyFocus,
+        textAlign: TextAlign.center,
+        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+        style: TextStyle(
+          fontSize: short ? 15.0 : 16.0,
+          fontWeight: FontWeight.w700,
+        ),
+        decoration: InputDecoration(
+          isDense: true,
+          labelText: AppStrings.t('qty', loc),
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 6, vertical: 12),
+        ),
+        // Quantity expressions (`10*24` → 240) are parsed by the shared
+        // funnel in pos_quantity.dart.
+        onSubmitted: _handleQtySubmitted,
+        onChanged: _handleQtyChanged,
+      ),
+    );
+  }
+
+  Widget _qtyIncButton({required String loc}) {
+    final line = widget.line;
+    return SizedBox(
+      width: 44,
+      height: 44,
+      child: IconButton(
+        key: Key('cart-line-qty-inc-${line.key}'),
+        tooltip: AppStrings.t('qty_increase', loc),
+        constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+        padding: EdgeInsets.zero,
+        iconSize: 26,
+        icon: const Icon(Icons.add_circle_outline),
+        onPressed: () => _bumpQty(1),
+      ),
+    );
+  }
+
+  Widget _removeButton({required String loc}) {
+    final line = widget.line;
+    return IconButton(
+      key: Key('cart-line-remove-${line.key}'),
+      tooltip: AppStrings.t('remove_line', loc),
+      constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+      padding: EdgeInsets.zero,
+      iconSize: 20,
+      icon: const Icon(Icons.close),
+      onPressed: widget.onRemove,
+    );
+  }
+
+  /// Compact line discount field (36–40px tall, warning colour when > 0).
+  /// [width] lets the dense row pin the 136px discount column; the card
+  /// keeps the short/tall 120/140 widths.
+  Widget _discountField({required String loc, required double width}) {
+    final theme = Theme.of(context);
+    final line = widget.line;
+    final discountActive = (double.tryParse(line.lineDiscount) ?? 0) > 0;
+    return SizedBox(
+      height: 38,
+      width: width,
+      child: TextField(
+        key: Key('cart-line-discount-${line.key}'),
+        controller: _discount,
+        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+        style: TextStyle(
+          fontSize: 13.5,
+          fontWeight: discountActive ? FontWeight.w700 : null,
+          color: discountActive ? AppColors.warning : null,
+        ),
+        decoration: InputDecoration(
+          isDense: true,
+          labelText: AppStrings.t('line_discount', loc),
+          labelStyle: TextStyle(
+            fontSize: 13,
+            color: discountActive ? AppColors.warning : null,
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(8),
+            borderSide: BorderSide(
+              color: discountActive
+                  ? AppColors.warning
+                  : theme.colorScheme.outline.withValues(alpha: 0.4),
+              width: discountActive ? 1.5 : 1,
+            ),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(8),
+            borderSide: BorderSide(
+              color: discountActive
+                  ? AppColors.warning
+                  : theme.colorScheme.primary,
+              width: 1.5,
+            ),
+          ),
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        ),
+        onSubmitted: widget.onDiscount,
+        onChanged: widget.onDiscount,
+      ),
+    );
+  }
+
+  /// Reversed-layout dense row: one horizontal line — selection marker,
+  /// name (+pack badge / stock warning / promo / wholesale markers),
+  /// unit price + equivalence, qty stepper, line total, discount, remove.
+  /// Column widths match [_CartPanel._denseCartHeader]'s segments.
+  Widget _buildDenseRow(BuildContext context) {
+    final loc = Localizations.localeOf(context).languageCode;
+    final theme = Theme.of(context);
+    final line = widget.line;
+    final selectedUnit = AppStrings.unitLabel(line.unitName, loc);
+    final baseUnit = AppStrings.unitLabel(line.productUnit, loc);
+    final baseQty = (double.tryParse(line.quantity) ?? 0) *
+        (double.tryParse(line.unitMultiplier ?? '') ?? 0);
+    final showBaseInfo = line.sellingUnitId != null &&
+        line.unitMultiplier != null &&
+        line.baseUnitPrice != null &&
+        baseQty > 0;
+    final available = double.tryParse(line.availableStock ?? '');
+    final overStock = available != null && line.qty > available;
+
+    return Padding(
+      key: Key('cart-line-${line.key}'),
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+      child: Material(
+        color: widget.selected
+            ? theme.colorScheme.primary.withValues(alpha: 0.08)
+            : theme.cardColor,
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: widget.selected
+                  ? theme.colorScheme.primary.withValues(alpha: 0.55)
+                  : theme.dividerColor.withValues(alpha: 0.45),
+            ),
+          ),
+          child: Row(
+            children: [
               SizedBox(
-                height: 38,
-                width: short ? 120 : 140,
-                child: TextField(
-                  key: Key('cart-line-discount-${line.key}'),
-                  controller: _discount,
-                  keyboardType: const TextInputType.numberWithOptions(
-                    decimal: true,
+                width: kPosDenseSelectWidth,
+                child: Icon(
+                  widget.selected ? Icons.check_circle : Icons.circle_outlined,
+                  key: Key(
+                    widget.selected
+                        ? 'cart-line-selected-${line.key}'
+                        : 'cart-line-unselected-${line.key}',
                   ),
-                  style: TextStyle(
-                    fontSize: 13.5,
-                    fontWeight: discountActive ? FontWeight.w700 : null,
-                    color: discountActive ? AppColors.warning : null,
-                  ),
-                  decoration: InputDecoration(
-                    isDense: true,
-                    labelText: AppStrings.t('line_discount', loc),
-                    labelStyle: TextStyle(
-                      fontSize: 13,
-                      color: discountActive ? AppColors.warning : null,
-                    ),
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
-                      borderSide: BorderSide(
-                        color: discountActive
-                            ? AppColors.warning
-                            : theme.colorScheme.outline.withValues(alpha: 0.4),
-                        width: discountActive ? 1.5 : 1,
-                      ),
-                    ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
-                      borderSide: BorderSide(
-                        color: discountActive
-                            ? AppColors.warning
-                            : theme.colorScheme.primary,
-                        width: 1.5,
-                      ),
-                    ),
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 8,
-                    ),
-                  ),
-                  onSubmitted: widget.onDiscount,
-                  onChanged: widget.onDiscount,
+                  size: 16,
+                  color: widget.selected
+                      ? theme.colorScheme.primary
+                      : theme.colorScheme.outline.withValues(alpha: 0.7),
                 ),
+              ),
+              const SizedBox(width: 6),
+              // Name (tappable → activates the line for the shortcuts)
+              // plus pack badge / stock-warning / promo / wholesale rows.
+              Expanded(
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: widget.onActivate,
+                  child: Row(
+                    children: [
+                      if (line.isPack) ...[
+                        Container(
+                          key: Key('cart-line-pack-badge-${line.key}'),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 4, vertical: 1),
+                          decoration: BoxDecoration(
+                            color: theme.colorScheme.primary
+                                .withValues(alpha: 0.15),
+                            borderRadius: BorderRadius.circular(5),
+                            border: Border.all(
+                              color: theme.colorScheme.primary
+                                  .withValues(alpha: 0.5),
+                            ),
+                          ),
+                          child: Text(
+                            AppStrings.t('pack_badge', loc),
+                            style: theme.textTheme.labelSmall?.copyWith(
+                              fontSize: 11,
+                              color: theme.colorScheme.primary,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                      ],
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              line.name,
+                              key: Key('cart-line-name-${line.key}'),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.textTheme.bodyMedium?.copyWith(
+                                fontWeight: FontWeight.w700,
+                                fontSize: 14,
+                              ),
+                            ),
+                            if (overStock ||
+                                line.promotionApplied ||
+                                line.wholesaleApplied)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 1),
+                                child: Row(
+                                  children: [
+                                    if (overStock) ...[
+                                      Icon(
+                                        Icons.warning_amber_rounded,
+                                        size: 13,
+                                        color: AppColors.warning,
+                                      ),
+                                      const SizedBox(width: 3),
+                                      Flexible(
+                                        child: Text(
+                                          '${AppStrings.t('stock', loc)}: '
+                                          '${_fmtQty(available)}',
+                                          key: Key(
+                                              'cart-line-stock-warning-${line.key}'),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: theme.textTheme.labelSmall
+                                              ?.copyWith(
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.w700,
+                                            color: AppColors.warning,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                    if (line.promotionApplied)
+                                      Tooltip(
+                                        message: line.retailPrice != null
+                                            ? '${AppStrings.t('promotion', loc)} · ${line.retailPrice}'
+                                            : AppStrings.t('promotion', loc),
+                                        child: Icon(
+                                          Icons.local_offer,
+                                          size: 13,
+                                          key: Key(
+                                              'cart-line-promotion-${line.key}'),
+                                          color: theme.colorScheme.tertiary,
+                                        ),
+                                      ),
+                                    if (line.wholesaleApplied) ...[
+                                      const SizedBox(width: 4),
+                                      Tooltip(
+                                        message:
+                                            AppStrings.t('wholesale', loc),
+                                        child: Icon(
+                                          Icons.sell,
+                                          size: 13,
+                                          key: Key(
+                                              'cart-line-wholesale-${line.key}'),
+                                          color: theme.colorScheme.primary,
+                                        ),
+                                      ),
+                                    ],
+                                  ],
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              // Unit price + selected-unit label (+ base-qty equivalence).
+              SizedBox(
+                width: kPosDensePriceWidth,
+                child: Tooltip(
+                  message: showBaseInfo
+                      ? '${AppStrings.t('base_price', loc)}: '
+                          '${bidiIsolateLtr(_fmtPrice(line.baseUnitPrice))} / $baseUnit'
+                      : '${AppStrings.t('unit_price', loc)}: '
+                          '${bidiIsolateLtr(line.unitPrice)}',
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      numericText(
+                        line.unitPrice,
+                        key: Key('cart-line-price-${line.key}'),
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 13.5,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      Text(
+                        selectedUnit,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          fontSize: 11,
+                          color: theme.colorScheme.onSurface
+                              .withValues(alpha: 0.65),
+                        ),
+                      ),
+                      if (showBaseInfo)
+                        numericText(
+                          '${_fmtQty(baseQty)} $baseUnit',
+                          key: Key('cart-line-base-qty-${line.key}'),
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            fontSize: 10.5,
+                            color: theme.colorScheme.onSurface
+                                .withValues(alpha: 0.6),
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              SizedBox(
+                width: kPosDenseQtyWidth,
+                child: Row(
+                  children: [
+                    _qtyDecButton(loc: loc),
+                    _qtyField(loc: loc, short: false, width: 52),
+                    _qtyIncButton(loc: loc),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              SizedBox(
+                width: kPosDenseTotalWidth,
+                child: Align(
+                  alignment: AlignmentDirectional.centerEnd,
+                  child: numericText(
+                    formatGroupedFixed(line.lineTotal, 2),
+                    key: Key('cart-line-total-${line.key}'),
+                    style: theme.textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 14,
+                      color: theme.colorScheme.primary,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              _discountField(
+                loc: loc,
+                width: kPosDenseDiscountWidth,
+              ),
+              const SizedBox(width: 8),
+              SizedBox(
+                width: kPosDenseRemoveWidth,
+                child: _removeButton(loc: loc),
               ),
             ],
           ),
@@ -4071,6 +4791,27 @@ class _CartLineTileState extends State<_CartLineTile> {
     );
   }
 }
+
+// Reversed-layout cart table geometry (Klick POS layout switch). The
+// dense header row and every dense line row share these widths so the
+// columns stay aligned while the whole table (header included) moves as
+// one unit inside the panel's HScrollView. Gap sequence:
+// select(18) 6 name(≥130) 8 price(84) 8 qty(140) 8 total(86) 8
+// discount(136) 8 remove(40) → 692px MINIMUM table width: the table
+// fills any wider panel the reversed cart owns (the name column absorbs
+// the extra) and only scrolls sideways below this floor.
+const double kPosDenseSelectWidth = 18;
+const double kPosDensePriceWidth = 84;
+const double kPosDenseQtyWidth = 140;
+const double kPosDenseTotalWidth = 86;
+const double kPosDenseDiscountWidth = 136;
+const double kPosDenseRemoveWidth = 40;
+const double kPosDenseRowWidth = 692;
+/// Reserved strip at the bottom of the dense table's region: the
+/// horizontal scrollbar thumb paints over it (the thumb is an overlay at
+/// the HScrollView's bottom edge), and the last cart row scrolls fully
+/// clear of the divider + fixed action/totals/PAY section below.
+const double kPosDenseThumbGutter = 8;
 
 /// Display helpers for cart-line unit presentation (UX FIX #3).
 /// Whole numbers render without decimals (10 not 10.0). Integer digits are
