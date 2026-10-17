@@ -71,9 +71,20 @@ DEFAULT_EARN_ON_DEBT_SETTLEMENT = True
 
 #: Maximum percentage a cashier may select when redeeming ONE reward
 #: (approved example: 20%).  Merchant-configurable, 0 disables reward
-#: redemption without disabling point earning.  The milestone constant
+#: redemption without disabling point earning.  The default milestone
 #: ``POINTS_PER_REWARD`` lives in ``app.domain.loyalty`` (formula layer).
 DEFAULT_MAX_REWARD_DISCOUNT_PERCENT = Decimal("20.000")
+
+#: Points needed to unlock ONE reward on a fresh install — the approved
+#: milestone of the reward redesign (100 points).  Merchant-configurable
+#: through ``loyalty_settings.min_reward_points`` (1..1_000_000): it is
+#: BOTH the balance required before a reward may be selected and the
+#: exact cost deducted when one is redeemed.
+DEFAULT_MIN_REWARD_POINTS = Decimal("100")
+
+#: Upper bound of ``min_reward_points`` (mirrors the CHECK constraint).
+#: A milestone beyond a million points could never be reached in practice.
+MAX_MIN_REWARD_POINTS = Decimal("1000000")
 
 #: Every ledger event type Phase B posting code may write. Enforced by a
 #: CHECK constraint so a typo can never land an unmapped event in the
@@ -124,6 +135,10 @@ class LoyaltySetting(Base, TimestampMixin):
             "AND max_reward_discount_percent <= 100",
             name="ck_loyalty_settings_max_reward_discount_percent",
         ),
+        CheckConstraint(
+            "min_reward_points >= 1 AND min_reward_points <= 1000000",
+            name="ck_loyalty_settings_min_reward_points",
+        ),
     )
 
     id: Mapped[int] = mapped_column(
@@ -165,12 +180,20 @@ class LoyaltySetting(Base, TimestampMixin):
         Numeric(18, 3), nullable=False, default=DEFAULT_MAX_REDEMPTION_PERCENT
     )
     #: Maximum percentage a cashier may select when redeeming ONE reward
-    #: (100 points) — the owner-configured cap of the reward redesign.
-    #: 0 parks reward redemption while point earning continues.
+    #: (the milestone points) — the owner-configured cap of the reward
+    #: redesign.  0 parks reward redemption while point earning continues.
     max_reward_discount_percent: Mapped[Decimal] = mapped_column(
         Numeric(18, 3),
         nullable=False,
         default=DEFAULT_MAX_REWARD_DISCOUNT_PERCENT,
+    )
+    #: Points required to unlock ONE reward — both the balance the
+    #: customer must hold (alone or reached by THIS sale) and the exact
+    #: cost deducted when the reward is redeemed.  1..1_000_000.
+    min_reward_points: Mapped[Decimal] = mapped_column(
+        Numeric(18, 0),
+        nullable=False,
+        default=DEFAULT_MIN_REWARD_POINTS,
     )
 
     # -- earning -------------------------------------------------------------

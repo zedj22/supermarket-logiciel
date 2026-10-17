@@ -423,8 +423,9 @@ class TestReturnRedemptionRestoration:
             reward_percent=10,  # 1000 gross - 100 reward = paid 900
         )
         assert _money(sale["amount_due"]) == Decimal("900.000")
-        # Earn is on the paid amount: floor(900 x 0.01) = 9.
-        assert _balances(db, c["id"])[0] == Decimal(409)  # 500-100+9
+        # Rule R: earn on min(paid, due)=900 + 100 (reward) = 1000 == the
+        # cart total -> 10.
+        assert _balances(db, c["id"])[0] == Decimal(410)  # 500-100+10
 
         line = sale["lines"][0]
         resp = _return(
@@ -443,20 +444,20 @@ class TestReturnRedemptionRestoration:
         assert _money(body["credit_reversed"]) == Decimal("0.000")
         assert _money(body["cash_pending"]) == Decimal("900.000")
 
-        # Ledger: clawback of the 9 earned + full restoration of 100.
+        # Ledger: clawback of the 10 earned + full restoration of 100.
         claw = _ledger_rows(
             db, event_type="return_clawback", sale_id=uuid.UUID(sale["id"])
         )
         restore = _ledger_rows(
             db, event_type="adjustment", sale_id=uuid.UUID(sale["id"])
         )
-        assert len(claw) == 1 and claw[0].points_delta == Decimal(-9)
+        assert len(claw) == 1 and claw[0].points_delta == Decimal(-10)
         assert len(restore) == 1
         assert restore[0].points_delta == Decimal(100)
         assert restore[0].source_event_key == (
             f"return_redemption:{body['return']['id']}"
         )
-        # 409 - 9 clawed + 100 restored = 500, exactly the pre-sale seed.
+        # 410 - 10 clawed + 100 restored = 500, exactly the pre-sale seed.
         assert _balances(db, c["id"])[0] == Decimal(500)
         _reconcile(db, c["id"])
 
@@ -477,8 +478,8 @@ class TestReturnRedemptionRestoration:
             client, admin_headers, p["id"], customer_id=c["id"], reward_percent=10
         )
         line = sale["lines"][0]
-        # Earn on paid 900 -> 9 points: 500-100+9 = 409.
-        assert _balances(db, c["id"])[0] == Decimal(409)
+        # Rule R: earn on min(900, 900) + 100 = 1000 -> 10 points.
+        assert _balances(db, c["id"])[0] == Decimal(410)
 
         first = _return(
             client,
@@ -488,9 +489,9 @@ class TestReturnRedemptionRestoration:
         )
         assert first.status_code == 201, first.text
         f = first.json()
-        # floor(100 x 3/10) = 30 restored; claw floor(9 x 0.3) = 2.
+        # floor(100 x 3/10) = 30 restored; claw floor(10 x 0.3) = 3.
         assert _money(f["cash_pending"]) == Decimal("270.000")  # 300-30
-        assert _balances(db, c["id"])[0] == Decimal(437)  # 409-2+30
+        assert _balances(db, c["id"])[0] == Decimal(437)  # 410-3+30
 
         second = _return(
             client,
@@ -501,8 +502,8 @@ class TestReturnRedemptionRestoration:
         assert second.status_code == 201, second.text
         s = second.json()
         # Entitlement pattern: restoration floor(100 x 10/10) - 30 = 70
-        # and claw floor(9 x 10/10) - 2 = 7 — exact completion by pattern,
-        # not by luck of the floor.
+        # and claw floor(10 x 10/10) - 3 = 7 — exact completion by
+        # pattern, not by luck of the floor.
         assert _money(s["cash_pending"]) == Decimal("630.000")  # 700-70
         assert _balances(db, c["id"])[0] == Decimal(500)  # 437-7+70
 
@@ -513,7 +514,7 @@ class TestReturnRedemptionRestoration:
             db, event_type="return_clawback", sale_id=uuid.UUID(sale["id"])
         )
         assert sum(r.points_delta for r in restored) == Decimal(100)
-        assert sum(r.points_delta for r in clawed) == Decimal(-9)
+        assert sum(r.points_delta for r in clawed) == Decimal(-10)
         _reconcile(db, c["id"])
 
     def test_credit_and_redemption_settlement_never_double_covers(
@@ -655,14 +656,14 @@ class TestVoidReversal:
         sale = _sell(
             client, admin_headers, p["id"], customer_id=c["id"], reward_percent=10
         )
-        # Earn on paid 900 -> 9: 500-100+9 = 409.
-        assert _balances(db, c["id"])[0] == Decimal(409)
+        # Rule R: earn on min(900, 900) + 100 = 1000 -> 10: 500-100+10 = 410.
+        assert _balances(db, c["id"])[0] == Decimal(410)
 
         resp = _void(client, admin_headers, sale["id"])
         assert resp.status_code == 200, resp.text
         body = resp.json()
 
-        # Claw the 9 earned, restore the 100 redeemed: back to seed.
+        # Claw the 10 earned, restore the 100 redeemed: back to seed.
         assert _balances(db, c["id"])[0] == Decimal(500)
         claw = _ledger_rows(
             db, event_type="void_clawback", sale_id=uuid.UUID(sale["id"])
@@ -671,7 +672,7 @@ class TestVoidReversal:
             db, event_type="adjustment", sale_id=uuid.UUID(sale["id"])
         )
         assert len(claw) == 1
-        assert claw[0].points_delta == Decimal(-9)
+        assert claw[0].points_delta == Decimal(-10)
         assert claw[0].source_event_key == f"void_clawback:{sale['id']}"
         assert len(restore) == 1
         assert restore[0].points_delta == Decimal(100)

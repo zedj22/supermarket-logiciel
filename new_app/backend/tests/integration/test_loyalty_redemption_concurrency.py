@@ -32,10 +32,10 @@ Scenario (one test, real supermarket_pro_test database):
    loser cannot fail at the unlocked preview.
 3. Exactly one commits; the other must fail with a ValidationError whose
    details prove the loser re-read the winner's committed balance under
-   the row lock (points_balance = 9, i.e. 100 - 100 + 9 earned, not the
-   pre-race 100).
+   the row lock (points_balance = 10, i.e. 100 - 100 + 10 earned, not
+   the pre-race 100).
 4. Final state invariants: exactly one sale / redeem entry / earn entry,
-   account balance == 9 == ledger projection (reconciliation passes),
+   account balance == 10 == ledger projection (reconciliation passes),
    stock == 990 (loser's decrement rolled back — zero residue).
 """
 
@@ -77,8 +77,8 @@ SELL_QTY = Decimal("10")                # 10 x 100 = 1000.000 gross
 UNIT_PRICE = Decimal("100.000")
 REWARD_DISCOUNT = Decimal("100.000")     # 10% of 1000.000
 AMOUNT_DUE = Decimal("900.000")         # 1000 - 100 reward discount
-EARNED = Decimal("9")                   # floor(900 x 0.01)
-EXPECTED_FINAL_POINTS = Decimal("9")    # 100 - 100 + 9
+EARNED = Decimal("10")                  # rule R: min(900,900)+100 = 1000
+EXPECTED_FINAL_POINTS = Decimal("10")   # 100 - 100 + 10
 INITIAL_STOCK = Decimal("1000.000")
 
 
@@ -307,7 +307,7 @@ def test_concurrent_rewards_cannot_double_spend_on_postgresql(
 
     Exactly one commits; the other is rejected by the locked in-transaction
     revalidation whose details prove it re-read the winner's committed
-    balance (9) under the row lock; final state satisfies the
+    balance (10) under the row lock; final state satisfies the
     balance/ledger/stock invariants with zero residue from the loser.
     """
     SessionLocal = pg_env["sessionmaker"]
@@ -389,7 +389,7 @@ def test_concurrent_rewards_cannot_double_spend_on_postgresql(
     assert Decimal(str(committed.debt)) == Decimal("0.000")
 
     # ── Loser: blocked on the account row lock, then re-read the winner's
-    #    committed balance (9 = 100 - 100 + 9), NOT the pre-race 100 —
+    #    committed balance (10 = 100 - 100 + 10), NOT the pre-race 100 —
     #    proving FOR UPDATE serialization on PostgreSQL. ──
     assert rejected.status_code == 422
     assert rejected.details["selected_percent"] == str(REWARD_PERCENT)
@@ -473,8 +473,16 @@ def test_concurrent_rewards_cannot_double_spend_on_postgresql(
             by_type["sale_earn"].source_event_key
             == f"sale_earn:{committed.id}"
         )
+        # The earn posts FIRST (so a zero-point first purchase can hold
+        # the milestone before the redeem deducts it): the earn entry's
+        # running balance is the seed plus the earn, and the redeem
+        # entry's is the final balance.
         assert (
-            by_type["sale_earn"].balance_after_points == EXPECTED_FINAL_POINTS
+            by_type["sale_earn"].balance_after_points
+            == SEED_POINTS + EARNED
+        )
+        assert (
+            by_type["redeem"].balance_after_points == EXPECTED_FINAL_POINTS
         )
 
         # Zero residue from the loser: only the winner's 10 units left.

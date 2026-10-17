@@ -361,7 +361,8 @@ def customer_loyalty_balance(
     Read-only: never creates the loyalty account row — a customer with
     no loyalty activity yet reports ``has_account=false`` and zeros.
     The reward view (``available_rewards`` / ``remaining_points``) is
-    derived here so clients never reimplement the milestone rule.
+    derived here — against the configured ``min_reward_points``
+    milestone — so clients never reimplement the rule.
     """
     service.get(customer_id)  # 404 when the customer does not exist
     account = engine.account_balance(customer_id)
@@ -370,6 +371,7 @@ def customer_loyalty_balance(
         if account is not None
         else Decimal(0)
     )
+    min_points = to_decimal(engine.settings_snapshot()["min_reward_points"])
     return LoyaltyBalanceResponse(
         customer_id=customer_id,
         has_account=account is not None,
@@ -379,8 +381,9 @@ def customer_loyalty_balance(
             if account is not None
             else Decimal(0)
         ),
-        available_rewards=int(available_rewards(points_balance)),
-        remaining_points=remaining_points(points_balance),
+        available_rewards=int(available_rewards(points_balance, min_points)),
+        remaining_points=remaining_points(points_balance, min_points),
+        min_reward_points=min_points,
     )
 
 

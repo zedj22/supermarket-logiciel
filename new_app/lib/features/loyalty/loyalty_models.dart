@@ -8,9 +8,8 @@ import 'package:flutter/foundation.dart';
 
 import '../../core/number_format.dart';
 
-/// Milestone: every 100 points unlock exactly one reward (mirrors the
-/// server's `POINTS_PER_REWARD`; display-only — the server still owns
-/// every computation).
+/// Milestone fallback (display-only when the server omits
+/// `min_reward_points`; mirrors the server's `POINTS_PER_REWARD`).
 const int loyaltyPointsPerReward = 100;
 
 /// Tolerant number parse: `40`, `40.5`, `'40.000'` and `null` all work.
@@ -50,6 +49,8 @@ class LoyaltySettings {
     required this.cashbackRate,
     required this.maxRewardDiscountPercent,
     required this.earnOnDebtSettlement,
+    required this.amountPerPoint,
+    required this.minRewardPoints,
   });
 
   /// Relative path of both endpoints (same Dio join convention as
@@ -61,10 +62,18 @@ class LoyaltySettings {
   final bool cashbackEnabled;
   final double cashbackRate;
 
-  /// Maximum percent a cashier may select when redeeming ONE reward
-  /// (100 points); 0 parks reward redemption while earning continues.
+  /// Maximum percent a cashier may select when redeeming ONE reward;
+  /// 0 parks reward redemption while earning continues.
   final double maxRewardDiscountPercent;
   final bool earnOnDebtSettlement;
+
+  /// Merchant-facing earning rate: DA of a sale that buy ONE point
+  /// (the inverse of [pointsRate], server-derived — the client shows it
+  /// but never recomputes it).
+  final double amountPerPoint;
+
+  /// Points needed to unlock ONE reward (server-configured, 1..1e6).
+  final int minRewardPoints;
 
   factory LoyaltySettings.fromJson(Map<String, dynamic> json) {
     return LoyaltySettings(
@@ -75,12 +84,20 @@ class LoyaltySettings {
       maxRewardDiscountPercent:
           loyaltyNum(json['max_reward_discount_percent']),
       earnOnDebtSettlement: json['earn_on_debt_settlement'] as bool? ?? false,
+      amountPerPoint: loyaltyNum(json['amount_per_point']),
+      minRewardPoints: loyaltyPoints(
+        json['min_reward_points'] ?? loyaltyPointsPerReward,
+      ),
     );
   }
 
   /// Full body for `PUT /loyalty/settings` — a settings form is a single
   /// document, so every field is always sent (the endpoint accepts partial
   /// bodies, an all-fields update is simply the complete form).
+  ///
+  /// Both `points_rate` and `amount_per_point` are sent: the alias wins
+  /// server-side, so a stale `points_rate` next to a freshly typed DA
+  /// value can never override what the admin meant.
   Map<String, dynamic> toJson() => <String, dynamic>{
         'points_enabled': pointsEnabled,
         'points_rate': pointsRate,
@@ -88,6 +105,8 @@ class LoyaltySettings {
         'cashback_rate': cashbackRate,
         'max_reward_discount_percent': maxRewardDiscountPercent,
         'earn_on_debt_settlement': earnOnDebtSettlement,
+        'amount_per_point': amountPerPoint,
+        'min_reward_points': minRewardPoints,
       };
 
   LoyaltySettings copyWith({
@@ -97,6 +116,8 @@ class LoyaltySettings {
     double? cashbackRate,
     double? maxRewardDiscountPercent,
     bool? earnOnDebtSettlement,
+    double? amountPerPoint,
+    int? minRewardPoints,
   }) {
     return LoyaltySettings(
       pointsEnabled: pointsEnabled ?? this.pointsEnabled,
@@ -106,6 +127,8 @@ class LoyaltySettings {
       maxRewardDiscountPercent:
           maxRewardDiscountPercent ?? this.maxRewardDiscountPercent,
       earnOnDebtSettlement: earnOnDebtSettlement ?? this.earnOnDebtSettlement,
+      amountPerPoint: amountPerPoint ?? this.amountPerPoint,
+      minRewardPoints: minRewardPoints ?? this.minRewardPoints,
     );
   }
 
@@ -118,7 +141,9 @@ class LoyaltySettings {
           other.cashbackEnabled == cashbackEnabled &&
           other.cashbackRate == cashbackRate &&
           other.maxRewardDiscountPercent == maxRewardDiscountPercent &&
-          other.earnOnDebtSettlement == earnOnDebtSettlement);
+          other.earnOnDebtSettlement == earnOnDebtSettlement &&
+          other.amountPerPoint == amountPerPoint &&
+          other.minRewardPoints == minRewardPoints);
 
   @override
   int get hashCode => Object.hashAll(<Object?>[
@@ -128,6 +153,8 @@ class LoyaltySettings {
         cashbackRate,
         maxRewardDiscountPercent,
         earnOnDebtSettlement,
+        amountPerPoint,
+        minRewardPoints,
       ]);
 }
 
@@ -141,6 +168,7 @@ class LoyaltyBalance {
     required this.cashbackBalance,
     required this.availableRewards,
     required this.remainingPoints,
+    required this.minRewardPoints,
   });
 
   final String customerId;
@@ -148,15 +176,21 @@ class LoyaltyBalance {
   final double pointsBalance;
   final double cashbackBalance;
 
-  /// Whole rewards unlocked by the balance (server-derived, every 100
-  /// points — the client never reimplements the milestone rule).
+  /// Whole rewards unlocked by the balance (server-derived — the client
+  /// never reimplements the milestone rule).
   final int availableRewards;
 
-  /// Points held beyond whole rewards: [0, 99].
+  /// Points held beyond whole rewards: [0, minRewardPoints).
   final double remainingPoints;
+
+  /// Points needed to unlock ONE reward (server-configured).
+  final int minRewardPoints;
 
   factory LoyaltyBalance.fromJson(Map<String, dynamic> json) {
     final points = loyaltyNum(json['points_balance']);
+    final minPoints = loyaltyPoints(
+      json['min_reward_points'] ?? loyaltyPointsPerReward,
+    );
     return LoyaltyBalance(
       customerId: '${json['customer_id'] ?? ''}',
       hasAccount: json['has_account'] as bool? ?? false,
@@ -165,7 +199,8 @@ class LoyaltyBalance {
       availableRewards: loyaltyPoints(json['available_rewards']),
       remainingPoints: json['remaining_points'] != null
           ? loyaltyNum(json['remaining_points'])
-          : points % loyaltyPointsPerReward,
+          : points % minPoints,
+      minRewardPoints: minPoints,
     );
   }
 }
@@ -181,11 +216,14 @@ class LoyaltyPreview {
     required this.amountDue,
     required this.availableRewards,
     required this.remainingPoints,
+    required this.minRewardPoints,
+    required this.rewardEligible,
     required this.maxRewardDiscountPercent,
     required this.pointsBalance,
     required this.cashbackBalance,
     required this.pointsEarned,
     required this.cashbackEarned,
+    required this.pointsAfterSale,
   });
 
   final String customerId;
@@ -200,11 +238,19 @@ class LoyaltyPreview {
   /// grossTotal − rewardDiscount: what the payment must cover.
   final double amountDue;
 
-  /// Whole rewards unlocked by the balance right now (every 100).
+  /// Whole rewards unlocked by the balance right now.
   final int availableRewards;
 
-  /// Points held beyond whole rewards: [0, 99].
+  /// Points held beyond whole rewards: [0, minRewardPoints).
   final double remainingPoints;
+
+  /// Points needed to unlock ONE reward (server-configured).
+  final int minRewardPoints;
+
+  /// May this customer spend a reward on THIS cart: the milestone is
+  /// HELD, or THIS SALE's own earning reaches it (first-purchase
+  /// redemption). Server-derived — the client only renders it.
+  final bool rewardEligible;
 
   /// Owner-configured cap for the percent selector (0 = parked/disabled).
   final double maxRewardDiscountPercent;
@@ -212,6 +258,9 @@ class LoyaltyPreview {
   final double cashbackBalance;
   final double pointsEarned;
   final double cashbackEarned;
+
+  /// pointsBalance + pointsEarned (server-computed).
+  final double pointsAfterSale;
 
   factory LoyaltyPreview.fromJson(Map<String, dynamic> json) {
     return LoyaltyPreview(
@@ -222,12 +271,17 @@ class LoyaltyPreview {
       amountDue: loyaltyNum(json['amount_due']),
       availableRewards: loyaltyPoints(json['available_rewards']),
       remainingPoints: loyaltyNum(json['remaining_points']),
+      minRewardPoints: loyaltyPoints(
+        json['min_reward_points'] ?? loyaltyPointsPerReward,
+      ),
+      rewardEligible: json['reward_eligible'] as bool? ?? false,
       maxRewardDiscountPercent:
           loyaltyNum(json['max_reward_discount_percent']),
       pointsBalance: loyaltyNum(json['points_balance']),
       cashbackBalance: loyaltyNum(json['cashback_balance']),
       pointsEarned: loyaltyNum(json['points_earned']),
       cashbackEarned: loyaltyNum(json['cashback_earned']),
+      pointsAfterSale: loyaltyNum(json['points_after_sale']),
     );
   }
 }

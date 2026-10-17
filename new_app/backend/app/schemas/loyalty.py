@@ -38,24 +38,45 @@ class LoyaltySettingsResponse(StrictBaseModel):
 
     points_enabled: bool
     #: Points earned per 1 DA spent (0.01 = one point per 100 DA).
+    #: Stored value; the merchant-facing inverse is ``amount_per_point``.
     points_rate: Decimal = Field(ge=0)
+    #: Merchant-facing earning rate: how many DA of a sale buy ONE point
+    #: (100 = "spend 100 DA, get 1 point").  Read-only DERIVED view of
+    #: ``points_rate`` (``1 / points_rate``, 6 dp); 0 when earning is
+    #: parked at a rate of 0.  Send it back in a PUT to change the rate.
+    amount_per_point: Decimal = Field(ge=0)
     cashback_enabled: bool
     #: Cashback percentage of the amount due (1.000 = 1%).
     cashback_rate: Decimal = Field(ge=0)
-    #: Maximum percent a cashier may select when redeeming ONE reward
-    #: (100 points); 0 parks reward redemption while earning continues.
+    #: Maximum percent a cashier may select when redeeming ONE reward;
+    #: 0 parks reward redemption while earning continues.
     max_reward_discount_percent: Decimal = Field(ge=0, le=100)
+    #: Points required to unlock ONE reward — both the balance needed
+    #: (alone or reached by the sale in progress) and the exact cost
+    #: deducted when it is redeemed.  Default 100, range 1..1_000_000.
+    min_reward_points: Decimal = Field(ge=1, le=Decimal("1000000"))
     earn_on_debt_settlement: bool
 
 
 class LoyaltySettingsUpdateRequest(StrictBaseModel):
-    """Partial update — every field optional, at least one required."""
+    """Partial update — every field optional, at least one required.
+
+    The earning rate may be expressed either way round: ``points_rate``
+    (points per DA, legacy/stored form) or ``amount_per_point`` (DA per
+    point, the merchant-facing form).  When BOTH are present,
+    ``amount_per_point`` wins — a settings form edits DA-per-point and
+    echoes the stale ``points_rate`` alongside it.
+    """
 
     points_enabled: bool | None = None
     points_rate: Decimal | None = Field(None, ge=0)
+    amount_per_point: Decimal | None = Field(None, gt=0, le=Decimal("1000000"))
     cashback_enabled: bool | None = None
     cashback_rate: Decimal | None = Field(None, ge=0)
     max_reward_discount_percent: Decimal | None = Field(None, ge=0, le=100)
+    min_reward_points: Decimal | None = Field(
+        None, ge=1, le=Decimal("1000000")
+    )
     earn_on_debt_settlement: bool | None = None
 
     @model_validator(mode="after")
@@ -65,7 +86,11 @@ class LoyaltySettingsUpdateRequest(StrictBaseModel):
         return self
 
     def provided(self) -> dict[str, object]:
-        """Only the fields the caller actually sent, keyed by column name."""
+        """Only the fields the caller actually sent, keyed by setting name.
+
+        ``amount_per_point`` is a WRITE-ONLY alias (it is not a column):
+        the service converts it into ``points_rate`` before persisting.
+        """
         return {
             name: getattr(self, name)
             for name in self.model_fields_set
@@ -93,10 +118,13 @@ class LoyaltyBalanceResponse(StrictBaseModel):
     has_account: bool
     points_balance: Decimal = Field(ge=0)
     cashback_balance: Decimal = Field(ge=0)
-    #: Whole rewards unlocked by the balance (every 100 points).
+    #: Whole rewards unlocked by the balance (every min_reward_points).
     available_rewards: int = Field(ge=0)
-    #: Points held beyond whole rewards: [0, 99].
+    #: Points held beyond whole rewards: [0, min_reward_points - 1].
     remaining_points: Decimal = Field(ge=0)
+    #: Configured milestone, so the client can render the progress bar
+    #: (``remaining_points / min_reward_points``) without a settings read.
+    min_reward_points: Decimal = Field(ge=1, le=Decimal("1000000"))
 
 
 class LoyaltyLedgerEntryResponse(StrictBaseModel):
@@ -130,6 +158,13 @@ class LoyaltyPreviewRequest(StrictBaseModel):
     ``reward_percent`` is the percentage the cashier selected (0 = no
     reward); the server answers with what is actually allowed, what it
     is worth in DA and whether the customer has a reward to spend.
+
+    ``paid`` is optional: the amount the checkout will collect.  When it
+    is omitted the preview assumes the sale settles IN FULL at
+    ``amount_due`` (the most favourable view — a POS asks before the
+    cashier has typed the paid amount).  The checkout itself always
+    re-checks with the real amount, so a partial/credit sale that cannot
+    reach the milestone is refused before it mutates anything.
     """
 
     customer_id: uuid.UUID
@@ -137,6 +172,7 @@ class LoyaltyPreviewRequest(StrictBaseModel):
     reward_percent: Decimal = Field(
         default=Decimal("0"), ge=0, le=100
     )
+    paid: Decimal | None = Field(None, ge=0)
 
 
 class LoyaltyPreviewResponse(StrictBaseModel):
@@ -150,19 +186,35 @@ class LoyaltyPreviewResponse(StrictBaseModel):
     reward_discount: Decimal = Field(ge=0)
     #: gross_total - reward_discount: what the payment must cover.
     amount_due: Decimal = Field(ge=0)
-    #: Whole rewards unlocked by the balance right now (every 100).
+    #: Whole rewards unlocked by the balance right now (every
+    #: min_reward_points).
     available_rewards: int = Field(ge=0)
-    #: Points held beyond whole rewards: [0, 99].
+    #: Points held beyond whole rewards: [0, min_reward_points - 1].
     remaining_points: Decimal = Field(ge=0)
+    #: Configured milestone (cost of ONE reward) — travels with every
+    #: preview so the POS renders the threshold without a settings read.
+    min_reward_points: Decimal = Field(ge=1, le=Decimal("1000000"))
+    #: True when the customer may spend a reward on THIS cart: the
+    #: configured milestone is already held, or this sale's own earning
+    #: reaches it (first-purchase redemption).  Server-computed so the
+    #: client never reimplements the eligibility rule.
+    reward_eligible: bool
     #: Owner-configured cap for the percent selector — lets the POS
     #: render its dropdown without a separate settings read.
     max_reward_discount_percent: Decimal = Field(ge=0, le=100)
     points_balance: Decimal = Field(ge=0)
     cashback_balance: Decimal = Field(ge=0)
-    #: Rewards earned if the sale settles at ``amount_due`` (the
-    #: checkout qualifying amount for a fully paid sale).
-    points_earned: Decimal
-    cashback_earned: Decimal
+    #: Points this sale would post: on the settled part of the amount
+    #: due PLUS the reward discount, capped at the sale total (nothing
+    #: when the sale settles nothing — see
+    #: ``app.domain.loyalty.sale_points_qualifying_amount``).
+    points_earned: Decimal = Field(ge=0)
+    #: Cashback this sale would post: on the settled amount
+    #: (``min(paid, amount_due)``) — credit earns nothing.
+    cashback_earned: Decimal = Field(ge=0)
+    #: points_balance + points_earned: what the balance becomes once this
+    #: sale is posted (never negative).
+    points_after_sale: Decimal = Field(ge=0)
 
 
 class LoyaltyAdjustmentRequest(StrictBaseModel):

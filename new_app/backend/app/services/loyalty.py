@@ -21,8 +21,8 @@ It NEVER commits — every method writes through the caller's session and
 flushes only, so sale/debt/return/void integrations group several posts
 under one caller-owned transaction boundary.  Phase C (reward redesign)
 adds the checkout helpers: unlocked preview + locked in-transaction
-revalidation of a reward percentage discount (exactly
-``POINTS_PER_REWARD`` points consumed), and the configured earn
+revalidation of a reward percentage discount (exactly the configured
+``min_reward_points`` points consumed), and the configured earn
 calculation used by the sale flow.
 """
 
@@ -46,12 +46,13 @@ from app.core.exceptions import (
     ValidationError,
 )
 from app.domain.loyalty import (
-    POINTS_PER_REWARD,
     LoyaltyMathError,
     available_rewards,
     cashback_earned,
+    derive_points_rate,
     points_earned,
     reward_discount,
+    sale_points_qualifying_amount,
     validate_reward_percent,
 )
 from app.domain.unit_conversions import to_decimal
@@ -62,10 +63,12 @@ from app.models.loyalty import (
     DEFAULT_CASHBACK_RATE,
     DEFAULT_EARN_ON_DEBT_SETTLEMENT,
     DEFAULT_MAX_REWARD_DISCOUNT_PERCENT,
+    DEFAULT_MIN_REWARD_POINTS,
     DEFAULT_POINTS_ENABLED,
     DEFAULT_POINTS_RATE,
     LEDGER_EVENT_TYPES,
     LOYALTY_SETTINGS_SINGLETON_ID,
+    MAX_MIN_REWARD_POINTS,
     LoyaltyAccount,
     LoyaltyLedgerEntry,
     LoyaltySetting,
@@ -87,6 +90,9 @@ _NUMERIC_RULES: dict[str, tuple[bool, Decimal]] = {
     "points_rate": (True, Decimal("0")),
     "cashback_rate": (True, Decimal("0")),
     "max_reward_discount_percent": (True, Decimal("0")),
+    # a milestone of 0 would unlock a reward on every cart, so 0 is
+    # refused here even though the CHECK allows >= 1 only
+    "min_reward_points": (False, Decimal("0")),
 }
 
 
@@ -105,6 +111,7 @@ def loyalty_settings_defaults() -> dict[str, object]:
         "cashback_enabled": DEFAULT_CASHBACK_ENABLED,
         "cashback_rate": DEFAULT_CASHBACK_RATE,
         "max_reward_discount_percent": DEFAULT_MAX_REWARD_DISCOUNT_PERCENT,
+        "min_reward_points": DEFAULT_MIN_REWARD_POINTS,
         "earn_on_debt_settlement": DEFAULT_EARN_ON_DEBT_SETTLEMENT,
     }
 
@@ -142,6 +149,15 @@ class LoyaltySettingsService(BaseService):
         a caller is never told "saved" unless the commit really happened.
         """
         changes = request.provided()
+        if "amount_per_point" in changes:
+            # Merchant-facing DA-per-point form of the earning rate: it
+            # is a WRITE-ONLY alias, so it becomes ``points_rate`` (the
+            # only stored column) before anything is snapshotted or
+            # persisted.  Precedence over a stale ``points_rate`` sent
+            # alongside it — see LoyaltySettingsUpdateRequest.
+            changes["points_rate"] = self._rate_from_amount(
+                changes.pop("amount_per_point")
+            )
         self._validate(changes)
         before = self.get()
         before_snapshot = {key: getattr(before, key) for key in changes}
@@ -175,6 +191,22 @@ class LoyaltySettingsService(BaseService):
     # -- validation ---------------------------------------------------------
 
     @staticmethod
+    def _rate_from_amount(amount_per_point: object) -> Decimal:
+        """DA-per-point → points-per-DA, with the same bounds as the API."""
+        try:
+            amount = Decimal(str(amount_per_point))
+        except Exception as exc:  # pragma: no cover - pydantic already typed
+            raise ValidationError("amount_per_point must be numeric") from exc
+        if amount < Decimal("0.001") or amount > MAX_MIN_REWARD_POINTS:
+            raise ValidationError(
+                "amount_per_point must be >= 0.001 and <= 1000000"
+            )
+        try:
+            return derive_points_rate(amount)
+        except LoyaltyMathError as exc:
+            raise ValidationError(str(exc)) from exc
+
+    @staticmethod
     def _validate(changes: dict[str, object]) -> None:
         """Domain guard mirroring the database CHECK constraints."""
         for name, (allow_zero, lower) in _NUMERIC_RULES.items():
@@ -190,6 +222,16 @@ class LoyaltySettingsService(BaseService):
             if cap < 0 or cap > 100:
                 raise ValidationError(
                     "max_reward_discount_percent must be >= 0 and <= 100"
+                )
+        if "min_reward_points" in changes:
+            milestone = Decimal(str(changes["min_reward_points"]))
+            if milestone > MAX_MIN_REWARD_POINTS:
+                raise ValidationError(
+                    f"min_reward_points must be <= {MAX_MIN_REWARD_POINTS}"
+                )
+            if milestone != milestone.to_integral_value():
+                raise ValidationError(
+                    "min_reward_points must be a whole number of points"
                 )
 
     # -- helpers ------------------------------------------------------------
@@ -226,13 +268,13 @@ class RewardDecision(NamedTuple):
     """Result of one reward eligibility evaluation.
 
     ``points_cost`` is always either 0 (no reward selected) or exactly
-    ``POINTS_PER_REWARD`` (one reward consumed — a point balance is
-    never money), ``percent`` the cashier-selected discount percentage
-    within the owner's cap, and ``discount`` the DA value the server
-    derived from the eligible base (money-quantized).  The
-    pre-transaction preview and the in-transaction revalidation must
-    agree on ALL THREE — otherwise the sale aborts before mutating
-    anything.
+    the configured milestone — ``loyalty_settings.min_reward_points``,
+    100 by default (one reward consumed; a point balance is never money),
+    ``percent`` the cashier-selected discount percentage within the
+    owner's cap, and ``discount`` the DA value the server derived from
+    the eligible base (money-quantized).  The pre-transaction preview and
+    the in-transaction revalidation must agree on ALL THREE — otherwise
+    the sale aborts before mutating anything.
     """
 
     points_cost: Decimal
@@ -364,6 +406,7 @@ class LoyaltyEngine(BaseService):
         "cashback_enabled",
         "cashback_rate",
         "max_reward_discount_percent",
+        "min_reward_points",
         "earn_on_debt_settlement",
     )
 
@@ -378,7 +421,13 @@ class LoyaltyEngine(BaseService):
         """
         if row is None:
             return loyalty_settings_defaults()
-        return {key: getattr(row, key) for key in self._SETTINGS_KEYS}
+        values = {key: getattr(row, key) for key in self._SETTINGS_KEYS}
+        if values.get("min_reward_points") is None:
+            # Defensive: a row written before migration 0035 already got
+            # the column default 100 from the server; this only covers a
+            # transient object built without the field.
+            values["min_reward_points"] = DEFAULT_MIN_REWARD_POINTS
+        return values
 
     @staticmethod
     def _no_reward() -> RewardDecision:
@@ -391,17 +440,32 @@ class LoyaltyEngine(BaseService):
         current_points: Decimal,
         selected_percent: Decimal,
         gross_total: Decimal,
+        paid: Decimal | None = None,
     ) -> RewardDecision:
-        """Validate the selected percent and price the decision.
+        """Validate the selected percent, check affordability, price it.
 
         Shared by the unlocked preview and the locked in-transaction
         revalidation so both evaluate the exact same rules — any drift
         between them (balance dropped below the milestone, settings
-        changed) is caught by the caller's equality check.
+        changed, a different ``paid``) is caught by the caller's
+        equality check.
 
-        One reward always costs exactly ``POINTS_PER_REWARD`` points;
-        the discount is derived server-side from the eligible base and
-        the cashier's percent, never taken from the client.
+        **Affordability** is what makes a first purchase able to redeem:
+        the configured milestone (``min_reward_points``, 100 by default)
+        must be HELD by the current balance or REACHED by this sale's own
+        earning on
+        :func:`app.domain.loyalty.sale_points_qualifying_amount`.  The
+        sale flow passes the real ``paid`` so this check is exactly what
+        will be posted — holding-or-reaching the milestone therefore also
+        guarantees the deduction cannot drive the balance negative.  A
+        read-only client preview may omit ``paid``, which means "the sale
+        settles in full" (the most favourable, payment-independent view);
+        the checkout still re-checks with the real amount and can refuse
+        the reward BEFORE any mutation.
+
+        One reward always costs exactly the milestone.  Percent
+        validation runs BEFORE affordability so a percent outside the
+        owner's cap is never reported as a points shortage.
         """
         if selected_percent == 0:
             return self._no_reward()
@@ -410,26 +474,40 @@ class LoyaltyEngine(BaseService):
                 "loyalty points are disabled",
                 details={"selected_percent": str(selected_percent)},
             )
-        rewards = available_rewards(current_points)
-        if rewards < 1:
-            raise ValidationError(
-                "customer has no reward available (100 points required)",
-                details={
-                    "selected_percent": str(selected_percent),
-                    "points_balance": str(current_points),
-                    "available_rewards": str(rewards),
-                },
-            )
+        milestone = to_decimal(settings["min_reward_points"])
         try:
             percent = validate_reward_percent(
                 selected_percent,
                 settings["max_reward_discount_percent"],
             )
             discount = reward_discount(gross_total, percent)
+            amount_due = quantize_money(gross_total - discount)
+            qualifying = sale_points_qualifying_amount(
+                total=gross_total,
+                paid=amount_due if paid is None else paid,
+                amount_due=amount_due,
+                redeem_value=discount,
+            )
         except LoyaltyMathError as exc:
             raise ValidationError(str(exc)) from exc
+        rewards = available_rewards(current_points, milestone)
+        points_if_earned = points_earned(
+            qualifying, settings["points_rate"]
+        )
+        if rewards < 1 and current_points + points_if_earned < milestone:
+            raise ValidationError(
+                f"customer has no reward available "
+                f"({milestone} points required)",
+                details={
+                    "selected_percent": str(selected_percent),
+                    "points_balance": str(current_points),
+                    "available_rewards": str(rewards),
+                    "min_reward_points": str(milestone),
+                    "points_earned_this_sale": str(points_if_earned),
+                },
+            )
         return RewardDecision(
-            points_cost=Decimal(POINTS_PER_REWARD),
+            points_cost=milestone,
             percent=percent,
             discount=discount,
         )
@@ -440,6 +518,7 @@ class LoyaltyEngine(BaseService):
         customer_id: uuid.UUID,
         reward_percent: Decimal | int | float | str,
         gross_total: Decimal | int | float | str,
+        paid: Decimal | int | float | str | None = None,
     ) -> RewardDecision:
         """Pre-transaction eligibility read for a checkout preview.
 
@@ -447,7 +526,10 @@ class LoyaltyEngine(BaseService):
         the authoritative check happens in :meth:`revalidate_reward`
         under the account ``FOR UPDATE`` lock, and a drift between the
         two aborts the sale.  A percent of 0 means "no reward" and
-        short-circuits without touching the account.
+        short-circuits without touching the account.  ``paid`` is the
+        amount the checkout will collect — the sale flow always passes
+        it so affordability is evaluated on what will really be posted;
+        ``None`` (a read-only client preview) means "settles in full".
         """
         percent = to_decimal(reward_percent)
         if percent == 0:
@@ -459,6 +541,7 @@ class LoyaltyEngine(BaseService):
             current_points=to_decimal(current),
             selected_percent=percent,
             gross_total=quantize_money(gross_total),
+            paid=None if paid is None else to_decimal(paid),
         )
 
     def revalidate_reward(
@@ -468,14 +551,16 @@ class LoyaltyEngine(BaseService):
         reward_percent: Decimal | int | float | str,
         gross_total: Decimal | int | float | str,
         expected: RewardDecision,
+        paid: Decimal | int | float | str | None = None,
     ) -> RewardDecision:
         """Authoritative in-transaction re-check under the row lock.
 
         Locks the loyalty account (``SELECT ... FOR UPDATE``), recomputes
-        the decision from the CURRENT balance and settings, and requires
-        it to equal the pre-transaction preview.  Any disagreement raises
-        :class:`ValidationError` — the caller aborts before mutating the
-        sale, stock or balances, and the cashier simply retries.
+        the decision from the CURRENT balance, settings and the real
+        ``paid`` amount, and requires it to equal the pre-transaction
+        preview.  Any disagreement raises :class:`ValidationError` — the
+        caller aborts before mutating the sale, stock or balances, and
+        the cashier simply retries.
         """
         percent = to_decimal(reward_percent)
         if percent == 0:
@@ -487,6 +572,7 @@ class LoyaltyEngine(BaseService):
             current_points=to_decimal(account.points_balance),
             selected_percent=percent,
             gross_total=quantize_money(gross_total),
+            paid=None if paid is None else to_decimal(paid),
         )
         if (
             decision.points_cost != expected.points_cost
@@ -510,20 +596,44 @@ class LoyaltyEngine(BaseService):
         self,
         *,
         qualifying_amount: Decimal | int | float | str,
+        cashback_qualifying_amount: Decimal | int | float | str | None = None,
         settings: dict[str, object] | None = None,
     ) -> EarnedRewards:
-        """Points and cashback earned on ``qualifying_amount``.
+        """Points and cashback earned on one sale (or one settlement).
 
-        The caller decides what qualifies (sale net of redemption, debt
-        settlement principal, ...); this applies the configured rates with
-        the approved rounding (points floored, cashback HALF_EVEN 0.001).
-        A disabled rule contributes exactly zero, never a partial rate.
+        The caller decides what qualifies; this applies the configured
+        rates with the approved rounding (points floored, cashback
+        HALF_EVEN 0.001).  A disabled rule contributes exactly zero,
+        never a partial rate.
+
+        The two bases are DELIBERATELY separable and callers may pass
+        both:
+
+        * **points** — a milestone counter, so on a SALE they qualify on
+          :func:`app.domain.loyalty.sale_points_qualifying_amount` (the
+          settled part of the amount due plus the reward discount, capped
+          at the sale total; nothing when the sale settles nothing):
+          a fully paid redeemed cart earns exactly what it earns
+          unredeemed, and credit earns nothing;
+        * **cashback** — money, so it qualifies on
+          :func:`app.domain.loyalty.settled_amount`
+          (``min(paid, amount_due)``): credit earns nothing, change does
+          not earn.
+
+        ``cashback_qualifying_amount=None`` (the default) means "same as
+        the points base" — debt settlements and other single-basis
+        callers stay one-argument.
         """
         if settings is None:
             settings = self._settings_values(
                 self._settings_repo.get_singleton()
             )
         amount = to_decimal(qualifying_amount)
+        cashback_base = (
+            amount
+            if cashback_qualifying_amount is None
+            else to_decimal(cashback_qualifying_amount)
+        )
         try:
             earned = (
                 points_earned(amount, settings["points_rate"])
@@ -531,7 +641,7 @@ class LoyaltyEngine(BaseService):
                 else Decimal(0)
             )
             cashback = cashback_earned(
-                amount,
+                cashback_base,
                 settings["cashback_rate"],
                 enabled=bool(settings["cashback_enabled"]),
             )

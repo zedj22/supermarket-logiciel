@@ -939,9 +939,10 @@ class _LoyaltySettingsSection extends ConsumerStatefulWidget {
 
 class _LoyaltySettingsSectionState
     extends ConsumerState<_LoyaltySettingsSection> {
-  late final TextEditingController _pointsRate;
+  late final TextEditingController _amountPerPoint;
   late final TextEditingController _cashbackRate;
   late final TextEditingController _maxRewardDiscount;
+  late final TextEditingController _minRewardPoints;
 
   bool _pointsEnabled = false;
   bool _cashbackEnabled = false;
@@ -950,9 +951,10 @@ class _LoyaltySettingsSectionState
   @override
   void initState() {
     super.initState();
-    _pointsRate = TextEditingController();
+    _amountPerPoint = TextEditingController();
     _cashbackRate = TextEditingController();
     _maxRewardDiscount = TextEditingController();
+    _minRewardPoints = TextEditingController();
     final current = ref.read(loyaltySettingsProvider).settings;
     if (current != null) _seedFrom(current);
     // Deferred out of initState: the provider must not be read while the
@@ -972,9 +974,10 @@ class _LoyaltySettingsSectionState
 
   @override
   void dispose() {
-    _pointsRate.dispose();
+    _amountPerPoint.dispose();
     _cashbackRate.dispose();
     _maxRewardDiscount.dispose();
+    _minRewardPoints.dispose();
     super.dispose();
   }
 
@@ -982,9 +985,13 @@ class _LoyaltySettingsSectionState
       value == value.roundToDouble() ? value.toInt().toString() : '$value';
 
   void _seedFrom(LoyaltySettings settings) {
-    _pointsRate.text = _numText(settings.pointsRate);
+    // The merchant edits DZD per point (the inverse of `points_rate`);
+    // the server derives and reports the stored rate, so re-seeding from
+    // the snapshot never drifts from what was typed.
+    _amountPerPoint.text = _numText(settings.amountPerPoint);
     _cashbackRate.text = _numText(settings.cashbackRate);
     _maxRewardDiscount.text = _numText(settings.maxRewardDiscountPercent);
+    _minRewardPoints.text = settings.minRewardPoints.toString();
     _pointsEnabled = settings.pointsEnabled;
     _cashbackEnabled = settings.cashbackEnabled;
     _earnOnDebt = settings.earnOnDebtSettlement;
@@ -992,22 +999,32 @@ class _LoyaltySettingsSectionState
 
   LoyaltySettings get _draft => LoyaltySettings(
         pointsEnabled: _pointsEnabled,
-        pointsRate: double.tryParse(_pointsRate.text.trim()) ?? -1,
+        // A stale/placeholder rate is harmless: `amount_per_point` (the
+        // inverse) wins server-side whenever both are present.
+        pointsRate: 0,
         cashbackEnabled: _cashbackEnabled,
         cashbackRate: double.tryParse(_cashbackRate.text.trim()) ?? -1,
         maxRewardDiscountPercent:
             double.tryParse(_maxRewardDiscount.text.trim()) ?? -1,
         earnOnDebtSettlement: _earnOnDebt,
+        amountPerPoint:
+            double.tryParse(_amountPerPoint.text.trim()) ?? -1,
+        minRewardPoints:
+            int.tryParse(_minRewardPoints.text.trim()) ?? -1,
       );
 
   /// Server field constraints mirrored client-side so the Save button is
   /// never able to fire an obviously invalid body (0 parks reward
-  /// redemption, 100 allows it over the whole amount due).
+  /// redemption, 100 allows it over the whole amount due; amount per
+  /// point is [0.001, 1e6] and the milestone is a whole [1, 1e6]).
   bool _valid(LoyaltySettings draft) =>
-      draft.pointsRate >= 0 &&
       draft.cashbackRate >= 0 &&
       draft.maxRewardDiscountPercent >= 0 &&
-      draft.maxRewardDiscountPercent <= 100;
+      draft.maxRewardDiscountPercent <= 100 &&
+      draft.amountPerPoint >= 0.001 &&
+      draft.amountPerPoint <= 1000000 &&
+      draft.minRewardPoints >= 1 &&
+      draft.minRewardPoints <= 1000000;
 
   Future<void> _save() async {
     final draft = _draft;
@@ -1026,6 +1043,18 @@ class _LoyaltySettingsSectionState
     if (text.isEmpty || value == null) return AppStrings.t('validation_error', loc());
     if (value < 0) return AppStrings.t('validation_error', loc());
     if (max != null && value > max) return AppStrings.t('validation_error', loc());
+    return null;
+  }
+
+  String? _intFieldError(TextEditingController controller) {
+    final text = controller.text.trim();
+    final value = int.tryParse(text);
+    if (text.isEmpty || value == null) {
+      return AppStrings.t('validation_error', loc());
+    }
+    if (value < 1 || value > 1000000) {
+      return AppStrings.t('validation_error', loc());
+    }
     return null;
   }
 
@@ -1104,9 +1133,15 @@ class _LoyaltySettingsSectionState
             ),
             const SizedBox(height: 12),
             _numField(
-              key: const Key('settings-loyalty-points-rate'),
-              controller: _pointsRate,
-              label: AppStrings.t('loyalty_settings_points_rate', loc),
+              key: const Key('settings-loyalty-amount-per-point'),
+              controller: _amountPerPoint,
+              label: AppStrings.t('loyalty_settings_amount_per_point', loc),
+            ),
+            const SizedBox(height: 12),
+            _intField(
+              key: const Key('settings-loyalty-min-reward-points'),
+              controller: _minRewardPoints,
+              label: AppStrings.t('loyalty_settings_min_reward_points', loc),
             ),
             const SizedBox(height: 12),
             _numField(
@@ -1169,6 +1204,24 @@ class _LoyaltySettingsSectionState
       decoration: InputDecoration(
         labelText: label,
         errorText: _fieldError(controller, max: max),
+        border: const OutlineInputBorder(),
+      ),
+      onChanged: (_) => setState(() {}),
+    );
+  }
+
+  Widget _intField({
+    required Key key,
+    required TextEditingController controller,
+    required String label,
+  }) {
+    return TextFormField(
+      key: key,
+      controller: controller,
+      keyboardType: TextInputType.number,
+      decoration: InputDecoration(
+        labelText: label,
+        errorText: _intFieldError(controller),
         border: const OutlineInputBorder(),
       ),
       onChanged: (_) => setState(() {}),

@@ -252,8 +252,12 @@ class TestRewardSale:
         assert _money(body, "paid") == Decimal("800.000")
         assert _money(body, "change") == Decimal("0.000")
         assert _money(body, "debt") == Decimal("0.000")
-        # Earn on min(paid, due) = 800 x 0.01 -> floor -> 8 points.
-        assert _money(body, "loyalty_points_earned") == Decimal("8")
+        # Rule R (settled + reward discount, capped at the sale total):
+        # min(paid, due) = 800 + 200 (reward) = 1000, which equals the
+        # cart total -> the redeemed cart earns EXACTLY what the same
+        # cart earns unredeemed (10 points), and the discount never
+        # earns on its own.
+        assert _money(body, "loyalty_points_earned") == Decimal("10")
         assert _money(body, "loyalty_cashback_earned") == Decimal("0.000")
 
         # Sale row mirrors the response (same transaction, same numbers).
@@ -261,7 +265,7 @@ class TestRewardSale:
         assert sale.amount_due == Decimal("800.000")
         assert sale.loyalty_points_redeemed == Decimal("100")
         assert sale.loyalty_redeemed_value == Decimal("200.000")
-        assert sale.loyalty_points_earned == Decimal("8")
+        assert sale.loyalty_points_earned == Decimal("10")
         assert sale.total == 1000.0  # GROSS untouched
 
         # Ledger: one redeem debit + one earn credit; balances reconcile.
@@ -269,17 +273,17 @@ class TestRewardSale:
         by_type = {r.event_type: r for r in rows}
         assert set(by_type) == {"redeem", "sale_earn"}
         assert by_type["redeem"].points_delta == Decimal("-100")
-        assert by_type["sale_earn"].points_delta == Decimal("8")
+        assert by_type["sale_earn"].points_delta == Decimal("10")
         assert by_type["redeem"].source_event_key == f"redeem:{body['id']}"
         # The note records percent -> discount provenance.
         assert "reward 20%: discount 200.000 DA" in by_type["redeem"].note
         assert by_type["sale_earn"].source_event_key == f"sale_earn:{body['id']}"
 
         account = _account(db, c["id"])
-        assert account.points_balance == Decimal("408")  # 500 - 100 + 8
+        assert account.points_balance == Decimal("410")  # 500 - 100 + 10
         assert LoyaltyEngine(db).reconcile_account(
             uuid.UUID(str(c["id"]))
-        ).points == Decimal("408")
+        ).points == Decimal("410")
 
     def test_earn_only_sale_no_reward(self, client, admin_headers, db):
         p = _create_product(client, admin_headers, price="100.000", quantity="1000.000")
@@ -405,8 +409,10 @@ class TestRewardSale:
         assert _money(b, "loyalty_points_redeemed") == Decimal("100")
 
         assert len(_ledger_rows(db, a["id"])) == 2  # redeem + earn once
-        # 200 - 100 + earn(min(400, 400)=400 -> 4) = 104
-        assert _account(db, c["id"]).points_balance == Decimal("104")
+        # Rule R: min(paid, due)=400 + reward 100 = 500 == the cart total
+        # -> 5 points; 200 - 100 + 5 = 105 (the redeemed cart earns what
+        # the unredeemed cart would).
+        assert _account(db, c["id"]).points_balance == Decimal("105")
 
 
 # ── Payment rules against amount_due ────────────────────────────────────

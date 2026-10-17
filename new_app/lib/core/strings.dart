@@ -650,6 +650,8 @@ class AppStrings {
     'loyalty_settings_cashback_enabled': 'اكسب استرداداً نقدياً من المبيعات',
     'loyalty_settings_earn_on_debt': 'اكسب نقاطاً عند تسديد الديون',
     'loyalty_settings_points_rate': 'معدل النقاط',
+    'loyalty_settings_amount_per_point': 'سعر النقاط (دج لكل نقطة)',
+    'loyalty_settings_min_reward_points': 'النقاط اللازمة لفتح مكافأة',
     'loyalty_settings_cashback_rate': 'معدل الاسترداد النقدي (%)',
     'loyalty_settings_max_reward_discount': 'أقصى نسبة خصم المكافأة (%)',
     'loyalty_history': 'سجل الولاء',
@@ -2157,6 +2159,9 @@ class AppStrings {
     'loyalty_settings_earn_on_debt':
         'Gagner des points au règlement des dettes',
     'loyalty_settings_points_rate': 'Taux de points',
+    'loyalty_settings_amount_per_point': 'Prix du point (DA par point)',
+    'loyalty_settings_min_reward_points':
+        'Points requis pour débloquer une récompense',
     'loyalty_settings_cashback_rate': 'Taux de cashback (%)',
     'loyalty_settings_max_reward_discount': 'Remise récompense maximale (%)',
     'loyalty_history': 'Historique de fidélité',
@@ -3698,6 +3703,8 @@ class AppStrings {
     'loyalty_settings_cashback_enabled': 'Earn cashback on sales',
     'loyalty_settings_earn_on_debt': 'Earn points on debt settlement',
     'loyalty_settings_points_rate': 'Points rate',
+    'loyalty_settings_amount_per_point': 'Point price (DA per point)',
+    'loyalty_settings_min_reward_points': 'Points needed for one reward',
     'loyalty_settings_cashback_rate': 'Cashback rate (%)',
     'loyalty_settings_max_reward_discount': 'Max reward discount (%)',
     'loyalty_history': 'Loyalty history',

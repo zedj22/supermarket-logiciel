@@ -417,8 +417,11 @@ def test_preview_selects_reward_within_cap(client, admin_headers):
     assert body["available_rewards"] == 10
     assert _money(body["remaining_points"]) == 0
     assert _money(body["points_balance"]) == Decimal("1000")
-    # earn applies to the amount due, not the gross cart
-    assert _money(body["points_earned"]) == Decimal("4")
+    # Rule R, no `paid` given -> assume the sale settles in full at
+    # the amount due: min(400, 400) + 100 (reward) = 500 == the cart
+    # total -> 5 points (a redeemed cart earns what the unredeemed
+    # cart would).
+    assert _money(body["points_earned"]) == Decimal("5")
 
 
 def test_preview_rejects_when_no_reward_available(client, admin_headers):

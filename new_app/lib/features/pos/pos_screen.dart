@@ -3251,10 +3251,15 @@ class _PosTotalsPanelState extends ConsumerState<_PosTotalsPanel> {
     final cashback =
         balance?.cashbackBalance ?? preview?.cashbackBalance ?? 0.0;
     final rewards = loyalty.availableRewards;
+    // The milestone is server-configurable: prefer the matching preview's
+    // value, else the balance snapshot, else the display fallback.
+    final minPoints = (loyalty.previewMatches
+            ? loyalty.preview!.minRewardPoints
+            : (balance?.minRewardPoints ?? loyaltyPointsPerReward))
+        .round();
     final remaining = (loyalty.previewMatches
             ? loyalty.preview!.remainingPoints
-            : (balance?.remainingPoints ??
-                points % loyaltyPointsPerReward))
+            : (balance?.remainingPoints ?? points % minPoints))
         .round();
     final maxPercent = loyalty.maxRewardDiscountPercent;
     final selected = loyalty.rewardPercent;
@@ -3270,12 +3275,16 @@ class _PosTotalsPanelState extends ConsumerState<_PosTotalsPanel> {
     if (selected > 0 && !options.contains(selected)) {
       options.add(selected);
     }
+    // A reward may be selected when the balance holds a milestone OR this
+    // sale's own earning reaches it (first purchase) — the server's
+    // `reward_eligible`, mirrored as `canSelectReward`.
+    final canSelect = loyalty.canSelectReward;
     final hint = loyalty.exceeds
         ? AppStrings.t('loyalty_redeem_exceeds', loc)
-        : rewards > 0
+        : canSelect
             ? '${AppStrings.t('loyalty_redeem_max', loc)}: '
                 '${_percentLabel(maxPercent)}%'
-            : '$remaining/$loyaltyPointsPerReward';
+            : '$remaining/$minPoints';
     return Padding(
       padding: EdgeInsets.only(top: verticalPad, bottom: verticalPad),
       child: Column(
@@ -3320,7 +3329,7 @@ class _PosTotalsPanelState extends ConsumerState<_PosTotalsPanel> {
           SizedBox(height: verticalPad + 1),
           Row(
             children: [
-              if (rewards > 0) ...[
+              if (canSelect) ...[
                 SizedBox(
                   width: 120,
                   child: DropdownButton<double>(
@@ -3361,7 +3370,7 @@ class _PosTotalsPanelState extends ConsumerState<_PosTotalsPanel> {
                 SizedBox(
                   width: 120,
                   child: Text(
-                    '$remaining/$loyaltyPointsPerReward',
+                    '$remaining/$minPoints',
                     key: const Key('pos-loyalty-reward-progress'),
                     textAlign: TextAlign.end,
                     style: theme.textTheme.bodySmall?.copyWith(

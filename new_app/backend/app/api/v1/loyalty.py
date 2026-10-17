@@ -48,7 +48,13 @@ from sqlalchemy.orm import Session
 from app.api.dependencies import get_current_user, require_permission
 from app.core.exceptions import NotFoundError, ValidationError
 from app.db.session import get_db
-from app.domain.loyalty import available_rewards, remaining_points
+from app.domain.loyalty import (
+    available_rewards,
+    derive_amount_per_point,
+    remaining_points,
+    sale_points_qualifying_amount,
+    settled_amount,
+)
 from app.domain.unit_conversions import to_decimal
 from app.domain.valuation import quantize_money
 from app.models.enums import PermissionScope
@@ -87,14 +93,20 @@ def _get_settings_service(db: Session = Depends(get_db)) -> LoyaltySettingsServi
 
 
 def _to_settings_response(row) -> LoyaltySettingsResponse:
+    points_rate = to_decimal(row.points_rate)
     return LoyaltySettingsResponse(
         points_enabled=row.points_enabled,
-        points_rate=to_decimal(row.points_rate),
+        points_rate=points_rate,
+        # Merchant-facing inverse of the stored rate ("100 DA per point"
+        # for the default 0.01) — a read-only derived view; send it back
+        # in a PUT to change the earning rate.
+        amount_per_point=derive_amount_per_point(points_rate),
         cashback_enabled=row.cashback_enabled,
         cashback_rate=to_decimal(row.cashback_rate),
         max_reward_discount_percent=to_decimal(
             row.max_reward_discount_percent
         ),
+        min_reward_points=to_decimal(row.min_reward_points),
         earn_on_debt_settlement=row.earn_on_debt_settlement,
     )
 
@@ -183,12 +195,21 @@ def preview_loyalty(
     with the structured reason when the selected percent is not
     allowed — disabled feature, no available reward, percent above the
     owner's cap), the resulting amount due, the reward milestone view
-    of the balance, the owner's cap for the percent selector, and the
-    rewards earned if the sale settles at that amount.  The client
-    never does authoritative math — it renders these numbers.
+    of the balance (``available_rewards`` / ``remaining_points`` /
+    ``min_reward_points``), whether a reward may be spent on THIS cart
+    (``reward_eligible`` — milestone HELD or reached by this sale's own
+    earning, which is how a first purchase can redeem), the owner's cap
+    for the percent selector, and the rewards this sale would post
+    (points on the settled part of the amount due plus the reward
+    discount, capped at the total; cashback on the settled amount).
+    The client never does authoritative math — it renders these numbers.
 
-    When points are disabled the reported cap collapses to 0 so a
-    client builds an empty selector without a second settings read.
+    Send the optional ``paid`` for a payment-aware answer; without it
+    the preview assumes the sale settles IN FULL at ``amount_due``,
+    which is what a POS shows while the cashier is still entering the
+    payment (the checkout itself always re-checks with the real
+    amount).  When points are disabled the reported cap collapses to 0
+    so a client builds an empty selector without a second settings read.
 
     Read-only: never creates the settings row or the loyalty account.
     """
@@ -212,6 +233,7 @@ def preview_loyalty(
             customer_id=customer.id,
             reward_percent=request.reward_percent,
             gross_total=gross_total,
+            paid=request.paid,
         )
     else:
         decision = RewardDecision(Decimal(0), Decimal(0), quantize_money(0))
@@ -226,9 +248,21 @@ def preview_loyalty(
         else Decimal(0)
     )
 
-    earned = engine.calculate_earn(
-        qualifying_amount=amount_due, settings=settings
+    paid_effective = (
+        amount_due if request.paid is None else quantize_money(request.paid)
     )
+    earned = engine.calculate_earn(
+        qualifying_amount=sale_points_qualifying_amount(
+            total=gross_total,
+            paid=paid_effective,
+            amount_due=amount_due,
+            redeem_value=decision.discount,
+        ),
+        cashback_qualifying_amount=settled_amount(paid_effective, amount_due),
+        settings=settings,
+    )
+    min_points = to_decimal(settings["min_reward_points"])
+    points_after_sale = points_balance + earned.points
 
     return LoyaltyPreviewResponse(
         customer_id=customer.id,
@@ -236,13 +270,17 @@ def preview_loyalty(
         reward_percent=decision.percent,
         reward_discount=decision.discount,
         amount_due=amount_due,
-        available_rewards=int(available_rewards(points_balance)),
-        remaining_points=remaining_points(points_balance),
+        available_rewards=int(available_rewards(points_balance, min_points)),
+        remaining_points=remaining_points(points_balance, min_points),
+        min_reward_points=min_points,
+        reward_eligible=bool(settings["points_enabled"])
+        and points_after_sale >= min_points,
         max_reward_discount_percent=max_percent,
         points_balance=points_balance,
         cashback_balance=cashback_balance,
         points_earned=earned.points,
         cashback_earned=earned.cashback,
+        points_after_sale=points_after_sale,
     )
 
 

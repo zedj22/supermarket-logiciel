@@ -84,8 +84,16 @@ class PosLoyaltyState {
       ? preview!.availableRewards
       : (balance?.availableRewards ?? 0);
 
-  /// True when at least one reward (100 points) is available.
+  /// True when at least one reward is available right now (the balance
+  /// holds a whole milestone).
   bool get hasRewardAvailable => availableRewards > 0;
+
+  /// May the cashier select a reward percent on THIS cart: the balance
+  /// holds a milestone, or this sale's own earning reaches it (the
+  /// first-purchase redemption). The server decides — the client only
+  /// mirrors its answer.
+  bool get canSelectReward =>
+      availableRewards > 0 || (previewMatches && preview!.rewardEligible);
 
   /// Owner-configured cap for the percent selector (0 = parked or
   /// points disabled).

@@ -31,6 +31,7 @@ from app.core.exceptions import (
     NotFoundError,
     ValidationError,
 )
+from app.domain.loyalty import sale_points_qualifying_amount, settled_amount
 from app.domain.unit_conversions import QTY_QUANTUM, effective_unit_price, selling_to_base, to_decimal
 from app.domain.valuation import quantize_money
 from app.domain.promotion import promotional_unit_price
@@ -1024,7 +1025,10 @@ class SaleService(BaseService):
         a reward requested via ``request.loyalty_reward_percent`` is
         previewed pre-transaction, revalidated in-transaction under the
         account row lock, and posted through :class:`LoyaltyEngine` in the
-        SAME transaction as the sale (exactly 100 points consumed).
+        SAME transaction as the sale (exactly the configured
+        ``min_reward_points`` points consumed — reached by the balance
+        alone or by this sale's own earning, which is how a first
+        purchase can redeem).
         """
         user_id = user.id if user is not None else None
         effective_device = device_id or request.device_id
@@ -1088,6 +1092,12 @@ class SaleService(BaseService):
                 customer_id=request.customer_id,
                 reward_percent=request.loyalty_reward_percent,
                 gross_total=gross_total,
+                # The real amount the checkout will collect: affordability
+                # of the reward is evaluated on what will really be
+                # posted, so a partial/credit sale that cannot reach the
+                # milestone is refused here — BEFORE any transaction,
+                # stock or balance is touched.
+                paid=request.paid,
             )
 
         totals = self._compute_totals(
@@ -1148,15 +1158,29 @@ class SaleService(BaseService):
                         reward_percent=request.loyalty_reward_percent,
                         gross_total=totals["total"],
                         expected=loyalty_preview,
+                        paid=totals["paid"],
                     )
                     redeem_points, reward_percent, redeem_value = decision
-                    # Earn qualifies on what this sale actually collects,
-                    # net of redemption: cash/card -> amount_due (paid may
-                    # exceed it via change), partial -> paid, credit -> 0.
+                    # POINTS qualify on what the sale really covers —
+                    # the settled part of the amount due PLUS the reward
+                    # discount, capped at the sale total
+                    # (sale_points_qualifying_amount): a fully paid
+                    # redeemed cart earns exactly what the same cart
+                    # earns unredeemed (the discount never adds points
+                    # beyond the cart), change never earns, and a sale
+                    # that settles nothing (credit, or a cart covered
+                    # 100% by the reward) earns 0.  CASHBACK is money,
+                    # so it qualifies on the settled amount only.
                     earn = engine.calculate_earn(
-                        qualifying_amount=min(
+                        qualifying_amount=sale_points_qualifying_amount(
+                            total=totals["total"],
+                            paid=totals["paid"],
+                            amount_due=totals["amount_due"],
+                            redeem_value=redeem_value,
+                        ),
+                        cashback_qualifying_amount=settled_amount(
                             totals["paid"], totals["amount_due"]
-                        )
+                        ),
                     )
                     earn_points, cashback_value = (
                         earn.points,
@@ -1251,12 +1275,29 @@ class SaleService(BaseService):
                         )
                     )
 
-                # Loyalty ledger — reward debit and earn credit in the
-                # SAME transaction as the sale (sale.id was assigned by
-                # the sale-insert flush, so the FK and source keys exist).
-                # Exactly POINTS_PER_REWARD points are consumed; the note
-                # records which percent produced which discount.
+                # Loyalty ledger — earn credit FIRST, then the reward
+                # debit, both in the SAME transaction as the sale
+                # (sale.id was assigned by the sale-insert flush, so the
+                # FK and source keys exist).  The order matters: a
+                # zero-point customer redeeming on their first purchase
+                # only reaches the milestone WITH this sale's earning, so
+                # the credit has to land before the debit or the
+                # resulting balance would go negative and be refused.
+                # Exactly the configured ``min_reward_points`` points are
+                # consumed; the note records which percent produced which
+                # discount.
                 if enable_loyalty and customer is not None:
+                    if earn_points > 0 or cashback_value > 0:
+                        engine.post(
+                            customer_id=customer.id,
+                            event_type="sale_earn",
+                            source_event_key=f"sale_earn:{sale.id}",
+                            points_delta=earn_points,
+                            cashback_delta=cashback_value,
+                            sale_id=sale.id,
+                            created_by=user_id,
+                            note=f"Sale {invoice_number}",
+                        )
                     if redeem_points > 0:
                         engine.post(
                             customer_id=customer.id,
@@ -1270,17 +1311,6 @@ class SaleService(BaseService):
                                 f"reward {reward_percent}%: discount "
                                 f"{redeem_value} DA | Sale {invoice_number}"
                             ),
-                        )
-                    if earn_points > 0 or cashback_value > 0:
-                        engine.post(
-                            customer_id=customer.id,
-                            event_type="sale_earn",
-                            source_event_key=f"sale_earn:{sale.id}",
-                            points_delta=earn_points,
-                            cashback_delta=cashback_value,
-                            sale_id=sale.id,
-                            created_by=user_id,
-                            note=f"Sale {invoice_number}",
                         )
 
                 tx.flush()

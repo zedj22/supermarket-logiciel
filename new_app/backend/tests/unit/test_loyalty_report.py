@@ -298,9 +298,9 @@ def scenario(client, admin_headers, db):
     sale1 = _sell(client, admin_headers, product["id"], customer_id=customer["id"])
 
     # Sale 2: 1 x 100 = 100, ONE reward at 10% -> discount 10.000,
-    # due 90 (100 points consumed).  Earn on 90: floor(0.9) = 0 pts
-    # (zero points still posts because cashback 90 x 2% = 1.800 > 0).
-    # Balance: 410 pts / 21.800.
+    # due 90 (100 points consumed).  Rule R: earn on min(paid, due)=90
+    # + 10 (reward) = 100 -> 1 pt (cashback 90 x 2% = 1.800).
+    # Balance: 411 pts / 21.800.
     sale2 = _sell(
         client,
         admin_headers,
@@ -311,10 +311,10 @@ def scenario(client, admin_headers, db):
     )
 
     # Return of sale 1 (full 1000): clawback 10 pts / 20.000 cashback,
-    # no reward to restore.  Balance: 400 pts / 1.800.
+    # no reward to restore.  Balance: 401 pts / 1.800.
     ret = _return(client, admin_headers, sale1, "10.000")
 
-    # Void of sale 2: clawback 0 pts / 1.800 cashback + restore the
+    # Void of sale 2: clawback 1 pt / 1.800 cashback + restore the
     # 100 spent points / 10.000 value.  Balance: 500 pts / 0.000.
     voided = _void(client, admin_headers, sale2["id"])
 
@@ -341,15 +341,18 @@ class TestLoyaltyReportScenario:
         assert body["invoice_count"] == 1
 
         # Period activity (ledger window).
-        assert Decimal(str(body["points_earned"])) == Decimal("10")
+        # Rule R: sale 2 earns 1 pt (90 settled + 10 reward = 100 == the
+        # cart total), so the window total is 10 + 1.
+        assert Decimal(str(body["points_earned"])) == Decimal("11")
         assert Decimal(str(body["cashback_earned"])) == Decimal("21.800")
         assert body["earn_entries"] == 2
         assert Decimal(str(body["settlement_points"])) == Decimal("0")
         assert Decimal(str(body["points_redeemed"])) == Decimal("100")
         assert Decimal(str(body["redemption_value"])) == Decimal("10.000")
         assert body["redeem_entries"] == 1
-        # Return clawback -10 pts / -20.000; void clawback -0 / -1.800.
-        assert Decimal(str(body["points_reversed"])) == Decimal("10")
+        # Return clawback -10 pts / -20.000; void clawback -1 / -1.800
+        # (sale 2 earned 1 pt under rule R, so the void claws it back).
+        assert Decimal(str(body["points_reversed"])) == Decimal("11")
         assert Decimal(str(body["cashback_reversed"])) == Decimal("21.800")
         assert body["reversal_entries"] == 2
         # Void restored the 100 spent pts / 10.000 (return had none).
@@ -392,9 +395,10 @@ class TestLoyaltyReportScenario:
         ]
         by_type = {e["event_type"]: e for e in events}
 
-        # sale_earn: 10 pts / 20.000 (sale 1) + 0 pts / 1.800 (sale 2).
+        # sale_earn: 10 pts / 20.000 (sale 1) + 1 pt / 1.800 (sale 2,
+        # rule R: 90 settled + 10 reward = 100 == the cart total).
         assert by_type["sale_earn"]["entries"] == 2
-        assert Decimal(str(by_type["sale_earn"]["points_delta"])) == Decimal("10")
+        assert Decimal(str(by_type["sale_earn"]["points_delta"])) == Decimal("11")
         assert Decimal(str(by_type["sale_earn"]["cashback_delta"])) == Decimal(
             "21.800"
         )
@@ -412,7 +416,9 @@ class TestLoyaltyReportScenario:
         )
 
         assert by_type["void_clawback"]["entries"] == 1
-        assert Decimal(str(by_type["void_clawback"]["points_delta"])) == Decimal("0")
+        assert Decimal(str(by_type["void_clawback"]["points_delta"])) == Decimal(
+            "-1"
+        )
         assert Decimal(str(by_type["void_clawback"]["cashback_delta"])) == Decimal(
             "-1.800"
         )
@@ -649,7 +655,7 @@ class TestLoyaltyReportPermissions:
         self, client, manager_headers, scenario
     ):
         body = _report(client, manager_headers)
-        assert Decimal(str(body["points_earned"])) == Decimal("10")
+        assert Decimal(str(body["points_earned"])) == Decimal("11")
 
     def test_cashier_without_report_financial_is_forbidden(
         self, client, cashier_headers, scenario

@@ -72,15 +72,49 @@ void main() {
         'cashback_rate': '1.000',
         'max_reward_discount_percent': '20.000',
         'earn_on_debt_settlement': true,
+        'amount_per_point': '100.000',
+        'min_reward_points': '100',
       });
       expect(settings.pointsEnabled, isTrue);
       expect(settings.pointsRate, 0.01);
       expect(settings.cashbackEnabled, isFalse);
       expect(settings.maxRewardDiscountPercent, 20.0);
       expect(settings.earnOnDebtSettlement, isTrue);
+      expect(settings.amountPerPoint, 100.0);
+      expect(settings.minRewardPoints, 100);
 
       final back = LoyaltySettings.fromJson(settings.toJson());
       expect(back, settings);
+    });
+
+    test('legacy payload without the new fields falls back sensibly', () {
+      final settings = LoyaltySettings.fromJson(const {
+        'points_enabled': true,
+        'points_rate': '0.010',
+        'cashback_enabled': false,
+        'cashback_rate': '1.000',
+        'max_reward_discount_percent': '20.000',
+        'earn_on_debt_settlement': true,
+      });
+      expect(settings.amountPerPoint, 0.0);
+      expect(settings.minRewardPoints, 100);
+    });
+
+    test('toJson always carries both rate and the DA-per-point alias', () {
+      const base = LoyaltySettings(
+        pointsEnabled: true,
+        pointsRate: 0.01,
+        cashbackEnabled: false,
+        cashbackRate: 1,
+        maxRewardDiscountPercent: 20,
+        earnOnDebtSettlement: true,
+        amountPerPoint: 100,
+        minRewardPoints: 100,
+      );
+      final body = base.toJson();
+      expect(body['points_rate'], 0.01);
+      expect(body['amount_per_point'], 100.0);
+      expect(body['min_reward_points'], 100);
     });
 
     test('copyWith + equality are value-based', () {
@@ -91,6 +125,8 @@ void main() {
         cashbackRate: 1,
         maxRewardDiscountPercent: 20,
         earnOnDebtSettlement: true,
+        amountPerPoint: 100,
+        minRewardPoints: 100,
       );
       final tweaked =
           base.copyWith(pointsEnabled: false, pointsRate: 0.02);
@@ -108,6 +144,7 @@ void main() {
         'cashback_balance': '12.500',
         'available_rewards': 0,
         'remaining_points': '60.000',
+        'min_reward_points': '100',
       });
       expect(balance.customerId, 'c-1');
       expect(balance.hasAccount, isTrue);
@@ -115,6 +152,7 @@ void main() {
       expect(balance.cashbackBalance, 12.5);
       expect(balance.availableRewards, 0);
       expect(balance.remainingPoints, 60.0);
+      expect(balance.minRewardPoints, 100);
     });
 
     test('milestone split: 130 points -> 1 reward + 30 remaining', () {
@@ -125,6 +163,7 @@ void main() {
         'cashback_balance': '0.000',
         'available_rewards': 1,
         'remaining_points': '30.000',
+        'min_reward_points': '100',
       });
       expect(balance.availableRewards, 1);
       expect(balance.remainingPoints, 30.0);
@@ -140,6 +179,7 @@ void main() {
         'available_rewards': 2,
       });
       expect(balance.remainingPoints, 30.0);
+      expect(balance.minRewardPoints, 100);
     });
   });
 
@@ -153,19 +193,25 @@ void main() {
         'amount_due': '80.000',
         'available_rewards': 1,
         'remaining_points': '30.000',
+        'min_reward_points': '100',
+        'reward_eligible': true,
         'max_reward_discount_percent': '20.000',
         'points_balance': '130.000',
         'cashback_balance': '0.000',
         'points_earned': '0.800',
         'cashback_earned': '0.000',
+        'points_after_sale': '130.800',
       });
       expect(preview.rewardPercent, 20.0);
       expect(preview.rewardDiscount, 20.0);
       expect(preview.amountDue, 80.0);
       expect(preview.availableRewards, 1);
       expect(preview.remainingPoints, 30.0);
+      expect(preview.minRewardPoints, 100);
+      expect(preview.rewardEligible, isTrue);
       expect(preview.maxRewardDiscountPercent, 20.0);
       expect(preview.pointsEarned, 0.8);
+      expect(preview.pointsAfterSale, 130.8);
     });
 
     test('no reward selected parses as zero percent/discount', () {
@@ -177,15 +223,38 @@ void main() {
         'amount_due': '100.00',
         'available_rewards': 1,
         'remaining_points': '30.000',
+        'min_reward_points': '100',
+        'reward_eligible': true,
+        'max_reward_discount_percent': '20.000',
+        'points_balance': '130.000',
+        'cashback_balance': '0.000',
+        'points_earned': '1.000',
+        'cashback_earned': '0.000',
+        'points_after_sale': '131.000',
+      });
+      expect(preview.rewardPercent, 0);
+      expect(preview.rewardDiscount, 0);
+      expect(preview.amountDue, 100.0);
+    });
+
+    test('legacy payload without the new fields falls back sensibly', () {
+      final preview = LoyaltyPreview.fromJson(const {
+        'customer_id': 'c-1',
+        'gross_total': '100.00',
+        'reward_percent': '0',
+        'reward_discount': '0',
+        'amount_due': '100.00',
+        'available_rewards': 0,
+        'remaining_points': '30.000',
         'max_reward_discount_percent': '20.000',
         'points_balance': '130.000',
         'cashback_balance': '0.000',
         'points_earned': '1.000',
         'cashback_earned': '0.000',
       });
-      expect(preview.rewardPercent, 0);
-      expect(preview.rewardDiscount, 0);
-      expect(preview.amountDue, 100.0);
+      expect(preview.minRewardPoints, 100);
+      expect(preview.rewardEligible, isFalse);
+      expect(preview.pointsAfterSale, 0.0);
     });
   });
 

@@ -156,10 +156,13 @@ void main() {
       // backend printing/labels.py, the 21 warning codes, the screen
       // sections/fields/actions, the payment dialog and history labels,
       // the missing-field and eligibility chips — 130 keys (1420).
+      // The loyalty earning-rate redesign pass added the merchant-facing
+      // DA-per-point setting label and the configurable milestone label —
+      // 2 keys (1422).
       // Update this deliberately when a subphase
       // adds strings — an unexplained drop means keys were deleted from
       // one map only.
-      expect(_map('en').keys.length, 1420);
+      expect(_map('en').keys.length, 1422);
       expect(_map('ar').keys.length, _map('en').keys.length);
       expect(_map('fr').keys.length, _map('en').keys.length);
     });
