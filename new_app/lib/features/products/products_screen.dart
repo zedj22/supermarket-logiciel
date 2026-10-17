@@ -17,6 +17,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/colors.dart';
 import '../../core/number_format.dart';
 import '../../core/numeric_text.dart';
+import '../../core/search_field_state.dart';
 import '../../core/shortcuts.dart';
 import '../../core/strings.dart';
 import '../../core/widgets/table_header.dart';
@@ -155,6 +156,12 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
       },
     );
     PageShortcutsRegistry.current = _pageShortcuts;
+    // The query outlives this page State: without re-seeding, returning
+    // shows an empty box while the list is still filtered.
+    seedSearchField(
+      _searchController,
+      ref.read(productsProvider).query.search,
+    );
     Future.microtask(() {
       ref.read(productsProvider.notifier).load();
       ref.read(categoriesProvider.notifier).load(status: 'active');

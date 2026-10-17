@@ -12,6 +12,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/numeric_text.dart';
+import '../../core/search_field_state.dart';
 import '../../core/strings.dart';
 import '../../l10n/locale_provider.dart';
 import '../auth/permission_helpers.dart';
@@ -28,15 +29,29 @@ class DebtsScreen extends ConsumerStatefulWidget {
 }
 
 class _DebtsScreenState extends ConsumerState<DebtsScreen> {
+  final _searchController = TextEditingController();
+
   @override
   void initState() {
     super.initState();
+    // The query outlives this page State: without re-seeding, returning
+    // shows an empty box while the list is still filtered.
+    seedSearchField(
+      _searchController,
+      ref.read(debtorsProvider).query.search,
+    );
     // Refresh on every visit (providers keep their state alive).
     Future.microtask(() {
       if (!mounted) return;
       ref.read(debtorsProvider.notifier).load();
       ref.read(debtSummaryProvider.notifier).refresh();
     });
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
   }
 
   Future<void> _pay(CustomerModel customer) async {
@@ -122,6 +137,7 @@ class _DebtsScreenState extends ConsumerState<DebtsScreen> {
             width: 320,
             child: TextField(
               key: const Key('debts-search'),
+              controller: _searchController,
               decoration: InputDecoration(
                 hintText: AppStrings.t('search', loc),
                 isDense: true,

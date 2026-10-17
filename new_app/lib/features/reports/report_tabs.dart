@@ -12,6 +12,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/strings.dart';
+import '../../core/widgets/h_scroll_view.dart';
 import '../../core/widgets/section_header.dart';
 import '../../l10n/locale_provider.dart';
 import '../clients/customer_models.dart';
@@ -885,44 +886,50 @@ class _SlowMovingTabState extends ConsumerState<SlowMovingTab>
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            SizedBox(
-              width: 170,
-              child: TextFormField(
-                key: const Key('reports-slow-days'),
-                initialValue: '${controller.days}',
-                decoration: InputDecoration(
-                  labelText: AppStrings.t('filter_lookback', loc),
-                  isDense: true,
-                  border: const OutlineInputBorder(),
+        // Two fixed-width inputs: fine on a wide window, 1px (and worse
+        // in English) over the edge on a narrow one. HScrollView keeps
+        // every control reachable instead of clipping the second field.
+        HScrollView(
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox(
+                width: 170,
+                child: TextFormField(
+                  key: const Key('reports-slow-days'),
+                  initialValue: '${controller.days}',
+                  decoration: InputDecoration(
+                    labelText: AppStrings.t('filter_lookback', loc),
+                    isDense: true,
+                    border: const OutlineInputBorder(),
+                  ),
+                  inputFormatters: [LengthLimitingTextInputFormatter(3)],
+                  onFieldSubmitted: (value) {
+                    final parsed = int.tryParse(value.trim());
+                    if (parsed != null) controller.setDays(parsed);
+                  },
                 ),
-                inputFormatters: [LengthLimitingTextInputFormatter(3)],
-                onFieldSubmitted: (value) {
-                  final parsed = int.tryParse(value.trim());
-                  if (parsed != null) controller.setDays(parsed);
-                },
               ),
-            ),
-            const SizedBox(width: 12),
-            SizedBox(
-              width: 170,
-              child: TextFormField(
-                key: const Key('reports-slow-threshold'),
-                initialValue: '${controller.threshold}',
-                decoration: InputDecoration(
-                  labelText: AppStrings.t('filter_threshold', loc),
-                  isDense: true,
-                  border: const OutlineInputBorder(),
+              const SizedBox(width: 12),
+              SizedBox(
+                width: 170,
+                child: TextFormField(
+                  key: const Key('reports-slow-threshold'),
+                  initialValue: '${controller.threshold}',
+                  decoration: InputDecoration(
+                    labelText: AppStrings.t('filter_threshold', loc),
+                    isDense: true,
+                    border: const OutlineInputBorder(),
+                  ),
+                  inputFormatters: [LengthLimitingTextInputFormatter(4)],
+                  onFieldSubmitted: (value) {
+                    final parsed = int.tryParse(value.trim());
+                    if (parsed != null) controller.setThreshold(parsed);
+                  },
                 ),
-                inputFormatters: [LengthLimitingTextInputFormatter(4)],
-                onFieldSubmitted: (value) {
-                  final parsed = int.tryParse(value.trim());
-                  if (parsed != null) controller.setThreshold(parsed);
-                },
               ),
-            ),
-          ],
+            ],
+          ),
         ),
         const SizedBox(height: 8),
         Expanded(
@@ -1123,71 +1130,76 @@ class _SalesTabState extends ConsumerState<SalesTab>
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            SizedBox(
-              width: 190,
-              child: DropdownButtonFormField<String>(
-                key: ValueKey<String>('reports-status-${controller.status}'),
-                initialValue: controller.status,
-                isExpanded: true,
-                decoration: InputDecoration(
-                  labelText: AppStrings.t('filter_status', loc),
-                  isDense: true,
-                  border: const OutlineInputBorder(),
-                ),
-                items: [
-                  for (final status in kSalesStatuses)
-                    DropdownMenuItem(
-                      value: status,
-                      child: Text(
-                        status == 'all'
-                            ? AppStrings.t('all', loc)
-                            : AppStrings.t(reportStatusKey(status), loc),
-                        key: Key('reports-status-item-$status'),
-                      ),
-                    ),
-                ],
-                onChanged: (value) {
-                  if (value != null) controller.setStatus(value);
-                },
-              ),
-            ),
-            const SizedBox(width: 12),
-            SizedBox(
-              width: 190,
-              child: DropdownButtonFormField<String>(
-                key: ValueKey<String>(
-                  'reports-payment-${controller.paymentMethod ?? 'all'}',
-                ),
-                initialValue: controller.paymentMethod ?? '',
-                isExpanded: true,
-                decoration: InputDecoration(
-                  labelText: AppStrings.t('filter_payment', loc),
-                  isDense: true,
-                  border: const OutlineInputBorder(),
-                ),
-                items: [
-                  DropdownMenuItem(
-                    value: '',
-                    child: Text(
-                      AppStrings.t('all', loc),
-                      key: const Key('reports-payment-item-all'),
-                    ),
+        // 392px of fixed filters: scrolls instead of overflowing (41px
+        // over at 600 wide, 141px in English at 500).
+        HScrollView(
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox(
+                width: 190,
+                child: DropdownButtonFormField<String>(
+                  key: ValueKey<String>('reports-status-${controller.status}'),
+                  initialValue: controller.status,
+                  isExpanded: true,
+                  decoration: InputDecoration(
+                    labelText: AppStrings.t('filter_status', loc),
+                    isDense: true,
+                    border: const OutlineInputBorder(),
                   ),
-                  for (final method in kSalesPaymentMethods)
-                    DropdownMenuItem(
-                      value: method,
+                  items: [
+                    for (final status in kSalesStatuses)
+                      DropdownMenuItem<String>(
+                        value: status,
+                        child: Text(
+                          status == 'all'
+                              ? AppStrings.t('all', loc)
+                              : AppStrings.t(reportStatusKey(status), loc),
+                          key: Key('reports-status-item-$status'),
+                        ),
+                      ),
+                  ],
+                  onChanged: (value) {
+                    if (value != null) controller.setStatus(value);
+                  },
+                ),
+              ),
+              const SizedBox(width: 12),
+              SizedBox(
+                width: 190,
+                child: DropdownButtonFormField<String>(
+                  key: ValueKey<String>(
+                    'reports-payment-${controller.paymentMethod ?? 'all'}',
+                  ),
+                  initialValue: controller.paymentMethod ?? '',
+                  isExpanded: true,
+                  decoration: InputDecoration(
+                    labelText: AppStrings.t('filter_payment', loc),
+                    isDense: true,
+                    border: const OutlineInputBorder(),
+                  ),
+                  items: [
+                    DropdownMenuItem<String>(
+                      value: '',
                       child: Text(
-                        AppStrings.t(reportPaymentMethodKey(method), loc),
-                        key: Key('reports-payment-item-$method'),
+                        AppStrings.t('all', loc),
+                        key: const Key('reports-payment-item-all'),
                       ),
                     ),
-                ],
-                onChanged: (value) => controller.setPaymentMethod(value),
+                    for (final method in kSalesPaymentMethods)
+                      DropdownMenuItem<String>(
+                        value: method,
+                        child: Text(
+                          AppStrings.t(reportPaymentMethodKey(method), loc),
+                          key: Key('reports-payment-item-$method'),
+                        ),
+                      ),
+                  ],
+                  onChanged: (value) => controller.setPaymentMethod(value),
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
         const SizedBox(height: 8),
         Expanded(

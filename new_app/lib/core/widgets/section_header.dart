@@ -56,12 +56,18 @@ class SectionHeader extends StatelessWidget {
             ),
             const SizedBox(width: 8),
           ],
-          Text(
-            title,
-            key: titleKey == null ? null : Key('report-section-$titleKey'),
-            style: AppTheme.sectionTitle(theme),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
+          // Flexible, not bare: inside a Row the title gets unbounded
+          // width, so `overflow: ellipsis` never engages and a long
+          // localized title pushes the rule (and any trailing action)
+          // past the right edge instead of shrinking.
+          Flexible(
+            child: Text(
+              title,
+              key: titleKey == null ? null : Key('report-section-$titleKey'),
+              style: AppTheme.sectionTitle(theme),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
           ),
           const SizedBox(width: 10),
           Expanded(

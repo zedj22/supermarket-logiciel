@@ -11,6 +11,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/search_field_state.dart';
 import '../../core/strings.dart';
 import '../../l10n/locale_provider.dart';
 import '../auth/permission_helpers.dart';
@@ -32,6 +33,12 @@ class _AuditScreenState extends ConsumerState<AuditScreen> {
   @override
   void initState() {
     super.initState();
+    // The query outlives this page State: without re-seeding, returning
+    // shows an empty box while the list is still filtered.
+    seedSearchField(
+      _searchController,
+      ref.read(auditProvider).query.search,
+    );
     // Refresh on every visit (the provider keeps its state alive).
     Future.microtask(() {
       if (!mounted) return;

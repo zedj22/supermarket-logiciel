@@ -243,6 +243,51 @@ class PosCartNotifier extends StateNotifier<PosCartState> {
     state = exists ? next.copyWith(lastActiveKey: key) : next;
   }
 
+  /// Re-reads each product line's stock snapshot from a freshly loaded
+  /// catalog.
+  ///
+  /// [CartLine.availableStock] is stamped at add-to-cart time, so a
+  /// purchase received while the line sits in the cart (or any stock
+  /// change made from Products/Stock) leaves the cart validating against
+  /// a quantity that no longer exists: a real restock blocks additions
+  /// that are now legal, and a sale made elsewhere silently allows
+  /// over-adding.
+  ///
+  /// [stocks] maps productId -> fresh quantity. Pack lines, variant
+  /// lines and products that are not in the loaded catalog page keep
+  /// their snapshot — the SERVER stays authoritative at checkout either
+  /// way (`sale.py` rejects insufficient stock regardless of this).
+  ///
+  /// Returns the keys of lines whose snapshot got SMALLER, so the caller
+  /// can tell the cashier the cart may now exceed what is on the shelf.
+  List<String> syncAvailableStock(Map<String, String> stocks) {
+    if (stocks.isEmpty || state.lines.isEmpty) return const [];
+
+    final decreased = <String>[];
+    var changed = false;
+    final lines = <CartLine>[];
+    for (final line in state.lines) {
+      final productId = line.productId;
+      final fresh = productId == null ||
+              line.packId != null ||
+              line.variantId != null
+          ? null
+          : stocks[productId];
+      if (fresh == null || fresh == line.availableStock) {
+        lines.add(line);
+        continue;
+      }
+      final before = double.tryParse(line.availableStock ?? '') ?? 0;
+      final after = double.tryParse(fresh) ?? 0;
+      if (after < before) decreased.add(line.key);
+      lines.add(line.copyWith(availableStock: fresh));
+      changed = true;
+    }
+    if (!changed) return const [];
+    state = state.copyWith(lines: lines);
+    return decreased;
+  }
+
   void removeLine(String key) {
     final remaining = state.lines.where((l) => l.key != key).toList();
     // Deleting the active line hands the `+` / `*` shortcuts to the newest

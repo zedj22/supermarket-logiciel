@@ -50,8 +50,10 @@ import '../../core/colors.dart';
 import '../../core/keyboard.dart';
 import '../../core/number_format.dart';
 import '../../core/numeric_text.dart';
+import '../../core/search_field_state.dart';
 import '../../core/shortcuts.dart';
 import '../../core/strings.dart';
+import '../../core/widgets/h_scroll_view.dart';
 import '../../l10n/locale_provider.dart';
 import '../auth/auth_provider.dart';
 import '../auth/permission_helpers.dart';
@@ -144,10 +146,17 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       refresh: _refreshWorkspace,
     );
     PageShortcutsRegistry.current = _pageShortcuts;
-    Future.microtask(() {
-      ref.read(posSearchProvider.notifier).load();
+    // The catalog query outlives this page State: restore the box so the
+    // visible input and the loaded catalog always describe the same term.
+    seedSearchField(_searchController, ref.read(posSearchProvider).query);
+    Future.microtask(() async {
+      // Await the catalog first: the cart's per-line stock snapshots are
+      // re-seeded from what actually loads (a purchase received while the
+      // cart held lines must not leave them validating stale numbers).
+      await ref.read(posSearchProvider.notifier).load();
       ref.read(favoritesProvider.notifier).load();
       ref.read(holdsProvider.notifier).load();
+      _syncCartStocks();
     });
   }
 
@@ -176,6 +185,35 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     ref.read(posSearchProvider.notifier).load();
     ref.read(favoritesProvider.notifier).load();
     ref.read(holdsProvider.notifier).load();
+    _syncCartStocks();
+  }
+
+  /// Re-reads every cart line's stock snapshot from the catalog that was
+  /// just loaded, then warns the cashier when a line's available quantity
+  /// SHRANK (the cart may now exceed what is on the shelf).
+  ///
+  /// Called after each catalog load — screen activation and F5 — because
+  /// stock can move while this page is away (purchases received on the
+  /// Purchases screen, sales run elsewhere). Lines whose product is not
+  /// in the loaded page keep their snapshot; the server stays
+  /// authoritative at checkout either way.
+  void _syncCartStocks() {
+    if (!mounted) return;
+    final stocks = <String, String>{
+      for (final product in ref.read(posSearchProvider).items)
+        product.id: product.quantity,
+    };
+    if (stocks.isEmpty) return;
+    final decreasedKeys =
+        ref.read(posCartProvider.notifier).syncAvailableStock(stocks);
+    if (decreasedKeys.isEmpty || !mounted) return;
+    final loc = ref.read(localeProvider).flutterLocale.languageCode;
+    showPosToast(
+      context,
+      message: AppStrings.t('pos_cart_stock_changed', loc),
+      kind: PosToastKind.warning,
+      key: const Key('pos-cart-stock-changed-toast'),
+    );
   }
 
   /// Escape — the context-safe clear. With text in the search box it only
@@ -2409,28 +2447,47 @@ class _FavoritesRow extends StatelessWidget {
   Widget build(BuildContext context) {
     if (favorites.isEmpty) return const SizedBox.shrink();
 
-    return SizedBox(
+    // HScrollView (not a bare horizontal ListView): a mouse wheel has no
+    // horizontal delta, so without the bridge and the thumb a long
+    // favorites strip silently runs off the right edge with no way to
+    // reach the rest of it on a desktop POS.
+    return HScrollView(
+      key: const Key('pos-favorites-row'),
       height: 72,
-      child: ListView.separated(
-        key: const Key('pos-favorites-row'),
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        itemCount: favorites.length,
-        separatorBuilder: (_, _) => const SizedBox(width: 8),
-        itemBuilder: (context, index) {
-          final f = favorites[index];
-          return ActionChip(
-            key: Key('pos-favorite-${f.productId}'),
-            avatar: const Icon(Icons.star, size: 16),
-            label: Text(
-              f.productName ?? f.productId,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          for (var index = 0; index < favorites.length; index++) ...[
+            if (index > 0) const SizedBox(width: 8),
+            _FavoriteChip(
+              favorite: favorites[index],
+              onTap: onTapFavorite,
             ),
-            onPressed: () => onTapFavorite(f),
-          );
-        },
+          ],
+        ],
       ),
+    );
+  }
+}
+
+class _FavoriteChip extends StatelessWidget {
+  const _FavoriteChip({required this.favorite, required this.onTap});
+
+  final FavoriteModel favorite;
+  final void Function(FavoriteModel) onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return ActionChip(
+      key: Key('pos-favorite-${favorite.productId}'),
+      avatar: const Icon(Icons.star, size: 16),
+      label: Text(
+        favorite.productName ?? favorite.productId,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+      onPressed: () => onTap(favorite),
     );
   }
 }

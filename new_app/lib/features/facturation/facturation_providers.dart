@@ -31,6 +31,12 @@ class FacturationQuery {
 
   /// Invoice-client filter (`null` = all clients).
   final String? clientId;
+
+  /// Display-only label for [clientId] — never serialized to the server.
+  /// The chip that shows it lives in the page's [State], which does not
+  /// survive navigation; keeping the label with the id is what makes the
+  /// visible chip match the filter still applied to the list.
+  final String? clientName;
   final int page;
   final int pageSize;
 
@@ -39,6 +45,7 @@ class FacturationQuery {
     this.docType = '',
     this.year,
     this.clientId,
+    this.clientName,
     this.page = 1,
     this.pageSize = 40,
   });
@@ -49,6 +56,7 @@ class FacturationQuery {
     int? year,
     bool clearYear = false,
     String? clientId,
+    String? clientName,
     bool clearClient = false,
     int? page,
     int? pageSize,
@@ -58,6 +66,7 @@ class FacturationQuery {
       docType: docType ?? this.docType,
       year: clearYear ? null : (year ?? this.year),
       clientId: clearClient ? null : (clientId ?? this.clientId),
+      clientName: clearClient ? null : (clientName ?? this.clientName),
       page: page ?? this.page,
       pageSize: pageSize ?? this.pageSize,
     );
@@ -188,12 +197,16 @@ class FacturationNotifier extends StateNotifier<FacturationState> {
     load();
   }
 
-  void setClientFilter(String? value) {
+  void setClientFilter(String? value, {String? name}) {
     _debounce?.cancel();
     state = state.copyWith(
       query: value == null
           ? state.query.copyWith(clearClient: true, page: 1)
-          : state.query.copyWith(clientId: value, page: 1),
+          // Clear first, so a client that carries no label can never
+          // inherit the previous client's name.
+          : state.query
+              .copyWith(clearClient: true, page: 1)
+              .copyWith(clientId: value, clientName: name),
       clearError: true,
     );
     load();

@@ -12,6 +12,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/colors.dart';
 import '../../core/numeric_text.dart';
 import '../../core/number_format.dart';
+import '../../core/search_field_state.dart';
 import '../../core/strings.dart';
 import '../../core/widgets/status_chip.dart';
 import '../../core/widgets/table_header.dart';
@@ -186,6 +187,12 @@ class _StockScreenState extends ConsumerState<StockScreen>
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
+    // The query outlives this page State: without re-seeding, returning
+    // to Stock shows an empty box while the list is still filtered.
+    seedSearchField(
+      _searchController,
+      ref.read(inventoryProvider).query.search,
+    );
     Future.microtask(() {
       ref.read(inventoryProvider.notifier).load();
       ref.read(movementsProvider.notifier).load();

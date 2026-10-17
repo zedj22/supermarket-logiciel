@@ -14,6 +14,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/numeric_text.dart';
+import '../../core/search_field_state.dart';
 import '../../core/strings.dart';
 import '../../core/widgets/adaptive_title_row.dart';
 import '../../l10n/locale_provider.dart';
@@ -36,6 +37,12 @@ class _PromotionsScreenState extends ConsumerState<PromotionsScreen> {
   @override
   void initState() {
     super.initState();
+    // The query outlives this page State: without re-seeding, returning
+    // shows an empty box while the list is still filtered.
+    seedSearchField(
+      _searchController,
+      ref.read(promotionsProvider).query.search,
+    );
     // Refresh on every visit (the provider keeps its state alive).
     Future.microtask(() {
       if (!mounted) return;

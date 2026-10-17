@@ -12,6 +12,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/colors.dart';
 import '../../core/number_format.dart';
 import '../../core/numeric_text.dart';
+import '../../core/search_field_state.dart';
 import '../../core/strings.dart';
 import '../../core/widgets/table_header.dart';
 import '../../l10n/locale_provider.dart';
@@ -36,6 +37,12 @@ class _PacksScreenState extends ConsumerState<PacksScreen> {
   @override
   void initState() {
     super.initState();
+    // The query outlives this page State: without re-seeding, returning
+    // shows an empty box while the list is still filtered.
+    seedSearchField(
+      _searchController,
+      ref.read(packsProvider).query.search,
+    );
     Future.microtask(() => ref.read(packsProvider.notifier).load());
   }
 

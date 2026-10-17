@@ -9,6 +9,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/search_field_state.dart';
 import '../../core/strings.dart';
 import '../../l10n/locale_provider.dart';
 import '../facturation/facturation_models.dart';
@@ -25,13 +26,27 @@ class InvoiceClientsScreen extends ConsumerStatefulWidget {
 }
 
 class _InvoiceClientsScreenState extends ConsumerState<InvoiceClientsScreen> {
+  final _searchController = TextEditingController();
+
   @override
   void initState() {
     super.initState();
+    // The query outlives this page State: without re-seeding, returning
+    // shows an empty box while the list is still filtered.
+    seedSearchField(
+      _searchController,
+      ref.read(invoiceClientsProvider).query.search,
+    );
     Future.microtask(() {
       if (!mounted) return;
       ref.read(invoiceClientsProvider.notifier).load();
     });
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
   }
 
   Future<void> _add() async {
@@ -121,6 +136,7 @@ class _InvoiceClientsScreenState extends ConsumerState<InvoiceClientsScreen> {
                 width: 260,
                 child: TextField(
                   key: const Key('invoice-clients-search'),
+                  controller: _searchController,
                   decoration: InputDecoration(
                     hintText: AppStrings.t('search', loc),
                     isDense: true,

@@ -571,9 +571,14 @@ class _ZakatScreenState extends ConsumerState<ZakatScreen>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          // isExpanded + single-line items: the selected value gets a
+          // bounded width inside the decorator, so a long localized
+          // value ellipsizes instead of blowing the Row past the card
+          // edge (7px / 151px RenderFlex overflows at a 600px window).
           DropdownButtonFormField<String>(
             key: const Key('zakat-field-basis'),
             initialValue: _inventoryBasis,
+            isExpanded: true,
             decoration: InputDecoration(
               labelText: AppStrings.t('zakat_inventory_basis', loc),
               border: const OutlineInputBorder(),
@@ -582,7 +587,11 @@ class _ZakatScreenState extends ConsumerState<ZakatScreen>
               for (final basis in _kInventoryBases)
                 DropdownMenuItem<String>(
                   value: basis,
-                  child: Text(AppStrings.t(zakatBasisKey(basis), loc)),
+                  child: Text(
+                    AppStrings.t(zakatBasisKey(basis), loc),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
             ],
             onChanged: (v) =>
@@ -724,6 +733,7 @@ class _ZakatScreenState extends ConsumerState<ZakatScreen>
           DropdownButtonFormField<String>(
             key: const Key('zakat-field-debt-treatment'),
             initialValue: _debtTreatment,
+            isExpanded: true,
             decoration: InputDecoration(
               labelText: AppStrings.t('zakat_debt_treatment', loc),
               border: const OutlineInputBorder(),
@@ -732,7 +742,11 @@ class _ZakatScreenState extends ConsumerState<ZakatScreen>
               for (final method in _kDebtTreatments)
                 DropdownMenuItem<String>(
                   value: method,
-                  child: Text(AppStrings.t(zakatMethodKey(method), loc)),
+                  child: Text(
+                    AppStrings.t(zakatMethodKey(method), loc),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
             ],
             onChanged: (v) =>

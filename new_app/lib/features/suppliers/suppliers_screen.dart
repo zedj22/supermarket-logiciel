@@ -14,6 +14,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/numeric_text.dart';
+import '../../core/search_field_state.dart';
 import '../../core/strings.dart';
 import '../../l10n/locale_provider.dart';
 import '../auth/permission_helpers.dart';
@@ -43,15 +44,28 @@ class SuppliersScreen extends ConsumerStatefulWidget {
 
 class _SuppliersScreenState extends ConsumerState<SuppliersScreen> {
   String? _selectedId;
+  final _searchController = TextEditingController();
 
   @override
   void initState() {
     super.initState();
+    // The query outlives this page State: without re-seeding, returning
+    // shows an empty box while the list is still filtered.
+    seedSearchField(
+      _searchController,
+      ref.read(suppliersProvider).query.search,
+    );
     // Refresh on every visit (provider state itself is kept alive).
     Future.microtask(() {
       if (!mounted) return;
       ref.read(suppliersProvider.notifier).load();
     });
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
   }
 
   void _select(String id) => setState(() => _selectedId = id);
@@ -99,6 +113,7 @@ class _SuppliersScreenState extends ConsumerState<SuppliersScreen> {
                 width: 260,
                 child: TextField(
                   key: const Key('suppliers-search'),
+                  controller: _searchController,
                   decoration: InputDecoration(
                     hintText: AppStrings.t('search', loc),
                     isDense: true,

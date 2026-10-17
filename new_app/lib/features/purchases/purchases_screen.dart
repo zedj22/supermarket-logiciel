@@ -17,6 +17,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/numeric_text.dart';
+import '../../core/search_field_state.dart';
 import '../../core/strings.dart';
 import '../../core/widgets/table_header.dart';
 import '../../l10n/locale_provider.dart';
@@ -55,15 +56,31 @@ class PurchasesScreen extends ConsumerStatefulWidget {
 
 class _PurchasesScreenState extends ConsumerState<PurchasesScreen> {
   String? _filterSupplierName;
+  final _searchController = TextEditingController();
 
   @override
   void initState() {
     super.initState();
+    // The query outlives this page State: without re-seeding, returning
+    // shows an empty box while the list is still filtered.
+    seedSearchField(
+      _searchController,
+      ref.read(purchasesProvider).query.search,
+    );
+    // Same for the supplier chip label — the id stays applied to the
+    // query, so the label must come back with it.
+    _filterSupplierName = ref.read(purchasesProvider).query.supplierName;
     // Refresh on every visit (provider state itself is kept alive).
     Future.microtask(() {
       if (!mounted) return;
       ref.read(purchasesProvider.notifier).load();
     });
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
   }
 
   Future<void> _add() async {
@@ -78,7 +95,9 @@ class _PurchasesScreenState extends ConsumerState<PurchasesScreen> {
     final supplier = await showPurchaseSupplierPicker(context);
     if (supplier == null || !mounted) return;
     setState(() => _filterSupplierName = supplier.name);
-    ref.read(purchasesProvider.notifier).setSupplierFilter(supplier.id);
+    ref
+        .read(purchasesProvider.notifier)
+        .setSupplierFilter(supplier.id, name: supplier.name);
   }
 
   void _clearSupplierFilter() {
@@ -134,6 +153,7 @@ class _PurchasesScreenState extends ConsumerState<PurchasesScreen> {
                 width: 240,
                 child: TextField(
                   key: const Key('purchases-search'),
+                  controller: _searchController,
                   decoration: InputDecoration(
                     hintText: AppStrings.t('search', loc),
                     isDense: true,

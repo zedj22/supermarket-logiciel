@@ -479,6 +479,8 @@ class AppStrings {
     'delete_hold': 'حذف',
     'no_holds': 'لا توجد مبيعات معلقة',
     'hold_saved': 'تم حفظ البيع المعلق',
+    'pos_cart_stock_changed':
+        'تم تحديث المخزون — قد تتجاوز بعض أسطر السلة الكمية المتوفرة',
     'hold_restored': 'تمت استعادة البيع المعلق',
     'favorites': 'المفضلة',
     'add_favorite': 'إضافة للمفضلة',
@@ -1985,6 +1987,8 @@ class AppStrings {
     'delete_hold': 'Supprimer',
     'no_holds': 'Aucune vente en attente',
     'hold_saved': 'Vente mise en attente',
+    'pos_cart_stock_changed':
+        'Stock mis à jour — certaines lignes du panier peuvent dépasser la quantité disponible',
     'hold_restored': 'Vente restaurée',
     'favorites': 'Favoris',
     'add_favorite': 'Ajouter aux favoris',
@@ -3531,6 +3535,8 @@ class AppStrings {
     'delete_hold': 'Delete',
     'no_holds': 'No held sales',
     'hold_saved': 'Sale held',
+    'pos_cart_stock_changed':
+        'Stock updated — some cart lines may now exceed the available quantity',
     'hold_restored': 'Held sale restored',
     'favorites': 'Favorites',
     'add_favorite': 'Add to favorites',

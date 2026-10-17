@@ -158,11 +158,13 @@ void main() {
       // the missing-field and eligibility chips — 130 keys (1420).
       // The loyalty earning-rate redesign pass added the merchant-facing
       // DA-per-point setting label and the configurable milestone label —
-      // 2 keys (1422).
+      // 2 keys (1422). The purchase → POS stock-sync pass added the
+      // cashier warning shown when a held cart line's available quantity
+      // shrank — 1 key (1423).
       // Update this deliberately when a subphase
       // adds strings — an unexplained drop means keys were deleted from
       // one map only.
-      expect(_map('en').keys.length, 1422);
+      expect(_map('en').keys.length, 1423);
       expect(_map('ar').keys.length, _map('en').keys.length);
       expect(_map('fr').keys.length, _map('en').keys.length);
     });

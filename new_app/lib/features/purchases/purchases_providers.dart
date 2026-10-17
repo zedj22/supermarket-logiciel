@@ -13,6 +13,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../l10n/locale_provider.dart';
 import '../auth/auth_provider.dart';
+import '../pos/pos_providers.dart';
+import '../products/products_providers.dart';
+import '../stock/inventory_providers.dart';
 import 'purchase_models.dart';
 import 'purchases_error.dart';
 
@@ -27,6 +30,12 @@ class PurchasesQuery {
 
   /// Supplier filter (`null` = all suppliers).
   final String? supplierId;
+
+  /// Display-only label for [supplierId] — never serialized to the
+  /// server. The chip that shows it lives in the page's [State], which
+  /// does not survive navigation; keeping the label with the id is what
+  /// makes the visible chip match the filter still applied to the list.
+  final String? supplierName;
   final int page;
   final int pageSize;
 
@@ -34,6 +43,7 @@ class PurchasesQuery {
     this.search = '',
     this.status = '',
     this.supplierId,
+    this.supplierName,
     this.page = 1,
     this.pageSize = 40,
   });
@@ -42,6 +52,7 @@ class PurchasesQuery {
     String? search,
     String? status,
     String? supplierId,
+    String? supplierName,
     bool clearSupplier = false,
     int? page,
     int? pageSize,
@@ -50,6 +61,7 @@ class PurchasesQuery {
       search: search ?? this.search,
       status: status ?? this.status,
       supplierId: clearSupplier ? null : (supplierId ?? this.supplierId),
+      supplierName: clearSupplier ? null : (supplierName ?? this.supplierName),
       page: page ?? this.page,
       pageSize: pageSize ?? this.pageSize,
     );
@@ -99,10 +111,18 @@ class PurchasesNotifier extends StateNotifier<PurchasesState> {
   Timer? _debounce;
   int _requestId = 0;
 
+  /// Called after a mutation that actually CHANGED stock (create-with-
+  /// receive, receive, cancel). Which quantity views are open is not this
+  /// screen's business, so the provider layer only refreshes the views
+  /// that already exist — POS, Products and Stock must not keep serving
+  /// pre-purchase quantities until their next visit.
+  final void Function()? onStockMutation;
+
   PurchasesNotifier(
     this._dio,
     this._localeCode, {
     PurchasesQuery initialQuery = const PurchasesQuery(),
+    this.onStockMutation,
   }) : super(PurchasesState(query: initialQuery));
 
   Map<String, dynamic> _params(PurchasesQuery q) {
@@ -164,14 +184,16 @@ class PurchasesNotifier extends StateNotifier<PurchasesState> {
     load();
   }
 
-  void setSupplierFilter(String? supplierId) {
+  void setSupplierFilter(String? supplierId, {String? name}) {
     _debounce?.cancel();
     state = state.copyWith(
-      query: state.query.copyWith(
-        supplierId: supplierId,
-        clearSupplier: supplierId == null,
-        page: 1,
-      ),
+      query: supplierId == null
+          ? state.query.copyWith(clearSupplier: true, page: 1)
+          // Clear first, so a supplier that carries no label can never
+          // inherit the previous supplier's name.
+          : state.query
+              .copyWith(clearSupplier: true, page: 1)
+              .copyWith(supplierId: supplierId, supplierName: name),
       clearError: true,
     );
     load();
@@ -197,6 +219,7 @@ class PurchasesNotifier extends StateNotifier<PurchasesState> {
     try {
       final response = await _dio.post(kPurchasesPath, data: payload);
       refresh();
+      onStockMutation?.call();
       final model = PurchaseModel.fromJson(
         response.data as Map<String, dynamic>,
       );
@@ -228,6 +251,7 @@ class PurchasesNotifier extends StateNotifier<PurchasesState> {
     try {
       await _dio.post('$kPurchasesPath/$id/receive');
       refresh();
+      onStockMutation?.call();
       return null;
     } on DioException catch (e) {
       return purchasesApiError(e, _localeCode());
@@ -239,6 +263,7 @@ class PurchasesNotifier extends StateNotifier<PurchasesState> {
     try {
       await _dio.post('$kPurchasesPath/$id/cancel');
       refresh();
+      onStockMutation?.call();
       return null;
     } on DioException catch (e) {
       return purchasesApiError(e, _localeCode());
@@ -269,8 +294,30 @@ final purchasesProvider =
   return PurchasesNotifier(
     dio,
     () => ref.read(localeProvider).flutterLocale.languageCode,
+    onStockMutation: () => refreshStockViews(ref),
   );
 });
+
+/// Re-reads every quantity view that is ALREADY alive after a purchase
+/// changed stock.
+///
+/// `exists` keeps this from waking a screen nobody has opened, while a
+/// POS with a held cart (and the Products / Stock screens) drop their
+/// pre-purchase numbers right away instead of on their next visit. The
+/// cart's own per-line snapshots are re-seeded when the POS screen is
+/// next activated (see `_syncCartStocks`); the SERVER stays authoritative
+/// at checkout either way.
+void refreshStockViews(Ref ref) {
+  if (ref.exists(posSearchProvider)) {
+    unawaited(ref.read(posSearchProvider.notifier).load());
+  }
+  if (ref.exists(productsProvider)) {
+    ref.read(productsProvider.notifier).refresh();
+  }
+  if (ref.exists(inventoryProvider)) {
+    ref.read(inventoryProvider.notifier).refresh();
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Purchase detail (header + lines, re-read after every mutation)

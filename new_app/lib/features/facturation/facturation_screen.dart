@@ -13,6 +13,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/search_field_state.dart';
 import '../../core/strings.dart';
 import '../../core/widgets/table_header.dart';
 import '../../l10n/locale_provider.dart';
@@ -40,14 +41,30 @@ class FacturationScreen extends ConsumerStatefulWidget {
 
 class _FacturationScreenState extends ConsumerState<FacturationScreen> {
   String? _filterClientName;
+  final _searchController = TextEditingController();
 
   @override
   void initState() {
     super.initState();
+    // The query outlives this page State: without re-seeding, returning
+    // shows an empty box while the list is still filtered.
+    seedSearchField(
+      _searchController,
+      ref.read(facturationProvider).query.search,
+    );
+    // The client chip label lives in this State too — restore it so the
+    // visible chip matches the clientId still applied to the query.
+    _filterClientName = ref.read(facturationProvider).query.clientName;
     Future.microtask(() {
       if (!mounted) return;
       ref.read(facturationProvider.notifier).load();
     });
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
   }
 
   Future<void> _add() async {
@@ -60,7 +77,9 @@ class _FacturationScreenState extends ConsumerState<FacturationScreen> {
     final client = await showInvoiceClientPicker(context);
     if (client == null || !mounted) return;
     setState(() => _filterClientName = client.name);
-    ref.read(facturationProvider.notifier).setClientFilter(client.id);
+    ref
+        .read(facturationProvider.notifier)
+        .setClientFilter(client.id, name: client.name);
   }
 
   void _clearClientFilter() {
@@ -102,6 +121,7 @@ class _FacturationScreenState extends ConsumerState<FacturationScreen> {
                 width: 240,
                 child: TextField(
                   key: const Key('facturation-search'),
+                  controller: _searchController,
                   decoration: InputDecoration(
                     hintText: AppStrings.t('search', loc),
                     isDense: true,
@@ -113,9 +133,13 @@ class _FacturationScreenState extends ConsumerState<FacturationScreen> {
                       ref.read(facturationProvider.notifier).setSearch(value),
                 ),
               ),
+              // Bounded by the Wrap: without isExpanded the selected
+              // value keeps its intrinsic width and overflows the
+              // decorator's Row instead of ellipsizing.
               DropdownButtonFormField<String>(
                 key: const Key('facturation-doctype-filter'),
                 initialValue: query.docType,
+                isExpanded: true,
                 decoration: InputDecoration(
                   labelText: AppStrings.t('doc_type', loc),
                   isDense: true,
@@ -124,13 +148,19 @@ class _FacturationScreenState extends ConsumerState<FacturationScreen> {
                 items: [
                   DropdownMenuItem<String>(
                     value: '',
-                    child: Text(AppStrings.t('all', loc)),
+                    child: Text(
+                      AppStrings.t('all', loc),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
                   for (final type in DocTypeValue.all)
                     DropdownMenuItem<String>(
                       value: type,
                       child: Text(
                         AppStrings.t('doc_type_${type.toLowerCase()}', loc),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                       ),
                     ),
                 ],
