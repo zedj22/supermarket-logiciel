@@ -23,6 +23,7 @@ import '../../core/strings.dart';
 import '../../l10n/locale_provider.dart';
 import '../auth/auth_provider.dart';
 import '../products/models.dart';
+import '../products/product_form_dialog.dart';
 import 'purchase_models.dart';
 import 'purchase_pickers.dart';
 
@@ -160,6 +161,22 @@ class _PurchaseLineDialogState extends ConsumerState<PurchaseLineDialog> {
     await _loadChoices(product.id);
   }
 
+  /// Quick-add: open the full product form, then select the freshly
+  /// created product and reload its variant/unit choices without
+  /// re-opening the picker. Quantity/cost fields are untouched. A
+  /// cancelled form keeps the current product selection.
+  Future<void> _quickAddProduct() async {
+    final created = await showProductFormDialog(context);
+    if (created == null || !mounted) return;
+    setState(() {
+      _product = created;
+      _variantId = null;
+      _unitId = null;
+      _error = null;
+    });
+    await _loadChoices(created.id);
+  }
+
   PurchaseUnitModel? get _selectedUnit {
     if (_unitId == null) return null;
     for (final u in _units) {
@@ -291,6 +308,13 @@ class _PurchaseLineDialogState extends ConsumerState<PurchaseLineDialog> {
                       loc,
                     ),
                   ),
+                ),
+                const SizedBox(width: 8),
+                OutlinedButton.icon(
+                  key: const Key('purchase-line-quick-add-product'),
+                  onPressed: _saving ? null : _quickAddProduct,
+                  icon: const Icon(Icons.add, size: 18),
+                  label: Text(AppStrings.t('add_product', loc)),
                 ),
               ],
             ),

@@ -216,6 +216,11 @@ void _stub(
           ),
         );
       }
+      if (path == _productsPath) {
+        // POST /products returns the created product body (the notifier
+        // parses it so callers can select the fresh model immediately).
+        return ok(path, _productJson());
+      }
       return ok(path, _verifyBody(scopes));
     },
   );

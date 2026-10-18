@@ -19,6 +19,7 @@ import '../../core/numeric_text.dart';
 import '../../core/strings.dart';
 import '../../l10n/locale_provider.dart';
 import '../pos/pos_toast.dart';
+import '../suppliers/supplier_form_dialog.dart';
 import 'purchase_line_dialog.dart';
 import 'purchase_models.dart';
 import 'purchase_pickers.dart';
@@ -63,7 +64,11 @@ class _PurchaseFormDialogState extends ConsumerState<PurchaseFormDialog> {
   void initState() {
     super.initState();
     final draft = widget.draft;
-    _supplierId = draft?.supplierId;
+    // Normalize legacy '' (non-null JSON default) to "no supplier".
+    final draftSupplierId = draft?.supplierId;
+    _supplierId = draftSupplierId == null || draftSupplierId.isEmpty
+        ? null
+        : draftSupplierId;
     _supplierName = draft?.supplierName;
     if (draft != null) {
       _lines.addAll(
@@ -143,9 +148,9 @@ class _PurchaseFormDialogState extends ConsumerState<PurchaseFormDialog> {
   // ── Validation ───────────────────────────────────────────────────────
 
   String? _validate(String loc) {
-    if (_supplierId == null || _supplierId!.isEmpty) {
-      return AppStrings.t('select_supplier', loc);
-    }
+    // Supplier is OPTIONAL (quick-add / cash deliveries): NULL is a valid
+    // purchase state — the server records no supplier, and receive posts
+    // stock without touching any payable ledger.
     if (_lines.isEmpty) return AppStrings.t('purchase_requires_lines', loc);
     for (final line in _lines) {
       final qty = qtyToMilli(line.quantity);
@@ -292,6 +297,21 @@ class _PurchaseFormDialogState extends ConsumerState<PurchaseFormDialog> {
     });
   }
 
+  /// Quick-add: open the full supplier form, then select the freshly
+  /// created supplier without re-opening the picker. Form state (lines,
+  /// totals, note) is untouched. A cancelled form keeps the current
+  /// supplier selection.
+  Future<void> _quickAddSupplier() async {
+    final created = await showSupplierFormDialog(context);
+    if (created == null || !mounted) return;
+    setState(() {
+      _supplierId = created.id;
+      _supplierName = created.name;
+      _error = null;
+      _errorDetail = null;
+    });
+  }
+
   Future<void> _addLine() async {
     final line = await showPurchaseLineDialog(context);
     if (line == null || !mounted) return;
@@ -342,14 +362,19 @@ class _PurchaseFormDialogState extends ConsumerState<PurchaseFormDialog> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // Supplier row
+            // Supplier row — supplier is optional; quick-add creates and
+            // selects a supplier in place without dropping editor state.
             Row(
               children: [
                 Expanded(
                   child: Text(
-                    _supplierName ?? AppStrings.t('select_supplier', loc),
+                    _supplierName ?? AppStrings.t('no_supplier', loc),
                     key: const Key('purchase-form-supplier'),
-                    style: theme.textTheme.titleMedium,
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      color: _supplierName == null
+                          ? theme.hintColor
+                          : null,
+                    ),
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
@@ -358,6 +383,13 @@ class _PurchaseFormDialogState extends ConsumerState<PurchaseFormDialog> {
                   onPressed: _saving ? null : _pickSupplier,
                   icon: const Icon(Icons.search, size: 18),
                   label: Text(AppStrings.t('select', loc)),
+                ),
+                const SizedBox(width: 8),
+                OutlinedButton.icon(
+                  key: const Key('purchase-form-quick-add-supplier'),
+                  onPressed: _saving ? null : _quickAddSupplier,
+                  icon: const Icon(Icons.add, size: 18),
+                  label: Text(AppStrings.t('add_supplier', loc)),
                 ),
               ],
             ),

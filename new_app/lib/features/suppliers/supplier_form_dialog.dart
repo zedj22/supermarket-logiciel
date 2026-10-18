@@ -11,14 +11,18 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/strings.dart';
 import '../../l10n/locale_provider.dart';
 import '../pos/pos_toast.dart';
+import 'suppliers_error.dart';
 import 'suppliers_providers.dart';
 import 'supplier_models.dart';
 
-Future<void> showSupplierFormDialog(
+/// Opens the supplier form. Returns the freshly created [SupplierModel]
+/// on a successful create (so a caller like the purchase editor can
+/// select it immediately), or null on cancel / edit / failure.
+Future<SupplierModel?> showSupplierFormDialog(
   BuildContext context, {
   SupplierModel? supplier,
 }) {
-  return showDialog(
+  return showDialog<SupplierModel>(
     context: context,
     builder: (_) => SupplierFormDialog(supplier: supplier),
   );
@@ -116,13 +120,19 @@ class _SupplierFormDialogState extends ConsumerState<SupplierFormDialog> {
 
     final notifier = ref.read(suppliersProvider.notifier);
     final payload = _payload();
-    final result = _isEdit
-        ? await notifier.updateSupplier(widget.supplier!.id, payload)
-        : await notifier.createSupplier(payload);
+    SupplierModel? created;
+    PosApiError? result;
+    if (_isEdit) {
+      result = await notifier.updateSupplier(widget.supplier!.id, payload);
+    } else {
+      (created, result) = await notifier.createSupplier(payload);
+    }
 
     if (!mounted) return;
     if (result == null) {
-      Navigator.pop(context);
+      // Pop with the created supplier so a quick-add caller (purchase
+      // editor) can select it without re-searching; edits pop null.
+      Navigator.pop(context, created);
       showPosToast(
         context,
         message: AppStrings.t(
@@ -133,10 +143,11 @@ class _SupplierFormDialogState extends ConsumerState<SupplierFormDialog> {
         key: const Key('supplier-form-success-toast'),
       );
     } else {
+      final failure = result;
       setState(() {
         _saving = false;
-        _error = result.message;
-        _errorDetail = result.detail;
+        _error = failure.message;
+        _errorDetail = failure.detail;
       });
     }
   }

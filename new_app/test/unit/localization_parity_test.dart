@@ -168,11 +168,13 @@ void main() {
       // labels (import / backup download / backup upload), the data
       // transfer surface (26), the backup inspect/download/upload
       // surface (15) and the hardware overview surface (26) —
-      // 73 keys (1499).
+      // 73 keys (1499). The purchase quick-add / optional-supplier pass
+      // added the "no supplier" placeholder shown by the purchase editor,
+      // list rows and detail header — 1 key (1500).
       // Update this deliberately when a subphase
       // adds strings — an unexplained drop means keys were deleted from
       // one map only.
-      expect(_map('en').keys.length, 1499);
+      expect(_map('en').keys.length, 1500);
       expect(_map('ar').keys.length, _map('en').keys.length);
       expect(_map('fr').keys.length, _map('en').keys.length);
     });

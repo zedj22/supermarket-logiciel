@@ -21,7 +21,6 @@ import '../../core/search_field_state.dart';
 import '../../core/strings.dart';
 import '../../core/widgets/table_header.dart';
 import '../../l10n/locale_provider.dart';
-import '../../theme/app_theme.dart';
 import '../auth/permission_helpers.dart';
 import 'purchase_detail_dialog.dart';
 import 'purchase_form_dialog.dart';
@@ -45,6 +44,36 @@ String _timestampOf(DateTime? value) {
   final min = value.minute.toString().padLeft(2, '0');
   final s = value.second.toString().padLeft(2, '0');
   return '${value.year}-$m-$d $h:$min:$s';
+}
+
+/// Supplier column/label: purchases may have no supplier (optional
+/// supplier) — show the localized "No supplier" instead of an empty cell.
+String _supplierLabel(PurchaseModel purchase, String loc) {
+  final name = purchase.supplierName;
+  if (name == null || name.isEmpty) return AppStrings.t('no_supplier', loc);
+  return name;
+}
+
+/// One purchases-table column — the single source of truth shared by the
+/// pinned header and every data row (products-screen / `tableHeaderCell`
+/// convention). Header labels and their cells must be built from the same
+/// spec or the columns drift apart: `numeric` pins the cell content to the
+/// trailing edge with [AlignmentDirectional.centerEnd], which resolves to
+/// the same visual edge for the label (ambient RTL/LTR) and for the value
+/// (an LTR paragraph via [numericText]) in BOTH locales. Aligning via
+/// `textAlign: TextAlign.end` inside the LTR-forced numeric paragraph —
+/// the old bug — made money hug the opposite edge from its heading under
+/// RTL.
+class _Col {
+  final String label;
+  final int flex;
+  final bool numeric;
+
+  const _Col(
+    this.label, {
+    required this.flex,
+    this.numeric = false,
+  });
 }
 
 class PurchasesScreen extends ConsumerStatefulWidget {
@@ -329,7 +358,7 @@ class _PurchasesScreenState extends ConsumerState<PurchasesScreen> {
     final wide = mode == PurchasesLayoutMode.wide;
     return Column(
       children: [
-        _headerRow(theme, loc, wide: wide),
+        _headerRow(loc, wide: wide),
         const SizedBox(height: 4),
         Expanded(
           child: ListView.builder(
@@ -381,13 +410,13 @@ class _PurchasesScreenState extends ConsumerState<PurchasesScreen> {
       ),
       subtitle: Text(
         [
-          purchase.supplierName ?? '',
+          _supplierLabel(purchase, loc),
           AppStrings.t('purchase_status_${purchase.status}', loc),
           if (purchase.purchaseDate != null)
             // Isolated: the "date time" pair must stay one LTR unit in
             // the RTL subtitle (its two numeric groups would swap).
             bidiIsolateLtr(_timestampOf(purchase.purchaseDate)),
-        ].where((part) => part.isNotEmpty).join(' · '),
+        ].join(' · '),
         key: Key('purchase-meta-$index'),
       ),
       trailing: Column(
@@ -416,63 +445,64 @@ class _PurchasesScreenState extends ConsumerState<PurchasesScreen> {
     );
   }
 
-  Widget _headerRow(ThemeData theme, String loc, {required bool wide}) {
-    final style = AppTheme.tableHeader(theme);
+  /// Column specs for the current layout mode — the pinned header and
+  /// every row derive from this one list, so a column can never be sized
+  /// or aligned differently between the label row and its values.
+  List<_Col> _cols(String loc, {required bool wide}) => [
+        _Col(AppStrings.t('invoice_number', loc), flex: 3),
+        _Col(AppStrings.t('supplier', loc), flex: 3),
+        _Col(AppStrings.t('status', loc), flex: 2),
+        _Col(AppStrings.t('total', loc), flex: 2, numeric: true),
+        _Col(AppStrings.t('remaining', loc), flex: 2, numeric: true),
+        if (wide) _Col(AppStrings.t('date', loc), flex: 3, numeric: true),
+      ];
+
+  /// Builds one cell from the shared column spec. Header and data cells
+  /// both go through here (same padding, same directional [Align], same
+  /// flex) — the alignment contract that keeps every value under its own
+  /// heading in RTL and LTR.
+  Widget _cell(
+    _Col col,
+    Widget child, {
+    bool header = false,
+    Key? key,
+  }) {
+    final theme = Theme.of(context);
+    return Expanded(
+      flex: col.flex,
+      child: Padding(
+        key: key,
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        child: DefaultTextStyle(
+          style: header
+              ? tableHeaderStyle(context)
+              : theme.textTheme.bodyMedium!,
+          child: Align(
+            alignment: col.numeric
+                ? AlignmentDirectional.centerEnd
+                : AlignmentDirectional.centerStart,
+            child: child,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _headerRow(String loc, {required bool wide}) {
+    final cols = _cols(loc, wide: wide);
     return TableHeaderRow(
       testKey: const Key('purchases-table-header'),
-      padding: const EdgeInsets.symmetric(horizontal: 12),
       children: [
-        Expanded(
-          flex: 3,
-          child: Text(
-            AppStrings.t('invoice_number', loc),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: style,
-          ),
-        ),
-        Expanded(
-          flex: 3,
-          child: Text(
-            AppStrings.t('supplier', loc),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: style,
-          ),
-        ),
-        Expanded(
-          flex: 2,
-          child: Text(
-            AppStrings.t('status', loc),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: style,
-          ),
-        ),
-        Expanded(
-          flex: 2,
-          child: Text(
-            AppStrings.t('total', loc),
-            style: style,
-            textAlign: TextAlign.end,
-          ),
-        ),
-        Expanded(
-          flex: 2,
-          child: Text(
-            AppStrings.t('remaining', loc),
-            style: style,
-            textAlign: TextAlign.end,
-          ),
-        ),
-        if (wide)
-          Expanded(
-            flex: 3,
-            child: Text(
-              AppStrings.t('date', loc),
-              style: style,
-              textAlign: TextAlign.end,
+        for (var i = 0; i < cols.length; i++)
+          _cell(
+            cols[i],
+            Text(
+              cols[i].label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
             ),
+            header: true,
+            key: Key('purchases-header-cell-$i'),
           ),
       ],
     );
@@ -485,66 +515,74 @@ class _PurchasesScreenState extends ConsumerState<PurchasesScreen> {
     String loc, {
     required bool wide,
   }) {
+    final cols = _cols(loc, wide: wide);
     return InkWell(
       key: Key('purchase-row-$index'),
       onTap: () => _openDetail(purchase.id),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        padding: const EdgeInsets.symmetric(vertical: 8),
         child: Row(
           children: [
-            Expanded(
-              flex: 3,
-              child: Text(
+            _cell(
+              cols[0],
+              Text(
                 purchase.invoiceNumber,
                 key: Key('purchase-invoice-$index'),
                 overflow: TextOverflow.ellipsis,
               ),
+              key: Key('purchase-row-$index-cell-0'),
             ),
-            Expanded(
-              flex: 3,
-              child: Text(
-                purchase.supplierName ?? '',
+            _cell(
+              cols[1],
+              Text(
+                _supplierLabel(purchase, loc),
                 key: Key('purchase-supplier-$index'),
                 overflow: TextOverflow.ellipsis,
               ),
+              key: Key('purchase-row-$index-cell-1'),
             ),
-            Expanded(
-              flex: 2,
-              child: _statusBadge(context, purchase.status, loc),
+            _cell(
+              cols[2],
+              _statusBadge(context, purchase.status, loc),
+              key: Key('purchase-row-$index-cell-2'),
             ),
-            Expanded(
-              flex: 2,
-              child: numericText(
+            // numericText pins the figure to an LTR paragraph (digits
+            // never mirror); the cell's directional Align places it —
+            // never textAlign.end inside that LTR paragraph, which would
+            // hug the opposite edge from the ambient-RTL heading.
+            _cell(
+              cols[3],
+              numericText(
                 formatMoney(purchase.total),
                 key: Key('purchase-total-$index'),
-                textAlign: TextAlign.end,
                 style: const TextStyle(fontWeight: FontWeight.w600),
               ),
+              key: Key('purchase-row-$index-cell-3'),
             ),
-            Expanded(
-              flex: 2,
-              child: numericText(
+            _cell(
+              cols[4],
+              numericText(
                 purchase.unpaidMilli > 0
                     ? formatMoney(purchase.unpaid)
                     : '—',
                 key: Key('purchase-remaining-$index'),
-                textAlign: TextAlign.end,
                 style: purchase.unpaidMilli > 0
                     ? TextStyle(color: theme.colorScheme.error)
                     : null,
               ),
+              key: Key('purchase-row-$index-cell-4'),
             ),
             if (wide)
-              Expanded(
-                flex: 3,
-                child: Text(
+              _cell(
+                cols[5],
+                Text(
                   // Isolated: keeps "YYYY-MM-DD HH:MM:SS" one LTR unit
                   // (the date/time groups would otherwise swap under RTL).
                   bidiIsolateLtr(_timestampOf(purchase.purchaseDate)),
                   key: Key('purchase-date-$index'),
-                  textAlign: TextAlign.end,
                   style: theme.textTheme.bodySmall,
                 ),
+                key: Key('purchase-row-$index-cell-5'),
               ),
           ],
         ),

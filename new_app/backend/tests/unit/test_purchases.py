@@ -1087,3 +1087,185 @@ def test_supplier_detail_balance_tracks_purchase_flow(client, admin_headers):
     assert lst.status_code == 200
     item = next(i for i in lst.json()["items"] if i["id"] == sid)
     assert Decimal(str(item["balance"])) == Decimal("0.000")
+
+
+# ── Optional supplier ──────────────────────────────────────────────────
+
+
+def test_create_without_supplier_is_allowed(client, admin_headers, db):
+    """supplier_id may be omitted — the purchase records NULL, not a
+    placeholder supplier, and stock still posts on receive."""
+    product = _create_product(client, admin_headers, quantity="0.000")
+
+    code, body = _create_purchase(
+        client,
+        admin_headers,
+        {
+            "lines": [
+                {"product_id": product["id"], "quantity": "4", "unit_cost": "25"}
+            ],
+            "paid": "100",
+            "receive": True,
+        },
+    )
+    assert code == 201, body
+    assert body["supplier_id"] is None
+    assert body["supplier_name"] is None
+    assert body["status"] == "received"
+
+    p = _stock(db, product["id"])
+    assert float(p.quantity) == pytest.approx(4.0)
+
+
+def test_create_with_explicit_null_supplier(client, admin_headers):
+    product = _create_product(client, admin_headers, quantity="0.000")
+    code, body = _create_purchase(
+        client,
+        admin_headers,
+        {
+            "supplier_id": None,
+            "lines": [
+                {"product_id": product["id"], "quantity": "1", "unit_cost": "10"}
+            ],
+            "receive": False,
+        },
+    )
+    assert code == 201, body
+    assert body["supplier_id"] is None
+    assert body["status"] == "draft"
+
+
+def test_create_with_unknown_supplier_still_404(client, admin_headers):
+    product = _create_product(client, admin_headers, quantity="0.000")
+    code, body = _create_purchase(
+        client,
+        admin_headers,
+        _purchase_payload(
+            str(uuid.uuid4()),
+            [{"product_id": product["id"], "quantity": "1", "unit_cost": "10"}],
+            receive=False,
+        ),
+    )
+    assert code == 404
+    assert body["error"]["code"] == "NOT_FOUND"
+
+
+def test_no_supplier_unpaid_creates_no_ledger_entry(
+    client, admin_headers, db
+):
+    """A no-supplier purchase with unpaid remainder receives stock but
+    never posts a payable — there is no supplier account to post to."""
+    product = _create_product(client, admin_headers, quantity="0.000")
+
+    code, body = _create_purchase(
+        client,
+        admin_headers,
+        {
+            "lines": [
+                {"product_id": product["id"], "quantity": "10", "unit_cost": "50"}
+            ],
+            "paid": "0",
+            "receive": True,
+        },
+    )
+    assert code == 201, body
+    assert body["supplier_id"] is None
+
+    db.expire_all()
+    entries = list(db.execute(select(SupplierLedgerEntry)).scalars())
+    assert entries == []
+
+
+def test_no_supplier_cancel_reverses_stock_only(client, admin_headers, db):
+    product = _create_product(client, admin_headers, quantity="0.000")
+    code, body = _create_purchase(
+        client,
+        admin_headers,
+        {
+            "lines": [
+                {"product_id": product["id"], "quantity": "5", "unit_cost": "20"}
+            ],
+            "paid": "100",
+            "receive": True,
+        },
+    )
+    assert code == 201, body
+
+    cancel = client.post(
+        f"/api/v1/purchases/{body['id']}/cancel", headers=admin_headers
+    )
+    assert cancel.status_code == 200, cancel.text
+    assert cancel.json()["status"] == "cancelled"
+
+    p = _stock(db, product["id"])
+    assert float(p.quantity) == pytest.approx(0.0)
+
+
+def test_draft_update_can_clear_supplier(client, admin_headers):
+    product = _create_product(client, admin_headers, quantity="0.000")
+    supplier = _create_supplier(client, admin_headers)
+    code, body = _create_purchase(
+        client,
+        admin_headers,
+        _purchase_payload(
+            supplier["id"],
+            [{"product_id": product["id"], "quantity": "1", "unit_cost": "10"}],
+            receive=False,
+        ),
+    )
+    assert code == 201, body
+    assert body["supplier_id"] == supplier["id"]
+
+    put = client.put(
+        f"/api/v1/purchases/{body['id']}",
+        json={"supplier_id": None},
+        headers=admin_headers,
+    )
+    assert put.status_code == 200, put.text
+    assert put.json()["supplier_id"] is None
+
+
+def test_draft_update_omitting_supplier_keeps_it(client, admin_headers):
+    product = _create_product(client, admin_headers, quantity="0.000")
+    supplier = _create_supplier(client, admin_headers)
+    code, body = _create_purchase(
+        client,
+        admin_headers,
+        _purchase_payload(
+            supplier["id"],
+            [{"product_id": product["id"], "quantity": "1", "unit_cost": "10"}],
+            receive=False,
+        ),
+    )
+    assert code == 201, body
+
+    put = client.put(
+        f"/api/v1/purchases/{body['id']}",
+        json={"note": "supplier untouched"},
+        headers=admin_headers,
+    )
+    assert put.status_code == 200, put.text
+    assert put.json()["supplier_id"] == supplier["id"]
+
+
+def test_existing_purchase_with_supplier_still_works(
+    client, admin_headers, db
+):
+    """Backward-compat: a supplied supplier_id behaves exactly as before
+    (payable posted, balance increased)."""
+    product = _create_product(client, admin_headers, quantity="0.000")
+    supplier = _create_supplier(client, admin_headers)
+
+    code, body = _create_purchase(
+        client,
+        admin_headers,
+        _purchase_payload(
+            supplier["id"],
+            [{"product_id": product["id"], "quantity": "10", "unit_cost": "50"}],
+            paid="0",
+        ),
+    )
+    assert code == 201, body
+    assert body["supplier_id"] == supplier["id"]
+    assert body["supplier_name"] == supplier["name"]
+    assert _balance(db, supplier["id"]) == Decimal("500.000")

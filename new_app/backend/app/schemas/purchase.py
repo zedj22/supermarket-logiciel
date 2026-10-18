@@ -47,9 +47,13 @@ class PurchaseCreateRequest(StrictBaseModel):
     ``client_request_id`` mirrors the Phase 8/9 idempotency contract:
     a repeat with the same key returns the original purchase instead of
     receiving stock twice.
+
+    ``supplier_id`` is OPTIONAL: omitting it (or sending null) records a
+    purchase with no supplier — no placeholder row, no ledger payable.
+    A supplied id must still reference an existing supplier.
     """
 
-    supplier_id: uuid.UUID
+    supplier_id: uuid.UUID | None = None
     lines: list[PurchaseLineRequest] = Field(..., min_length=1)
     discount: Decimal = Field(default=Decimal("0"), ge=0, le=MONEY_MAX)
     paid: Decimal = Field(default=Decimal("0"), ge=0, le=MONEY_MAX)
@@ -73,6 +77,12 @@ class PurchaseUpdateRequest(StrictBaseModel):
     Only fields present in the body change. ``lines`` (when present)
     replace the whole line set and snapshots are recomputed. Received and
     cancelled documents are immutable (409 INVALID_PURCHASE_STATE).
+
+    ``supplier_id``: omit the field to leave the supplier untouched;
+    send a UUID to set it; send ``null`` to CLEAR it (back to "no
+    supplier"). This is why the update schema cannot use a plain
+    default-only None — ``exclude_unset`` on the service side tells
+    "absent" from "explicitly null".
     """
 
     supplier_id: uuid.UUID | None = None
@@ -108,7 +118,9 @@ class PurchaseResponse(StrictBaseModel):
     id: uuid.UUID
     invoice_number: str
     status: str
-    supplier_id: uuid.UUID
+
+    # ``None`` when the purchase was recorded without a supplier.
+    supplier_id: uuid.UUID | None = None
     supplier_name: str | None = None
     user_id: uuid.UUID | None = None
     subtotal: Decimal

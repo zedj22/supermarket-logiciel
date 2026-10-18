@@ -48,11 +48,14 @@ const List<String> kProductUnits = [
   'pack',
 ];
 
-Future<void> showProductFormDialog(
+/// Opens the product form. Returns the freshly created [ProductModel] on
+/// a successful create (so a caller like the purchase editor can select
+/// it immediately), or null on cancel / edit / failure.
+Future<ProductModel?> showProductFormDialog(
   BuildContext context, {
   ProductModel? product,
 }) {
-  return showDialog(
+  return showDialog<ProductModel>(
     context: context,
     builder: (_) => ProductFormDialog(product: product),
   );
@@ -395,9 +398,13 @@ class _ProductFormDialogState extends ConsumerState<ProductFormDialog> {
     final canAdjust = ref.read(hasPermissionProvider('inventory_adjust'));
     final notifier = ref.read(productsProvider.notifier);
     final payload = _payload();
-    final error = _isEdit
-        ? await notifier.updateProduct(widget.product!.id, payload)
-        : await notifier.createProduct(payload);
+    ProductModel? created;
+    String? error;
+    if (_isEdit) {
+      error = await notifier.updateProduct(widget.product!.id, payload);
+    } else {
+      (created, error) = await notifier.createProduct(payload);
+    }
 
     if (!mounted) return;
     if (error != null) {
@@ -429,7 +436,9 @@ class _ProductFormDialogState extends ConsumerState<ProductFormDialog> {
       stockChanged = true;
     }
 
-    Navigator.pop(context);
+    // Pop with the created product so a quick-add caller (purchase
+    // editor) can select it without re-searching; edits pop null.
+    Navigator.pop(context, created);
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(

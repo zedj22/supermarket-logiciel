@@ -164,14 +164,21 @@ class SuppliersNotifier extends StateNotifier<SuppliersState> {
     load();
   }
 
-  /// POST /api/v1/suppliers — null on success, localized error otherwise.
-  Future<PosApiError?> createSupplier(Map<String, dynamic> payload) async {
+  /// POST /api/v1/suppliers — returns the created supplier on success so
+  /// callers (e.g. the purchase editor's quick-add) can select it
+  /// immediately; `(null, error)` on failure.
+  Future<(SupplierModel?, PosApiError?)> createSupplier(
+    Map<String, dynamic> payload,
+  ) async {
     try {
-      await _dio.post(kSuppliersPath, data: payload);
+      final response = await _dio.post(kSuppliersPath, data: payload);
       refresh();
-      return null;
+      final created = SupplierModel.fromJson(
+        response.data as Map<String, dynamic>,
+      );
+      return (created, null);
     } on DioException catch (e) {
-      return suppliersApiError(e, _localeCode());
+      return (null, suppliersApiError(e, _localeCode()));
     }
   }
 

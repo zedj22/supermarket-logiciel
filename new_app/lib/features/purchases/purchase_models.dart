@@ -89,7 +89,9 @@ class PurchaseModel {
 
   /// `draft` | `received` | `cancelled`.
   final String status;
-  final String supplierId;
+
+  /// Supplier link — null/empty means "no supplier" (optional supplier).
+  final String? supplierId;
   final String? supplierName;
   final String? userId;
   final String subtotal;
@@ -111,7 +113,7 @@ class PurchaseModel {
     required this.id,
     required this.invoiceNumber,
     required this.status,
-    required this.supplierId,
+    this.supplierId,
     this.supplierName,
     this.userId,
     required this.subtotal,
@@ -131,11 +133,16 @@ class PurchaseModel {
   });
 
   factory PurchaseModel.fromJson(Map<String, dynamic> json) {
+    // Normalize: legacy payloads used '' for "no supplier" (the field
+    // used to be non-nullable) — both null and '' mean "no supplier".
+    final rawSupplierId = json['supplier_id'] as String?;
+    final supplierId =
+        rawSupplierId == null || rawSupplierId.isEmpty ? null : rawSupplierId;
     return PurchaseModel(
       id: json['id'] as String,
       invoiceNumber: json['invoice_number'] as String? ?? '',
       status: json['status'] as String? ?? PurchaseStatusValue.draft,
-      supplierId: json['supplier_id'] as String? ?? '',
+      supplierId: supplierId,
       supplierName: json['supplier_name'] as String?,
       userId: json['user_id'] as String?,
       subtotal: '${json['subtotal'] ?? 0}',

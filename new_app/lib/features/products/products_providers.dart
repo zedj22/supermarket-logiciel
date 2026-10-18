@@ -215,13 +215,21 @@ class ProductsNotifier extends StateNotifier<ProductsState> {
     load();
   }
 
-  Future<String?> createProduct(Map<String, dynamic> payload) async {
+  /// POST /api/v1/products — returns the created product on success so
+  /// callers (e.g. the purchase editor's quick-add) can select it
+  /// immediately; `(null, errorMessage)` on failure.
+  Future<(ProductModel?, String?)> createProduct(
+    Map<String, dynamic> payload,
+  ) async {
     try {
-      await _dio.post('/api/v1/products', data: payload);
+      final response = await _dio.post('/api/v1/products', data: payload);
       await load();
-      return null;
+      final created = ProductModel.fromJson(
+        response.data as Map<String, dynamic>,
+      );
+      return (created, null);
     } on DioException catch (e) {
-      return _message(e);
+      return (null, _message(e));
     }
   }
 

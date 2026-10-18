@@ -52,6 +52,7 @@ const _phase11PurchaseKeys = [
   'received_at',
   'cancelled_at',
   'change_product',
+  'no_supplier',
 ];
 
 /// Purchase total-cost mode keys (checkbox, hint, live preview).

@@ -306,10 +306,10 @@ class _PurchaseDetailDialogState extends ConsumerState<PurchaseDetailDialog> {
                 ),
                 Text(
                   [
-                    if (purchase.supplierName != null &&
-                        purchase.supplierName!.isNotEmpty)
-                      '${AppStrings.t('supplier', loc)}: '
-                      '${purchase.supplierName}',
+                    // Supplier is optional — always shown; a purchase with
+                    // none reads "Supplier: No supplier".
+                    '${AppStrings.t('supplier', loc)}: '
+                    '${purchase.supplierName == null || purchase.supplierName!.isEmpty ? AppStrings.t('no_supplier', loc) : purchase.supplierName}',
                     if (purchase.purchaseDate != null)
                       '${AppStrings.t('date', loc)}: '
                       '${bidiIsolateLtr(_timestampOf(purchase.purchaseDate))}',

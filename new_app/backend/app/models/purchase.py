@@ -45,9 +45,12 @@ class Purchase(DocumentModel):
     )
     received_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    supplier_id: Mapped[uuid.UUID] = mapped_column(
+    # Optional supplier: a purchase may be recorded without one (cash /
+    # walk-in delivery). NULL means "no supplier" — never a placeholder
+    # row. Ledger payables only exist when this is set.
+    supplier_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("suppliers.id", ondelete="RESTRICT"),
-        nullable=False,
+        nullable=True,
         index=True,
     )
     user_id: Mapped[uuid.UUID | None] = mapped_column(
@@ -66,7 +69,7 @@ class Purchase(DocumentModel):
     )
 
     # Relationships
-    supplier: Mapped["Supplier"] = relationship(  # noqa: F821
+    supplier: Mapped["Supplier | None"] = relationship(  # noqa: F821
         "Supplier",
         back_populates="purchases",
         lazy="selectin",

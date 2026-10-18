@@ -147,12 +147,14 @@ class PurchaseService(BaseService):
                 )
                 return existing, True
 
-        supplier = self.suppliers.get_by_id(request.supplier_id)
-        if supplier is None:
-            raise NotFoundError(
-                message="Supplier not found",
-                details={"supplier_id": str(request.supplier_id)},
-            )
+        supplier = None
+        if request.supplier_id is not None:
+            supplier = self.suppliers.get_by_id(request.supplier_id)
+            if supplier is None:
+                raise NotFoundError(
+                    message="Supplier not found",
+                    details={"supplier_id": str(request.supplier_id)},
+                )
         lines = self._resolve_lines(request.lines)
         totals = self._compute_totals(lines, request.discount, request.paid)
         invoice_number = _generate_invoice_number()
@@ -164,7 +166,7 @@ class PurchaseService(BaseService):
                 purchase = Purchase(
                     invoice_number=invoice_number,
                     status=PurchaseStatus.DRAFT.value,
-                    supplier_id=supplier.id,
+                    supplier_id=supplier.id if supplier is not None else None,
                     user_id=user_id,
                     subtotal=float(totals["subtotal"]),
                     discount=float(totals["discount"]),
@@ -251,17 +253,20 @@ class PurchaseService(BaseService):
             purchase = self._lock(purchase_id)
             self._require_editable(purchase)
 
-            if (
-                "supplier_id" in updates
-                and updates["supplier_id"] != purchase.supplier_id
-            ):
-                supplier = self.suppliers.get_by_id(updates["supplier_id"])
-                if supplier is None:
-                    raise NotFoundError(
-                        message="Supplier not found",
-                        details={"supplier_id": str(updates["supplier_id"])},
-                    )
-                purchase.supplier_id = supplier.id
+            if "supplier_id" in updates:
+                next_supplier_id = updates["supplier_id"]
+                if next_supplier_id != purchase.supplier_id:
+                    if next_supplier_id is None:
+                        # Explicit null clears the link ("no supplier").
+                        purchase.supplier_id = None
+                    else:
+                        supplier = self.suppliers.get_by_id(next_supplier_id)
+                        if supplier is None:
+                            raise NotFoundError(
+                                message="Supplier not found",
+                                details={"supplier_id": str(next_supplier_id)},
+                            )
+                        purchase.supplier_id = supplier.id
 
             if request.lines is not None:
                 lines = self._resolve_lines(request.lines)
@@ -426,12 +431,20 @@ class PurchaseService(BaseService):
         )
         self._assert_totals(purchase)
 
-        supplier = self.suppliers.get_for_update(purchase.supplier_id)
-        if supplier is None:  # pragma: no cover — FK guarantees existence
-            raise NotFoundError(
-                message="Supplier not found",
-                details={"supplier_id": str(purchase.supplier_id)},
-            )
+        unpaid = quantize_money(
+            to_decimal(purchase.total) - to_decimal(purchase.paid)
+        )
+        # Supplier payables only exist when the purchase has a supplier.
+        # A no-supplier purchase still receives stock; its unpaid remainder
+        # is simply not attributed to any supplier ledger account.
+        supplier = None
+        if purchase.supplier_id is not None:
+            supplier = self.suppliers.get_for_update(purchase.supplier_id)
+            if supplier is None:  # pragma: no cover — FK guarantees existence
+                raise NotFoundError(
+                    message="Supplier not found",
+                    details={"supplier_id": str(purchase.supplier_id)},
+                )
 
         summaries = self.inventory.receive_purchase(
             purchase,
@@ -439,10 +452,7 @@ class PurchaseService(BaseService):
             device_id=purchase.device_id,
         )
 
-        unpaid = quantize_money(
-            to_decimal(purchase.total) - to_decimal(purchase.paid)
-        )
-        if unpaid > 0:
+        if supplier is not None and unpaid > 0:
             balance = quantize_money(to_decimal(supplier.balance))
             self.db.add(
                 SupplierLedgerEntry(
@@ -480,12 +490,16 @@ class PurchaseService(BaseService):
         )
         self._assert_totals(purchase)
 
-        supplier = self.suppliers.get_for_update(purchase.supplier_id)
-        if supplier is None:  # pragma: no cover — FK guarantees existence
-            raise NotFoundError(
-                message="Supplier not found",
-                details={"supplier_id": str(purchase.supplier_id)},
-            )
+        # No supplier ⇒ nothing was ever posted to a payable ledger, so
+        # the cancellation only reverses stock (no ledger reconciliation).
+        supplier = None
+        if purchase.supplier_id is not None:
+            supplier = self.suppliers.get_for_update(purchase.supplier_id)
+            if supplier is None:  # pragma: no cover — FK guarantees existence
+                raise NotFoundError(
+                    message="Supplier not found",
+                    details={"supplier_id": str(purchase.supplier_id)},
+                )
 
         summaries = self.inventory.reverse_purchase(
             purchase,
@@ -499,45 +513,50 @@ class PurchaseService(BaseService):
         unpaid = quantize_money(
             to_decimal(purchase.total) - to_decimal(purchase.paid)
         )
-        balance = quantize_money(to_decimal(supplier.balance))
-        reverse = min(unpaid, balance)
-        if reverse > 0:
-            note = f"Purchase {purchase.invoice_number} cancelled"
-            shortfall = quantize_money(unpaid - reverse)
-            if shortfall > 0:
-                note = (
-                    f"{note} (shortfall {shortfall} already settled "
-                    f"by later payments)"
+        reverse = Decimal("0")
+        if supplier is not None:
+            balance = quantize_money(to_decimal(supplier.balance))
+            reverse = min(unpaid, balance)
+            if reverse > 0:
+                note = f"Purchase {purchase.invoice_number} cancelled"
+                shortfall = quantize_money(unpaid - reverse)
+                if shortfall > 0:
+                    note = (
+                        f"{note} (shortfall {shortfall} already settled "
+                        f"by later payments)"
+                    )
+                self.db.add(
+                    SupplierLedgerEntry(
+                        supplier_id=supplier.id,
+                        entry_type="purchase_cancel",
+                        amount=reverse,
+                        reference_purchase_id=purchase.id,
+                        note=note,
+                        user_id=actor_id,
+                    )
                 )
-            self.db.add(
-                SupplierLedgerEntry(
-                    supplier_id=supplier.id,
-                    entry_type="purchase_cancel",
-                    amount=reverse,
-                    reference_purchase_id=purchase.id,
-                    note=note,
-                    user_id=actor_id,
-                )
-            )
-            supplier.balance = float(quantize_money(balance - reverse))
+                supplier.balance = float(quantize_money(balance - reverse))
 
-        # Reconciliation (§13): cached balance must equal Σ ledger entries.
-        # Flush first — sessions may run with autoflush off, and the SQL
-        # projection must see the just-appended cancel entry.
-        self.db.flush()
-        expected = quantize_money(
-            self.ledger.ledger_sum_for_supplier(supplier.id)
-        )
-        actual = quantize_money(to_decimal(supplier.balance))
-        if expected != actual:
-            raise ConflictError(
-                message="Supplier ledger/balance mismatch after cancellation",
-                details={
-                    "supplier_id": str(supplier.id),
-                    "ledger_sum": str(expected),
-                    "balance": str(actual),
-                },
+            # Reconciliation (§13): cached balance must equal Σ ledger
+            # entries. Flush first — sessions may run with autoflush off,
+            # and the SQL projection must see the just-appended cancel
+            # entry.
+            self.db.flush()
+            expected = quantize_money(
+                self.ledger.ledger_sum_for_supplier(supplier.id)
             )
+            actual = quantize_money(to_decimal(supplier.balance))
+            if expected != actual:
+                raise ConflictError(
+                    message=(
+                        "Supplier ledger/balance mismatch after cancellation"
+                    ),
+                    details={
+                        "supplier_id": str(supplier.id),
+                        "ledger_sum": str(expected),
+                        "balance": str(actual),
+                    },
+                )
 
         purchase.status = PurchaseStatus.CANCELLED.value
         purchase.cancelled_at = datetime.now(timezone.utc)
