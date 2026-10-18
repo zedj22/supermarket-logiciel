@@ -75,41 +75,13 @@ class SupermarketPosApp extends ConsumerWidget {
 
     final themeState = ref.watch(themeProvider);
     final localeState = ref.watch(localeProvider);
-    final authState = ref.watch(authProvider);
-
-    if (authState.status == AuthStatus.checking) {
-      return MaterialApp(
-        debugShowCheckedModeBanner: false,
-        // The boot splash used to render on the *default* light scaffold
-        // with a dark-theme icon hardcoded below, flashing the wrong
-        // palette for one frame on every cold start.
-        theme: AppTheme.forMode(themeState.mode),
-        locale: localeState.flutterLocale,
-        supportedLocales: appSupportedLocales,
-        localizationsDelegates: appLocalizationsDelegates,
-        home: Scaffold(
-          body: Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(
-                  Icons.store,
-                  size: 64,
-                  color: AppTheme.forMode(
-                    themeState.mode,
-                  ).colorScheme.primary,
-                ),
-                const SizedBox(height: 16),
-                const CircularProgressIndicator(),
-              ],
-            ),
-          ),
-        ),
-      );
-    }
-
     final router = ref.watch(routerProvider);
 
+    // ONE MaterialApp for the whole app life. The cold-start splash is a
+    // route (/splash) inside this router — while auth is still checking
+    // the redirect holds every destination there — so there is never a
+    // second Material app, a second navigator, or a palette flip on the
+    // first frame.
     return MaterialApp.router(
       title: AppConstants.appName,
       debugShowCheckedModeBanner: false,

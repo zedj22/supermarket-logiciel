@@ -62,3 +62,7 @@ flutter:
   # every DocArticle.screenshotRefs stays empty so nothing is fabricated.
   assets:
     - assets/docshots/
+    # Klick POS brand identity: the hand-authored SVG is the design source
+    # of truth for the drawn logo (the runtime mark is vector-painted from
+    # the same geometry, see lib/core/widgets/klick_logo.dart).
+    - assets/brand/

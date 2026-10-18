@@ -10,6 +10,7 @@ import '../features/auth/login_screen.dart';
 import '../features/auth/permission_helpers.dart';
 import '../features/auth/setup_screen.dart';
 import '../features/shell/app_nav_rail.dart';
+import '../features/splash/splash_screen.dart';
 import '../features/shell/nav_items.dart';
 import '../features/shell/shortcuts_help_dialog.dart';
 import '../l10n/locale_provider.dart';
@@ -63,6 +64,11 @@ final routerProvider = Provider<GoRouter>((ref) {
     networkConfiguredProvider,
     (previous, next) => authRefresh.value++,
   );
+  // The startup splash is a redirect state, so the moment its one-shot
+  // gate opens the redirect must re-run to reveal the real destination.
+  ref.listen(splashGateProvider, (previous, next) {
+    if (next) authRefresh.value++;
+  });
 
   final router = GoRouter(
     initialLocation: '/',
@@ -75,8 +81,13 @@ final routerProvider = Provider<GoRouter>((ref) {
       final isSetupRequired = authState.status == AuthStatus.setupRequired;
       final isChecking = authState.status == AuthStatus.checking;
 
-      // While checking, show nothing (loading handled by app)
-      if (isChecking) return null;
+      // Startup splash: every destination resolves to /splash while auth
+      // is still checking AND until the one-shot brand sequence has
+      // completed. Checked first so no other gate reads happen mid-boot,
+      // and returning null on /splash itself keeps the redirect loop-free.
+      if (isChecking || !ref.read(splashGateProvider)) {
+        return path == '/splash' ? null : '/splash';
+      }
 
       // Phase 16 (§23.2): a client that has never completed the wizard has
       // no device identity, so there is nothing it can legitimately do.
@@ -104,12 +115,29 @@ final routerProvider = Provider<GoRouter>((ref) {
         return '/login';
       }
 
-      // Authenticated on login/setup → redirect to home
-      if (isAuthenticated && (path == '/login' || path == '/setup')) return '/';
+      // Authenticated on login/setup/splash → redirect to home. The splash
+      // case is the one that matters after the gate opens: without it a
+      // restored session would sit on /splash forever (null = stay).
+      if (isAuthenticated &&
+          (path == '/login' || path == '/setup' || path == '/splash')) {
+        return '/';
+      }
 
       return null;
     },
     routes: [
+      GoRoute(
+        path: '/splash',
+        name: 'splash',
+        pageBuilder: (context, state) => CustomTransitionPage<void>(
+          key: state.pageKey,
+          child: const SplashScreen(),
+          transitionDuration: const Duration(milliseconds: 350),
+          reverseTransitionDuration: const Duration(milliseconds: 350),
+          transitionsBuilder: (context, animation, secondaryAnimation, child) =>
+              FadeTransition(opacity: animation, child: child),
+        ),
+      ),
       GoRoute(
         path: '/setup-network',
         name: 'setup-network',

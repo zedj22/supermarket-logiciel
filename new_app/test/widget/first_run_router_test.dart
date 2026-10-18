@@ -85,8 +85,10 @@ void main() {
       ),
     );
     // Bounded pumps: the login screen keeps a progress indicator alive, so
-    // `pumpAndSettle` would never return.
-    for (var i = 0; i < 12; i++) {
+    // `pumpAndSettle` would never return. 40 × 50ms = 2000ms — long enough
+    // for the startup splash's fixed minimum sequence (1600ms, see
+    // kSplashSequenceDuration) to release the router on top of that.
+    for (var i = 0; i < 40; i++) {
       await tester.pump(const Duration(milliseconds: 50));
     }
     container = ProviderScope.containerOf(
@@ -113,7 +115,7 @@ void main() {
       expect(location(), '/setup-network');
 
       container.read(routerProvider).go('/pos');
-      for (var i = 0; i < 8; i++) {
+      for (var i = 0; i < 40; i++) {
         await tester.pump(const Duration(milliseconds: 50));
       }
       expect(location(), '/setup-network');

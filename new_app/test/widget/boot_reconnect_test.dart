@@ -143,7 +143,10 @@ void main() {
         child: const SupermarketPosApp(),
       ),
     );
-    for (var i = 0; i < 8; i++) {
+    // Bounded pumps (40 × 50ms = 2000ms): the startup splash holds every
+    // route for its fixed minimum sequence (kSplashSequenceDuration,
+    // 1600ms) before the login screen mounts, then auth resolves.
+    for (var i = 0; i < 40; i++) {
       await tester.pump(const Duration(milliseconds: 50));
     }
 
