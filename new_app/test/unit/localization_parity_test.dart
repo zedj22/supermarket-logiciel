@@ -162,11 +162,17 @@ void main() {
       // cashier warning shown when a held cart line's available quantity
       // shrank — 1 key (1423). The POS layout-switch pass added the
       // toolbar toggle action label and the two layout mode names —
-      // 3 keys (1426).
+      // 3 keys (1426). The Objective 4 pass (product import/export,
+      // portable backup/restore, connected-device discovery) added the
+      // three Administration rail labels, the three new audit action
+      // labels (import / backup download / backup upload), the data
+      // transfer surface (26), the backup inspect/download/upload
+      // surface (15) and the hardware overview surface (26) —
+      // 73 keys (1499).
       // Update this deliberately when a subphase
       // adds strings — an unexplained drop means keys were deleted from
       // one map only.
-      expect(_map('en').keys.length, 1426);
+      expect(_map('en').keys.length, 1499);
       expect(_map('ar').keys.length, _map('en').keys.length);
       expect(_map('fr').keys.length, _map('en').keys.length);
     });

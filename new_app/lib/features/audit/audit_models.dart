@@ -53,6 +53,11 @@ const List<String> kAuditActions = <String>[
   'restore',
   'receive',
   'export',
+  // Objective 1–2: product import and the portable-archive backup
+  // endpoints (`AuditAction.IMPORT` / `BACKUP_DOWNLOAD` / `BACKUP_UPLOAD`).
+  'import',
+  'backup_download',
+  'backup_upload',
   'print',
   'device_pair',
   'device_approve',

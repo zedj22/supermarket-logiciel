@@ -5,7 +5,6 @@ All values are lowercase strings to serialize cleanly to JSON/PostgreSQL.
 
 import enum
 
-
 # ── Auth / RBAC ────────────────────────────────────────────────────────
 
 
@@ -228,6 +227,10 @@ class AuditAction(str, enum.Enum):
     ADJUSTMENT = "adjustment"
     BACKUP = "backup"
     RESTORE = "restore"
+    # Objective 2: portable archive download / upload staging.  Additive
+    # only — audit_logs.action is String(30).
+    BACKUP_DOWNLOAD = "backup_download"
+    BACKUP_UPLOAD = "backup_upload"
     # Phase 11: purchase receipt (draft -> received posting). Additive only.
     RECEIVE = "receive"
     # Phase 15: exports (/api/v1/exports) and print renders
@@ -235,6 +238,9 @@ class AuditAction(str, enum.Enum):
     # appends exactly one row.
     EXPORT = "export"
     PRINT = "print"
+    # Phase 17: bulk product CSV/XLSX import (POST /api/v1/products/import).
+    # Additive only — the audit_logs action column is String(30).
+    IMPORT = "import"
     # Phase 16: device registry lifecycle.  Additive only — the audit_logs
     # action column is String(30).  NEVER carries the pairing code or the
     # device token (§18); no heartbeat/last_seen rows are ever written.

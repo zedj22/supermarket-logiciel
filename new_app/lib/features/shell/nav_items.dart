@@ -20,6 +20,9 @@ class NavScopes {
   static const String deviceManage = 'device_manage';
   static const String facturationView = 'facturation_view';
   static const String auditView = 'audit_view';
+
+  /// Objective 4: portable backup / restore (admin only).
+  static const String backupRestore = 'backup_restore';
 }
 
 /// One destination in the rail.
@@ -250,13 +253,41 @@ List<NavGroup> buildNavGroups({required bool Function(String scope) can}) {
     NavGroup(
       titleKey: 'nav_group_administration',
       items: [
-        if (can(NavScopes.deviceManage))
+        if (can(NavScopes.deviceManage)) ...[
           const NavItem(
             path: '/devices',
             labelKey: 'lan_devices_title',
             icon: Icons.devices_outlined,
             selectedIcon: Icons.devices,
             scope: NavScopes.deviceManage,
+          ),
+          // Objective 3: server-PC hardware (printers/scanners/USB/COM).
+          const NavItem(
+            path: '/connected-devices',
+            labelKey: 'nav_connected_devices',
+            icon: Icons.print_outlined,
+            selectedIcon: Icons.print,
+            scope: NavScopes.deviceManage,
+          ),
+        ],
+        // Objective 1: product import / export (read gate = product_view;
+        // the endpoints enforce export_data / product_create themselves).
+        if (can(NavScopes.productView))
+          const NavItem(
+            path: '/data-transfer',
+            labelKey: 'nav_data_transfer',
+            icon: Icons.swap_horiz_outlined,
+            selectedIcon: Icons.swap_horiz,
+            scope: NavScopes.productView,
+          ),
+        // Objective 2: portable backup & restore (admin only).
+        if (can(NavScopes.backupRestore))
+          const NavItem(
+            path: '/backup-restore',
+            labelKey: 'nav_backup_restore',
+            icon: Icons.save_alt_outlined,
+            selectedIcon: Icons.save_alt,
+            scope: NavScopes.backupRestore,
           ),
         // Audit Log — admin only (`audit_view`; backend RBAC remains the
         // security boundary, this gate only hides the destination).

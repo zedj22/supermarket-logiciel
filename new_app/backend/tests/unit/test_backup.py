@@ -1,4 +1,4 @@
-"""Phase 17 §17.2 — backup / restore.
+"""Phase 17 §17.2 — backup / restore. + Objective 2 extensions.
 
 Covers:
 - the catalogue is the filesystem: an empty (or absent) directory lists nothing
@@ -12,6 +12,18 @@ Covers:
 - create is all-or-nothing with its audit row: no audit ⇒ no backup files
 - audit rows for both ``backup`` and ``restore`` actions
 - ``DbParams`` never exposes the password and URL-decodes it correctly
+
+Objective 2:
+- restore requires an explicit ``confirm: true`` (bare POST → 422
+  ``RESTORE_CONFIRMATION_REQUIRED``, nothing touched)
+- a safety backup is taken before the replay and reported in the response;
+  a failed safety backup cancels the restore (``RESTORE_SAFETY_BACKUP_FAILED``)
+- ``GET /{id}/inspect``: integrity (hash) + schema-compatibility summary
+- ``GET /{id}/download``: portable ZIP (``dump.sql`` + ``manifest.json``)
+- ``POST /upload``: stages a raw ``.sql`` or a portable ZIP as a first-class
+  backup (id re-allocated, hash recomputed, ``backup_upload`` audit row);
+  refuses empty / non-SQL / bad-ZIP / oversized content
+- unit-level portable roundtrip: create → download → upload → restore
 
 No test shells out: ``DumpRunner`` is injected, so the suite passes on a
 machine without PostgreSQL tooling.  The real tools are covered by
@@ -45,9 +57,15 @@ DUMP_BYTES = b"-- fake pg_dump output\nCREATE TABLE x (id int);\n"
 class FakeRunner:
     """Stands in for ``DumpRunner`` — records instead of shelling out."""
 
-    def __init__(self, content: bytes = DUMP_BYTES, fail: bool = False):
+    def __init__(
+        self,
+        content: bytes = DUMP_BYTES,
+        fail: bool = False,
+        fail_restore: bool = False,
+    ):
         self.content = content
         self.fail = fail
+        self.fail_restore = fail_restore
         self.dumped: list[str] = []
         self.restored: list[str] = []
 
@@ -60,6 +78,8 @@ class FakeRunner:
 
     def restore(self, source: Path) -> None:
         if self.fail:
+            raise ServiceUnavailableError("psql failed: syntax error")
+        if self.fail_restore:
             raise ServiceUnavailableError("psql failed: syntax error")
         self.restored.append(source.name)
 
@@ -332,15 +352,41 @@ def _create(client, headers) -> dict:
 
 
 def test_restore_requires_authentication(client):
-    resp = client.post("/api/v1/backups/1/restore")
+    resp = client.post("/api/v1/backups/1/restore", json={"confirm": True})
     assert resp.status_code == 401
 
 
 @pytest.mark.parametrize("fixture_name", ["manager_headers", "cashier_headers"])
 def test_restore_is_admin_only(client, request, fixture_name):
     headers = request.getfixturevalue(fixture_name)
-    resp = client.post("/api/v1/backups/1/restore", headers=headers)
+    resp = client.post("/api/v1/backups/1/restore", json={"confirm": True}, headers=headers)
     assert resp.status_code == 403
+
+
+def test_restore_without_confirmation_is_refused(
+    client, admin_headers, runner
+):
+    """A bare POST (no confirm body) must not touch the database."""
+    backup = _create(client, admin_headers)
+    resp = client.post(
+        f"/api/v1/backups/{backup['id']}/restore", headers=admin_headers
+    )
+    assert resp.status_code == 422
+    assert resp.json()["error"]["code"] == "RESTORE_CONFIRMATION_REQUIRED"
+    assert runner.restored == []
+
+
+def test_restore_with_explicit_false_is_refused(
+    client, admin_headers, runner
+):
+    backup = _create(client, admin_headers)
+    resp = client.post(
+        f"/api/v1/backups/{backup['id']}/restore",
+        json={"confirm": False},
+        headers=admin_headers,
+    )
+    assert resp.status_code == 422
+    assert runner.restored == []
 
 
 def test_restore_replays_the_requested_file(
@@ -349,19 +395,60 @@ def test_restore_replays_the_requested_file(
     backup = _create(client, admin_headers)
 
     resp = client.post(
-        f"/api/v1/backups/{backup['id']}/restore", headers=admin_headers
+        f"/api/v1/backups/{backup['id']}/restore",
+        json={"confirm": True},
+        headers=admin_headers,
     )
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["restored"] is True
     assert body["backup"]["id"] == backup["id"]
+    assert body["post_restore_ok"] is True
+    # A safety snapshot of the pre-restore database was taken first.
+    assert body["safety_backup"] is not None
+    assert body["safety_backup"]["id"] != backup["id"]
     assert runner.restored == [backup["filename"]]
+
+
+def test_restore_takes_a_safety_backup_before_replaying(
+    client, admin_headers, runner, backup_dir
+):
+    backup = _create(client, admin_headers)
+    resp = client.post(
+        f"/api/v1/backups/{backup['id']}/restore",
+        json={"confirm": True},
+        headers=admin_headers,
+    )
+    assert resp.status_code == 200
+    # The safety backup is a real dump on disk, restorable in turn.
+    safety = resp.json()["safety_backup"]
+    assert (backup_dir / safety["filename"]).is_file()
+    assert safety["filename"] != backup["filename"]
+
+
+def test_restore_is_cancelled_when_the_safety_backup_fails(
+    client, admin_headers, runner
+):
+    """No way back ⇒ no restore. Nothing is replayed."""
+    backup = _create(client, admin_headers)
+    runner.fail = True  # the safety snapshot's dump will fail
+
+    resp = client.post(
+        f"/api/v1/backups/{backup['id']}/restore",
+        json={"confirm": True},
+        headers=admin_headers,
+    )
+    assert resp.status_code == 422
+    assert resp.json()["error"]["code"] == "RESTORE_SAFETY_BACKUP_FAILED"
+    assert runner.restored == []
 
 
 def test_restore_writes_restore_audit_row(client, admin_headers, db):
     backup = _create(client, admin_headers)
     resp = client.post(
-        f"/api/v1/backups/{backup['id']}/restore", headers=admin_headers
+        f"/api/v1/backups/{backup['id']}/restore",
+        json={"confirm": True},
+        headers=admin_headers,
     )
     assert resp.status_code == 200
 
@@ -369,11 +456,16 @@ def test_restore_writes_restore_audit_row(client, admin_headers, db):
     assert len(rows) == 1
     assert rows[0].details == backup["filename"]
     assert json.loads(rows[0].before_state)["id"] == backup["id"]
+    assert json.loads(rows[0].before_state)["safety_backup_id"] is not None
 
 
 def test_restore_unknown_id_is_404(client, admin_headers, runner):
     _create(client, admin_headers)
-    resp = client.post("/api/v1/backups/999/restore", headers=admin_headers)
+    resp = client.post(
+        "/api/v1/backups/999/restore",
+        json={"confirm": True},
+        headers=admin_headers,
+    )
     assert resp.status_code == 404
     assert runner.restored == []
 
@@ -386,7 +478,9 @@ def test_restore_of_a_tampered_file_is_refused(
     path.write_bytes(DUMP_BYTES + b"-- tampered\n")
 
     resp = client.post(
-        f"/api/v1/backups/{backup['id']}/restore", headers=admin_headers
+        f"/api/v1/backups/{backup['id']}/restore",
+        json={"confirm": True},
+        headers=admin_headers,
     )
     assert resp.status_code == 422
     assert runner.restored == []
@@ -400,7 +494,9 @@ def test_restore_of_a_deleted_file_is_404(client, admin_headers, backup_dir, run
     (backup_dir / backup["filename"]).unlink()
 
     resp = client.post(
-        f"/api/v1/backups/{backup['id']}/restore", headers=admin_headers
+        f"/api/v1/backups/{backup['id']}/restore",
+        json={"confirm": True},
+        headers=admin_headers,
     )
     assert resp.status_code == 404
     assert runner.restored == []
@@ -408,10 +504,12 @@ def test_restore_of_a_deleted_file_is_404(client, admin_headers, backup_dir, run
 
 def test_failed_restore_is_reported_as_failed(client, admin_headers, runner):
     backup = _create(client, admin_headers)
-    runner.fail = True
+    runner.fail_restore = True  # safety dump succeeds; the replay fails
 
     resp = client.post(
-        f"/api/v1/backups/{backup['id']}/restore", headers=admin_headers
+        f"/api/v1/backups/{backup['id']}/restore",
+        json={"confirm": True},
+        headers=admin_headers,
     )
     assert resp.status_code == 503
     assert runner.restored == []
@@ -425,12 +523,328 @@ def test_restore_still_reports_success_after_the_dump_was_replaced(
     second = _create(client, admin_headers)
 
     resp = client.post(
-        f"/api/v1/backups/{first['id']}/restore", headers=admin_headers
+        f"/api/v1/backups/{first['id']}/restore",
+        json={"confirm": True},
+        headers=admin_headers,
     )
     assert resp.status_code == 200
     assert resp.json()["backup"]["filename"] == first["filename"]
     assert runner.restored == [first["filename"]]
     assert second["filename"] != first["filename"]
+
+
+# ── inspect (Objective 2) ──────────────────────────────────────────────
+
+
+def test_inspect_requires_authentication(client):
+    assert client.get("/api/v1/backups/1/inspect").status_code == 401
+
+
+@pytest.mark.parametrize("fixture_name", ["manager_headers", "cashier_headers"])
+def test_inspect_is_admin_only(client, request, fixture_name):
+    headers = request.getfixturevalue(fixture_name)
+    assert (
+        client.get("/api/v1/backups/1/inspect", headers=headers).status_code
+        == 403
+    )
+
+
+def test_inspect_reports_integrity_for_a_fresh_backup(
+    client, admin_headers, backup_dir
+):
+    backup = _create(client, admin_headers)
+    resp = client.get(
+        f"/api/v1/backups/{backup['id']}/inspect", headers=admin_headers
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["backup"]["id"] == backup["id"]
+    assert body["file_present"] is True
+    assert body["sha256_ok"] is True
+    # SQLite has no alembic_version, so the only warning is the
+    # schema-revision one — integrity itself is clean.
+    assert all("revision" in w for w in body["warnings"])
+
+
+def test_inspect_flags_a_tampered_dump(client, admin_headers, backup_dir):
+    backup = _create(client, admin_headers)
+    (backup_dir / backup["filename"]).write_bytes(DUMP_BYTES + b"-- evil\n")
+
+    body = client.get(
+        f"/api/v1/backups/{backup['id']}/inspect", headers=admin_headers
+    ).json()
+    assert body["sha256_ok"] is False
+    assert any("no longer matches" in w for w in body["warnings"])
+
+
+def test_inspect_flags_a_missing_dump(client, admin_headers, backup_dir):
+    backup = _create(client, admin_headers)
+    (backup_dir / backup["filename"]).unlink()
+
+    body = client.get(
+        f"/api/v1/backups/{backup['id']}/inspect", headers=admin_headers
+    ).json()
+    assert body["file_present"] is False
+    assert any("missing" in w for w in body["warnings"])
+
+
+def test_inspect_reports_schema_compatibility(client, admin_headers, db):
+    """A same-session backup matches the running revision when known."""
+    backup = _create(client, admin_headers)
+    body = client.get(
+        f"/api/v1/backups/{backup['id']}/inspect", headers=admin_headers
+    ).json()
+    # SQLite has no alembic_version table ⇒ both sides None, never guessed.
+    assert body["current_schema_revision"] is None
+    assert body["schema_compatible"] is None
+    assert any("revision" in w for w in body["warnings"])
+
+
+def test_inspect_unknown_id_is_404(client, admin_headers):
+    assert (
+        client.get("/api/v1/backups/999/inspect", headers=admin_headers).status_code
+        == 404
+    )
+
+
+# ── download (portable archive, Objective 2) ───────────────────────────
+
+
+def test_download_requires_authentication(client):
+    assert client.get("/api/v1/backups/1/download").status_code == 401
+
+
+@pytest.mark.parametrize("fixture_name", ["manager_headers", "cashier_headers"])
+def test_download_is_admin_only(client, request, fixture_name):
+    headers = request.getfixturevalue(fixture_name)
+    assert (
+        client.get("/api/v1/backups/1/download", headers=headers).status_code
+        == 403
+    )
+
+
+def test_download_returns_a_zip_with_dump_and_manifest(client, admin_headers):
+    backup = _create(client, admin_headers)
+    resp = client.get(
+        f"/api/v1/backups/{backup['id']}/download", headers=admin_headers
+    )
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "application/zip"
+    disposition = resp.headers["content-disposition"]
+    assert disposition.startswith("attachment; filename=")
+    assert ".zip" in disposition
+    assert str(backup["id"]) in disposition
+
+    import io
+    import zipfile as zf
+
+    with zf.ZipFile(io.BytesIO(resp.content)) as archive:
+        assert set(archive.namelist()) == {"dump.sql", "manifest.json"}
+        assert archive.read("dump.sql") == DUMP_BYTES
+        manifest = json.loads(archive.read("manifest.json"))
+    assert manifest["id"] == backup["id"]
+    assert manifest["sha256"] == backup["sha256"]
+
+
+def test_download_unknown_id_is_404(client, admin_headers):
+    assert (
+        client.get("/api/v1/backups/999/download", headers=admin_headers).status_code
+        == 404
+    )
+
+
+def test_download_of_a_deleted_file_is_404(client, admin_headers, backup_dir):
+    backup = _create(client, admin_headers)
+    (backup_dir / backup["filename"]).unlink()
+    assert (
+        client.get(
+            f"/api/v1/backups/{backup['id']}/download", headers=admin_headers
+        ).status_code
+        == 404
+    )
+
+
+# ── upload (Objective 2) ───────────────────────────────────────────────
+
+
+def _sql_content() -> bytes:
+    return DUMP_BYTES
+
+
+def test_upload_requires_authentication(client):
+    resp = client.post(
+        "/api/v1/backups/upload",
+        files={"file": ("x.sql", _sql_content(), "application/sql")},
+    )
+    assert resp.status_code == 401
+
+
+@pytest.mark.parametrize("fixture_name", ["manager_headers", "cashier_headers"])
+def test_upload_is_admin_only(client, request, fixture_name):
+    headers = request.getfixturevalue(fixture_name)
+    resp = client.post(
+        "/api/v1/backups/upload",
+        files={"file": ("x.sql", _sql_content(), "application/sql")},
+        headers=headers,
+    )
+    assert resp.status_code == 403
+
+
+def test_upload_raw_sql_is_staged_as_a_backup(
+    client, admin_headers, backup_dir
+):
+    resp = client.post(
+        "/api/v1/backups/upload",
+        files={"file": ("hand_copied.sql", _sql_content(), "application/sql")},
+        headers=admin_headers,
+    )
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    assert body["filename"].endswith(".sql")
+    assert (backup_dir / body["filename"]).read_bytes() == _sql_content()
+    assert body["sha256"] == sha256_of(backup_dir / body["filename"])
+    assert body["schema_revision"] is None  # raw upload, no manifest
+
+    listed = client.get("/api/v1/backups", headers=admin_headers).json()
+    assert body["id"] in [item["id"] for item in listed["items"]]
+
+
+def test_upload_does_not_claim_an_existing_id(client, admin_headers):
+    existing = _create(client, admin_headers)  # takes id 1
+    resp = client.post(
+        "/api/v1/backups/upload",
+        files={"file": ("x.sql", _sql_content(), "application/sql")},
+        headers=admin_headers,
+    )
+    assert resp.status_code == 201
+    assert resp.json()["id"] == existing["id"] + 1
+
+
+def test_upload_writes_a_backup_upload_audit_row(client, admin_headers, db):
+    resp = client.post(
+        "/api/v1/backups/upload",
+        files={"file": ("x.sql", _sql_content(), "application/sql")},
+        headers=admin_headers,
+    )
+    assert resp.status_code == 201
+    rows = [row for row in _audit_rows(db) if row.action == "backup_upload"]
+    assert len(rows) == 1
+    assert rows[0].details == resp.json()["filename"]
+
+
+def test_upload_rejects_an_empty_file(client, admin_headers):
+    resp = client.post(
+        "/api/v1/backups/upload",
+        files={"file": ("x.sql", b"", "application/sql")},
+        headers=admin_headers,
+    )
+    assert resp.status_code == 422
+    assert resp.json()["error"]["code"] == "BACKUP_UPLOAD_EMPTY"
+
+
+def test_upload_rejects_a_non_sql_binary(client, admin_headers):
+    resp = client.post(
+        "/api/v1/backups/upload",
+        files={"file": ("x.sql", b"\x89PNG\r\n\x1a\n" + b"\x00" * 64, "application/sql")},
+        headers=admin_headers,
+    )
+    assert resp.status_code == 422
+    assert resp.json()["error"]["code"] == "BACKUP_UPLOAD_INVALID"
+
+
+def test_upload_rejects_a_bad_zip(client, admin_headers):
+    resp = client.post(
+        "/api/v1/backups/upload",
+        files={"file": ("x.zip", b"PK\x03\x04not-a-real-zip", "application/zip")},
+        headers=admin_headers,
+    )
+    assert resp.status_code == 422
+    assert resp.json()["error"]["code"] == "BACKUP_UPLOAD_INVALID"
+
+
+def test_upload_rejects_a_zip_without_a_dump_member(client, admin_headers):
+    import io
+    import zipfile as zf
+
+    buffer = io.BytesIO()
+    with zf.ZipFile(buffer, "w") as archive:
+        archive.writestr("notes.txt", "hello")
+    resp = client.post(
+        "/api/v1/backups/upload",
+        files={"file": ("x.zip", buffer.getvalue(), "application/zip")},
+        headers=admin_headers,
+    )
+    assert resp.status_code == 422
+    assert resp.json()["error"]["code"] == "BACKUP_UPLOAD_INVALID"
+
+
+def test_upload_accepts_a_portable_archive(client, admin_headers, backup_dir):
+    """The archive ``download`` produced can be ``upload``ed back."""
+    original = _create(client, admin_headers)
+    archive_bytes = client.get(
+        f"/api/v1/backups/{original['id']}/download", headers=admin_headers
+    ).content
+
+    resp = client.post(
+        "/api/v1/backups/upload",
+        files={"file": ("restored.zip", archive_bytes, "application/zip")},
+        headers=admin_headers,
+    )
+    assert resp.status_code == 201, resp.text
+    staged = resp.json()
+    # The id is re-allocated on this server, never claimed from the archive.
+    assert staged["id"] != original["id"]
+    assert staged["schema_revision"] is None  # FakeRunner has no alembic
+    assert (backup_dir / staged["filename"]).read_bytes() == DUMP_BYTES
+
+
+def test_upload_of_an_oversized_file_is_refused(client, admin_headers):
+    from app.services.backup import MAX_UPLOAD_BYTES
+
+    payload = b"CREATE TABLE x (id int);\n" + b"-- pad\n" * 16
+    # Simulate the cap without allocating 200 MB: patch the module constant.
+    import app.services.backup as backup_module
+
+    original = backup_module.MAX_UPLOAD_BYTES
+    backup_module.MAX_UPLOAD_BYTES = len(payload) - 1
+    try:
+        resp = client.post(
+            "/api/v1/backups/upload",
+            files={"file": ("x.sql", payload, "application/sql")},
+            headers=admin_headers,
+        )
+    finally:
+        backup_module.MAX_UPLOAD_BYTES = original
+    assert resp.status_code == 422
+    assert resp.json()["error"]["code"] == "BACKUP_UPLOAD_TOO_LARGE"
+    assert MAX_UPLOAD_BYTES > len(payload)  # sanity: default is far larger
+
+
+# ── portable roundtrip (Objective 2, unit level) ───────────────────────
+
+
+def test_download_upload_restore_roundtrip(
+    client, admin_headers, runner, backup_dir
+):
+    """create → download → upload → restore the staged copy."""
+    original = _create(client, admin_headers)
+    archive_bytes = client.get(
+        f"/api/v1/backups/{original['id']}/download", headers=admin_headers
+    ).content
+
+    staged = client.post(
+        "/api/v1/backups/upload",
+        files={"file": ("portable.zip", archive_bytes, "application/zip")},
+        headers=admin_headers,
+    ).json()
+
+    resp = client.post(
+        f"/api/v1/backups/{staged['id']}/restore",
+        json={"confirm": True},
+        headers=admin_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    assert runner.restored == [staged["filename"]]
 
 
 # ── service-level: audit must accompany a backup ───────────────────────

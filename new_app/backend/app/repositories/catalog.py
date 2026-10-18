@@ -7,8 +7,8 @@ ordering allowlist, and bounded search results — no full-table loads.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from decimal import Decimal
-from typing import Sequence
 
 from sqlalchemy import asc, desc, func, or_, select
 
@@ -49,6 +49,10 @@ MAX_SEARCH_LIMIT = 50
 # The count therefore stops at this bound.  Nothing consumes a total above
 # it - the Flutter POS / pack / purchase / return pickers read only `items`.
 SEARCH_TOTAL_CAP = 10_000
+
+# Batch-key chunk size for get_many(): keeps every IN() list comfortably
+# inside SQLite's (999) and PostgreSQL's (65535) bind-variable ceilings.
+_ID_CHUNK = 500
 
 
 class ProductRepository(BaseRepository[Product]):
@@ -184,6 +188,23 @@ class ProductRepository(BaseRepository[Product]):
         if exclude_id is not None:
             stmt = stmt.where(Product.id != exclude_id)
         return self.db.scalar(stmt) is not None
+
+    def get_many(self, ids: Sequence[uuid.UUID]) -> Sequence[Product]:
+        """Batch lookup by primary key (chunked IN — no full-table load).
+
+        Duplicates in ``ids`` are collapsed. Missing ids are simply absent
+        from the result; the caller decides how to report them. Order is
+        unspecified (import path matches by id map, never by position).
+        """
+        unique = list(dict.fromkeys(ids))
+        if not unique:
+            return []
+        found: list[Product] = []
+        for start in range(0, len(unique), _ID_CHUNK):
+            chunk = unique[start : start + _ID_CHUNK]
+            stmt = select(Product).where(Product.id.in_(chunk))
+            found.extend(self.db.scalars(stmt).all())
+        return found
 
 
 class CategoryRepository(BaseRepository[Category]):

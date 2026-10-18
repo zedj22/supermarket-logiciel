@@ -27,6 +27,7 @@ from app.api.v1.devices import router as devices_router
 from app.api.v1.expenses import router as expenses_router
 from app.api.v1.exports import router as exports_router
 from app.api.v1.factures import router as factures_router
+from app.api.v1.hardware import router as hardware_router
 from app.api.v1.health import router as health_router
 from app.api.v1.inventory import router as inventory_router
 from app.api.v1.invoice_clients import router as invoice_clients_router
@@ -34,6 +35,7 @@ from app.api.v1.loyalty import router as loyalty_router
 from app.api.v1.packs import router as packs_router
 from app.api.v1.pos import pos_router, sales_router
 from app.api.v1.print import router as print_router
+from app.api.v1.product_transfer import router as product_transfer_router
 from app.api.v1.products import router as products_router
 from app.api.v1.promotions import router as promotions_router
 from app.api.v1.purchases import router as purchases_router
@@ -53,6 +55,12 @@ api_router.include_router(health_router, tags=["health"])
 api_router.include_router(system_router, tags=["system"])
 api_router.include_router(auth_router, prefix="/auth", tags=["auth"])
 api_router.include_router(users_router, prefix="/users", tags=["users"])
+# Product transfer (import/export) MUST be included before products_router:
+# FastAPI matches routes in declaration order, and products_router has a
+# /{product_id} catch-all that would otherwise swallow /import and /export.
+api_router.include_router(
+    product_transfer_router, prefix="/products", tags=["products"]
+)
 api_router.include_router(products_router, prefix="/products", tags=["products"])
 api_router.include_router(promotions_router, prefix="/promotions", tags=["promotions"])
 api_router.include_router(packs_router, prefix="/packs", tags=["packs"])
@@ -76,6 +84,9 @@ api_router.include_router(print_router, prefix="/print", tags=["print"])
 api_router.include_router(dashboard_router, prefix="/dashboard", tags=["dashboard"])
 api_router.include_router(pos_router, prefix="/pos", tags=["pos"])
 api_router.include_router(devices_router, prefix="/devices", tags=["devices"])
+# Objective 3: server-PC hardware discovery (printers/scanners/USB/COM).
+# Distinct from /devices above, which is the LAN pairing registry.
+api_router.include_router(hardware_router, prefix="/hardware", tags=["hardware"])
 api_router.include_router(audit_router, prefix="/audit", tags=["audit"])
 api_router.include_router(settings_router, prefix="/settings", tags=["settings"])
 api_router.include_router(backups_router, prefix="/backups", tags=["backups"])

@@ -37,6 +37,9 @@ import '../features/storage/storage_screen.dart';
 import '../features/users/users_screen.dart';
 import '../features/facturation/facturation_screen.dart';
 import '../features/invoice_clients/invoice_clients_screen.dart';
+import '../features/data_transfer/data_transfer_screen.dart';
+import '../features/backup_restore/backup_restore_screen.dart';
+import '../features/hardware/connected_devices_screen.dart';
 import '../features/devices/device_identity.dart';
 import '../features/devices/connection_provider.dart';
 import '../features/devices/devices_screen.dart';
@@ -220,6 +223,24 @@ final routerProvider = Provider<GoRouter>((ref) {
             path: '/devices',
             name: 'devices',
             builder: (context, state) => const DevicesScreen(),
+          ),
+          // Objective 4 — Administration surfaces. Backend RBAC remains
+          // the security boundary; the scopes here only hide the rail
+          // entry from users who could never load the screen.
+          GoRoute(
+            path: '/data-transfer',
+            name: 'data-transfer',
+            builder: (context, state) => const DataTransferScreen(),
+          ),
+          GoRoute(
+            path: '/backup-restore',
+            name: 'backup-restore',
+            builder: (context, state) => const BackupRestoreScreen(),
+          ),
+          GoRoute(
+            path: '/connected-devices',
+            name: 'connected-devices',
+            builder: (context, state) => const ConnectedDevicesScreen(),
           ),
           GoRoute(
             path: '/audit-log',

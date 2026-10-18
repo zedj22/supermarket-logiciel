@@ -137,9 +137,12 @@ class BackupNotifier extends StateNotifier<BackupState> {
 
   /// `POST /api/v1/backups/{id}/restore`.
   ///
-  /// Returns `true` only when the server confirms the restore.  Anything
-  /// else — including a 422 from a tampered file — is surfaced as an error
-  /// and never reported as success.
+  /// Returns `true` only when the server confirms the restore.  The body
+  /// carries `{"confirm": true}` — the backend refuses a restore without
+  /// that explicit confirmation (422 `RESTORE_CONFIRMATION_REQUIRED`) and
+  /// takes a safety snapshot before replaying.  Anything else — including
+  /// a 422 from a tampered file — is surfaced as an error and never
+  /// reported as success.
   Future<bool> restore(int backupId) async {
     state = state.copyWith(
       busy: true,
@@ -147,7 +150,10 @@ class BackupNotifier extends StateNotifier<BackupState> {
       clearError: true,
     );
     try {
-      await _dio.post('${BackupInfo.backupsPath}/$backupId/restore');
+      await _dio.post(
+        '${BackupInfo.backupsPath}/$backupId/restore',
+        data: {'confirm': true},
+      );
       // The database was replaced: re-read the catalogue rather than
       // trusting whatever we had before.
       await _refreshAfterMutation();

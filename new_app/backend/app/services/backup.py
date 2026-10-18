@@ -1,4 +1,4 @@
-"""Backup / restore service (Phase 17, §17.2).
+"""Backup / restore service (Phase 17, §17.2 + Objective 2).
 
 Design (decisions recorded in ``docs/PHASE_17_IMPLEMENTATION.md``):
 
@@ -15,6 +15,18 @@ Design (decisions recorded in ``docs/PHASE_17_IMPLEMENTATION.md``):
   anything is replayed, ``psql --single-transaction`` makes the restore
   all-or-nothing, and the request's own session is rolled back afterwards
   so it cannot keep reading a pre-restore snapshot.
+* **Objective 2 — confirmation & safety net**: a restore now requires an
+  explicit ``confirm: true``; before the dump is replayed the current
+  database is snapshotted once more (the *safety backup*) so a mistaken
+  restore is itself undoable; after the replay a cheap connectivity check
+  runs and its outcome is reported (never hidden).
+* **Objective 2 — portable archive**: ``download`` returns a ZIP holding
+  the dump and its manifest together (one file to move between machines);
+  ``upload`` accepts that ZIP — or a raw ``.sql`` — validates it the same
+  way an adopted file is validated, and stages it as a first-class backup
+  with a freshly computed hash and a new id.  Integrity (hash) and
+  compatibility (schema revision vs the running app) are surfaced by
+  ``inspect`` *before* the operator confirms anything.
 * **Audit**: creating a backup that cannot be audited is rolled back (the
   files are deleted and the request fails).  A restore cannot be undone,
   so its audit row is written afterwards and a failure there is logged
@@ -24,9 +36,11 @@ Design (decisions recorded in ``docs/PHASE_17_IMPLEMENTATION.md``):
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import uuid
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -35,11 +49,18 @@ from sqlalchemy import text
 
 from app.core.config import BACKEND_ROOT, settings
 from app.core.db_dump import DbParams, DumpRunner, sha256_of
-from app.core.exceptions import AppError, BusinessRuleError, NotFoundError
+from app.core.exceptions import (
+    AppError,
+    BusinessRuleError,
+    NotFoundError,
+    ValidationError,
+)
+from app.core.filenames import sanitize_filename
 from app.models.audit import AuditLog
 from app.models.enums import AuditAction
 from app.schemas.backup import (
     BackupInfo,
+    BackupInspect,
     BackupListResponse,
     BackupRestoreResponse,
 )
@@ -49,6 +70,16 @@ logger = structlog.get_logger(__name__)
 
 _MANIFEST_SUFFIX = ".json"
 _SQL_SUFFIX = ".sql"
+_ARCHIVE_SUFFIX = ".zip"
+
+#: Upload cap — a plain-SQL dump of a supermarket database stays far
+#: below this; anything larger is refused before it is buffered.
+MAX_UPLOAD_BYTES = 200 * 1024 * 1024
+
+#: Members a portable archive is allowed to contain (nothing else is
+#: extracted — a ZIP is untrusted input).
+_ARCHIVE_DUMP_MEMBER = "dump.sql"
+_ARCHIVE_MANIFEST_MEMBER = "manifest.json"
 
 
 class BackupService(BaseService):
@@ -69,7 +100,16 @@ class BackupService(BaseService):
 
     @property
     def directory(self) -> Path:
-        """Absolute backup directory (never depends on the CWD)."""
+        """Absolute backup directory (never depends on the CWD).
+
+        An explicit ``directory`` passed to the constructor wins; otherwise
+        ``BACKUP_DIR`` from settings; otherwise ``backend/backups``.
+        """
+        if self._directory is not None:
+            path = self._directory
+            if not path.is_absolute():
+                path = BACKEND_ROOT / path
+            return path
         raw = settings.BACKUP_DIR.strip()
         path = Path(raw) if raw else BACKEND_ROOT / "backups"
         if not path.is_absolute():
@@ -180,9 +220,24 @@ class BackupService(BaseService):
         self,
         backup_id: int,
         *,
+        confirm: bool = False,
         actor_id: uuid.UUID | None = None,
     ) -> BackupRestoreResponse:
-        """Replay one backup over the live database."""
+        """Replay one backup over the live database.
+
+        Objective 2: an explicit ``confirm`` is required; the current
+        database is snapshotted once more (safety backup) *before* the
+        replay so a mistaken restore is itself undoable; a cheap
+        connectivity check runs afterwards and is reported, never hidden.
+        """
+        if not confirm:
+            raise BusinessRuleError(
+                "Restoring replaces the entire database. Send "
+                "confirm: true after reviewing the backup details.",
+                details={"required_field": "confirm"},
+                code="RESTORE_CONFIRMATION_REQUIRED",
+            )
+
         entries = self.list().items
         info = next((entry for entry in entries if entry.id == backup_id), None)
         if info is None:
@@ -201,12 +256,39 @@ class BackupService(BaseService):
                     details={"filename": info.filename},
                 )
 
+        # Safety net: snapshot the database as it is RIGHT NOW, so the
+        # restore itself can be undone.  A failed snapshot aborts the
+        # restore — replaying without a way back is exactly the situation
+        # this feature exists to prevent.
+        safety: BackupInfo | None = None
+        try:
+            safety = self.create(actor_id=actor_id)
+        except AppError as exc:
+            logger.error(
+                "restore_safety_backup_failed",
+                id=backup_id,
+                error=str(exc),
+            )
+            raise BusinessRuleError(
+                "A safety backup of the current database could not be "
+                "taken, so the restore was cancelled. Nothing was changed.",
+                details={"filename": info.filename},
+                code="RESTORE_SAFETY_BACKUP_FAILED",
+            ) from exc
+
         logger.info("backup_restore_started", id=backup_id, filename=info.filename)
         self.runner.restore(path)
 
         # Everything the request's session had read belongs to the
         # pre-restore database — drop it before touching the data again.
         self.db.rollback()
+
+        # Post-restore check: the database must answer a trivial query.
+        # The restore itself already committed (psql --single-transaction);
+        # a failed check is reported, not swallowed, and never rewrites the
+        # outcome to "failed" — the data has been replaced either way.
+        post_ok = self._post_restore_check()
+
         revision = self._schema_revision()
 
         # Best effort: the restore already happened and cannot be undone,
@@ -220,10 +302,18 @@ class BackupService(BaseService):
                         entity_type="backup",
                         details=info.filename,
                         before_state=json.dumps(
-                            {"id": backup_id, "filename": info.filename}
+                            {
+                                "id": backup_id,
+                                "filename": info.filename,
+                                "safety_backup_id": safety.id if safety else None,
+                            }
                         ),
                         after_state=json.dumps(
-                            {"schema_revision": revision}, default=str
+                            {
+                                "schema_revision": revision,
+                                "post_restore_ok": post_ok,
+                            },
+                            default=str,
                         ),
                     )
                 )
@@ -234,14 +324,293 @@ class BackupService(BaseService):
                 filename=info.filename,
             )
 
-        logger.info("backup_restore_done", id=backup_id, revision=revision)
+        logger.info(
+            "backup_restore_done",
+            id=backup_id,
+            revision=revision,
+            post_restore_ok=post_ok,
+        )
         return BackupRestoreResponse(
             restored=True,
             backup=info,
             schema_revision=revision,
+            safety_backup=safety,
+            post_restore_ok=post_ok,
         )
 
+    # -- inspect -----------------------------------------------------------
+
+    def inspect(self, backup_id: int) -> BackupInspect:
+        """Integrity + compatibility summary for the confirmation dialog."""
+        entries = self.list().items
+        info = next((entry for entry in entries if entry.id == backup_id), None)
+        if info is None:
+            # The dump may be gone while its manifest remains — reporting
+            # exactly that is the point of inspect, so fall back to the
+            # sidecar instead of 404ing on a half-deleted backup.
+            info = self._info_from_manifest(backup_id)
+        if info is None:
+            raise NotFoundError(f"backup {backup_id} does not exist")
+
+        path = self.directory / info.filename
+        file_present = path.is_file()
+        sha_ok: bool | None = None
+        warnings: list[str] = []
+
+        if not file_present:
+            warnings.append(
+                "The dump file is missing from the backup directory; "
+                "this backup cannot be restored."
+            )
+        elif info.sha256:
+            sha_ok = sha256_of(path) == info.sha256
+            if not sha_ok:
+                warnings.append(
+                    "The dump no longer matches the hash recorded when it "
+                    "was created; restoring it will be refused."
+                )
+        else:
+            warnings.append(
+                "This backup has no recorded hash (it was copied in by "
+                "hand); its integrity cannot be proven."
+            )
+
+        current_revision = self._schema_revision()
+        compatible: bool | None = None
+        if info.schema_revision and current_revision:
+            compatible = info.schema_revision == current_revision
+            if not compatible:
+                warnings.append(
+                    f"Schema mismatch: the backup was taken at revision "
+                    f"{info.schema_revision} but the server is running "
+                    f"{current_revision}."
+                )
+        elif info.schema_revision is None:
+            warnings.append(
+                "This backup does not record the schema revision it was "
+                "taken at; compatibility cannot be checked."
+            )
+
+        return BackupInspect(
+            backup=info,
+            file_present=file_present,
+            sha256_ok=sha_ok,
+            current_schema_revision=current_revision,
+            schema_compatible=compatible,
+            warnings=warnings,
+        )
+
+    # -- download (portable archive) ---------------------------------------
+
+    def download(self, backup_id: int) -> tuple[bytes, str]:
+        """Build a portable ZIP (dump + manifest) for one backup.
+
+        Returns ``(zip_bytes, filename)``.  The archive is what an
+        operator moves to another machine; ``upload`` accepts it back.
+        """
+        entries = self.list().items
+        info = next((entry for entry in entries if entry.id == backup_id), None)
+        if info is None:
+            raise NotFoundError(f"backup {backup_id} does not exist")
+
+        path = self.directory / info.filename
+        if not path.is_file():
+            raise NotFoundError(f"backup file missing: {info.filename}")
+
+        manifest_path = path.with_suffix(_MANIFEST_SUFFIX)
+        manifest_bytes = (
+            manifest_path.read_bytes() if manifest_path.is_file() else b"{}"
+        )
+
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr(_ARCHIVE_DUMP_MEMBER, path.read_bytes())
+            archive.writestr(_ARCHIVE_MANIFEST_MEMBER, manifest_bytes)
+
+        archive_name = sanitize_filename(
+            f"backup_{info.id}_{path.stem}{_ARCHIVE_SUFFIX}"
+        )
+        logger.info("backup_download", id=backup_id, filename=archive_name)
+        return buffer.getvalue(), archive_name
+
+    # -- upload (stage a portable archive or raw dump) ----------------------
+
+    def upload(
+        self,
+        *,
+        content: bytes,
+        filename: str,
+        actor_id: uuid.UUID | None = None,
+    ) -> BackupInfo:
+        """Stage an uploaded archive/dump as a first-class backup.
+
+        Accepts a portable ZIP (``dump.sql`` + ``manifest.json``) or a
+        raw ``.sql``.  Validation mirrors adoption: the file must be
+        non-empty and plausibly SQL; the id is always re-allocated on
+        this server (an uploaded file never claims an existing id); the
+        hash is recomputed here, never trusted from the upload.
+        """
+        if len(content) > MAX_UPLOAD_BYTES:
+            raise ValidationError(
+                "The uploaded backup exceeds the size limit.",
+                details={"bytes": len(content), "limit": MAX_UPLOAD_BYTES},
+                code="BACKUP_UPLOAD_TOO_LARGE",
+            )
+        if not content:
+            raise ValidationError(
+                "The uploaded file is empty.", code="BACKUP_UPLOAD_EMPTY"
+            )
+
+        if filename.lower().endswith(_ARCHIVE_SUFFIX):
+            dump_bytes, carried_manifest = self._extract_archive(content)
+        else:
+            dump_bytes, carried_manifest = content, None
+
+        if not self._looks_like_sql(dump_bytes):
+            raise ValidationError(
+                "The uploaded file does not look like a SQL dump.",
+                details={"filename": filename},
+                code="BACKUP_UPLOAD_INVALID",
+            )
+
+        directory = self.directory
+        directory.mkdir(parents=True, exist_ok=True)
+        entries = self.list().items
+        next_id = max(
+            [entry.id for entry in entries] + self.list_ids(),
+            default=0,
+        ) + 1
+
+        base_name = Path(sanitize_filename(filename or "uploaded.sql")).stem
+        base_name = base_name.removesuffix(".backup") or "uploaded"
+        sql_name = self._unique_name(directory, base_name)
+        path = directory / sql_name
+        path.write_bytes(dump_bytes)
+
+        manifest = {
+            "id": next_id,
+            "filename": sql_name,
+            "size": path.stat().st_size,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "sha256": sha256_of(path),
+            "schema_revision": (carried_manifest or {}).get("schema_revision"),
+            "pg_dump_version": (carried_manifest or {}).get("pg_dump_version"),
+            "app_version": (carried_manifest or {}).get("app_version"),
+            "database": (carried_manifest or {}).get("database"),
+            "uploaded_from": sanitize_filename(filename or "upload", max_length=120),
+        }
+        self._write_manifest(directory / (path.stem + _MANIFEST_SUFFIX), manifest)
+
+        try:
+            with self.transaction():
+                self.db.add(
+                    AuditLog(
+                        user_id=actor_id,
+                        action=AuditAction.BACKUP_UPLOAD.value,
+                        entity_type="backup",
+                        details=sql_name,
+                        after_state=json.dumps(manifest, default=str),
+                    )
+                )
+        except AppError:
+            path.unlink(missing_ok=True)
+            (directory / (path.stem + _MANIFEST_SUFFIX)).unlink(missing_ok=True)
+            logger.error("backup_upload_audit_failed", filename=sql_name)
+            raise
+
+        logger.info("backup_uploaded", id=next_id, filename=sql_name)
+        return BackupInfo(**manifest)
+
     # -- helpers -----------------------------------------------------------
+
+    @staticmethod
+    def _extract_archive(content: bytes) -> tuple[bytes, dict | None]:
+        """Pull ``dump.sql`` (+ optional manifest) out of a portable ZIP.
+
+        Only the two well-known members are ever read; nothing is written
+        to disk here.  A ZIP without a dump member is refused.
+        """
+        try:
+            with zipfile.ZipFile(io.BytesIO(content)) as archive:
+                names = set(archive.namelist())
+                if _ARCHIVE_DUMP_MEMBER not in names:
+                    raise ValidationError(
+                        "The archive does not contain dump.sql.",
+                        details={"members": sorted(names)[:20]},
+                        code="BACKUP_UPLOAD_INVALID",
+                    )
+                dump_bytes = archive.read(_ARCHIVE_DUMP_MEMBER)
+                manifest: dict | None = None
+                if _ARCHIVE_MANIFEST_MEMBER in names:
+                    try:
+                        parsed = json.loads(
+                            archive.read(_ARCHIVE_MANIFEST_MEMBER).decode("utf-8")
+                        )
+                        if isinstance(parsed, dict):
+                            manifest = parsed
+                    except (ValueError, UnicodeDecodeError):
+                        manifest = None
+        except zipfile.BadZipFile as exc:
+            raise ValidationError(
+                "The uploaded file is not a valid ZIP archive.",
+                code="BACKUP_UPLOAD_INVALID",
+            ) from exc
+        return dump_bytes, manifest
+
+    @staticmethod
+    def _looks_like_sql(content: bytes) -> bool:
+        """Cheap sanity check — enough to reject a random binary file.
+
+        A ``pg_dump`` plain script always carries SQL keywords in its
+        first few kilobytes; anything else (an EXE, a JPEG, a truncated
+        upload) does not.
+        """
+        head = content[:8192].lower()
+        markers = (
+            b"create table",
+            b"create index",
+            b"create sequence",
+            b"copy ",
+            b"insert into",
+            b"alter table",
+            b"drop table",
+            b"set ",
+            b"begin;",
+            b"--\n-- postgresql database dump",
+        )
+        return any(marker in head for marker in markers)
+
+    def _unique_name(self, directory: Path, base: str) -> str:
+        candidate = f"{base}{_SQL_SUFFIX}"
+        suffix = 2
+        while (directory / candidate).exists():
+            candidate = f"{base}_{suffix}{_SQL_SUFFIX}"
+            suffix += 1
+        return candidate
+
+    def _info_from_manifest(self, backup_id: int) -> BackupInfo | None:
+        """Look up a backup by its sidecar alone (dump may be missing)."""
+        directory = self.directory
+        if not directory.is_dir():
+            return None
+        for manifest_path in directory.glob(f"*{_MANIFEST_SUFFIX}"):
+            manifest = self._read_manifest(manifest_path)
+            if manifest is not None and int(manifest["id"]) == backup_id:
+                return self._to_info(manifest)
+        return None
+
+    def _post_restore_check(self) -> bool:
+        """Trivial liveness probe after a restore (never raises)."""
+        try:
+            self.db.execute(text("SELECT 1"))
+            return True
+        except Exception:
+            logger.error("post_restore_check_failed")
+            try:
+                self.db.rollback()
+            except Exception:  # noqa: BLE001 - best effort cleanup
+                pass
+            return False
 
     def _next_filename(self, directory: Path, moment: datetime) -> str:
         base = f"backup_{moment.strftime('%Y%m%d_%H%M%S')}"
