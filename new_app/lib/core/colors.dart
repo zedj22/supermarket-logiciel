@@ -66,6 +66,26 @@ class AppColors {
   static const Color negative = error;
   static const Color attention = warning;
 
+  // Cart-panel action-button identity hues (semantic action colors).
+  //
+  // The identity actions (discount, hold, history) paint these hues as a
+  // SUBTLE TINT wash over the panel (see [tint] × [tintAlpha]) with the
+  // hue itself as the button border and an [onTint] foreground — outlined
+  // and readable, never an opaque slab (solid fills were tried and read as
+  // heavy/flat; rolled back). Discount rides the generic [warning] amber —
+  // its label comes from [onTint], so the amber never has to carry white.
+  // [actionReturn] is the deliberate solid exception: entering return mode
+  // must stay an unmissable red chip (white labels clear 5.4:1 on it).
+  static const Color actionHold = Color(0xFF0D9488); // teal — shelve/pause (F9)
+  static const Color actionHistory = Color(0xFF64748B); // slate — neutral archive
+  static const Color actionReturn = Color(0xFFC0392B); // solid red — returns
+
+  /// Solid disabled fill for an action button: [accent] mixed toward
+  /// [surface] — fully opaque, so a disabled action reads as a muted
+  /// version of its enabled color instead of going transparent.
+  static Color mutedAction(Color accent, Color surface) =>
+      Color.lerp(accent, surface, 0.55) ?? accent;
+
   /// Fill alpha for a semantic tint on the current surface.
   ///
   /// Light surfaces are near-white, so a weak tint reads as "nothing";
@@ -73,23 +93,54 @@ class AppColors {
   static double tintAlpha(Brightness brightness) =>
       brightness == Brightness.light ? 0.14 : 0.20;
 
+  /// Minimum WCAG ratio for a label sitting on a [tint]ed fill (AA body
+  /// text).
+  static const double _onTintMinRatio = 4.5;
+
   /// A readable foreground for text/icons sitting on [tint]-ed fill of the
   /// same accent. Derived through HSL rather than hand-picked so every
   /// accent (success, warning, error, info, report tones) stays legible in
   /// light, dark *and* grey without a per-accent table.
+  ///
+  /// The initial HSL step (darken on light, lift on dark) clears 4.5:1 on
+  /// its own for the mid-lightness semantic hues. DARKER hues start too
+  /// deep for a single lift — one step left them at 1.3–2.1:1 in dark — so
+  /// the candidate is then measured against [tint] composited over the
+  /// LIGHTEST surface that brightness can paint (white / grey card — the
+  /// strictest case in the palette) and walked toward black (light
+  /// theme) / white (dark theme) until it converges. Hue and saturation
+  /// never move, so the accent keeps its identity; hues that already
+  /// pass return the one-step result unchanged.
   static Color onTint(Color accent, Brightness brightness) {
     final hsl = HSLColor.fromColor(accent);
+    final Color start;
     if (brightness == Brightness.light) {
       // Darken: a 4.5:1 foreground on the pale tint.
-      return hsl
+      start = hsl
           .withLightness((hsl.lightness * 0.55).clamp(0.0, 1.0))
           .withSaturation((hsl.saturation * 1.05).clamp(0.0, 1.0))
           .toColor();
+    } else {
+      // Lighten: the tint is dark, so lift the hue back up.
+      start = hsl
+          .withLightness((hsl.lightness * 1.25 + 0.16).clamp(0.0, 1.0))
+          .toColor();
     }
-    // Lighten: the tint is dark, so lift the hue back up.
-    return hsl
-        .withLightness((hsl.lightness * 1.25 + 0.16).clamp(0.0, 1.0))
-        .toColor();
+    final surface = brightness == Brightness.light ? lightSurface : greyCard;
+    final background =
+        Color.lerp(surface, accent, tintAlpha(brightness)) ?? surface;
+    if (contrastRatio(start, background) >= _onTintMinRatio) return start;
+    final delta = brightness == Brightness.light ? -0.03 : 0.03;
+    var step = HSLColor.fromColor(start);
+    var candidate = start;
+    for (var i = 0; i < 40; i++) {
+      final lightness = (step.lightness + delta).clamp(0.0, 1.0);
+      step = step.withLightness(lightness);
+      candidate = step.toColor();
+      if (contrastRatio(candidate, background) >= _onTintMinRatio) break;
+      if (lightness == 0.0 || lightness == 1.0) break;
+    }
+    return candidate;
   }
 
   /// One tinted fill for a semantic accent, brightness aware.

@@ -34,9 +34,10 @@
 // 240); every mutation is parsed, stock-validated and applied through
 // pos_quantity.dart (one shared rule).
 //
-// Add → focus (Phase 8 FIX #1): a successful add (new or merged line)
-// makes that line active and moves the keyboard focus to its quantity
-// field, so `+` keeps working without the mouse.
+// Add → active line: a successful add (new or merged line) makes that
+// line active, so `+` / `-` / `*` keep working without the mouse. NO
+// quantity field is auto-focused by an add (Phase 8 FIX #1 retired) —
+// a qty field takes focus only when the cashier clicks/taps it.
 import 'dart:async';
 import 'dart:io';
 
@@ -46,10 +47,12 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/amount_entry.dart';
+import '../../core/barcode_scanner.dart';
 import '../../core/colors.dart';
 import '../../core/keyboard.dart';
 import '../../core/number_format.dart';
 import '../../core/numeric_text.dart';
+import '../../core/scan_diagnostics.dart';
 import '../../core/search_field_state.dart';
 import '../../core/shortcuts.dart';
 import '../../core/strings.dart';
@@ -63,6 +66,7 @@ import '../loyalty/loyalty_models.dart';
 import '../loyalty/loyalty_providers.dart';
 import '../packs/pack_models.dart';
 import '../products/models.dart';
+import '../products/products_providers.dart';
 import '../products/quantity_dialog.dart';
 import '../products/selling_unit_picker.dart';
 import '../products/variant_picker.dart';
@@ -119,11 +123,30 @@ class _PosScreenState extends ConsumerState<PosScreen> {
   final FocusNode _searchFocusNode = FocusNode();
   final TextEditingController _searchController = TextEditingController();
 
-  /// Key of the cart line whose quantity field should take keyboard focus
-  /// — set right after a successful add (Phase 8 FIX #1), consumed by the
-  /// matching [_CartLineTile] and cleared again at the end of that frame.
-  final ValueNotifier<String?> _qtyFocusRequest = ValueNotifier<String?>(null);
+  /// Key of the cart line whose quantity field should show the committed
+  /// quantity again once the current frame lands — set by a scan that was
+  /// submitted from that field (the merge is still resolving, so the
+  /// field must not be overwritten mid-flight: a wedge burst typed on top
+  /// of the barcode would lose its committed prefix). Consumed by the
+  /// matching [_CartLineTile]; a scan arriving before the reset lands is
+  /// detected by [_CartLineTileState._runBase], never by the field text.
+  final ValueNotifier<String?> _clearQtyTextRequest =
+      ValueNotifier<String?>(null);
+
+  /// Key of the cart line arrow navigation (_moveActiveLine) should bring
+  /// fully into view — consumed by the matching [_CartLineTile] the moment
+  /// it exists: by a mounted listener immediately, or by initState when
+  /// the lazy standard list builds the target only AFTER the jump laid its
+  /// region out. A plain selected-transition reveal can never fire there
+  /// (the tile mounts already selected, so didUpdateWidget never runs).
+  final ValueNotifier<String?> _revealRequest = ValueNotifier<String?>(null);
   bool _cartDrawerOpen = false;
+
+  /// Standard cart list scroll position — [_moveActiveLine] jumps it to the
+  /// matching end when a FIRST arrow press enters the list from the
+  /// unselected state (the lazy list may not have built the target tile
+  /// yet); every other reveal is Scrollable.ensureVisible inside the tile.
+  final ScrollController _linesController = ScrollController();
 
   /// Last POS return-mode failure (localized message + raw backend
   /// detail) — shown inline in the return banner and as a toast. Kept
@@ -134,6 +157,12 @@ class _PosScreenState extends ConsumerState<PosScreen> {
 
   /// This screen's page-level shortcut hooks, published to the nav shell.
   late final PageShortcuts _pageShortcuts;
+
+  /// App-level scan target (core/barcode_scanner.dart): while this screen
+  /// is the live route and no text field has focus, a wedge burst
+  /// (digits + Enter) resolves through the canonical scan path — the
+  /// same [_handleLineScan] the focused-field submits use.
+  late final BarcodeScanHandler _scanHandler;
 
   @override
   void initState() {
@@ -146,6 +175,14 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       refresh: _refreshWorkspace,
     );
     PageShortcutsRegistry.current = _pageShortcuts;
+    // Global barcode capture: scans land here even with the workspace
+    // unfocused (never stealing a key a focused field or dialog owns).
+    _scanHandler = BarcodeScanHandler(
+      context: context,
+      name: 'pos',
+      onScan: _handleLineScan,
+    );
+    BarcodeScannerGateway.instance.register(_scanHandler);
     // The catalog query outlives this page State: restore the box so the
     // visible input and the loaded catalog always describe the same term.
     seedSearchField(_searchController, ref.read(posSearchProvider).query);
@@ -162,13 +199,18 @@ class _PosScreenState extends ConsumerState<PosScreen> {
 
   @override
   void dispose() {
+    // Stop claiming global scans first — a half-torn-down screen must
+    // never receive (or block) another burst.
+    BarcodeScannerGateway.instance.unregister(_scanHandler);
     if (identical(PageShortcutsRegistry.current, _pageShortcuts)) {
       PageShortcutsRegistry.current = null;
     }
     _focusNode.dispose();
     _searchFocusNode.dispose();
     _searchController.dispose();
-    _qtyFocusRequest.dispose();
+    _clearQtyTextRequest.dispose();
+    _revealRequest.dispose();
+    _linesController.dispose();
     super.dispose();
   }
 
@@ -231,21 +273,6 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       return;
     }
     _focusNode.requestFocus();
-  }
-
-  /// Phase 8 FIX #1 — a successful add leaves the cart keyboard-first: the
-  /// line just added (or the line it merged into) becomes ACTIVE and its
-  /// quantity field takes focus, so the cashier can keep pressing `+`
-  /// without reaching for the mouse.
-  ///
-  /// The request is dropped at the end of the frame when no tile claimed it
-  /// (line off-screen, cart hidden) — focus is never stolen later by a
-  /// stale request.
-  void _requestQtyFocus(String key) {
-    _qtyFocusRequest.value = key;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_qtyFocusRequest.value == key) _qtyFocusRequest.value = null;
-    });
   }
 
   Future<void> _handleShortcut(LogicalKeyboardKey key) async {
@@ -342,7 +369,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
         // Clear Cart empties the CART only. The catalog, the search query,
         // favorites and the view mode stay exactly as the cashier left
         // them — no search reset, no refetch, no navigation.
-        ref.read(posCartProvider.notifier).clearCart();
+        ref.read(posCartProvider.notifier).clearCart(reason: 'clear-dialog');
       }
       if (mounted) _searchFocusNode.requestFocus();
       return;
@@ -486,6 +513,78 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     ref.read(posCartProvider.notifier).removeLine(line.key);
   }
 
+  /// Up/Down — move the selected cart line by [delta] (−1 = up, +1 = down).
+  ///
+  /// Selection is CLAMPED at both ends: the first press from the
+  /// unselected state enters the list (Down → first line, Up → last line),
+  /// every further press walks exactly one line and stops at the ends; an
+  /// empty cart is a no-op. The moved-to tile reveals itself when it
+  /// becomes selected (geometry check inside [_CartLineTile] — a fully
+  /// visible row never moves, a row above the fold top-aligns, a row below
+  /// it bottom-aligns). The standard list builds tiles lazily: an entering
+  /// jump can cross the whole list, so the matching END is scrolled to
+  /// first, and a mid-list step that lands outside the built window lays
+  /// the target's estimated region out first ([_jumpNearTarget]) — the
+  /// dense table builds every row eagerly and needs neither jump. Focus
+  /// never moves — the activator only fires outside text editing, so the
+  /// barcode field keeps it.
+  void _moveActiveLine(int delta) {
+    final cart = ref.read(posCartProvider);
+    final lines = cart.lines;
+    if (lines.isEmpty) return;
+    final keys = [for (final line in lines) line.key];
+    final active = cart.lastActiveKey;
+    var index = active == null ? -1 : keys.indexOf(active);
+    final dense =
+        ref.read(posLayoutSwitchProvider) == PosScreenLayout.reversed;
+    final controller = _linesController;
+    if (index < 0) {
+      index = delta > 0 ? 0 : keys.length - 1;
+      if (!dense && controller.hasClients) {
+        // Lay out the END the entering selection starts from so the target
+        // tile EXISTS for its reveal in the very next frame.
+        controller.jumpTo(delta > 0
+            ? controller.position.minScrollExtent
+            : controller.position.maxScrollExtent);
+      }
+    } else {
+      final next = index + delta;
+      index = next < 0 ? 0 : (next >= keys.length ? keys.length - 1 : next);
+      if (!dense && controller.hasClients) {
+        _jumpNearTarget(controller.position, index, keys.length);
+      }
+    }
+    final target = keys[index];
+    // Publish BEFORE the state change: a mounted target consumes it
+    // synchronously and reveals itself post-frame; an un-built target
+    // claims it in initState once the jump above put its region on screen.
+    _revealRequest.value = target;
+    ref.read(posCartProvider.notifier).setActiveLine(target);
+  }
+
+  /// Standard lazy list: a normal one-row step can land OUTSIDE the built
+  /// window (a freshly preselected line far below the fold never mounts,
+  /// so no tile-level ensureVisible could ever run for it). Lay out the
+  /// target's region first — an average-row-height estimate, good enough
+  /// because the tile's own ensureVisible refines it once the row exists
+  /// and every further press recomputes from the new position. Inside the
+  /// built window nothing moves (those tiles reveal themselves minimally).
+  static void _jumpNearTarget(
+      ScrollPosition position, int index, int count) {
+    if (count <= 0 || !position.hasContentDimensions) return;
+    final avg =
+        (position.maxScrollExtent + position.viewportDimension) / count;
+    if (avg <= 0) return;
+    final target = index * avg + avg / 2;
+    const cache = 250.0; // ListView's default cacheExtent
+    if (target >= position.pixels - cache &&
+        target <= position.pixels + position.viewportDimension + cache) {
+      return; // Already within the built region — tiles can reveal.
+    }
+    position.jumpTo((target - position.viewportDimension / 2)
+        .clamp(position.minScrollExtent, position.maxScrollExtent));
+  }
+
   /// Cart qty field / line +/- buttons: the ONE validating mutation path
   /// for an existing line (expression parsing + stock guard + toast).
   bool _updateLineQty(String key, String rawInput) {
@@ -509,31 +608,167 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     );
   }
 
-  /// Enter in search: if barcode-shaped exact match, add; a loyalty QR
-  /// payload resolves to its customer; else load results.
+  /// Enter in search: a complete scan (or typed barcode) resolves through
+  /// the canonical exact barcode lookup FIRST — the debounced catalog the
+  /// keystrokes raced is irrelevant, so a scanner's Enter that lands
+  /// before the debounce still adds the right product exactly once. When
+  /// the lookup misses, a fresh text search covers name / SKU / barcode
+  /// exact matches and the documented first-result fallback; nothing found
+  /// anywhere raises a clear not-found toast instead of silence. A single
+  /// Enter can never double-add (re-entry guard).
+  bool _submitSearchInFlight = false;
+
   Future<void> _submitSearch() async {
+    if (_submitSearchInFlight) return;
     final query = _searchController.text.trim();
     if (query.isEmpty) return;
+    // ORIGIN event for the focused-search path: the next resolve /
+    // receive hop correlates to this submit. `len` > 13 after a scan
+    // session would reveal a STALE prefix concatenated onto the next
+    // code (a burst split across fields).
+    lastScanCorr = scanDiag('search-submit', {
+      'len': query.length,
+      'suffix3': scanDiagSuffix3(query),
+    });
     if (query.toUpperCase().startsWith(kLoyaltyQrPrefix)) {
       await _submitLoyaltyLookup(query);
       return;
     }
-    final products = ref.read(posSearchProvider).items;
-    ProductModel? exact;
-    for (final p in products) {
-      if (p.barcode == query || p.name == query || p.sku == query) {
-        exact = p;
-        break;
-      }
-    }
-    if (exact == null && products.isNotEmpty) {
-      exact = products.first;
-    }
-    if (exact != null) {
-      await _addProduct(exact);
-    } else {
+    _submitSearchInFlight = true;
+    try {
+      if (await _resolveAndAddBarcode(query)) return;
+      // Fresh results for THIS query (cancels the pending debounce), then
+      // exact name/SKU/barcode match. The documented first-result fallback
+      // applies to TYPED text only — a pure-digit query is a scan shape,
+      // and after the canonical lookup missed it, fuzzy-adding the first
+      // catalog row would put the WRONG product in the cart. Numeric SKUs
+      // still resolve through the exact-match loop above.
       await ref.read(posSearchProvider.notifier).load();
+      final products = ref.read(posSearchProvider).items;
+      ProductModel? exact;
+      for (final p in products) {
+        if (p.barcode == query || p.name == query || p.sku == query) {
+          exact = p;
+          break;
+        }
+      }
+      if (exact == null && products.isNotEmpty && !_scanShaped(query)) {
+        exact = products.first;
+      }
+      if (exact != null) {
+        // Search-input add (the focused search field consumed the input —
+        // typed text or a wedge burst that landed there): the field keeps
+        // focus for the next code; never auto-focus a qty field.
+        await _addProduct(exact, fromScan: true);
+        _clearSearchAfterAdd();
+      } else {
+        _showBarcodeNotFound();
+      }
+    } finally {
+      _submitSearchInFlight = false;
     }
+  }
+
+  /// A pure digit run — the shape a keyboard-wedge scanner types (EAN-8 /
+  /// UPC-A / EAN-13 …). Distinguishes "scan of an unknown code" (never
+  /// fuzzy-match it) from typed text ("bre" + Enter → first result).
+  static bool _scanShaped(String query) =>
+      RegExp(r'^\d+$').hasMatch(query);
+
+  /// Canonical exact barcode resolve (string-preserving, server-side
+  /// selling-unit → variant → product). Returns true when the code was
+  /// recognized and handed to the existing add flow (which applies the
+  /// archived / out-of-stock / picker rules); false when the lookup
+  /// missed or failed, so callers may fall back to text search.
+  Future<bool> _resolveAndAddBarcode(String code) async {
+    final lookup =
+        await ref.read(barcodeLookupProvider.notifier).lookup(code);
+    final productId = lookup?.found == true ? lookup?.productId : null;
+    if (!mounted || productId == null) {
+      scanDiag('scan-resolve', {
+        'outcome': !mounted ? 'stale' : 'miss',
+        'corr': lastScanCorr,
+        'len': code.length,
+        'suffix3': scanDiagSuffix3(code),
+      });
+      return false;
+    }
+    scanDiag('scan-resolve', {
+      'outcome': 'hit',
+      'corr': lastScanCorr,
+      'productId': productId,
+      'len': code.length,
+      'suffix3': scanDiagSuffix3(code),
+    });
+    try {
+      final dio = ref.read(apiClientProvider).dio;
+      final response = await dio.get('/api/v1/products/$productId');
+      final product =
+          ProductModel.fromJson(response.data as Map<String, dynamic>);
+      if (!mounted) return true; // recognized — never fall through
+      // Gateway/qty-field scan add: the scan input keeps focus (see
+      // [_clearSearchAfterAdd]); the qty field is never auto-focused.
+      await _addProduct(product, fromScan: true);
+      _clearSearchAfterAdd();
+      return true;
+    } on DioException {
+      return false;
+    }
+  }
+
+  /// Continuous-scanning hygiene: a processed scan leaves the barcode field
+  /// empty and focused, so the next wedge burst types a fresh code instead
+  /// of concatenating onto the previous one.
+  void _clearSearchAfterAdd() {
+    if (!mounted) return;
+    _searchController.clear();
+    ref.read(posSearchProvider.notifier).clear();
+    // The clear above resets the catalog state to an EMPTY result set
+    // (no query, no items) — without an immediate reload the product
+    // panel sticks on the "No matching products" empty state until the
+    // cashier navigates away and back. Reload the normal product list
+    // right away (same clear + load pairing Escape already uses).
+    unawaited(ref.read(posSearchProvider.notifier).load());
+    // One physical scan must complete in exactly ONE consumer: if the qty
+    // field currently holds a burst-in-progress (or any focused field
+    // holds uncommitted input), the post-add search refocus would yank the
+    // remaining digits of the in-flight burst out of their current field
+    // mid-stream (the real-device `qty-submit len=7` split: prefix into
+    // search, suffix into qty — or vice versa). Skip the refocus; the
+    // scan session's field keeps the digits it already has.
+    if (_focusInterruptedByInput()) {
+      scanDiag('focus-yank', {'outcome': 'blocked-input'});
+      return;
+    }
+    _searchFocusNode.requestFocus();
+  }
+
+  void _showBarcodeNotFound() {
+    if (!mounted) return;
+    final loc = ref.read(localeProvider).flutterLocale.languageCode;
+    showPosToast(
+      context,
+      message: AppStrings.t('product_not_found', loc),
+      kind: PosToastKind.error,
+      key: const Key('pos-barcode-not-found-toast'),
+    );
+  }
+
+  /// A scan landed in a focused cart quantity field (the next scan of a
+  /// continuous session — the cashier may have clicked a qty field
+  /// mid-session): forward the code to the same canonical resolve path.
+  /// Unknown codes get the clear not-found toast; recognized codes reuse
+  /// every cart rule (merge-increment, stock guard, pickers).
+  Future<void> _handleLineScan(String code) async {
+    // First statement, synchronously: every dispatch (gateway or field
+    // path) leaves a receive trace here, correlated to its origin.
+    scanDiag('scan-receive', {
+      'corr': lastScanCorr,
+      'len': code.length,
+      'suffix3': scanDiagSuffix3(code),
+    });
+    if (await _resolveAndAddBarcode(code)) return;
+    _showBarcodeNotFound();
   }
 
   /// Phase E — barcode wedge scans a loyalty QR into the product search:
@@ -557,6 +792,10 @@ class _PosScreenState extends ConsumerState<PosScreen> {
         ref.read(posCartProvider.notifier).setCustomer(items.single);
         _searchController.clear();
         ref.read(posSearchProvider.notifier).clear();
+        // Same pairing as [_clearSearchAfterAdd]: a clear without a
+        // reload would leave the product panel stuck empty after the
+        // loyalty QR was scanned into the search field.
+        unawaited(ref.read(posSearchProvider.notifier).load());
         _searchFocusNode.requestFocus();
         return;
       }
@@ -584,7 +823,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     }
   }
 
-  Future<void> _addProduct(ProductModel product) async {
+  Future<void> _addProduct(ProductModel product, {bool fromScan = false}) async {
     final loc = ref.read(localeProvider).flutterLocale.languageCode;
     if (product.isArchived) {
       if (!mounted) return;
@@ -611,7 +850,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     // Failure ≠ empty: never direct-add when the decision lookup failed.
     final variantLookup = await _fetchActiveVariants(product.id);
     if (variantLookup.error != null) {
-      _showLookupError(product, variantLookup.error!);
+      _showLookupError(product, variantLookup.error!, fromScan: fromScan);
       return;
     }
     final variants = variantLookup.items;
@@ -649,7 +888,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     // Fetch selling units once for this product to decide dialog vs direct.
     final unitLookup = await _fetchActiveSellingUnits(product.id);
     if (unitLookup.error != null) {
-      _showLookupError(product, unitLookup.error!);
+      _showLookupError(product, unitLookup.error!, fromScan: fromScan);
       return;
     }
     final units = unitLookup.items;
@@ -715,6 +954,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
           wholesalePrice: product.wholesalePrice,
           wholesaleMinQty: product.wholesaleMinQty,
           promotionPrice: promoPrice,
+          fromScan: fromScan,
         );
         return;
       }
@@ -738,6 +978,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
         wholesalePrice: product.wholesalePrice,
         wholesaleMinQty: product.wholesaleMinQty,
         promotionPrice: promoPrice,
+        fromScan: fromScan,
       );
       return;
     }
@@ -792,6 +1033,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       wholesalePrice: product.wholesalePrice,
       wholesaleMinQty: product.wholesaleMinQty,
       promotionPrice: pickPromoPrice,
+      fromScan: fromScan,
     );
   }
 
@@ -821,7 +1063,17 @@ class _PosScreenState extends ConsumerState<PosScreen> {
 
   /// Product stays out of the cart until the required lookup succeeds.
   /// Localized headline + backend detail (UX FIX #12 — FIX #5).
-  void _showLookupError(ProductModel product, Object error) {
+  ///
+  /// [fromScan] carries the ORIGIN of the add that hit the failed lookup:
+  /// the retry action re-enters [_addProduct] through the exact same flow,
+  /// so a scanner-driven add retried from the toast must stay scanner-
+  /// driven — its eventual `_addCartLine` must keep treating it as a scan
+  /// add (catalog refresh + no focus movement).
+  void _showLookupError(
+    ProductModel product,
+    Object error, {
+    bool fromScan = false,
+  }) {
     if (!mounted) return;
     final loc = ref.read(localeProvider).flutterLocale.languageCode;
     final failure = posApiError(error, loc);
@@ -834,7 +1086,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       key: const Key('pos-lookup-error'),
       actionLabel: AppStrings.t('retry', loc),
       actionKey: const Key('pos-lookup-error-retry'),
-      onAction: () => _addProduct(product),
+      onAction: () => _addProduct(product, fromScan: fromScan),
     );
   }
 
@@ -928,6 +1180,14 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     // the line is not promoted). Set together with retailPrice, which then
     // keeps the ORIGINAL retail price.
     String? promotionPrice,
+    // Scanner/search-driven add (gateway dispatch or the focused search
+    // field): after the add the scan input keeps focus — the line's qty
+    // field must NEVER be auto-focused, or the next wedge burst lands in
+    // it and can be partially submitted as a quantity (`qty-submit len=7`
+    // fragments on real hardware). Catalog/manual adds behave the same:
+    // NO cart-line quantity field is ever auto-focused after an add —
+    // focus moves to a qty field only when the cashier clicks/taps it.
+    bool fromScan = false,
   }) {
     final loc = ref.read(localeProvider).flutterLocale.languageCode;
     // Merge + stock guard in one place (UX FIX #12 — FIX #6): adding a
@@ -955,6 +1215,13 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       wholesaleMinQty: wholesaleMinQty,
       promotionPrice: promotionPrice,
     );
+    String? qtyBefore;
+    for (final existing in ref.read(posCartProvider).lines) {
+      if (existing.key == line.key) {
+        qtyBefore = existing.quantity;
+        break;
+      }
+    }
     final applied = applyAddingLine(
       notifier: ref.read(posCartProvider.notifier),
       cart: ref.read(posCartProvider),
@@ -963,8 +1230,45 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       loc: loc,
       onError: _showQtyError,
     );
-    // Phase 8 FIX #1: focus the line that was actually written.
-    if (applied && mounted) _requestQtyFocus(line.key);
+    final cartAfter = ref.read(posCartProvider);
+    String? qtyAfter;
+    for (final existing in cartAfter.lines) {
+      if (existing.key == line.key) {
+        qtyAfter = existing.quantity;
+        break;
+      }
+    }
+    scanDiag('cart-add', {
+      'corr': lastScanCorr,
+      'productId': productId ?? packId ?? '-',
+      'variantId': variantId ?? '-',
+      'sellingUnitId': sellingUnitId ?? '-',
+      'requested': quantity,
+      'stock': availableStock ?? 'unknown',
+      'applied': applied,
+      // `qtyBefore=-` is NOT a lookup failure: it means NO line with this
+      // CartLine.key existed before the add (fresh line — the cart had
+      // been reset/cleared elsewhere, or this resolves to a different
+      // variant/unit identity than the line the cashier remembers).
+      'lineFound': qtyBefore != null,
+      'qtyBefore': qtyBefore ?? '-',
+      'qtyAfter': qtyAfter ?? '-',
+      'cartLines': cartAfter.lines.length,
+    });
+    // Phase 8 FIX #1 retired: NO quantity field is auto-focused after any
+    // add — scanner-driven or catalog/manual. The cashier stays where they
+    // are (the scan input keeps focus; a manual add leaves focus on the
+    // search field / wherever the click landed) and a qty field takes
+    // focus only on an explicit click/tap. The written line still becomes
+    // the `+`/`*` target: addLine/updateLine set `lastActiveKey`
+    // themselves, so no focus move is needed for that. The line is still
+    // REVEALED without focus: dense-table ensureVisible used to ride the
+    // post-add focus request; the reveal request gives the same visibility
+    // (claimed synchronously by a mounted tile or in initState by the
+    // just-built one) while the qty field is never auto-focused.
+    if (applied && mounted) {
+      _revealRequest.value = line.key;
+    }
   }
 
   Future<void> _pickCustomer() async {
@@ -1083,7 +1387,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     }
     // Server confirmed → clear the cart (also exits return mode) and
     // report the server-owned refund total.
-    notifier.clearCart();
+    notifier.clearCart(reason: 'return-confirm');
     setState(() => _returnError = null);
     showPosToast(
       context,
@@ -1327,7 +1631,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       // Clear Cart empties the CART only. The catalog, the search query,
       // favorites and the view mode stay exactly as the cashier left
       // them — no search reset, no refetch, no navigation.
-      ref.read(posCartProvider.notifier).clearCart();
+      ref.read(posCartProvider.notifier).clearCart(reason: 'clear-dialog');
     }
   }
 
@@ -1443,11 +1747,16 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       // mode keeps the existing card list untouched.
       dense: reversedLayout,
       cart: cart,
-      qtyFocusRequest: _qtyFocusRequest,
+      linesController: _linesController,
+      clearQtyTextRequest: _clearQtyTextRequest,
+      revealRequest: _revealRequest,
       onRemoveLine: (key) =>
           ref.read(posCartProvider.notifier).removeLine(key),
       // Single validating qty path (UX FIX #12 — FIX #6).
       onUpdateQty: _updateLineQty,
+      // A scan in a focused qty field routes to the canonical barcode
+      // resolve (same add rules) instead of the quantity parser.
+      onScanLine: _handleLineScan,
       // Tapping / focusing a line makes it the `+` / `*` target (FIX #2).
       onActivateLine: (key) =>
           ref.read(posCartProvider.notifier).setActiveLine(key),
@@ -1742,7 +2051,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     // field is being TYPED in — TextFreeKeyActivator declines it while an
     // EditableText has primary focus unless allowWhileEditing says the
     // focused field is not editing (see spaceMayClaimFocusedField): the
-    // cart QUANTITY field (every add leaves focus there — the pay key can
+    // cart QUANTITY field (a cashier may click one — the pay key can
     // never corrupt a quantity) and the EMPTY barcode field (the
     // barcode-ready home state where the cashier selects rows: SPACE must
     // still open the payment window there). A typed search query, a line
@@ -1813,6 +2122,32 @@ class _PosScreenState extends ConsumerState<PosScreen> {
           LogicalKeyboardKey.delete,
           allowWhileEditing: deleteMayClaimFocusedField,
         ): _removeActiveLine,
+        // Up/Down — move the SELECTED cart line (selection navigation, not
+        // text carets). The keys are ALWAYS claimed on this page and the
+        // callback applies arrowMayClaimFocusedField: from the workspace,
+        // the idle barcode field (right after a catalog add focus stays
+        // off the cart — arrows must answer the very next press, no cart
+        // click) OR a cart quantity field the cashier clicked the
+        // selection walks; while a typed query, a line discount or any
+        // other editable holds focus the press is swallowed — the
+        // selection never walks — instead of bubbling into the framework's
+        // single-line vertical-caret action, which asserts on
+        // non-left-aligned inputs (the centered qty field). Left/Right
+        // remain ordinary caret movement, and the dialogs' route scopes
+        // (option picker) keep their own arrows — one activation per key
+        // event, TextFreeKeyActivator matches key-down only.
+        TextFreeKeyActivator(
+          LogicalKeyboardKey.arrowUp,
+          allowWhileEditing: () => true,
+        ): () {
+          if (arrowMayClaimFocusedField()) _moveActiveLine(-1);
+        },
+        TextFreeKeyActivator(
+          LogicalKeyboardKey.arrowDown,
+          allowWhileEditing: () => true,
+        ): () {
+          if (arrowMayClaimFocusedField()) _moveActiveLine(1);
+        },
       },
       child: FocusScope(
         child: Focus(
@@ -2377,7 +2712,8 @@ class _ProductCatalog extends StatelessWidget {
                               product.name,
                               key: Key('pos-product-name-${product.id}'),
                               style: theme.textTheme.titleSmall?.copyWith(
-                                fontWeight: FontWeight.w700,
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
                               ),
                               maxLines: 2,
                               overflow: TextOverflow.ellipsis,
@@ -2466,7 +2802,8 @@ class _ProductCatalog extends StatelessWidget {
                         product.name,
                         key: Key('pos-product-name-${product.id}'),
                         style: theme.textTheme.titleSmall?.copyWith(
-                          fontWeight: FontWeight.w700,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
                         ),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
@@ -2708,13 +3045,28 @@ class _CartPanel extends StatelessWidget {
   /// region — instead of the standard stacked card list.
   final bool dense;
 
-  /// Line key that should receive keyboard focus after an add
-  /// (Phase 8 FIX #1) — consumed by the matching line tile.
-  final ValueNotifier<String?> qtyFocusRequest;
+  /// Line key whose qty field should show the committed quantity again
+  /// once the current frame lands — set by a scan submitted FROM that
+  /// field. The merge is still resolving when Enter returns, so the field
+  /// must not be overwritten mid-flight: a burst typed on top of the
+  /// still-visible barcode would lose its committed prefix. Consumed by
+  /// the matching tile post-frame; a burst typed before the reset lands
+  /// is detected by its run base, never by the field text.
+  final ValueNotifier<String?> clearQtyTextRequest;
+
+  /// Line key arrow navigation wants revealed fully in view — consumed by
+  /// the matching tile (listener while it is already mounted, initState
+  /// when the lazy list builds it right after a jump; see
+  /// _PosScreenState._moveActiveLine).
+  final ValueNotifier<String?> revealRequest;
 
   /// Returns true when the quantity was applied (false = rejected, a toast
   /// was already shown by the shared validation funnel).
   final bool Function(String key, String quantity) onUpdateQty;
+
+  /// A keyboard-wedge scan landed in a line's focused qty field — the POS
+  /// scan path (canonical barcode resolve + cart rules).
+  final ValueChanged<String> onScanLine;
 
   /// Marks a line as the `+` / `*` target (line tap or qty-field focus).
   final void Function(String key) onActivateLine;
@@ -2738,12 +3090,21 @@ class _CartPanel extends StatelessWidget {
   /// Localized last return failure — inline in the return banner.
   final String? returnError;
 
+  /// Parent-owned standard list scroll position — the State jumps it when
+  /// an entering arrow press (_PosScreenState._moveActiveLine) lands on a
+  /// tile the lazy list has not built yet; the dense table builds every
+  /// row eagerly and never needs it.
+  final ScrollController linesController;
+
   const _CartPanel({
     required this.cart,
+    required this.linesController,
     this.dense = false,
-    required this.qtyFocusRequest,
+    required this.clearQtyTextRequest,
+    required this.revealRequest,
     required this.onRemoveLine,
     required this.onUpdateQty,
+    required this.onScanLine,
     required this.onActivateLine,
     required this.onUpdateLineDiscount,
     required this.onCustomer,
@@ -2785,7 +3146,12 @@ class _CartPanel extends StatelessWidget {
         : compact
             ? 64.0
             : 72.0;
-    final customerHeight = dense ? 44.0 : compact ? 48.0 : 52.0;
+    // A selected customer keeps the SAME essential content (name, phone,
+    // change-customer action) in the dense 44px footprint — walk-in keeps
+    // the roomy 48/52 row. Attaching a customer must never steal vertical
+    // space from the cart lines region below (customer-attached clipping).
+    final customerHeight =
+        dense || cart.customer != null ? 44.0 : compact ? 48.0 : 52.0;
 
     return Container(
       key: const Key('pos-cart-panel'),
@@ -3033,6 +3399,7 @@ class _CartPanel extends StatelessWidget {
                     ? _denseCartLines(theme: theme, loc: loc)
                     : ListView.separated(
                     key: const Key('pos-cart-lines'),
+                    controller: linesController,
                     padding: const EdgeInsets.symmetric(
                       vertical: 6,
                       horizontal: 6,
@@ -3047,137 +3414,181 @@ class _CartPanel extends StatelessWidget {
                         // another product is added above it.
                         key: ValueKey<String>(line.key),
                         line: line,
-                        qtyFocusRequest: qtyFocusRequest,
+                        // Selection drives the row's highlight (primary
+                        // tint + border, check-circle in the dense table)
+                        // and the arrow-key reveal.
+                        selected: line.key == cart.lastActiveKey,
+                        revealRequest: revealRequest,
                         onRemove: () => onRemoveLine(line.key),
                         onActivate: () => onActivateLine(line.key),
                         onQty: (q) => onUpdateQty(line.key, q),
                         onDiscount: (d) =>
                             onUpdateLineDiscount(line.key, d),
+                        onScan: onScanLine,
+                        clearQtyTextRequest: clearQtyTextRequest,
                       );
                     },
                   ),
           ),
-          const Divider(height: 1),
-          // Stock errors
-          if (cart.stockErrors.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  for (final e in cart.stockErrors)
-                    Text(
-                      e,
-                      key: const Key('pos-stock-error'),
-                      style: TextStyle(color: theme.colorScheme.error),
-                    ),
-                ],
-              ),
-            ),
-          // 2-column secondary action grid (UX FIX #8): 44–48px, 13–15px
-          // font. Dense (reversed) compacts it: 40px buttons (36 on short
-          // screens), 4px row gaps, 2px block padding — the checkout
-          // chrome must leave the lines region as much height as possible.
-          Padding(
-            key: const Key('pos-cart-actions'),
-            padding: dense
-                ? const EdgeInsets.fromLTRB(8, 2, 8, 2)
-                : compact
-                    ? const EdgeInsets.fromLTRB(10, 4, 10, 4)
-                    : const EdgeInsets.fromLTRB(10, 6, 10, 6),
-            child: Column(
-              children: [
-                Row(
+          // EXPLICIT checkout-section budget: the fixed chrome above the
+          // lines (header + customer row + divider + optional return
+          // banner) is computed from the same flags that rendered it, so
+          // the section below the lines (divider, stock errors, actions,
+          // totals/PAY) can never claim more than what remains. A taller
+          // customer/loyalty block (or a stock-error list) shrinks the
+          // scrollable lines region to >= 0 instead of overflowing the
+          // panel bottom, covering the last rows and the PAY button
+          // (customer-attached clipping). LayoutBuilder as a non-flex
+          // Column child receives the panel's own (full) height bound.
+          LayoutBuilder(
+            builder: (context, tailConstraints) {
+              final topHeight = headerHeight +
+                  customerHeight +
+                  1.0 + // divider under the customer row
+                  (cart.returnMode ? 80.0 : 0.0); // banner + error line
+              final maxH = tailConstraints.maxHeight;
+              final tailMax = maxH.isFinite
+                  ? (maxH - topHeight > 0.0 ? maxH - topHeight : 0.0)
+                  : double.infinity;
+              return ConstrainedBox(
+                constraints: BoxConstraints(maxHeight: tailMax),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    Expanded(
-                      child: _actionButton(
-                        context: context,
-                        key: const Key('pos-discount-button'),
-                        icon: Icons.percent,
-                        label: AppStrings.t('discount_shortcut', loc),
-                        onPressed: onDiscount,
-                        short: short || compact,
-                        dense: dense,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: _actionButton(
-                        context: context,
-                        key: const Key('pos-hold-button'),
-                        icon: Icons.pause,
-                        label: AppStrings.t('hold_shortcut', loc),
-                        // Return mode owns the cart — holding it would
-                        // shelve the pending return (a hold is a SALE
-                        // snapshot).
-                        onPressed:
-                            (cart.isEmpty || cart.returnMode) ? null : onHold,
-                        short: short || compact,
-                        dense: dense,
-                      ),
-                    ),
-                  ],
-                ),
-                SizedBox(height: dense ? (short ? 2 : 4) : 8),
-                Row(
-                  children: [
-                    Expanded(
-                      child: _actionButton(
-                        context: context,
-                        key: const Key('pos-holds-button'),
-                        icon: Icons.list_alt,
-                        label: AppStrings.t('holds_shortcut', loc),
-                        onPressed: onHolds,
-                        short: short || compact,
-                        dense: dense,
-                        badgeCount: heldCount,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: _actionButton(
-                        context: context,
-                        key: const Key('pos-history-button'),
-                        icon: Icons.history,
-                        label: AppStrings.t('history_shortcut', loc),
-                        onPressed: onHistory,
-                        short: short || compact,
-                        dense: dense,
-                      ),
-                    ),
-                  ],
-                ),
-                // Return entry point (permission-gated): hidden while the
-                // mode is active — the banner + Confirm/Cancel own it.
-                if (canReturn && !cart.returnMode) ...[
-                  SizedBox(height: dense ? (short ? 2 : 4) : 8),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _actionButton(
-                          context: context,
-                          key: const Key('pos-return-button'),
-                          icon: Icons.replay,
-                          label: AppStrings.t('pos_return', loc),
-                          onPressed: cart.isEmpty ? null : onReturn,
-                          short: short || compact,
-                          dense: dense,
+                    const Divider(height: 1),
+                    // Stock errors
+                    if (cart.stockErrors.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            for (final e in cart.stockErrors)
+                              Text(
+                                e,
+                                key: const Key('pos-stock-error'),
+                                style: TextStyle(color: theme.colorScheme.error),
+                              ),
+                          ],
                         ),
                       ),
-                    ],
-                  ),
-                ],
-              ],
-            ),
-          ),
-          // Sticky totals + PAY card (UX FIX #7/#8) — in return mode the
-          // PAY slot becomes Confirm return / Cancel return.
-          _PosTotalsPanel(
-            cart: cart,
-            dense: dense,
-            onPayment: onPayment,
-            onConfirmReturn: onConfirmReturn,
-            onCancelReturn: onCancelReturn,
+                    // 2-column secondary action grid (UX FIX #8): 44–48px, 13–15px
+                    // font. Dense (reversed) compacts it: 40px buttons (36 on short
+                    // screens), 4px row gaps, 2px block padding — the checkout
+                    // chrome must leave the lines region as much height as possible.
+                    Padding(
+                      key: const Key('pos-cart-actions'),
+                      padding: dense
+                          ? const EdgeInsets.fromLTRB(8, 2, 8, 2)
+                          : compact
+                              ? const EdgeInsets.fromLTRB(10, 4, 10, 4)
+                              : const EdgeInsets.fromLTRB(10, 6, 10, 6),
+                      child: Column(
+                        children: [
+                          Row(
+                            children: [
+                              Expanded(
+                                child: _actionButton(
+                                  context: context,
+                                  key: const Key('pos-discount-button'),
+                                  icon: Icons.percent,
+                                  label: AppStrings.t('discount_shortcut', loc),
+                                  onPressed: onDiscount,
+                                  short: short || compact,
+                                  dense: dense,
+                                  accent: AppColors.warning,
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: _actionButton(
+                                  context: context,
+                                  key: const Key('pos-hold-button'),
+                                  icon: Icons.pause,
+                                  label: AppStrings.t('hold_shortcut', loc),
+                                  // Return mode owns the cart — holding it would
+                                  // shelve the pending return (a hold is a SALE
+                                  // snapshot).
+                                  onPressed:
+                                      (cart.isEmpty || cart.returnMode) ? null : onHold,
+                                  short: short || compact,
+                                  dense: dense,
+                                  accent: AppColors.actionHold,
+                                ),
+                              ),
+                            ],
+                          ),
+                          SizedBox(height: dense ? (short ? 2 : 4) : 8),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: _actionButton(
+                                  context: context,
+                                  key: const Key('pos-holds-button'),
+                                  icon: Icons.list_alt,
+                                  label: AppStrings.t('holds_shortcut', loc),
+                                  onPressed: onHolds,
+                                  short: short || compact,
+                                  dense: dense,
+                                  badgeCount: heldCount,
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: _actionButton(
+                                  context: context,
+                                  key: const Key('pos-history-button'),
+                                  icon: Icons.history,
+                                  label: AppStrings.t('history_shortcut', loc),
+                                  onPressed: onHistory,
+                                  short: short || compact,
+                                  dense: dense,
+                                  accent: AppColors.actionHistory,
+                                ),
+                              ),
+                            ],
+                          ),
+                          // Return entry point (permission-gated): hidden while the
+                          // mode is active — the banner + Confirm/Cancel own it.
+                          if (canReturn && !cart.returnMode) ...[
+                            SizedBox(height: dense ? (short ? 2 : 4) : 8),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: _actionButton(
+                                    context: context,
+                                    key: const Key('pos-return-button'),
+                                    icon: Icons.replay,
+                                    label: AppStrings.t('pos_return', loc),
+                                    onPressed: cart.isEmpty ? null : onReturn,
+                                    short: short || compact,
+                                    dense: dense,
+                                    accent: AppColors.actionReturn,
+                                    // The one solid chip: entering return
+                                    // mode must stay an unmissable red.
+                                    solid: true,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                    // Sticky totals + PAY card (UX FIX #7/#8) — in return mode the
+                    // PAY slot becomes Confirm return / Cancel return.
+                    _PosTotalsPanel(
+                      cart: cart,
+                      dense: dense,
+                      onPayment: onPayment,
+                      onConfirmReturn: onConfirmReturn,
+                      onCancelReturn: onCancelReturn,
+                    ),
+                  ],
+                ),
+              );
+            },
           ),
         ],
       ),
@@ -3243,12 +3654,14 @@ class _CartPanel extends StatelessWidget {
                             line: line,
                             dense: true,
                             selected: line.key == cart.lastActiveKey,
-                            qtyFocusRequest: qtyFocusRequest,
+                            clearQtyTextRequest: clearQtyTextRequest,
+                            revealRequest: revealRequest,
                             onRemove: () => onRemoveLine(line.key),
                             onActivate: () => onActivateLine(line.key),
                             onQty: (q) => onUpdateQty(line.key, q),
                             onDiscount: (d) =>
                                 onUpdateLineDiscount(line.key, d),
+                            onScan: onScanLine,
                           ),
                       ],
                     ),
@@ -3270,9 +3683,11 @@ class _CartPanel extends StatelessWidget {
   /// Column headers for the dense table — same paddings and segment
   /// widths as the dense line row so every column lines up.
   Widget _denseCartHeader({required ThemeData theme, required String loc}) {
-    final style = theme.textTheme.labelSmall?.copyWith(
-      fontSize: 12,
-      fontWeight: FontWeight.w700,
+    // Readability: 14px semibold column labels (was 12px bold) — headers
+    // are glance-text the cashier reads while scanning rows.
+    final style = theme.textTheme.labelMedium?.copyWith(
+      fontSize: 14,
+      fontWeight: FontWeight.w600,
       color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
     );
 
@@ -3289,6 +3704,8 @@ class _CartPanel extends StatelessWidget {
         );
 
     return Padding(
+      // Test hook: the header cells share one style; find them via this.
+      key: const Key('pos-dense-header'),
       // Compact in dense mode: every vertical pixel here is one the
       // cart lines cannot use.
       padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 4),
@@ -3328,6 +3745,8 @@ class _CartPanel extends StatelessWidget {
     required bool short,
     bool dense = false,
     int badgeCount = 0,
+    Color? accent,
+    bool solid = false,
   }) {
     // Dense (reversed) rows: 40px (36 on short screens) instead of the
     // standard 44–46 — labels and shortcuts stay identical, only the
@@ -3338,11 +3757,65 @@ class _CartPanel extends StatelessWidget {
             ? 44.0
             : 46.0;
     final theme = Theme.of(context);
+    // Semantic action colors: an accent paints a SUBTLE TINT wash of its
+    // hue over the panel ([AppColors.tint] × brightness) with the hue
+    // itself as the border and an [AppColors.onTint] label — outlined,
+    // never an opaque slab (solid fills were tried and rolled back: heavy
+    // and flat against the totals card). [solid] keeps the ONE action that
+    // must read as a filled chip — RETURN: the accent solid, white label,
+    // mutedAction disabled fill. No accent = the plain outlined look (the
+    // holds list is neutral by design). Disabled tint releases its wash
+    // (transparent) with the outline softened toward the surface.
+    final tintBg = accent == null || solid
+        ? null
+        : AppColors.tint(accent, theme.brightness);
+    final tintFg = accent == null || solid
+        ? null
+        : AppColors.onTint(accent, theme.brightness);
+    final style = OutlinedButton.styleFrom(
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      minimumSize: Size(0, height),
+      maximumSize: Size(double.infinity, height),
+      visualDensity: VisualDensity.compact,
+      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      textStyle: theme.textTheme.labelLarge?.copyWith(fontSize: 14),
+      side: accent == null ? BorderSide(color: theme.colorScheme.outline) : null,
+      foregroundColor: accent == null
+          ? null
+          : solid
+              ? Colors.white
+              : tintFg,
+      backgroundColor: accent == null
+          ? null
+          : solid
+              ? accent
+              : tintBg,
+      // styleFrom() keeps an explicit backgroundColor in EVERY state —
+      // the solid chip dims to the muted mix, the tint wash releases.
+      disabledBackgroundColor: accent == null
+          ? null
+          : solid
+              ? AppColors.mutedAction(accent, theme.colorScheme.surface)
+              : Colors.transparent,
+      disabledForegroundColor: accent == null
+          ? null
+          : theme.colorScheme.onSurface.withValues(alpha: 0.38),
+    ).copyWith(
+      side: accent == null
+          ? null
+          : WidgetStateProperty.resolveWith<BorderSide>((states) =>
+              states.contains(WidgetState.disabled)
+                  ? BorderSide(
+                      color: theme.colorScheme.outline.withValues(alpha: 0.6),
+                    )
+                  : BorderSide(color: accent)),
+    );
     return SizedBox(
       height: height,
       child: OutlinedButton.icon(
         key: key,
         onPressed: onPressed,
+        style: style,
         icon: badgeCount > 0
             ? Badge(
                 label: Text('$badgeCount'),
@@ -3359,15 +3832,6 @@ class _CartPanel extends StatelessWidget {
           ),
           overflow: TextOverflow.ellipsis,
           maxLines: 1,
-        ),
-        style: OutlinedButton.styleFrom(
-          padding: const EdgeInsets.symmetric(horizontal: 8),
-          minimumSize: Size(0, height),
-          maximumSize: Size(double.infinity, height),
-          visualDensity: VisualDensity.compact,
-          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-          textStyle: theme.textTheme.labelLarge?.copyWith(fontSize: 14),
-          side: BorderSide(color: theme.colorScheme.outline),
         ),
       ),
     );
@@ -3432,19 +3896,23 @@ class _PosTotalsPanelState extends ConsumerState<_PosTotalsPanel> {
         borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
       ),
       child: Padding(
+        // §4 height budget: the stacked TOTAL (+~25px of label above the
+        // amount) is paid for by leaner chrome here — the bottom region
+        // must NOT grow against the cart lines (customer-attached
+        // clipping, last-row fits). Dense keeps its own tighter rhythm.
         padding: EdgeInsets.fromLTRB(
           12,
           widget.dense
               ? 4
               : MediaQuery.sizeOf(context).height < 700
-                  ? 6
-                  : 8,
+                  ? 4
+                  : 6,
           12,
           widget.dense
               ? 2
               : MediaQuery.sizeOf(context).height < 700
                   ? 4
-                  : 6,
+                  : 4,
         ),
         child: LayoutBuilder(
           builder: (context, constraints) {
@@ -3463,8 +3931,9 @@ class _PosTotalsPanelState extends ConsumerState<_PosTotalsPanel> {
               labelSize = 18.0;
               payHeight = 56.0;
             } else {
-              totalSize = w >= 400 ? 46.0 : 42.0;
-              if (totalSize > 48) totalSize = 48;
+              // §6: the dominant figure is 44–48 on normal desktops — 44
+              // in the narrow cart panel, 48 on wide layouts.
+              totalSize = w >= 400 ? 48.0 : 44.0;
               labelSize = 20.0;
               payHeight = 60.0;
             }
@@ -3476,25 +3945,62 @@ class _PosTotalsPanelState extends ConsumerState<_PosTotalsPanel> {
             // more so on short screens); the TOTAL size and PAY height
             // are untouched (both prominent).
             final rowPad = widget.dense
-                ? (mediaH < 560 ? 2.0 : 3.0)
+                ? (mediaH < 560 ? 1.0 : 3.0)
                 : mediaH < 700
-                    ? 3.0
-                    : 5.0;
+                    ? 2.0
+                    : 3.0;
             final gapAfterTotal = widget.dense
-                ? (mediaH < 560 ? 4.0 : 6.0)
+                ? (mediaH < 560 ? 2.0 : 6.0)
                 : mediaH < 700
-                    ? 6.0
-                    : 8.0;
+                    ? 4.0
+                    : 6.0;
             final dividerH = widget.dense
-                ? (mediaH < 560 ? 6.0 : 8.0)
+                ? (mediaH < 560 ? 4.0 : 8.0)
                 : mediaH < 700
-                    ? 10.0
-                    : 12.0;
+                    ? 8.0
+                    : 10.0;
+
+            // §4/§6: the label sits immediately ABOVE the dominant amount,
+            // both right-aligned to the money edge — a stacked focal block.
+            // `height: 1.0` keeps the label's line box to its font size.
+            final totalStack = Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  AppStrings.t('total_label', loc),
+                  key: const Key('pos-total-label'),
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontSize: labelSize,
+                    height: 1.0,
+                    fontWeight: FontWeight.w700,
+                    color: cs.onSurface,
+                  ),
+                ),
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: AlignmentDirectional.centerEnd,
+                  child: numericText(
+                    '${totals.totalDisplay} $currency',
+                    key: const Key('pos-total-value'),
+                    style: theme.textTheme.headlineSmall?.copyWith(
+                      fontSize: totalSize,
+                      fontWeight: FontWeight.w800,
+                      color: cs.primary,
+                      height: 1.05,
+                    ),
+                  ),
+                ),
+              ],
+            );
 
             return Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
+                // Subtotal stays clean — the loyalty chunks moved to the
+                // Total block below (task: balance/rewards ride the final
+                // amount, not the Subtotal row).
                 _totalsRow(
                   label: AppStrings.t('subtotal_label', loc),
                   value: totals.subtotalDisplay,
@@ -3511,52 +4017,66 @@ class _PosTotalsPanelState extends ConsumerState<_PosTotalsPanel> {
                   fontSize: subSize,
                   verticalPad: rowPad,
                 ),
-                if (showLoyalty)
-                  _loyaltyBlock(
-                    theme: theme,
-                    cs: cs,
-                    loc: loc,
-                    loyalty: loyalty,
-                    preview: preview,
-                    currency: currency,
-                    fontSize: subSize,
-                    verticalPad: rowPad,
+                if (showLoyalty && loyalty.error != null)
+                  Padding(
+                    padding: EdgeInsets.only(top: rowPad / 2),
+                    child: Text(
+                      loyalty.error!,
+                      key: const Key('pos-loyalty-error'),
+                      textAlign: TextAlign.end,
+                      style: theme.textTheme.bodySmall
+                          ?.copyWith(color: cs.error),
+                    ),
                   ),
                 Divider(height: dividerH),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Flexible(
-                      child: Text(
-                        AppStrings.t('total_label', loc),
-                        key: const Key('pos-total-label'),
-                        style: theme.textTheme.titleMedium?.copyWith(
-                          fontSize: labelSize,
-                          fontWeight: FontWeight.w700,
-                          color: cs.onSurface,
+                // Loyalty rides the TOTAL block: balance + reward selector
+                // sit alongside the large amount (left cluster of the same
+                // row), keeping Subtotal/Discount rows clean. The stacked
+                // amount stays the money edge; without a customer the
+                // block stands alone (full-width edge alignment).
+                if (!showLoyalty)
+                  totalStack
+                else
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      Flexible(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            _loyaltyBalance(
+                              theme: theme,
+                              cs: cs,
+                              loc: loc,
+                              loyalty: loyalty,
+                              preview: preview,
+                              currency: currency,
+                              fontSize: subSize,
+                            ),
+                            _loyaltyReward(
+                              theme: theme,
+                              cs: cs,
+                              loc: loc,
+                              loyalty: loyalty,
+                              preview: preview,
+                              fontSize: subSize,
+                            ),
+                          ],
                         ),
                       ),
-                    ),
-                    const SizedBox(width: 8),
-                    Flexible(
-                      child: FittedBox(
-                        fit: BoxFit.scaleDown,
-                        alignment: AlignmentDirectional.centerEnd,
-                        child: numericText(
-                          '${totals.totalDisplay} $currency',
-                          key: const Key('pos-total-value'),
-                          style: theme.textTheme.headlineSmall?.copyWith(
-                            fontSize: totalSize,
-                            fontWeight: FontWeight.w800,
-                            color: cs.primary,
-                            height: 1.05,
-                          ),
+                      // The dominant figure yields only the slice the
+                      // loyalty cluster needs (dropdown + hint) — never
+                      // overlapping it, still far above every other size.
+                      ConstrainedBox(
+                        constraints: BoxConstraints(
+                          maxWidth: w - (w < 340 ? 96.0 : 148.0),
                         ),
+                        child: totalStack,
                       ),
-                    ),
-                  ],
-                ),
+                    ],
+                  ),
                 SizedBox(height: gapAfterTotal),
                 if (showLoyalty && rewardDiscount > 0)
                   _totalsRow(
@@ -3567,24 +4087,82 @@ class _PosTotalsPanelState extends ConsumerState<_PosTotalsPanel> {
                     fontSize: subSize,
                     verticalPad: rowPad,
                   ),
-                if (showLoyalty && pointsEarned > 0)
-                  _totalsRow(
-                    label: AppStrings.t('loyalty_points_earned', loc),
-                    value: '${formatLoyaltyPoints(pointsEarned)} '
-                        '${AppStrings.t('loyalty_points', loc)}',
-                    valueKey: const Key('pos-loyalty-points-earned'),
-                    color: AppColors.success,
-                    fontSize: subSize,
-                    verticalPad: rowPad,
-                  ),
-                if (showLoyalty && cashbackEarned > 0)
-                  _totalsRow(
-                    label: AppStrings.t('loyalty_cashback_earned', loc),
-                    value: '${PaymentMath.money(cashbackEarned)} $currency',
-                    valueKey: const Key('pos-loyalty-cashback-earned'),
-                    color: AppColors.success,
-                    fontSize: subSize,
-                    verticalPad: rowPad,
+                // Points + cashback share ONE row (2-in-1 totals line):
+                // the customer chrome added to this panel must not steal
+                // the cart lines' scroll room (customer-attached clipping).
+                // Each half keeps its own value key; with a single metric
+                // the row matches [_totalsRow]'s space-between alignment.
+                if (showLoyalty &&
+                    (pointsEarned > 0 || cashbackEarned > 0))
+                  Padding(
+                    padding: EdgeInsets.symmetric(vertical: rowPad),
+                    child: Row(
+                      mainAxisAlignment:
+                          pointsEarned > 0 && cashbackEarned > 0
+                              ? MainAxisAlignment.start
+                              : MainAxisAlignment.spaceBetween,
+                      children: [
+                        if (pointsEarned > 0) ...[
+                          Flexible(
+                            child: Text(
+                              AppStrings.t('loyalty_points_earned', loc),
+                              style: TextStyle(
+                                fontSize: subSize,
+                                fontWeight: FontWeight.w500,
+                                height: 1.3,
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          numericText(
+                            '${formatLoyaltyPoints(pointsEarned)} '
+                            '${AppStrings.t('loyalty_points', loc)}',
+                            key: const Key('pos-loyalty-points-earned'),
+                            style: TextStyle(
+                              fontSize: subSize + 1,
+                              fontWeight: FontWeight.w700,
+                              height: 1.3,
+                              // Digits line up down the right edge of the
+                              // totals column (same as [_totalsRow]).
+                              fontFeatures: const [
+                                FontFeature.tabularFigures(),
+                              ],
+                              color: AppColors.success,
+                            ),
+                          ),
+                        ],
+                        if (pointsEarned > 0 && cashbackEarned > 0)
+                          const SizedBox(width: 16),
+                        if (cashbackEarned > 0) ...[
+                          Flexible(
+                            child: Text(
+                              AppStrings.t('loyalty_cashback_earned', loc),
+                              style: TextStyle(
+                                fontSize: subSize,
+                                fontWeight: FontWeight.w500,
+                                height: 1.3,
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          numericText(
+                            '${PaymentMath.money(cashbackEarned)} $currency',
+                            key: const Key('pos-loyalty-cashback-earned'),
+                            style: TextStyle(
+                              fontSize: subSize + 1,
+                              fontWeight: FontWeight.w700,
+                              height: 1.3,
+                              fontFeatures: const [
+                                FontFeature.tabularFigures(),
+                              ],
+                              color: AppColors.success,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
                   ),
                 SafeArea(
                   top: false,
@@ -3610,6 +4188,11 @@ class _PosTotalsPanelState extends ConsumerState<_PosTotalsPanel> {
                                 fontSize: payFontSize,
                                 fontWeight: FontWeight.w700,
                               ),
+                              // PAY rides the THEME accent (solid blue in
+                              // every theme) — the screen-wide primary the
+                              // rest of the app already speaks. The bold
+                              // label clears 3:1 (large-text AA) on each
+                              // theme's primary; disabled colors unchanged.
                               backgroundColor: cs.primary,
                               disabledBackgroundColor:
                                   cs.onSurface.withValues(alpha: 0.12),
@@ -3700,7 +4283,18 @@ class _PosTotalsPanelState extends ConsumerState<_PosTotalsPanel> {
   /// `loyalty_reward_percent` and the server re-validates everything.
   /// With no reward yet the selector shows the progress toward the next
   /// milestone (`remaining/100`) instead of the dropdown.
-  Widget _loyaltyBlock({
+  /// Loyalty balance chunk, merged INTO the Subtotal row (§4): points ·
+  /// rewards × · cashback, right-aligned against the money column inside
+  /// a bounded width so narrow panels ellipsis instead of overflowing.
+  /// Bidi: Arabic words stay natural; each numeric segment is its own LTR
+  /// isolate (the points value is grouped, and the rewards count follows
+  /// an Arabic word — both would swap inside a whole-string forced-LTR
+  /// paragraph — W7).
+  /// Loyalty balance chunk, riding the TOTAL block: the 'Loyalty' word +
+  /// key sit beside the large amount (left cluster of the total row).
+  /// Children shrink (Flexible, ellipsis) so narrow panels never overflow
+  /// next to the dominant figure.
+  Widget _loyaltyBalance({
     required ThemeData theme,
     required ColorScheme cs,
     required String loc,
@@ -3708,7 +4302,6 @@ class _PosTotalsPanelState extends ConsumerState<_PosTotalsPanel> {
     required LoyaltyPreview? preview,
     required String currency,
     required double fontSize,
-    required double verticalPad,
   }) {
     final balance = loyalty.balance;
     final points =
@@ -3716,8 +4309,61 @@ class _PosTotalsPanelState extends ConsumerState<_PosTotalsPanel> {
     final cashback =
         balance?.cashbackBalance ?? preview?.cashbackBalance ?? 0.0;
     final rewards = loyalty.availableRewards;
-    // The milestone is server-configurable: prefer the matching preview's
-    // value, else the balance snapshot, else the display fallback.
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // The 'Loyalty' word + key survive — repositioned from the old
+        // standalone line onto the Total block it now rides.
+        Flexible(
+          child: Text(
+            AppStrings.t('loyalty', loc),
+            key: const Key('pos-loyalty-label'),
+            overflow: TextOverflow.ellipsis,
+            style: theme.textTheme.bodySmall?.copyWith(
+              fontSize: fontSize,
+              fontWeight: FontWeight.w700,
+              color: cs.primary,
+            ),
+          ),
+        ),
+        const SizedBox(width: 6),
+        Flexible(
+          child: Text(
+            '${bidiIsolateLtr(formatLoyaltyPoints(points))} '
+            '${AppStrings.t('loyalty_points', loc)}'
+            ' · ${bidiIsolateLtr('$rewards×')} '
+            '${AppStrings.t('loyalty_reward', loc)}'
+            ' · ${bidiIsolateLtr(
+              '${PaymentMath.money(cashback)} $currency',
+            )}',
+            key: const Key('pos-loyalty-balance'),
+            textAlign: TextAlign.end,
+            overflow: TextOverflow.ellipsis,
+            style: theme.textTheme.bodySmall?.copyWith(
+              fontSize: fontSize,
+              color: cs.onSurface.withValues(alpha: 0.78),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Reward selector chunk, riding the TOTAL block next to the balance:
+  /// the dropdown (or the progress slot) plus its hint — same keys, same
+  /// states, repositioned alongside the final amount. Children shrink
+  /// (Flexible) so narrow panels ellipsis instead of overflowing.
+  Widget _loyaltyReward({
+    required ThemeData theme,
+    required ColorScheme cs,
+    required String loc,
+    required PosLoyaltyState loyalty,
+    required LoyaltyPreview? preview,
+    required double fontSize,
+  }) {
+    final balance = loyalty.balance;
+    final points =
+        balance?.pointsBalance ?? preview?.pointsBalance ?? 0.0;
     final minPoints = (loyalty.previewMatches
             ? loyalty.preview!.minRewardPoints
             : (balance?.minRewardPoints ?? loyaltyPointsPerReward))
@@ -3750,126 +4396,71 @@ class _PosTotalsPanelState extends ConsumerState<_PosTotalsPanel> {
             ? '${AppStrings.t('loyalty_redeem_max', loc)}: '
                 '${_percentLabel(maxPercent)}%'
             : '$remaining/$minPoints';
-    return Padding(
-      padding: EdgeInsets.only(top: verticalPad, bottom: verticalPad),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
-            children: [
-              Text(
-                AppStrings.t('loyalty', loc),
-                key: const Key('pos-loyalty-label'),
-                style: theme.textTheme.bodySmall?.copyWith(
-                  fontSize: fontSize,
-                  fontWeight: FontWeight.w700,
-                  color: cs.primary,
-                ),
-              ),
-              const SizedBox(width: 8),
-              // Bidi: Arabic words stay natural; each numeric segment is
-              // its own LTR isolate (the points value is grouped, and the
-              // rewards count follows an Arabic word — both would swap
-              // inside a whole-string forced-LTR paragraph — W7).
-              Expanded(
-                child: Text(
-                  '${bidiIsolateLtr(formatLoyaltyPoints(points))} '
-                  '${AppStrings.t('loyalty_points', loc)}'
-                  ' · ${bidiIsolateLtr('$rewards×')} '
-                  '${AppStrings.t('loyalty_reward', loc)}'
-                  ' · ${bidiIsolateLtr(
-                    '${PaymentMath.money(cashback)} $currency',
-                  )}',
-                  key: const Key('pos-loyalty-balance'),
-                  textAlign: TextAlign.end,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    fontSize: fontSize,
-                    color: cs.onSurface.withValues(alpha: 0.78),
-                  ),
-                ),
-              ),
-            ],
-          ),
-          SizedBox(height: verticalPad + 1),
-          Row(
-            children: [
-              if (canSelect) ...[
-                SizedBox(
-                  width: 120,
-                  child: DropdownButton<double>(
-                    key: const Key('pos-loyalty-reward-select'),
-                    value: selected,
-                    isExpanded: true,
-                    isDense: true,
-                    items: [
-                      for (final p in options)
-                        DropdownMenuItem<double>(
-                          value: p,
-                          child: Text(
-                            p == 0
-                                ? AppStrings.t('loyalty_reward_none', loc)
-                                : _percentLabel(p),
-                            style: theme.textTheme.bodySmall,
-                          ),
-                        ),
-                    ],
-                    onChanged: (value) => ref
-                        .read(posLoyaltyProvider.notifier)
-                        .setRewardPercent(value ?? 0),
-                  ),
-                ),
-                if (selected > 0)
-                  InkWell(
-                    key: const Key('pos-loyalty-reward-clear'),
-                    onTap: () => ref
-                        .read(posLoyaltyProvider.notifier)
-                        .clearReward(),
-                    child: Padding(
-                      padding: const EdgeInsets.all(2),
-                      child: Icon(Icons.close,
-                          size: 16, color: cs.outline),
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (canSelect) ...[
+          Flexible(
+            child: DropdownButton<double>(
+              key: const Key('pos-loyalty-reward-select'),
+              value: selected,
+              isExpanded: true,
+              isDense: true,
+              items: [
+                for (final p in options)
+                  DropdownMenuItem<double>(
+                    value: p,
+                    child: Text(
+                      p == 0
+                          ? AppStrings.t('loyalty_reward_none', loc)
+                          : _percentLabel(p),
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.bodySmall,
                     ),
                   ),
-              ] else
-                SizedBox(
-                  width: 120,
-                  child: Text(
-                    '$remaining/$minPoints',
-                    key: const Key('pos-loyalty-reward-progress'),
-                    textAlign: TextAlign.end,
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: cs.outline,
-                    ),
-                  ),
-                ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: numericText(
-                  hint,
-                  key: const Key('pos-loyalty-redeem-hint'),
-                  textAlign: TextAlign.end,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    fontSize: fontSize,
-                    color: loyalty.exceeds ? cs.error : cs.outline,
-                  ),
-                ),
-              ),
-            ],
+              ],
+              onChanged: (value) => ref
+                  .read(posLoyaltyProvider.notifier)
+                  .setRewardPercent(value ?? 0),
+            ),
           ),
-          if (loyalty.error != null)
-            Padding(
-              padding: const EdgeInsets.only(top: 2),
-              child: Text(
-                loyalty.error!,
-                key: const Key('pos-loyalty-error'),
-                textAlign: TextAlign.end,
-                style: theme.textTheme.bodySmall?.copyWith(color: cs.error),
+          if (selected > 0)
+            InkWell(
+              key: const Key('pos-loyalty-reward-clear'),
+              onTap: () =>
+                  ref.read(posLoyaltyProvider.notifier).clearReward(),
+              child: Padding(
+                padding: const EdgeInsets.all(2),
+                child: Icon(Icons.close, size: 16, color: cs.outline),
               ),
             ),
-        ],
-      ),
+        ] else
+          Flexible(
+            child: Text(
+              '$remaining/$minPoints',
+              key: const Key('pos-loyalty-reward-progress'),
+              textAlign: TextAlign.end,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.bodySmall?.copyWith(color: cs.outline),
+            ),
+          ),
+        const SizedBox(width: 8),
+        Flexible(
+          child: numericText(
+            // Without a selectable reward the progress slot already shows
+            // `remaining/minPoints` — the hint stays rendered (key
+            // stability) but empty instead of duplicating it.
+            canSelect ? hint : '',
+            key: const Key('pos-loyalty-redeem-hint'),
+            textAlign: TextAlign.end,
+            overflow: TextOverflow.ellipsis,
+            style: theme.textTheme.bodySmall?.copyWith(
+              fontSize: fontSize,
+              color: loyalty.exceeds ? cs.error : cs.outline,
+            ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -4018,6 +4609,32 @@ class _PosTotalsPanelState extends ConsumerState<_PosTotalsPanel> {
   }
 }
 
+/// True when an automatic focus move (the post-add qty refocus, the
+/// post-add search refocus) would interrupt a field that holds
+/// uncommitted input right now.
+///
+/// Two cases, matching the two field paths a wedge burst can land in:
+///  * a cart line qty field (debugLabel `cart-line-qty`) holding a
+///    pure-digit run longer than any legal quantity — committed
+///    quantities never exceed [kPosQuantityMax], and a burst appends at
+///    least 6 more digits — is a burst mid-typing;
+///  * any other focused field (search, dialog) with non-empty text is
+///    uncommitted input (a query or a burst being typed).
+bool _focusInterruptedByInput() {
+  if (!editableTextHasFocus()) return false;
+  final focus = FocusManager.instance.primaryFocus;
+  final context = focus?.context;
+  final editable = context?.widget is EditableText
+      ? context?.widget as EditableText
+      : context?.findAncestorWidgetOfExactType<EditableText>();
+  final text = editable?.controller.text ?? '';
+  if (focus?.debugLabel == 'cart-line-qty') {
+    final value = double.tryParse(text);
+    return value != null && value > kPosQuantityMax;
+  }
+  return text.isNotEmpty;
+}
+
 class _CartLineTile extends StatefulWidget {
   final CartLine line;
   final VoidCallback onRemove;
@@ -4030,9 +4647,23 @@ class _CartLineTile extends StatefulWidget {
   final bool Function(String quantity) onQty;
   final ValueChanged<String> onDiscount;
 
-  /// Set when *this* line should take keyboard focus (Phase 8 FIX #1);
-  /// consumed (reset) by the tile so a stale request never re-fires.
-  final ValueNotifier<String?>? qtyFocusRequest;
+  /// A keyboard-wedge scan landed in this line's focused qty field (the
+  /// next scan of a continuous session): the digit run is a barcode, not a
+  /// quantity — handed to the POS scan path instead of the qty parser.
+  final ValueChanged<String>? onScan;
+
+  /// Set when a scan submitted from *this* line's qty field is still
+  /// resolving: once the frame that produced it lands, the field shows
+  /// the committed quantity again. Never reset synchronously at submit —
+  /// a wedge burst typed in the flight window appends to whatever is on
+  /// screen, and its Enter strip is anchored at [_CartLineTileState.
+  /// _runBase], not at the displayed text.
+  final ValueNotifier<String?>? clearQtyTextRequest;
+
+  /// Set when arrow navigation wants *this* line revealed fully in view;
+  /// consumed (reset) by the tile so the request survives until the lazy
+  /// list has actually built this row (mounting claims it via initState).
+  final ValueNotifier<String?>? revealRequest;
 
   const _CartLineTile({
     super.key,
@@ -4041,7 +4672,9 @@ class _CartLineTile extends StatefulWidget {
     required this.onActivate,
     required this.onQty,
     required this.onDiscount,
-    this.qtyFocusRequest,
+    this.onScan,
+    this.clearQtyTextRequest,
+    this.revealRequest,
     this.dense = false,
     this.selected = false,
   });
@@ -4051,7 +4684,9 @@ class _CartLineTile extends StatefulWidget {
   final bool dense;
 
   /// Whether this line is the cart's current shortcut target
-  /// (lastActiveKey). Drives the dense row's selection marker and tint.
+  /// (lastActiveKey). Drives the selection marker and tint — the dense
+  /// row's check-circle, the standard row's highlighted card border — and
+  /// the arrow-key reveal.
   final bool selected;
 
   @override
@@ -4063,71 +4698,189 @@ class _CartLineTileState extends State<_CartLineTile> {
   late final TextEditingController _discount;
   late final FocusNode _qtyFocus;
 
+  /// The qty text as last seen by the typing handlers — the pre-edit
+  /// content the next keystroke extends. Kept aligned with the displayed
+  /// text at every programmatic write (see [_commitQtyText]) so an
+  /// appended digit can be told apart from a fresh replacement (see
+  /// [_isDigitAppend]).
+  String _lastQtyText = '';
+
+  /// The text the CURRENT digit run started from — what a wedge burst is
+  /// typed on top of. An external quantity merge that lands mid-run (a
+  /// previous scan resolving while this burst is being typed) bumps the
+  /// committed quantity but must NOT change this base: Enter still strips
+  /// it off the submitted run to recover the barcode suffix. Reset by
+  /// every non-append keystroke and every programmatic write.
+  String _runBase = '';
+
+  /// The field text the last scan submit consumed — set together with the
+  /// clear request, checked by the post-frame clear: the committed
+  /// quantity is restored only while the field still shows this exact
+  /// text (nothing typed over it during the flight window).
+  String? _pendingScanText;
+
   @override
   void initState() {
     super.initState();
     _qty = TextEditingController(text: widget.line.quantity);
     _discount = TextEditingController(text: widget.line.lineDiscount);
+    _commitQtyText(_qty.text);
     _qtyFocus = FocusNode(debugLabel: 'cart-line-qty');
     // Focusing this line's qty field makes it the shortcut target —
     // "tap an older line, type 3, press +" now always hits that line.
     _qtyFocus.addListener(_handleQtyFocus);
-    widget.qtyFocusRequest?.addListener(_handleQtyFocusRequest);
-    // A focus request may already be waiting for this tile (it was just
-    // created by the add that issued it).
-    _handleQtyFocusRequest();
+    widget.clearQtyTextRequest?.addListener(_handleClearQtyTextRequest);
+    // A clear request may already be waiting for this tile (a scan
+    // submitted from this field resolved while the tile was rebuilding).
+    _handleClearQtyTextRequest();
+    widget.revealRequest?.addListener(_handleRevealRequest);
+    // A reveal request may already be waiting for this tile (the lazy list
+    // often builds it only after _moveActiveLine's jump laid its region
+    // out — the tile mounts already selected, so the selected-transition
+    // reveal in didUpdateWidget can never be the one to claim it). Post-add
+    // reveals (barcode or catalog add) claim it the same way.
+    _handleRevealRequest();
+    // Deliberately NO reveal here: a tile is often built ALREADY selected
+    // (an add preselects its new line), and jumping the list on every mount
+    // would scroll older rows past the fold edge — a later tap on their
+    // header then lands outside the viewport clip. Reveals belong to
+    // selection CHANGES (didUpdateWidget) and the post-add / arrow
+    // reveal request, exactly as before.
   }
 
   void _handleQtyFocus() {
     if (_qtyFocus.hasFocus) widget.onActivate();
   }
 
-  /// Phase 8 FIX #1: claim the post-add focus request when it names this
-  /// line, then focus the quantity field once the frame is complete (the
-  /// field may not have been built when the request was made).
-  void _handleQtyFocusRequest() {
-    final request = widget.qtyFocusRequest;
+  /// Arrow navigation named THIS line: consume the request, then reveal
+  /// the row against the committed selection rebuild. Fires both from a
+  /// mounted listener (tile already in the tree) and from initState (lazy
+  /// list just built it after the jump) — the post-frame check re-reads
+  /// `widget.selected` so a stale request whose selection has meanwhile
+  /// moved on is dropped instead of yanking the list elsewhere.
+  void _handleRevealRequest() {
+    final request = widget.revealRequest;
     if (request == null || request.value != widget.line.key) return;
     request.value = null;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      // Dense (reversed) table: a just-added line can sit below the fold
-      // of the tall scroll body — bring it into view. Focus still goes to
-      // this line's quantity field right after (Phase 8 FIX #1 unchanged);
-      // ensureVisible never moves focus itself.
-      if (widget.dense) {
-        Scrollable.ensureVisible(
-          context,
-          duration: const Duration(milliseconds: 160),
-          curve: Curves.easeOut,
-          alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtEnd,
-        );
-      }
-      _qtyFocus.requestFocus();
+      if (!mounted || !widget.selected) return;
+      _revealNow();
     });
   }
 
   @override
   void didUpdateWidget(covariant _CartLineTile old) {
     super.didUpdateWidget(old);
-    if (!identical(old.qtyFocusRequest, widget.qtyFocusRequest)) {
-      old.qtyFocusRequest?.removeListener(_handleQtyFocusRequest);
-      widget.qtyFocusRequest?.addListener(_handleQtyFocusRequest);
-      _handleQtyFocusRequest();
+    if (!identical(old.revealRequest, widget.revealRequest)) {
+      old.revealRequest?.removeListener(_handleRevealRequest);
+      widget.revealRequest?.addListener(_handleRevealRequest);
+      _handleRevealRequest();
+    }
+    if (!identical(old.clearQtyTextRequest, widget.clearQtyTextRequest)) {
+      old.clearQtyTextRequest?.removeListener(_handleClearQtyTextRequest);
+      widget.clearQtyTextRequest?.addListener(_handleClearQtyTextRequest);
+      _handleClearQtyTextRequest();
     }
     if (old.line.quantity != widget.line.quantity &&
         _qty.text != widget.line.quantity) {
-      _qty.text = widget.line.quantity;
+      // Phase 8 FIX #3: never wipe a mid-burst digit run. A concurrent
+      // add (another line's scan, a slow lookup resolving) changes this
+      // line's committed quantity while the qty field holds a pure-digit
+      // run that has NOT been touched since it was last committed — the
+      // run is the cashier's burst-in-progress, not stale field text.
+      // Clobbering it here replaces the burst's prefix with the new
+      // committed quantity, and the remaining digits then submit as a
+      // FOREIGN suffix (the real-device second vector: base '2' +
+      // '4202402' -> qty-submit len=7). Expression text (any non-digit
+      // content) still syncs — it can never be a scan run.
+      final text = _qty.text;
+      // A run IN PROGRESS has text that differs from the run's base
+      // ([_runBase] still holds the committed quantity the digits were
+      // typed on); a pristine committed display has base == text and
+      // must keep syncing normally (the `+` shortcut, dialogs, external
+      // quantity changes).
+      final midRun = text.isNotEmpty &&
+          text == _lastQtyText &&
+          text != _runBase &&
+          RegExp(r'^\d+$').hasMatch(text) &&
+          text != widget.line.quantity;
+      if (midRun) {
+        // Keep the run AND its original base: [_scanCodeOfSubmission]
+        // strips the text the run STARTED from, and a merge that landed
+        // mid-burst intentionally does not re-anchor it (the run's prefix
+        // is still the old committed quantity the digits were typed on).
+        scanDiag('qty-sync', {
+          'outcome': 'run-kept',
+          'committed': widget.line.quantity,
+          'runLen': text.length,
+        });
+      } else {
+        // Unconditional sync (matches the pre-fix behavior): an expression
+        // like `10*24` and every other valid quantity the user typed must
+        // resolve to the computed value on screen as soon as the cart
+        // commit lands. The digit-run tracker ([_runBase]) can go stale
+        // under this write, so it is committed too — a run typed AFTER a
+        // merge still has to append to the now-committed quantity, never
+        // to the barcode prefix this sync just discarded.
+        _qty.text = widget.line.quantity;
+        _commitQtyText(_qty.text);
+      }
     }
     if (old.line.lineDiscount != widget.line.lineDiscount &&
         _discount.text != widget.line.lineDiscount) {
       _discount.text = widget.line.lineDiscount;
     }
+    // Arrow-key selection moved HERE: reveal the newly selected row once
+    // this rebuild has committed (taps also trigger it — their row is
+    // visible, so the geometry check is a no-op there).
+    if (widget.selected && !old.selected) _revealIfOffscreen();
+  }
+
+  /// Bring the selected row fully into its scroll view: a row that is
+  /// already fully visible never moves; a row above the fold top-aligns
+  /// ([ScrollPositionAlignmentPolicy.keepVisibleAtStart]) and a row below
+  /// the fold bottom-aligns (keepVisibleAtEnd) — each scrolls the MINIMUM
+  /// distance that reveals the row. Runs post-frame so the selection
+  /// rebuild has laid the row out first; the horizontal dense-table
+  /// ancestor (if any) is revealed by the same ensureVisible walk the
+  /// post-add focus path already relies on.
+  void _revealIfOffscreen() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _revealNow();
+    });
+  }
+
+  /// Geometry half of [_revealIfOffscreen] against a committed frame —
+  /// also called directly by [_handleRevealRequest] from its own post-frame
+  /// callback (the selection rebuild has landed by then).
+  void _revealNow() {
+    final box = context.findRenderObject();
+    if (box is! RenderBox || !box.attached) return;
+    final scrollableBox =
+        Scrollable.maybeOf(context)?.context.findRenderObject();
+    if (scrollableBox is! RenderBox || !scrollableBox.attached) return;
+    final tile = MatrixUtils.transformRect(
+      box.getTransformTo(scrollableBox),
+      Offset.zero & box.size,
+    );
+    final view = Offset.zero & scrollableBox.size;
+    if (tile.top >= view.top && tile.bottom <= view.bottom) return;
+    // Instant jump — an animated glide would make the scrollable drop
+    // every pointer event until it settles.
+    Scrollable.ensureVisible(
+      context,
+      duration: Duration.zero,
+      alignmentPolicy: tile.top < view.top
+          ? ScrollPositionAlignmentPolicy.keepVisibleAtStart
+          : ScrollPositionAlignmentPolicy.keepVisibleAtEnd,
+    );
   }
 
   @override
   void dispose() {
-    widget.qtyFocusRequest?.removeListener(_handleQtyFocusRequest);
+    widget.revealRequest?.removeListener(_handleRevealRequest);
+    widget.clearQtyTextRequest?.removeListener(_handleClearQtyTextRequest);
     _qtyFocus.removeListener(_handleQtyFocus);
     _qtyFocus.dispose();
     _qty.dispose();
@@ -4143,23 +4896,203 @@ class _CartLineTileState extends State<_CartLineTile> {
     if (text == null || text == widget.line.quantity) return;
     final applied = widget.onQty(text);
     _qty.text = applied ? text : widget.line.quantity;
+    _commitQtyText(_qty.text);
   }
 
   /// Typing: apply as soon as the input is a complete, valid quantity
   /// (plain number or `10*24` expression) — silently wait while it is
   /// still incomplete, never keep an impossible quantity on screen.
+  ///
+  /// Two digit-run rules keep a keyboard-wedge burst from ever being
+  /// parsed as a quantity (repeated-scan regression):
+  ///  * a full barcode-length run ([kPosBarcodeScanInput]) waits for
+  ///    Enter untouched — the existing rule;
+  ///  * an ACCUMULATING digit run (each keystroke appending one digit to
+  ///    the previous one — exactly how a wedge types a barcode into this
+  ///    focused field, and equally how a human types a multi-digit
+  ///    quantity digit by digit) also waits: live-parsing it set the line
+  ///    quantity to partial barcode prefixes and fired the stock guard
+  ///    once a prefix overshot the stock ("Out of stock" while stock was
+  ///    available). Enter is the decision point — see
+  ///    [_handleQtySubmitted].
   void _handleQtyChanged(String raw) {
     widget.onActivate();
-    if (!parseQuantityExpression(raw).isValid) return;
-    if (widget.onQty(raw)) return;
+    final previous = _lastQtyText;
+    _lastQtyText = raw;
+    // Any live edit ends the in-flight scan window: once the field holds
+    // something else, a later submit of the old burst text would be a
+    // fresh event, never a duplicate delivery (the dedup key in
+    // _handleQtySubmitted). The scheduled clear keeps its own captured
+    // text, so this never blinds it.
+    if (_pendingScanText != null && raw != _pendingScanText) {
+      _pendingScanText = null;
+    }
+    if (kPosBarcodeScanInput.hasMatch(raw.trim())) return;
+    if (_isDigitAppend(previous, raw)) return;
+    if (!parseQuantityExpression(raw).isValid) {
+      // Fresh edit, not yet a quantity (e.g. '10*'): the run base is the
+      // text this edit replaced.
+      _runBase = previous;
+      return;
+    }
+    if (widget.onQty(raw)) {
+      // Applied: the tracker must not keep the typed text (a next
+      // keystroke would look like an append of it and be deferred) — AND
+      // it must not go EMPTY (a next keystroke then failed the append
+      // check and a barcode prefix parsed as a quantity: the repeated-
+      // scan jump to 14/15). Commit the NORMALIZED value the cart just
+      // received and put it on screen immediately: a programmatic write
+      // fires no onChanged, and didUpdateWidget sees equal text (no-op).
+      final applied = parseQuantityExpression(raw).text;
+      _qty.text = applied;
+      _commitQtyText(applied);
+      return;
+    }
     _qty.text = widget.line.quantity;
+    _commitQtyText(_qty.text);
+  }
+
+  /// A programmatic write to the qty field ends any digit run: the
+  /// append tracker and the run base now describe what is shown.
+  void _commitQtyText(String text) {
+    _lastQtyText = text;
+    _runBase = text;
+  }
+
+  /// A scan submitted from THIS field is still resolving (or missed): once
+  /// the next frame lands, show the committed quantity again — but only
+  /// while the field still holds the text that scan consumed. A wedge
+  /// burst typed into the flight window owns the field until ITS Enter
+  /// (Enter strips [_runBase] off the run, so the burst never depends on
+  /// the displayed text); wiping the field under it would corrupt the run.
+  void _handleClearQtyTextRequest() {
+    final request = widget.clearQtyTextRequest;
+    if (request == null || request.value != widget.line.key) return;
+    request.value = null;
+    final consumed = _pendingScanText;
+    if (consumed == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (_qty.text != consumed) {
+        // Something typed over the burst text in the flight window (or a
+        // sync already restored it) — never wipe live content.
+        scanDiag('qty-clear', {
+          'outcome': 'skipped',
+          'textLen': _qty.text.length,
+          'consumedLen': consumed.length,
+        });
+        return;
+      }
+      scanDiag('qty-clear', {
+        'outcome': 'restored',
+        'committedLen': widget.line.quantity.length,
+      });
+      _qty.text = widget.line.quantity;
+      _commitQtyText(_qty.text);
+      _pendingScanText = null;
+    });
+  }
+
+  /// True when [raw] extends [previous] by exactly one appended digit —
+  /// the fingerprint of an in-progress digit run (wedge burst or hand
+  /// typing). Such a run is not yet a quantity; it sits untouched until
+  /// Enter decides.
+  static bool _isDigitAppend(String previous, String raw) {
+    if (raw.length != previous.length + 1) return false;
+    if (!raw.startsWith(previous)) return false;
+    return RegExp(r'^\d+$').hasMatch(raw);
+  }
+
+  /// The barcode a wedge burst typed into this focused field, or null
+  /// when the submitted text is not a scan.
+  ///
+  /// The caret parks at the END of the committed quantity after every
+  /// add, so a burst types its digits ON TOP of that quantity (`2` +
+  /// `8718114202402`): the scan is the barcode-shaped SUFFIX, and
+  /// stripping it is unambiguous — committed quantity (≥ 1 digit) plus
+  /// barcode (≥ 6 digits) always exceeds [kPosQuantityMax], so such a
+  /// run can never be a quantity. The base is the text the run STARTED
+  /// from ([_runBase]) — a previous scan's merge may have landed (and
+  /// bumped the committed quantity) while this burst was still being
+  /// typed. A whole-replace barcode-shaped text (no committed prefix)
+  /// keeps the original rule.
+  String? _scanCodeOfSubmission(String raw) {
+    final text = raw.trim();
+    final base = _runBase.isNotEmpty ? _runBase : widget.line.quantity;
+    if (base.isNotEmpty &&
+        text.length > base.length &&
+        text.startsWith(base)) {
+      final suffix = text.substring(base.length);
+      if (kPosBarcodeScanInput.hasMatch(suffix)) return suffix;
+    }
+    if (kPosBarcodeScanInput.hasMatch(text)) return text;
+    return null;
   }
 
   /// Enter: strict — an invalid expression or an impossible quantity is
   /// rejected with the localized toast and the field rolls back.
   void _handleQtySubmitted(String raw) {
+    final trimmed = raw.trim();
+    // Scanner wedge in the focused qty field (post-add focus): the digit
+    // run is a barcode, not a quantity — forward it to the scan path
+    // (canonical lookup + cart rules). The field is NOT reset here: a
+    // burst typed into the flight window owns the text on screen until
+    // ITS Enter, and Enter strips the run base off the submitted text
+    // ([_scanCodeOfSubmission]) — never the displayed text. The committed
+    // quantity is restored post-frame by [_handleClearQtyTextRequest],
+    // and only while nothing typed over it in the meantime.
+    final scanCode = _scanCodeOfSubmission(trimmed);
+    if (scanCode != null) {
+      if (trimmed == _pendingScanText) {
+        // Duplicate delivery of a scan that is still resolving (repeated
+        // Enter / re-delivered performAction inside the clear window —
+        // CR+LF terminators, key repeat): the clear request is already
+        // pending; one physical scan may never dispatch twice.
+        scanDiag('qty-submit', {
+          'branch': 'dup-suppressed',
+          'len': trimmed.length,
+        });
+        widget.clearQtyTextRequest?.value = widget.line.key; // re-arm
+        return;
+      }
+      _pendingScanText = trimmed;
+      widget.clearQtyTextRequest?.value = widget.line.key;
+      // ORIGIN event for the qty-field path. `baseLen` > 0 means the
+      // field held a committed quantity prefix (normal burst-on-quantity);
+      // `textLen` longer than base + 13 would reveal foreign digits
+      // concatenated into the run.
+      lastScanCorr = scanDiag('qty-submit', {
+        'branch': 'scan',
+        'len': scanCode.length,
+        'textLen': trimmed.length,
+        'baseLen': trimmed.length - scanCode.length,
+        'suffix3': scanDiagSuffix3(scanCode),
+      });
+      widget.onScan?.call(scanCode);
+      return;
+    }
     widget.onActivate();
-    if (!widget.onQty(raw)) _qty.text = widget.line.quantity;
+    if (widget.onQty(raw)) {
+      // Normalize synchronously (see _handleQtyChanged's applied branch):
+      // the tracker and the screen must show the committed value before
+      // any next keystroke — an expression like `10*24` never leaves
+      // `10*24` on screen or in the tracker while the rebuild is pending.
+      final applied = parseQuantityExpression(raw).text;
+      _qty.text = applied;
+      _commitQtyText(applied);
+      scanDiag('qty-submit', {
+        'branch': 'quantity-applied',
+        'len': trimmed.length,
+        'text': applied,
+      });
+      return;
+    }
+    scanDiag('qty-submit', {
+      'branch': 'quantity-rejected',
+      'len': trimmed.length,
+    });
+    _qty.text = widget.line.quantity;
+    _commitQtyText(_qty.text);
   }
 
   @override
@@ -4191,7 +5124,11 @@ class _CartLineTileState extends State<_CartLineTile> {
       key: Key('cart-line-${line.key}'),
       padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
       child: Material(
-        color: theme.cardColor,
+        // Selection highlight (same tints the dense row already uses):
+        // without a marker the arrow walk would move an invisible cursor.
+        color: widget.selected
+            ? theme.colorScheme.primary.withValues(alpha: 0.08)
+            : theme.cardColor,
         borderRadius: BorderRadius.circular(10),
         child: Container(
           constraints: BoxConstraints(minHeight: minHeight),
@@ -4199,7 +5136,9 @@ class _CartLineTileState extends State<_CartLineTile> {
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(10),
             border: Border.all(
-              color: theme.dividerColor.withValues(alpha: 0.55),
+              color: widget.selected
+                  ? theme.colorScheme.primary.withValues(alpha: 0.55)
+                  : theme.dividerColor.withValues(alpha: 0.55),
             ),
           ),
           child: Column(
@@ -4628,7 +5567,7 @@ class _CartLineTileState extends State<_CartLineTile> {
                               overflow: TextOverflow.ellipsis,
                               style: theme.textTheme.bodyMedium?.copyWith(
                                 fontWeight: FontWeight.w700,
-                                fontSize: 14,
+                                fontSize: 15,
                               ),
                             ),
                             if (overStock ||
@@ -4655,7 +5594,7 @@ class _CartLineTileState extends State<_CartLineTile> {
                                           overflow: TextOverflow.ellipsis,
                                           style: theme.textTheme.labelSmall
                                               ?.copyWith(
-                                            fontSize: 11,
+                                            fontSize: 12,
                                             fontWeight: FontWeight.w700,
                                             color: AppColors.warning,
                                           ),
@@ -4718,7 +5657,7 @@ class _CartLineTileState extends State<_CartLineTile> {
                         key: Key('cart-line-price-${line.key}'),
                         style: theme.textTheme.bodyMedium?.copyWith(
                           fontWeight: FontWeight.w700,
-                          fontSize: 13.5,
+                          fontSize: 15,
                         ),
                         overflow: TextOverflow.ellipsis,
                       ),
@@ -4727,7 +5666,7 @@ class _CartLineTileState extends State<_CartLineTile> {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: theme.textTheme.labelSmall?.copyWith(
-                          fontSize: 11,
+                          fontSize: 12,
                           color: theme.colorScheme.onSurface
                               .withValues(alpha: 0.65),
                         ),
@@ -4737,7 +5676,7 @@ class _CartLineTileState extends State<_CartLineTile> {
                           '${_fmtQty(baseQty)} $baseUnit',
                           key: Key('cart-line-base-qty-${line.key}'),
                           style: theme.textTheme.labelSmall?.copyWith(
-                            fontSize: 10.5,
+                            fontSize: 12,
                             color: theme.colorScheme.onSurface
                                 .withValues(alpha: 0.6),
                           ),
@@ -4768,7 +5707,7 @@ class _CartLineTileState extends State<_CartLineTile> {
                     key: Key('cart-line-total-${line.key}'),
                     style: theme.textTheme.titleSmall?.copyWith(
                       fontWeight: FontWeight.w700,
-                      fontSize: 14,
+                      fontSize: 15,
                       color: theme.colorScheme.primary,
                     ),
                   ),

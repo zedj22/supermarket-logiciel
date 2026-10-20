@@ -28,6 +28,15 @@ enum PosQtyShortcutKind { increment, decrement, quantityEntry }
 /// Anything else (option pickers, dialogs, …) keeps the key as typed.
 const String posSearchFieldKey = 'pos-search-field';
 
+/// A pure digit run too long to be a real cart quantity — the shape a
+/// keyboard-wedge barcode scanner types when its Enter suffix lands in the
+/// focused line's quantity field (every add auto-focuses that field, so the
+/// NEXT scan in a continuous session arrives there). Six-plus digits is
+/// safely above any quantity a cashier enters by hand (quantities and
+/// `10*24` expressions stay well under it) and below no supported barcode
+/// length: EAN-8/UPC-A/EAN-13 and longer Code-128 codes all match.
+final RegExp kPosBarcodeScanInput = RegExp(r'^\d{6,}$');
+
 /// True when [key] is a cart line quantity field key (`cart-line-qty-*`).
 bool isCartLineQtyFieldKey(String key) => key.startsWith('cart-line-qty-');
 
@@ -65,7 +74,7 @@ String? focusedPosTextFieldKey() {
 }
 
 /// True while a cart line quantity field holds primary focus — the field
-/// every add auto-focuses (Phase 8 FIX #1).
+/// a cashier clicks/taps to edit a quantity (adds never auto-focus it).
 ///
 /// SPACE is the POS payment shortcut there: the key opens the payment dialog
 /// and is consumed before the quantity text input can see it, so a stray
@@ -151,6 +160,32 @@ bool spaceMayClaimFocusedField() => switch (posFocusRouting()) {
 /// keeps Delete as its text-editing meaning.
 bool deleteMayClaimFocusedField() =>
     posFocusRouting() == PosFocusRouting.searchIdle;
+
+/// Up/Down may MOVE the selected cart line while NO editable field has
+/// focus, while the EMPTY barcode field is focused (idle home — arrows
+/// do nothing natively there), and while a cart QUANTITY field is
+/// focused. The qty field is the ONE cart field where arrows must walk
+/// the selection: it is the keyboard-first editing surface a cashier
+/// clicks into, and a blocked qty routing left them needing a mouse
+/// click on a cart row before Up/Down responded. The claim is caret-safe
+/// there — the activator always matches and this predicate decides inside
+/// the binding callback: a declined press is swallowed instead of bubbling
+/// into the framework's single-line vertical-caret action (which asserts
+/// on non-left-aligned inputs such as the centered qty field), while an
+/// accepted press only ever rewrites the selection (focus itself never
+/// moves, so a cashier typing digits keeps their field). A typed query,
+/// the line discount field and every other editable must not walk the
+/// selection. Dialogs never reach this layer — their route scopes sit
+/// outside the page's CallbackShortcuts — and Left/Right stay ordinary
+/// caret movement.
+bool arrowMayClaimFocusedField() =>
+    switch (posFocusRouting()) {
+      PosFocusRouting.noEditable ||
+      PosFocusRouting.searchIdle ||
+      PosFocusRouting.cartQty =>
+        true,
+      _ => false,
+    };
 
 /// [ShortcutActivator] for the POS quantity shortcuts.
 ///

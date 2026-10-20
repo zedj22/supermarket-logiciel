@@ -18,6 +18,7 @@
 //      the same stock bucket (product + variant). The backend checkout
 //      remains authoritative — this guard only rejects the obvious.
 import '../../core/quantity_expression.dart';
+import '../../core/scan_diagnostics.dart';
 import '../../core/strings.dart';
 import 'pos_models.dart';
 import 'pos_providers.dart';
@@ -88,12 +89,28 @@ String? canApplyQuantityChange({
 }) {
   final requested = posScaled(quantity);
   if (requested == null) {
+    _stockGuardDiag(
+      prototype: prototype,
+      reason: 'invalid',
+      quantity: quantity,
+    );
     return AppStrings.t('invalid_quantity_expression', loc);
   }
   if (requested <= 0) {
+    _stockGuardDiag(
+      prototype: prototype,
+      reason: 'invalid',
+      quantity: quantity,
+    );
     return AppStrings.t('invalid_quantity_expression', loc);
   }
   if (requested > kPosQuantityMax * kPosQtyScale) {
+    _stockGuardDiag(
+      prototype: prototype,
+      reason: 'too-large',
+      quantity: quantity,
+      stock: prototype.availableStock,
+    );
     return AppStrings.t('quantity_too_large', loc);
   }
 
@@ -105,21 +122,28 @@ String? canApplyQuantityChange({
     unitMultiplier: prototype.unitMultiplier,
   );
   if (requestedBase == null) {
+    _stockGuardDiag(
+      prototype: prototype,
+      reason: 'invalid',
+      quantity: quantity,
+    );
     return AppStrings.t('invalid_quantity_expression', loc);
   }
 
   var currentBase = 0;
   var othersBase = 0;
+  var lineExists = false;
   for (final line in cart.lines) {
     final lineBase = posRequestedBaseScaled(
       quantity: line.quantity,
       unitMultiplier: line.unitMultiplier,
     );
-    if (lineBase == null) continue;
     if (existingKey != null && line.key == existingKey) {
-      currentBase = lineBase;
+      lineExists = true;
+      if (lineBase != null) currentBase = lineBase;
       continue;
     }
+    if (lineBase == null) continue;
     if (posSameStockBucket(line, prototype)) {
       othersBase += lineBase;
     }
@@ -129,7 +153,47 @@ String? canApplyQuantityChange({
   // Never trap the cashier: shrinking a line that is already over stock is
   // always allowed (it moves the cart back toward a valid state).
   if (requestedBase <= currentBase) return null;
+  _stockGuardDiag(
+    prototype: prototype,
+    reason: 'out-of-stock',
+    quantity: quantity,
+    stock: prototype.availableStock,
+    requestedBase: requestedBase,
+    currentBase: currentBase,
+    othersBase: othersBase,
+    lineExists: lineExists,
+  );
   return AppStrings.t('out_of_stock', loc);
+}
+
+/// `stock-guard` diagnostic: every REJECTED quantity mutation states why,
+/// with the exact numbers the guard compared (scaled base units ÷1000
+/// shown as-is; `stock` is the raw cart-line string). Guard logic itself
+/// is never altered here — this only observes it.
+void _stockGuardDiag({
+  required CartLine prototype,
+  required String reason,
+  required String quantity,
+  String? stock,
+  int? requestedBase,
+  int? currentBase,
+  int? othersBase,
+  bool? lineExists,
+}) {
+  final fields = <String, Object?>{
+    'reason': reason,
+    'productId': prototype.productId ?? '-',
+    'variantId': prototype.variantId ?? '-',
+    'packId': prototype.packId ?? '-',
+    'sellingUnitId': prototype.sellingUnitId ?? '-',
+    'quantity': quantity,
+    'stock': stock ?? 'unknown',
+  };
+  if (requestedBase != null) fields['requestedBase'] = requestedBase;
+  if (currentBase != null) fields['currentBase'] = currentBase;
+  if (othersBase != null) fields['othersBase'] = othersBase;
+  if (lineExists != null) fields['lineExists'] = lineExists;
+  scanDiag('stock-guard', fields);
 }
 
 /// Single-line stock rule used by dialogs that only know one line
@@ -243,6 +307,13 @@ bool applyAddingLine({
         (posScaled(existing.quantity) ?? 0) + expression.scaled;
     requestedText = posScaledText(requestedScaled);
     if (requestedScaled > kPosQuantityMax * kPosQtyScale) {
+      _stockGuardDiag(
+        prototype: newLine,
+        reason: 'merge-too-large',
+        quantity: requestedText,
+        stock: newLine.availableStock,
+        lineExists: true,
+      );
       onError?.call(AppStrings.t('quantity_too_large', loc), false);
       return false;
     }

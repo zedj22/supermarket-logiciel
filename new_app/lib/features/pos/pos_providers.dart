@@ -11,6 +11,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../core/scan_diagnostics.dart';
 import '../../core/strings.dart';
 import '../../l10n/locale_provider.dart';
 import '../auth/auth_provider.dart';
@@ -293,6 +294,11 @@ class PosCartNotifier extends StateNotifier<PosCartState> {
     // Deleting the active line hands the `+` / `*` shortcuts to the newest
     // remaining line (never a stale key); an emptied cart clears it.
     final wasActive = state.lastActiveKey == key;
+    scanDiag('cart-remove', {
+      'linesBefore': state.lines.length,
+      'linesAfter': remaining.length,
+      'wasActive': wasActive,
+    });
     state = state.copyWith(
       lines: remaining,
       clearStockErrors: true,
@@ -321,7 +327,17 @@ class PosCartNotifier extends StateNotifier<PosCartState> {
         : state.copyWith(customer: customer);
   }
 
-  void clearCart() {
+  /// Clears the cart. `reason` names the programmatic cause for the
+  /// diagnostics trail (`checkout`, `hold-create`, `hold-load`,
+  /// `return-confirm`, `clear-dialog`) — every path that replaces the
+  /// cart state wholesale must declare itself here or at its call site,
+  /// so an unexpected `qtyBefore=-` (no line matched by CartLine.key on
+  /// the next add) can be traced to the reset that emptied the cart.
+  void clearCart({String reason = 'clear'}) {
+    scanDiag('cart-reset', {
+      'reason': reason,
+      'linesBefore': state.lines.length,
+    });
     state = const PosCartState();
   }
 
@@ -451,6 +467,10 @@ class PosCartNotifier extends StateNotifier<PosCartState> {
           : parsed.withPriceOverrides(namedOverrides);
       // Success → clear cart + request id (not because of overrides —
       // because the sale committed). Keep result for override/receipt UI.
+      scanDiag('cart-reset', {
+        'reason': 'checkout',
+        'linesBefore': state.lines.length,
+      });
       state = PosCartState(lastResult: result);
       return result;
     } on DioException catch (e) {
@@ -508,7 +528,7 @@ class PosCartNotifier extends StateNotifier<PosCartState> {
         '/api/v1/pos/holds',
         data: payload,
       );
-      clearCart();
+      clearCart(reason: 'hold-create');
       return null;
     } on DioException catch (e) {
       return _message(e);
@@ -516,6 +536,11 @@ class PosCartNotifier extends StateNotifier<PosCartState> {
   }
 
   void loadHold(HoldModel hold) {
+    scanDiag('cart-reset', {
+      'reason': 'hold-load',
+      'linesBefore': state.lines.length,
+      'linesAfter': hold.items.length,
+    });
     state = PosCartState(
       lines: hold.items,
       invoiceDiscount: hold.invoiceDiscount,

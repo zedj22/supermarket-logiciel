@@ -170,11 +170,14 @@ void main() {
       // surface (15) and the hardware overview surface (26) —
       // 73 keys (1499). The purchase quick-add / optional-supplier pass
       // added the "no supplier" placeholder shown by the purchase editor,
-      // list rows and detail header — 1 key (1500).
+      // list rows and detail header — 1 key (1500). The POS barcode-
+      // scanner integration pass added the not-found toast shown when a
+      // scanned code resolves nowhere (canonical barcode lookup miss) —
+      // 1 key (1501).
       // Update this deliberately when a subphase
       // adds strings — an unexplained drop means keys were deleted from
       // one map only.
-      expect(_map('en').keys.length, 1500);
+      expect(_map('en').keys.length, 1501);
       expect(_map('ar').keys.length, _map('en').keys.length);
       expect(_map('fr').keys.length, _map('en').keys.length);
     });

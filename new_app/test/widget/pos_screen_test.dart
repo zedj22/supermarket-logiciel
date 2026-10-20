@@ -19,6 +19,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:supermarket_pos/core/barcode_scanner.dart';
 import 'package:supermarket_pos/core/colors.dart';
 import 'package:supermarket_pos/core/numeric_text.dart';
 import 'package:supermarket_pos/core/strings.dart';
@@ -35,6 +36,8 @@ import 'package:supermarket_pos/l10n/locale_provider.dart';
 import 'package:supermarket_pos/main.dart';
 import 'package:supermarket_pos/network/api_client.dart';
 import 'package:supermarket_pos/theme/app_theme.dart';
+
+import '../helpers/wedge_scanner.dart';
 
 class MockDio extends Mock implements Dio {}
 
@@ -279,7 +282,35 @@ Response<dynamic> _ok(String path, Object? data) => Response(
       data: data,
     );
 
-Object? _defaultBody(String path) {
+/// Canonical barcode-lookup payload for the default mock product (Bread,
+/// barcode 111). Any other code misses unless the test overrides it via
+/// _mockDio's barcodeLookups map.
+Map<String, dynamic> _lookupHit({
+  String productId = _productId,
+  String productName = 'Bread',
+  String productPrice = '10.0',
+  String productQuantity = '20',
+  String productUnit = 'piece',
+}) =>
+    {
+      'found': true,
+      'kind': 'product',
+      'product_id': productId,
+      'product_name': productName,
+      'product_price': productPrice,
+      'product_quantity': productQuantity,
+      'product_unit': productUnit,
+      'variant_id': null,
+      'selling_unit_id': null,
+      'is_archived': false,
+    };
+
+Map<String, dynamic> _lookupMiss() => {'found': false};
+
+Map<String, dynamic> _defaultLookupBody(String barcode) =>
+    barcode == '111' ? _lookupHit() : _lookupMiss();
+
+Object? _defaultBody(String path, {String quantity = '20'}) {
   if (path == _catalogPath) {
     return {
       'items': [_product()],
@@ -295,8 +326,15 @@ Object? _defaultBody(String path) {
   if (path.endsWith('/selling-units')) {
     return {'items': <dynamic>[], 'total': 0};
   }
+  if (path == '/api/v1/products/barcode-lookup') {
+    // The GET stubs extract the barcode from queryParameters and serve
+    // _defaultLookupBody; reaching here without them means a miss.
+    return _lookupMiss();
+  }
   if (path.startsWith('/api/v1/products/') && !path.endsWith('/search')) {
-    return _product();
+    // Product detail — what _resolveAndAddBarcode re-fetches for a scan;
+    // carries the configured stock so scans hit the real stock guard.
+    return _product(quantity: quantity);
   }
   if (path == '/api/v1/auth/setup/check') {
     return {'setup_needed': false};
@@ -331,6 +369,7 @@ void _mockDio(
   int? sellingUnitsErrorStatus,
   bool variantsNetworkError = false,
   bool sellingUnitsNetworkError = false,
+  int variantsFailOnce = 0,
   Map<String, dynamic>? saleListBody,
   Map<String, dynamic>? saleDetailBody,
   int? saleErrorStatus,
@@ -341,6 +380,7 @@ void _mockDio(
   int? restoreErrorStatus,
   List<String>? recordPaths,
   Map<String, dynamic>? settingsBody,
+  Map<String, Map<String, dynamic>>? barcodeLookups,
 }) {
   void record(String path) => recordPaths?.add(path);
   printRequestBodies.clear();
@@ -368,7 +408,11 @@ void _mockDio(
     );
   }
 
-  Object? bodyFor(String path) {
+  // One-shot variants failure counter (see the /variants branch below):
+  // lives in the mock's closure scope so it survives across requests.
+  var remainingVariantFailures = variantsFailOnce;
+
+  Object? bodyFor(String path, {String? barcode}) {
     if (path == _catalogPath) {
       onSearch?.call();
       return {
@@ -386,6 +430,10 @@ void _mockDio(
     if (path == _favoritesPath) {
       return {'items': <dynamic>[], 'total': 0};
     }
+    if (path == '/api/v1/products/barcode-lookup') {
+      return barcodeLookups?[barcode ?? ''] ??
+          _defaultLookupBody(barcode ?? '');
+    }
     if (path == '/api/v1/pos/holds') {
       return holdsBody ?? {'items': <dynamic>[], 'total': 0};
     }
@@ -401,7 +449,14 @@ void _mockDio(
           : <String, dynamic>{};
     }
     if (path.endsWith('/variants')) {
-      if (variantsNetworkError || variantsErrorStatus != null) {
+      // `variantsFailOnce`: the FIRST variants lookup fails (the add shows
+      // the retry toast), every later one succeeds — the scan → failed
+      // lookup → RETRY flow of the scanner-origin focus regression.
+      final failNow = variantsNetworkError ||
+          variantsErrorStatus != null ||
+          remainingVariantFailures > 0;
+      if (remainingVariantFailures > 0) remainingVariantFailures--;
+      if (failNow) {
         failPath(
           path,
           network: variantsNetworkError,
@@ -424,7 +479,7 @@ void _mockDio(
       // §17.6 print settings; the default keeps the pre-§17.6 behaviour.
       return settingsBody ?? <String, dynamic>{'items': <dynamic>[]};
     }
-    return _defaultBody(path);
+    return _defaultBody(path, quantity: productQuantity);
   }
 
   when(() => dio.interceptors).thenReturn(Interceptors());
@@ -434,6 +489,11 @@ void _mockDio(
       .thenAnswer((invocation) async {
     final path = invocation.positionalArguments.first as String? ?? '';
     record(path);
+    final params =
+        invocation.namedArguments[#queryParameters] as Map<String, dynamic>?;
+    if (path == '/api/v1/products/barcode-lookup') {
+      return _ok(path, bodyFor(path, barcode: params?['barcode'] as String?));
+    }
     if (path == _catalogPath && !withProduct) {
       return _ok(path, {'items': <dynamic>[], 'total': 0});
     }
@@ -1473,8 +1533,15 @@ void main() {
       await tester.pump(const Duration(milliseconds: 300));
 
       expect(find.byType(Image), findsOneWidget);
-      expect(find.byKey(Key('pos-product-name-$_productId')), findsOneWidget);
-      expect(find.byKey(Key('pos-product-price-$_productId')), findsOneWidget);
+      expect(find.byKey(const Key('pos-product-name-$_productId')), findsOneWidget);
+      expect(find.byKey(const Key('pos-product-price-$_productId')), findsOneWidget);
+      // R4: the catalog card name sits in the readable band — 16px
+      // semibold (was 14px bold), never smaller for a thumbnail card.
+      final cardName = tester.widget<Text>(
+        find.byKey(Key('pos-product-name-$_productId')),
+      );
+      expect(cardName.style?.fontSize, 16);
+      expect(cardName.style?.fontWeight, FontWeight.w600);
       expect(tester.takeException(), isNull);
     });
   });
@@ -4406,6 +4473,23 @@ void main() {
       );
       expect(gridSeg.width, greaterThanOrEqualTo(90));
       expect(listSeg.width, greaterThanOrEqualTo(90));
+      expect(tester.takeException(), isNull);
+    });
+
+    // ── R4: catalog name readability (list view) ───────────────────────
+    testWidgets('catalog product name is 16px semibold in list view too',
+        (tester) async {
+      await _pumpApp(tester, dio: dio, size: const Size(1366, 768));
+      await tester.pump(const Duration(milliseconds: 500));
+      await tester.tap(find.byKey(const Key('pos-view-mode-list')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('pos-product-list')), findsOneWidget);
+      final name = tester.widget<Text>(
+        find.byKey(Key('pos-product-name-$_productId')),
+      );
+      expect(name.style?.fontSize, 16);
+      expect(name.style?.fontWeight, FontWeight.w600);
+      expect(name.maxLines, 1);
       expect(tester.takeException(), isNull);
     });
 
@@ -7983,7 +8067,7 @@ void main() {
       await tester.pumpAndSettle();
     }
 
-    testWidgets('adding a product focuses that line\'s quantity field',
+    testWidgets('adding a product never auto-focuses its quantity field',
         (tester) async {
       await _pumpApp(tester, dio: dio);
       await tester.pump(const Duration(milliseconds: 500));
@@ -7993,13 +8077,23 @@ void main() {
       final cart = containerOf(tester).read(posCartProvider);
       expect(cart.lines, hasLength(1));
       final key = cart.lines.first.key;
-      // The line is active AND its qty field owns the keyboard.
+      // The line is active — but NO quantity field owns the keyboard
+      // (Phase 8 FIX #1 retired: an add never auto-focuses a qty field).
       expect(cart.lastActiveKey, key);
+      expect(focusedFieldKey(tester), isNot('cart-line-qty-$key'));
+
+      // An EXPLICIT click still parks focus in the qty field and hand
+      // editing keeps working normally.
+      await tester.tap(find.byKey(Key('cart-line-qty-$key')));
+      await tester.pump();
       expect(focusedFieldKey(tester), 'cart-line-qty-$key');
+      await tester.enterText(find.byKey(Key('cart-line-qty-$key')), '5');
+      await tester.pump();
+      expect(qtyAt(tester, 0), '5');
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('+ pressed right after the add increments the focused line',
+    testWidgets('+ pressed right after the add increments the active line',
         (tester) async {
       await _pumpApp(tester, dio: dio);
       await tester.pump(const Duration(milliseconds: 500));
@@ -8009,8 +8103,9 @@ void main() {
       await pressPlus(tester);
 
       expect(qtyAt(tester, 0), '2');
-      // Focus never left the line that `+` is incrementing.
-      expect(focusedFieldKey(tester), 'cart-line-qty-$key');
+      // `+` targets the ACTIVE line — never through a qty-field focus
+      // move (the add never focused one).
+      expect(focusedFieldKey(tester), isNot('cart-line-qty-$key'));
       expect(tester.takeException(), isNull);
     });
 
@@ -8050,7 +8145,7 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('the second product added becomes the focused active line',
+    testWidgets('the second product added becomes the active line',
         (tester) async {
       const secondId = '00000000-0000-0000-0000-0000000000p2';
       final twoDio = MockDio();
@@ -8071,7 +8166,7 @@ void main() {
       await tester.tap(find.byKey(Key('pos-product-$_productId')));
       await tester.pumpAndSettle();
       final firstKey = containerOf(tester).read(posCartProvider).lines.first.key;
-      expect(focusedFieldKey(tester), 'cart-line-qty-$firstKey');
+      expect(focusedFieldKey(tester), isNot('cart-line-qty-$firstKey'));
 
       await tester.tap(find.byKey(Key('pos-product-$secondId')));
       await tester.pumpAndSettle();
@@ -8081,18 +8176,18 @@ void main() {
       final secondKey = cart.lines.last.key;
       expect(secondKey, isNot(firstKey));
       expect(cart.lastActiveKey, secondKey);
-      expect(focusedFieldKey(tester), 'cart-line-qty-$secondKey');
+      // Neither add auto-focused any quantity field.
+      expect(focusedFieldKey(tester), isNot('cart-line-qty-$secondKey'));
 
       await pressPlus(tester);
 
-      // Only the newly added (focused) line moved.
+      // Only the newly added (active) line moved.
       expect(qtyAt(tester, 0), '1');
       expect(qtyAt(tester, 1), '2');
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('adding again merges into the same line and focuses it',
-        (tester) async {
+    testWidgets('adding again merges into the same line', (tester) async {
       await _pumpApp(tester, dio: dio);
       await tester.pump(const Duration(milliseconds: 500));
       await addBread(tester);
@@ -8103,7 +8198,8 @@ void main() {
       final key = cart.lines.first.key;
       expect(cart.lines.first.quantity, '2');
       expect(cart.lastActiveKey, key);
-      expect(focusedFieldKey(tester), 'cart-line-qty-$key');
+      // The merge never auto-focused the quantity field.
+      expect(focusedFieldKey(tester), isNot('cart-line-qty-$key'));
 
       await pressPlus(tester);
 
@@ -8174,7 +8270,7 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('+ respects the stock guard on the auto-focused line',
+    testWidgets('+ respects the stock guard on the active line',
         (tester) async {
       final stockDio = MockDio();
       _mockDio(stockDio, productQuantity: '3');
@@ -9232,8 +9328,8 @@ void main() {
     }
 
     /// Direct add through the real catalog (no variant / selling-unit
-    /// picker) — the flow that auto-focuses the new line's qty field
-    /// (Phase 8 FIX #1).
+    /// picker) — the flow that (Phase 8 FIX #1 retired) leaves the new
+    /// line ACTIVE without auto-focusing its qty field.
     Future<void> addFromCatalog(WidgetTester tester) async {
       await tester.tap(find.byKey(Key('pos-product-$_productId')));
       await tester.pumpAndSettle();
@@ -9303,14 +9399,13 @@ void main() {
     });
 
     // ── SPACE vs the cart quantity field (regression) ─────────────────────
-    // Every add leaves focus in the new line's quantity field (Phase 8
-    // FIX #1), where SPACE used to fall through to the text input: the
-    // payment dialog never opened and the quantity was the field that
-    // received the key. SPACE must win there, and the key must be CONSUMED
-    // so the quantity text input never sees the character.
+    // A catalog add leaves the new line ACTIVE but never focuses its
+    // quantity field (Phase 8 FIX #1 retired): SPACE still wins the pay
+    // key from that post-add state and must be CONSUMED, so no text input
+    // ever sees the character and the quantity stays untouched.
     testWidgets(
-        'SPACE with the auto-focused qty field opens payment (regression)',
-        (tester) async {
+        'SPACE right after a catalog add pays — the add never focused a '
+        'qty field', (tester) async {
       await _pumpApp(tester, dio: dio);
       await tester.pump(const Duration(milliseconds: 500));
 
@@ -9321,8 +9416,8 @@ void main() {
       final key = cart.lines.first.key;
       expect(
         focusedFieldKey(tester),
-        'cart-line-qty-$key',
-        reason: 'the add must leave focus on the new line qty field',
+        isNot('cart-line-qty-$key'),
+        reason: 'the add must never focus the new line qty field',
       );
       final textBefore = qtyFieldText(tester, 0);
 
@@ -9956,6 +10051,48 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
+    testWidgets('dense typography: 14px semibold column headers, 15px row '
+        'name / unit price / line total', (tester) async {
+      await _pumpApp(tester, dio: dio);
+      await tester.pump(const Duration(milliseconds: 500));
+      addLine(tester, bread);
+      await tester.pump();
+      await toggleLayout(tester);
+
+      // Column headers share one 14px w600 label style (was 12px bold —
+      // glance-text the cashier reads while scanning rows).
+      final header = find.byKey(const Key('pos-dense-header'));
+      expect(header, findsOneWidget);
+      for (final label in [
+        AppStrings.t('name', 'en'),
+        AppStrings.t('unit_price', 'en'),
+        AppStrings.t('total_label', 'en'),
+      ]) {
+        final cell = tester.widget<Text>(
+          find.descendant(of: header, matching: find.text(label)),
+        );
+        expect(cell.style?.fontSize, 14,
+            reason: '$label column header must be 14px');
+        expect(cell.style?.fontWeight, FontWeight.w600,
+            reason: '$label column header must be semibold');
+      }
+
+      // Row text bumped to the readable band: name, unit price, line total.
+      final name = tester.widget<Text>(
+        find.byKey(Key('cart-line-name-${bread.key}')),
+      );
+      expect(name.style?.fontSize, 15);
+      final price = tester.widget<Text>(
+        find.byKey(Key('cart-line-price-${bread.key}')),
+      );
+      expect(price.style?.fontSize, 15);
+      final total = tester.widget<Text>(
+        find.byKey(Key('cart-line-total-${bread.key}')),
+      );
+      expect(total.style?.fontSize, 15);
+      expect(tester.takeException(), isNull);
+    });
+
     testWidgets('second tap restores the standard layout', (tester) async {
       await _pumpApp(tester, dio: dio);
       await tester.pump(const Duration(milliseconds: 500));
@@ -9972,7 +10109,8 @@ void main() {
         (tester) async {
       await _pumpApp(tester, dio: dio);
       await tester.pump(const Duration(milliseconds: 500));
-      // Real catalog add (screen-driven) — leaves focus on the qty field.
+      // Real catalog add (screen-driven) — the line becomes active but
+      // never auto-focuses its qty field (Phase 8 FIX #1 retired).
       await tester.tap(find.byKey(Key('pos-product-$_productId')));
       await tester.pumpAndSettle();
       final cart = containerOf(tester).read(posCartProvider);
@@ -9981,7 +10119,7 @@ void main() {
         find.byKey(Key('cart-line-qty-$key')),
       );
       expect(qtyBefore.controller!.text, '1');
-      expect(focusedFieldKey(tester), 'cart-line-qty-$key');
+      expect(focusedFieldKey(tester), isNot('cart-line-qty-$key'));
 
       await toggleLayout(tester);
 
@@ -10002,11 +10140,15 @@ void main() {
     });
 
     testWidgets(
-        'barcode scan add in reversed mode selects and focuses the new line',
-        (tester) async {
+        'barcode scan add in reversed mode selects the new line '
+        '— and the arrows answer from the scan input', (tester) async {
       await _pumpApp(tester, dio: dio);
       await tester.pump(const Duration(milliseconds: 500));
       await toggleLayout(tester);
+      // One pre-existing line so the post-scan arrow has somewhere to go
+      // (productId differs from the scanned catalog product → 2 lines).
+      addLine(tester, bread);
+      await tester.pump();
 
       await focusSearchField(tester);
       await tester.enterText(
@@ -10019,11 +10161,79 @@ void main() {
       await tester.pumpAndSettle();
 
       final cart = containerOf(tester).read(posCartProvider);
-      expect(cart.lines, hasLength(1));
-      final key = cart.lines.single.key;
+      expect(cart.lines, hasLength(2));
+      final key = cart.lines.last.key;
       expect(cart.lastActiveKey, key);
       expect(find.byKey(Key('cart-line-selected-$key')), findsOneWidget);
-      expect(focusedFieldKey(tester), 'cart-line-qty-$key');
+      expect(
+        focusedFieldKey(tester),
+        'pos-search-field',
+        reason: 'a scanner add never auto-focuses the qty field — the '
+            '(cleared) scan input keeps focus',
+      );
+      expect(tester.takeException(), isNull);
+
+      // The scan add leaves focus in the scan input — the NEXT arrow
+      // press must walk the selection with no cart click, no focus
+      // theft, and no vertical-caret assertion (§2).
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+      await tester.pumpAndSettle();
+      expect(containerOf(tester).read(posCartProvider).lastActiveKey,
+          cart.lines.first.key,
+          reason: 'Up right after a scan add must move the selection');
+      expect(focusedFieldKey(tester), 'pos-search-field');
+      expect(tester.takeException(), isNull);
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+      await tester.pumpAndSettle();
+      expect(containerOf(tester).read(posCartProvider).lastActiveKey, key);
+      expect(focusedFieldKey(tester), 'pos-search-field');
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'reversed layout: an arrow press reveals the moved-to row WITHOUT '
+        'any manual settle', (tester) async {
+      await _pumpApp(tester, dio: dio);
+      await tester.pump(const Duration(milliseconds: 500));
+      await toggleLayout(tester);
+      // Far more lines than fit — the moved-to row needs a real reveal.
+      for (var i = 0; i < 30; i++) {
+        addLine(
+          tester,
+          CartLine(
+            productId: 'p$i',
+            name: 'Line $i',
+            quantity: '1',
+            unitPrice: '1',
+          ),
+        );
+      }
+      await tester.pump();
+
+      final cart = containerOf(tester).read(posCartProvider);
+      final keys = [for (final line in cart.lines) line.key];
+      expect(cart.lastActiveKey, keys.last,
+          reason: 'the newest line is preselected by the last add');
+
+      // §5: only the key press + explicit duration frames — no
+      // pumpAndSettle (a full settle would mask a reveal that never
+      // finishes). The idle barcode field holds focus, so the press is
+      // claimed and the walk runs from the workspace state.
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+      await tester.pump(const Duration(milliseconds: 50));
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(containerOf(tester).read(posCartProvider).lastActiveKey,
+          keys[keys.length - 2],
+          reason: 'Up must walk the selection in the dense table');
+      final viewport = tester.getRect(find.byKey(const Key('pos-cart-lines')));
+      final tile = tester.getRect(
+          find.byKey(Key('cart-line-${keys[keys.length - 2]}')));
+      expect(tile.top, greaterThanOrEqualTo(viewport.top - 0.5),
+          reason: 'the moved-to row must be revealed above the fold');
+      expect(tile.bottom, lessThanOrEqualTo(viewport.bottom + 0.5),
+          reason: 'and fully inside the dense viewport');
       expect(tester.takeException(), isNull);
     });
 
@@ -10226,9 +10436,9 @@ void main() {
       await tester.pump();
 
       // Real barcode scan flow (search field → Enter) — the screen-driven
-      // add path that issues the post-add focus + ensureVisible request.
-      // The list sits at the TOP, so the new row (appended at the END) is
-      // far below the fold when the request fires.
+      // add path that issues the post-add reveal request (never a focus
+      // request). The list sits at the TOP, so the new row (appended at
+      // the END) is far below the fold when the request fires.
       await focusSearchField(tester);
       await tester.enterText(
         find.byKey(const Key('pos-search-field')),
@@ -10254,9 +10464,10 @@ void main() {
       expect(tile.top, greaterThanOrEqualTo(lines.top - 0.75));
       expect(tile.bottom, lessThanOrEqualTo(lines.bottom + 0.75));
       expect(tile.bottom, lessThanOrEqualTo(actions.top + 0.75));
-      // Focus stays on the new line's qty field — continuous scanning and
-      // quantity editing are untouched.
-      expect(focusedFieldKey(tester), 'cart-line-qty-$key');
+      // The reveal brought the row into view WITHOUT moving focus — the
+      // (cleared) scan input keeps it; the qty field is never
+      // auto-focused after a scanner add.
+      expect(focusedFieldKey(tester), 'pos-search-field');
       expect(tester.takeException(), isNull);
     });
 
@@ -11730,6 +11941,1628 @@ void main() {
       await tester.pump(const Duration(milliseconds: 400));
       expect(focusedFieldKey(tester), 'pos-search-field');
       expect(controllerText(tester, const Key('pos-search-field')), 'bre');
+      expect(tester.takeException(), isNull);
+    });
+  });
+
+  group('barcode scanner integration (POS)', () {
+    late MockDio dio;
+
+    setUp(() {
+      dio = MockDio();
+      _mockDio(dio);
+    });
+
+    Future<void> pumpPos(
+      WidgetTester tester, {
+      Map<String, Map<String, dynamic>>? barcodeLookups,
+      String productQuantity = '20',
+      Size size = const Size(1366, 768),
+      int variantsFailOnce = 0,
+    }) async {
+      if (barcodeLookups != null ||
+          productQuantity != '20' ||
+          variantsFailOnce > 0) {
+        dio = MockDio();
+        _mockDio(
+          dio,
+          barcodeLookups: barcodeLookups,
+          productQuantity: productQuantity,
+          variantsFailOnce: variantsFailOnce,
+        );
+      }
+      await _pumpApp(tester, dio: dio, size: size);
+      await tester.pump(const Duration(milliseconds: 500));
+    }
+
+    Future<void> focusSearchField(WidgetTester tester) async {
+      await tester.tap(find.byKey(const Key('pos-search-field')));
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+
+    String? focusedFieldKey(WidgetTester tester) {
+      final context = FocusManager.instance.primaryFocus?.context;
+      if (context == null) return null;
+      final field = context.widget is TextField
+          ? context.widget as TextField
+          : context.findAncestorWidgetOfExactType<TextField>();
+      final key = field?.key;
+      return key is ValueKey<String> ? key.value : null;
+    }
+
+    String controllerText(WidgetTester tester, Key key) {
+      final field = tester.widget<TextField>(find.byKey(key));
+      return field.controller?.text ?? '';
+    }
+
+    ProviderContainer containerOf(WidgetTester tester) =>
+        ProviderScope.containerOf(
+          tester.element(find.byKey(const Key('pos-screen'))),
+        );
+
+    String qtyAt(WidgetTester tester, int index) => containerOf(tester)
+        .read(posCartProvider)
+        .lines[index]
+        .quantity;
+
+    testWidgets('scan + Enter adds the product even when the Enter lands '
+        'before the search debounce fires', (tester) async {
+      await pumpPos(tester);
+      await focusSearchField(tester);
+
+      // The wedge types the code and hits Enter immediately — no 250ms
+      // debounce wait. The old debounce-race path silently added nothing
+      // (or the wrong product); the canonical lookup resolves instead.
+      await tester.enterText(
+        find.byKey(const Key('pos-search-field')),
+        '111',
+      );
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+
+      final cart = containerOf(tester).read(posCartProvider);
+      expect(cart.lines, hasLength(1));
+      expect(cart.lines.single.name, 'Bread');
+      // Continuous-scanning hygiene: the field is cleared and empty.
+      expect(
+        controllerText(tester, const Key('pos-search-field')),
+        isEmpty,
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('unknown barcode shows the not-found toast and adds nothing',
+        (tester) async {
+      await pumpPos(tester);
+      await focusSearchField(tester);
+
+      await tester.enterText(
+        find.byKey(const Key('pos-search-field')),
+        '9998887776665',
+      );
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+
+      // A pure-digit query after a lookup miss is a scan of an unknown
+      // code — NO fuzzy first-result fallback (that would add the wrong
+      // product); a clear not-found toast replaces the old silence.
+      expect(find.byKey(const Key('pos-barcode-not-found-toast')), findsOneWidget);
+      expect(containerOf(tester).read(posCartProvider).lines, isEmpty);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('scan into the focused line qty field merges into the '
+        'existing line instead of typing digits into the quantity',
+        (tester) async {
+      // The second scan's code resolves to the same product via the
+      // lookup — the merge path must increment, never add a line.
+      await pumpPos(
+        tester,
+        barcodeLookups: {
+          '111': _lookupHit(),
+          '8718114202402': _lookupHit(),
+        },
+      );
+      await focusSearchField(tester);
+
+      // First scan: adds Bread (qty 1); post-add focus returns to the
+      // (cleared) scan input — never the new line's qty field.
+      await tester.enterText(
+        find.byKey(const Key('pos-search-field')),
+        '111',
+      );
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+
+      final cart = containerOf(tester).read(posCartProvider);
+      expect(cart.lines, hasLength(1));
+      final key = cart.lines.single.key;
+      expect(
+        focusedFieldKey(tester),
+        'pos-search-field',
+        reason: 'a scanner add must never auto-focus the qty field',
+      );
+
+      // Second scan: the cashier clicks into the qty field (manual edit
+      // path) and the 13-digit run is typed there. It is a barcode, not a
+      // quantity — Enter forwards it to the canonical resolve, which
+      // merges into the same product's line.
+      await tester.enterText(
+        find.byKey(Key('cart-line-qty-$key')),
+        '8718114202402',
+      );
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+
+      final after = containerOf(tester).read(posCartProvider);
+      expect(after.lines, hasLength(1),
+          reason: 'the scan merged into the existing line');
+      expect(after.lines.single.quantity, '2');
+      // The qty field shows the merged quantity, never the barcode digits.
+      expect(
+        controllerText(tester, Key('cart-line-qty-$key')),
+        '2',
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a real wedge burst into the focused qty field merges +1 '
+        'without out-of-stock noise', (tester) async {
+      // Regression: the second scan of a continuous session lands as a
+      // REAL keyboard-wedge burst in the focused line qty field. Bread
+      // stock is 20; the burst's digit prefixes (8, 87, 871, …) must
+      // never be parsed as quantities — that fired the shared stock
+      // guard mid-burst ("Out of stock" with stock available) and left
+      // the line quantity corrupted. The engine types by APPENDING at
+      // the caret (which parks at the committed quantity's end after
+      // every add), so the field shows 1 → 18 → 187 → … until Enter.
+      await pumpPos(
+        tester,
+        barcodeLookups: {'8718114202402': _lookupHit()},
+      );
+      await focusSearchField(tester);
+
+      // First scan: adds Bread (qty 1); post-add focus returns to the
+      // (cleared) scan input.
+      await tester.enterText(
+        find.byKey(const Key('pos-search-field')),
+        '111',
+      );
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+
+      final key = containerOf(tester).read(posCartProvider).lines.single.key;
+      expect(
+        focusedFieldKey(tester),
+        'pos-search-field',
+        reason: 'a scanner add must never auto-focus the qty field',
+      );
+
+      // The cashier clicks into the qty field (manual edit path) — the
+      // next burst types there, appended to the committed quantity ('1'),
+      // terminated by Enter.
+      final qtyField = find.byKey(Key('cart-line-qty-$key'));
+      await tester.tap(qtyField);
+      await tester.pump(const Duration(milliseconds: 50));
+      await typeWedgeScanIntoField(
+        tester,
+        qtyField,
+        '8718114202402',
+      );
+      await tester.pumpAndSettle();
+
+      final cart = containerOf(tester).read(posCartProvider);
+      expect(cart.lines, hasLength(1),
+          reason: 'the scan merged into the existing line');
+      expect(
+        cart.lines.single.quantity,
+        '2',
+        reason: 'each distinct burst adds exactly one unit',
+      );
+      // The field shows the merged quantity again, never the barcode
+      // digits and never a stock-guard rollback artifact.
+      expect(controllerText(tester, Key('cart-line-qty-$key')), '2');
+      expect(
+        find.byKey(const Key('pos-qty-stock-error')),
+        findsNothing,
+        reason: 'no stock guard may fire while stock (20) is available',
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('repeated scans merge unit-by-unit up to the stock, then '
+        'the exhausted scan fires the stock guard exactly once',
+        (tester) async {
+      // Stock 10: nine more scans after the first (qty 1 → 10) all
+      // succeed; the 11th is rejected through the shared funnel with the
+      // localized out-of-stock toast, and the quantity stays at 10.
+      await pumpPos(
+        tester,
+        productQuantity: '10',
+        barcodeLookups: {
+          '8718114202402': _lookupHit(productQuantity: '10'),
+        },
+      );
+      await focusSearchField(tester);
+      await tester.enterText(
+        find.byKey(const Key('pos-search-field')),
+        '111',
+      );
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+
+      final key = containerOf(tester).read(posCartProvider).lines.single.key;
+      final qtyField = find.byKey(Key('cart-line-qty-$key'));
+
+      // Scans 2–10: every burst is accepted, one unit at a time. Each
+      // burst the cashier clicks into the qty field first (manual edit
+      // path) — the add itself never moves focus there.
+      for (var scan = 2; scan <= 10; scan++) {
+        await tester.tap(qtyField);
+        await tester.pump(const Duration(milliseconds: 50));
+        await typeWedgeScanIntoField(tester, qtyField, '8718114202402');
+        await tester.pumpAndSettle();
+        expect(
+          containerOf(tester).read(posCartProvider).lines.single.quantity,
+          '$scan',
+          reason: 'scan $scan must land exactly at quantity $scan',
+        );
+      }
+
+      // Scan 11: stock is exhausted — guard fires, quantity unchanged.
+      await tester.tap(qtyField);
+      await tester.pump(const Duration(milliseconds: 50));
+      await typeWedgeScanIntoField(tester, qtyField, '8718114202402');
+      await tester.pumpAndSettle();
+      final cart = containerOf(tester).read(posCartProvider);
+      expect(cart.lines, hasLength(1));
+      expect(cart.lines.single.quantity, '10');
+      expect(find.byKey(const Key('pos-qty-stock-error')), findsOneWidget);
+      // The rejected scan left the field showing the committed quantity.
+      expect(controllerText(tester, Key('cart-line-qty-$key')), '10');
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('scans merge into a partially-filled line only up to the '
+        'remaining stock', (tester) async {
+      // Stock 5, line already holds 3: two further scans succeed (4, 5);
+      // the next is rejected — the guard counts the existing line's base
+      // quantity exactly once against the stock.
+      await pumpPos(
+        tester,
+        productQuantity: '5',
+        barcodeLookups: {
+          '8718114202402': _lookupHit(productQuantity: '5'),
+        },
+      );
+      await focusSearchField(tester);
+      await tester.enterText(
+        find.byKey(const Key('pos-search-field')),
+        '111',
+      );
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+
+      final key = containerOf(tester).read(posCartProvider).lines.single.key;
+      await tester.enterText(find.byKey(Key('cart-line-qty-$key')), '3');
+      await tester.pumpAndSettle();
+      expect(qtyAt(tester, 0), '3');
+
+      final qtyField = find.byKey(Key('cart-line-qty-$key'));
+      await typeWedgeScanIntoField(tester, qtyField, '8718114202402');
+      await tester.pumpAndSettle();
+      expect(qtyAt(tester, 0), '4');
+
+      await tester.tap(qtyField);
+      await tester.pump(const Duration(milliseconds: 50));
+      await typeWedgeScanIntoField(tester, qtyField, '8718114202402');
+      await tester.pumpAndSettle();
+      expect(qtyAt(tester, 0), '5');
+
+      // No stock left: rejected with the stock-guard toast.
+      await tester.tap(qtyField);
+      await tester.pump(const Duration(milliseconds: 50));
+      await typeWedgeScanIntoField(tester, qtyField, '8718114202402');
+      await tester.pumpAndSettle();
+      expect(qtyAt(tester, 0), '5');
+      expect(find.byKey(const Key('pos-qty-stock-error')), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('back-to-back scans with no settle between them each add '
+        'exactly one unit', (tester) async {
+      // Continuous scanning: the first burst resolves while the qty field
+      // is focused; the second burst types straight into that same field
+      // (real caret-append) after only one frame — the merge of the first
+      // is still in flight (no pumpAndSettle). Production always gets at
+      // least one 16ms frame between two physical scans (the previous
+      // scan's post-frame clear restores the committed quantity that the
+      // next burst appends onto); zero frames is physically impossible.
+      await pumpPos(
+        tester,
+        barcodeLookups: {'8718114202402': _lookupHit()},
+      );
+      await focusSearchField(tester);
+      await tester.enterText(
+        find.byKey(const Key('pos-search-field')),
+        '111',
+      );
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+
+      final cart = containerOf(tester).read(posCartProvider);
+      expect(cart.lines.single.quantity, '1');
+
+      final key = containerOf(tester).read(posCartProvider).lines.single.key;
+      final qtyField = find.byKey(Key('cart-line-qty-$key'));
+      // The cashier clicks into the qty field for each burst (manual edit
+      // path) — what is under test is the ZERO-SETTLE timing: the second
+      // burst types while the first burst's merge is still in flight.
+      await tester.tap(qtyField);
+      await tester.pump(const Duration(milliseconds: 50));
+      await typeWedgeScanIntoField(tester, qtyField, '8718114202402');
+      // One frame only — the first scan's chain has NOT settled (its
+      // merge and the qty-field clear are both still pending).
+      await tester.pump();
+      await tester.tap(qtyField);
+      await tester.pump(const Duration(milliseconds: 50));
+      await typeWedgeScanIntoField(tester, qtyField, '8718114202402');
+      await tester.pumpAndSettle();
+
+      final after = containerOf(tester).read(posCartProvider);
+      expect(after.lines, hasLength(1));
+      expect(
+        after.lines.single.quantity,
+        '3',
+        reason: 'start 1 + two bursts = 3, each applied exactly once',
+      );
+      expect(find.byKey(const Key('pos-qty-stock-error')), findsNothing);
+      expect(find.byKey(const Key('pos-barcode-not-found-toast')), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a duplicate Enter for the same completed scan never '
+        'double-adds', (tester) async {
+      // The wedge terminates with Enter; a stuck/duplicated terminator
+      // (or the gateway's buffered Enter replayed) submits again. The
+      // field has been reset to the committed quantity, so the second
+      // submit is a no-op quantity apply — the scan is never re-run.
+      await pumpPos(
+        tester,
+        barcodeLookups: {'8718114202402': _lookupHit()},
+      );
+      await focusSearchField(tester);
+      await tester.enterText(
+        find.byKey(const Key('pos-search-field')),
+        '111',
+      );
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+
+      final key = containerOf(tester).read(posCartProvider).lines.single.key;
+      final qtyField = find.byKey(Key('cart-line-qty-$key'));
+
+      // The cashier clicks into the qty field (manual edit path), the
+      // burst types there and merges +1.
+      await tester.tap(qtyField);
+      await tester.pump(const Duration(milliseconds: 50));
+      await typeWedgeScanIntoField(tester, qtyField, '8718114202402');
+      await tester.pumpAndSettle();
+      expect(qtyAt(tester, 0), '2');
+      // The merge completed; the cashier clicks back into the qty field
+      // showing the committed quantity — a stuck/duplicated Enter
+      // terminator (or the wedge replaying one) resubmits that quantity
+      // only.
+      await tester.tap(qtyField);
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(focusedFieldKey(tester), 'cart-line-qty-$key');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+
+      final cart = containerOf(tester).read(posCartProvider);
+      expect(cart.lines, hasLength(1));
+      expect(
+        cart.lines.single.quantity,
+        '2',
+        reason: 'one physical scan adds exactly one unit, even with '
+            'duplicated Enter terminators',
+      );
+      expect(find.byKey(const Key('pos-qty-stock-error')), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a duplicate delivery of one completed scan inside the '
+        'clear window adds exactly one unit', (tester) async {
+      // Platform-level duplicate: the engine re-delivers the SAME submit
+      // for the SAME on-screen text before the post-frame clear has landed
+      // (CR+LF terminator, queued performAction, key repeat inside the
+      // frame). One physical scan = one mutation — the second delivery
+      // must be swallowed, never re-dispatched.
+      await pumpPos(
+        tester,
+        barcodeLookups: {'8718114202402': _lookupHit()},
+      );
+      await focusSearchField(tester);
+      await tester.enterText(
+        find.byKey(const Key('pos-search-field')),
+        '111',
+      );
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+
+      final key = containerOf(tester).read(posCartProvider).lines.single.key;
+      final qtyField = find.byKey(Key('cart-line-qty-$key'));
+
+      // The burst is typed into the focused qty field but NOT yet
+      // submitted (per-character text updates, no receiveAction).
+      final editable = tester.widget<EditableText>(
+        find.descendant(of: qtyField, matching: find.byType(EditableText)),
+      );
+      var text = editable.controller.text;
+      for (final character in '8718114202402'.split('')) {
+        text += character;
+        tester.testTextInput.updateEditingValue(TextEditingValue(
+          text: text,
+          selection: TextSelection.collapsed(offset: text.length),
+        ));
+        await tester.pump();
+      }
+      expect(text, '18718114202402');
+
+      // Deliver the completed scan TWICE with no frame in between — the
+      // field still shows the burst text on the second delivery.
+      final textField = tester.widget<TextField>(qtyField);
+      textField.onSubmitted!(text);
+      textField.onSubmitted!(text);
+      await tester.pumpAndSettle();
+
+      final cart = containerOf(tester).read(posCartProvider);
+      expect(cart.lines, hasLength(1));
+      expect(
+        cart.lines.single.quantity,
+        '2',
+        reason: 'one physical scan must add exactly one unit even when '
+            'the platform delivers its submit twice inside one frame',
+      );
+      expect(
+        controllerText(tester, Key('cart-line-qty-$key')),
+        '2',
+        reason: 'the field converges back to the committed quantity',
+      );
+      expect(find.byKey(const Key('pos-qty-stock-error')), findsNothing);
+      verify(
+        () => dio.get(
+          '/api/v1/products/barcode-lookup',
+          queryParameters: {'barcode': '8718114202402'},
+        ),
+      ).called(1);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a burst digit after a quantity expression that resolved to '
+        'the committed value is a run append, never a quantity', (tester) async {
+      // Desync regression (repeated-scan corruption): `1*1` applies as the
+      // SAME quantity the line already holds, so the rebuild never
+      // corrects the typing tracker — the next scanner digit used to fail
+      // the append check and parse as a barcode prefix (quantity jumped to
+      // 14/15, or the stock guard fired while stock was available).
+      await pumpPos(
+        tester,
+        barcodeLookups: {'8718114202402': _lookupHit()},
+      );
+      await focusSearchField(tester);
+      await tester.enterText(
+        find.byKey(const Key('pos-search-field')),
+        '111',
+      );
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+
+      final key = containerOf(tester).read(posCartProvider).lines.single.key;
+      final qtyField = find.byKey(Key('cart-line-qty-$key'));
+      expect(qtyAt(tester, 0), '1');
+
+      // Whole-replace with an expression equal to the committed value:
+      // applies (returns true) but the quantity does not change.
+      await tester.enterText(qtyField, '1*1');
+      await tester.pump();
+      expect(qtyAt(tester, 0), '1');
+
+      // The FIRST digit of the next physical burst lands in the field.
+      final editable = tester.widget<EditableText>(
+        find.descendant(of: qtyField, matching: find.byType(EditableText)),
+      );
+      final base = editable.controller.text;
+      final next = '${base}4';
+      tester.testTextInput.updateEditingValue(TextEditingValue(
+        text: next,
+        selection: TextSelection.collapsed(offset: next.length),
+      ));
+      await tester.pump();
+
+      expect(
+        qtyAt(tester, 0),
+        '1',
+        reason: 'a single appended burst digit must never be parsed as a '
+            'quantity (the video bug: quantity jumped to 14/15 mid-burst)',
+      );
+      expect(
+        find.byKey(const Key('pos-qty-stock-error')),
+        findsNothing,
+        reason: 'the stock guard may not fire on a burst prefix while '
+            'stock (20) is available',
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('repeated scans keep product identity and the stock stamp '
+        'intact', (tester) async {
+      // Three scans in a row: the line stays the same product line with
+      // the same identity fields and the server's stock stamp — only the
+      // quantity moves.
+      await pumpPos(
+        tester,
+        barcodeLookups: {'8718114202402': _lookupHit()},
+      );
+      await focusSearchField(tester);
+      await tester.enterText(
+        find.byKey(const Key('pos-search-field')),
+        '111',
+      );
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+
+      final before = containerOf(tester).read(posCartProvider).lines.single;
+      final qtyField = find.byKey(Key('cart-line-qty-${before.key}'));
+
+      for (var scan = 2; scan <= 4; scan++) {
+        await tester.tap(qtyField);
+        await tester.pump(const Duration(milliseconds: 50));
+        await typeWedgeScanIntoField(tester, qtyField, '8718114202402');
+        await tester.pumpAndSettle();
+        final line = containerOf(tester).read(posCartProvider).lines.single;
+        expect(line.quantity, '$scan');
+        expect(line.productId, before.productId);
+        expect(line.variantId, before.variantId);
+        expect(line.sellingUnitId, before.sellingUnitId);
+        expect(line.unitName, before.unitName);
+        expect(line.availableStock, before.availableStock);
+      }
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('unknown scan in the qty field shows the not-found toast '
+        'and leaves the quantity untouched', (tester) async {
+      await pumpPos(tester);
+      await focusSearchField(tester);
+      await tester.enterText(
+        find.byKey(const Key('pos-search-field')),
+        '111',
+      );
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+
+      final key = containerOf(tester).read(posCartProvider).lines.single.key;
+      await tester.enterText(
+        find.byKey(Key('cart-line-qty-$key')),
+        '9998887776665',
+      );
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('pos-barcode-not-found-toast')), findsOneWidget);
+      expect(
+        containerOf(tester).read(posCartProvider).lines.single.quantity,
+        '1',
+      );
+      expect(
+        controllerText(tester, Key('cart-line-qty-$key')),
+        '1',
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('leading-zero barcode resolves as a string (never parsed '
+        'as a number)', (tester) async {
+      await pumpPos(
+        tester,
+        barcodeLookups: {
+          '00123456789012': _lookupHit(),
+        },
+      );
+      await focusSearchField(tester);
+
+      await tester.enterText(
+        find.byKey(const Key('pos-search-field')),
+        '00123456789012',
+      );
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+
+      final cart = containerOf(tester).read(posCartProvider);
+      expect(cart.lines, hasLength(1),
+          reason: 'the exact leading-zero string resolved via the lookup');
+      expect(cart.lines.single.name, 'Bread');
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('typed text Enter still falls back to the first result',
+        (tester) async {
+      await pumpPos(tester);
+      await focusSearchField(tester);
+
+      // 'bre' is typed text, not a scan: the canonical lookup misses,
+      // the fresh search runs, no exact name/SKU/barcode matches, and
+      // the documented first-result fallback adds Bread.
+      await tester.enterText(
+        find.byKey(const Key('pos-search-field')),
+        'bre',
+      );
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+
+      final cart = containerOf(tester).read(posCartProvider);
+      expect(cart.lines, hasLength(1));
+      expect(cart.lines.single.name, 'Bread');
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a double Enter on a known barcode adds the product once',
+        (tester) async {
+      await pumpPos(tester);
+      await focusSearchField(tester);
+
+      await tester.enterText(
+        find.byKey(const Key('pos-search-field')),
+        '111',
+      );
+      // Two Enters racing the same in-flight resolve — the re-entry
+      // guard drops the second before it can double-add.
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+
+      expect(containerOf(tester).read(posCartProvider).lines, hasLength(1));
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('focus-yank regression: a burst landing in the search '
+        'field while the post-add qty refocus is still pending is never '
+        'split across the two fields', (tester) async {
+      // Real-device Evidence B, vector 1 (`qty-submit len=7`): scan #1
+      // submits from the search field, its add chain refocuses search for
+      // the next scan and queues the line-qty refocus for the next frame.
+      // The NEXT burst starts typing into the still-focused search field
+      // before that frame runs — and the pending qty refocus used to fire
+      // MID-burst, stealing the remaining digits into the qty field. One
+      // physical scan must complete in exactly ONE consumer.
+      await pumpPos(
+        tester,
+        barcodeLookups: {'8718114202402': _lookupHit()},
+      );
+      await focusSearchField(tester);
+
+      // Scan #1 via the focused search field. Only MICROTASKS drain after
+      // this (no frame): the add chain completes — search refocused and
+      // cleared — and the qty refocus stays queued for the next frame.
+      // This is the race window.
+      await tester.enterText(
+        find.byKey(const Key('pos-search-field')),
+        '111',
+      );
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await Future<void>.microtask(() {});
+      expect(containerOf(tester).read(posCartProvider).lines, hasLength(1));
+      await Future<void>.microtask(() {});
+
+      // The next burst starts typing NOW — into the still-focused search
+      // field — before any frame has run the pending qty refocus.
+      const searchKey = Key('pos-search-field');
+      tester.testTextInput.updateEditingValue(const TextEditingValue(
+        text: '871811',
+        selection: TextSelection.collapsed(offset: 6),
+      ));
+      await tester.pump();
+
+      // The qty refocus fired this frame — it may NOT steal a field that
+      // holds uncommitted burst digits.
+      expect(
+        focusedFieldKey(tester),
+        'pos-search-field',
+        reason: 'the post-add qty refocus must never interrupt a '
+            'burst mid-typing (it splits one physical scan across two '
+            'fields)',
+      );
+      expect(controllerText(tester, searchKey), '871811');
+
+      // The rest of the SAME burst continues into the same field.
+      tester.testTextInput.updateEditingValue(TextEditingValue(
+        text: '${controllerText(tester, searchKey)}4202402',
+        selection: const TextSelection.collapsed(offset: 13),
+      ));
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+
+      final cart = containerOf(tester).read(posCartProvider);
+      expect(cart.lines, hasLength(1));
+      expect(
+        cart.lines.single.quantity,
+        '2',
+        reason: 'two physical scans = two units, never a fragment',
+      );
+      expect(
+        find.byKey(const Key('pos-barcode-not-found-toast')),
+        findsNothing,
+        reason: 'the 7-char suffix must never be looked up on its own',
+      );
+      verify(
+        () => dio.get(
+          '/api/v1/products/barcode-lookup',
+          queryParameters: {'barcode': '8718114202402'},
+        ),
+      ).called(1);
+      verifyNever(
+        () => dio.get(
+          '/api/v1/products/barcode-lookup',
+          queryParameters: {'barcode': '4202402'},
+        ),
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('mid-burst quantity sync regression: a concurrent merge '
+        'never wipes the digit run being typed', (tester) async {
+      // Real-device Evidence B, vector 2: while the cashier's burst sits
+      // in the focused qty field, a slow lookup from a concurrent add
+      // resolves and bumps the committed quantity 1 → 2. The tile sync
+      // used to clobber the in-flight run with the new committed value,
+      // so the burst's remaining digits submitted as a FOREIGN suffix on
+      // that base (`2` + `4202402` → `qty-submit len=7`).
+      await pumpPos(
+        tester,
+        barcodeLookups: {'8718114202402': _lookupHit()},
+      );
+      await focusSearchField(tester);
+      await tester.enterText(
+        find.byKey(const Key('pos-search-field')),
+        '111',
+      );
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+
+      final key = containerOf(tester).read(posCartProvider).lines.single.key;
+      final qtyKey = Key('cart-line-qty-$key');
+      expect(
+        focusedFieldKey(tester),
+        'pos-search-field',
+        reason: 'a scanner add returns focus to the (cleared) scan input '
+            '— never auto-focusing the qty field',
+      );
+      // The cashier clicks into the qty field (manual edit path) — the
+      // burst below types straight into it.
+      await tester.tap(find.byKey(qtyKey));
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(focusedFieldKey(tester), 'cart-line-qty-$key');
+      expect(controllerText(tester, qtyKey), '1');
+
+      // The concurrent scan's lookup is SLOW — it will resolve while the
+      // burst below is already in the field.
+      var lookups = 0;
+      when(() => dio.get(
+            '/api/v1/products/barcode-lookup',
+            queryParameters: any(named: 'queryParameters'),
+          )).thenAnswer((invocation) async {
+        lookups++;
+        if (lookups == 1) {
+          await Future<void>.delayed(const Duration(milliseconds: 300));
+        }
+        return _ok(
+          '/api/v1/products/barcode-lookup',
+          _lookupHit(),
+        );
+      });
+
+      // The START of this burst is typed straight into the focused qty
+      // field, not yet submitted (per-character text updates, no Enter).
+      tester.testTextInput.updateEditingValue(
+        const TextEditingValue(
+          text: '1871811',
+          selection: TextSelection.collapsed(offset: 7),
+        ),
+      );
+
+      // The concurrent add is submitted from the search field while the
+      // burst sits in the qty field — its lookup stays in flight until
+      // the pump below.
+      await tester.tap(find.byKey(const Key('pos-search-field')));
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(focusedFieldKey(tester), 'pos-search-field');
+      expect(
+        controllerText(tester, qtyKey),
+        '1871811',
+        reason: 'moving focus never edits the qty run',
+      );
+      await tester.enterText(
+        find.byKey(const Key('pos-search-field')),
+        '8718114202402',
+      );
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pump(const Duration(milliseconds: 400));
+
+      // The slow lookup resolved mid-"burst": the committed quantity
+      // moved 1 → 2, but the pure-digit run in the qty field must survive
+      // the sync untouched.
+      expect(qtyAt(tester, 0), '2');
+      expect(
+        controllerText(tester, qtyKey),
+        '1871811',
+        reason: 'a committed-quantity sync may never wipe a pure-digit '
+            'run in progress',
+      );
+
+      // The rest of the SAME burst completes in the qty field and submits
+      // as one full code.
+      await tester.tap(find.byKey(qtyKey));
+      await tester.pump();
+      expect(focusedFieldKey(tester), 'cart-line-qty-$key');
+      tester.testTextInput.updateEditingValue(
+        const TextEditingValue(
+          text: '18718114202402',
+          selection: TextSelection.collapsed(offset: 14),
+        ),
+      );
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+
+      final cart = containerOf(tester).read(posCartProvider);
+      expect(cart.lines, hasLength(1));
+      expect(
+        cart.lines.single.quantity,
+        '3',
+        reason: 'three physical scans = three units',
+      );
+      verify(
+        () => dio.get(
+          '/api/v1/products/barcode-lookup',
+          queryParameters: {'barcode': '8718114202402'},
+        ),
+      ).called(2);
+      verifyNever(
+        () => dio.get(
+          '/api/v1/products/barcode-lookup',
+          queryParameters: {'barcode': '4202402'},
+        ),
+      );
+      expect(find.byKey(const Key('pos-barcode-not-found-toast')), findsNothing);
+      expect(find.byKey(const Key('pos-qty-stock-error')), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a scanner add from the scan input never auto-focuses the '
+        'quantity field', (tester) async {
+      await pumpPos(
+        tester,
+        barcodeLookups: {'8718114202402': _lookupHit()},
+      );
+      await focusSearchField(tester);
+      await tester.enterText(
+        find.byKey(const Key('pos-search-field')),
+        '111',
+      );
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+
+      final cart = containerOf(tester).read(posCartProvider);
+      expect(cart.lines, hasLength(1));
+      final key = cart.lines.single.key;
+      expect(
+        focusedFieldKey(tester),
+        'pos-search-field',
+        reason: 'focus returns to the (cleared) scan input after a '
+            'scanner-driven add',
+      );
+      expect(
+        focusedFieldKey(tester),
+        isNot('cart-line-qty-$key'),
+        reason: 'the qty field must never receive scanner input',
+      );
+      expect(controllerText(tester, const Key('pos-search-field')), isEmpty);
+      expect(
+        controllerText(tester, Key('cart-line-qty-$key')),
+        '1',
+        reason: 'the qty field holds only the committed quantity, never '
+            'scanner digits',
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('two consecutive scans from the scan input each add one '
+        'unit with focus staying in the scan input', (tester) async {
+      await pumpPos(
+        tester,
+        barcodeLookups: {'8718114202402': _lookupHit()},
+      );
+      await focusSearchField(tester);
+
+      await tester.enterText(
+        find.byKey(const Key('pos-search-field')),
+        '111',
+      );
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+      expect(
+        containerOf(tester).read(posCartProvider).lines.single.quantity,
+        '1',
+      );
+      expect(focusedFieldKey(tester), 'pos-search-field');
+
+      // Second physical scan: the first add cleared and refocused the
+      // scan input, so the burst lands there as a fresh code.
+      await tester.enterText(
+        find.byKey(const Key('pos-search-field')),
+        '8718114202402',
+      );
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+
+      final cart = containerOf(tester).read(posCartProvider);
+      expect(cart.lines, hasLength(1));
+      expect(cart.lines.single.quantity, '2');
+      final key = cart.lines.single.key;
+      expect(
+        focusedFieldKey(tester),
+        'pos-search-field',
+        reason: 'focus returns to the scan input after every scanner add',
+      );
+      expect(
+        controllerText(tester, Key('cart-line-qty-$key')),
+        '2',
+        reason: 'the qty field never receives scanner digits',
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('repeated scan adds never type partial barcode digits into '
+        'the quantity field', (tester) async {
+      await pumpPos(
+        tester,
+        barcodeLookups: {'8718114202402': _lookupHit()},
+      );
+      await focusSearchField(tester);
+      await tester.enterText(
+        find.byKey(const Key('pos-search-field')),
+        '111',
+      );
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+
+      // Consecutive scans, no manual field clicks: every burst must find
+      // the scan input focused, and the qty field must show only the
+      // committed quantity — never a barcode prefix/suffix fragment.
+      for (var scan = 2; scan <= 4; scan++) {
+        expect(
+          focusedFieldKey(tester),
+          'pos-search-field',
+          reason: 'scan $scan must find the scan input focused',
+        );
+        await tester.enterText(
+          find.byKey(const Key('pos-search-field')),
+          '8718114202402',
+        );
+        await tester.testTextInput.receiveAction(TextInputAction.done);
+        await tester.pumpAndSettle();
+        final cart = containerOf(tester).read(posCartProvider);
+        expect(cart.lines, hasLength(1));
+        expect(cart.lines.single.quantity, '$scan');
+        final key = cart.lines.single.key;
+        expect(
+          controllerText(tester, Key('cart-line-qty-$key')),
+          '$scan',
+          reason: 'after scan $scan the qty field shows only the committed '
+              'quantity — never a barcode fragment',
+        );
+        expect(
+          find.byKey(const Key('pos-barcode-not-found-toast')),
+          findsNothing,
+        );
+        expect(find.byKey(const Key('pos-qty-stock-error')), findsNothing);
+      }
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('manual click-to-edit of the quantity field still applies '
+        'a typed quantity', (tester) async {
+      await pumpPos(
+        tester,
+        barcodeLookups: {'8718114202402': _lookupHit()},
+      );
+      await focusSearchField(tester);
+      await tester.enterText(
+        find.byKey(const Key('pos-search-field')),
+        '111',
+      );
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+
+      final key = containerOf(tester).read(posCartProvider).lines.single.key;
+      final qtyField = find.byKey(Key('cart-line-qty-$key'));
+      expect(focusedFieldKey(tester), 'pos-search-field');
+
+      // Phase 8 FIX #1 survives: a cashier click focuses the qty field…
+      await tester.tap(qtyField);
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(focusedFieldKey(tester), 'cart-line-qty-$key');
+
+      // …and a typed quantity applies through the shared validating
+      // mutation (stock guard and over-stock typing covered at
+      // 'out-of-stock is detected while typing (immediate)' and the
+      // scan-loop stock tests above).
+      await tester.enterText(qtyField, '5');
+      await tester.pumpAndSettle();
+      expect(qtyAt(tester, 0), '5');
+      expect(controllerText(tester, Key('cart-line-qty-$key')), '5');
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a successful scan keeps the product panel populated — '
+        'never stuck on the empty state', (tester) async {
+      await pumpPos(
+        tester,
+        barcodeLookups: {'8718114202402': _lookupHit()},
+      );
+      await focusSearchField(tester);
+      await tester.enterText(
+        find.byKey(const Key('pos-search-field')),
+        '8718114202402',
+      );
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+
+      final cart = containerOf(tester).read(posCartProvider);
+      expect(cart.lines, hasLength(1));
+      expect(
+        find.byKey(const Key('pos-no-products')),
+        findsNothing,
+        reason: 'the post-scan catalog clear must immediately reload the '
+            'normal list — the panel can never stick on "No matching '
+            'products" until the cashier navigates away and back',
+      );
+      expect(find.byKey(const Key('pos-product-grid')), findsOneWidget);
+      expect(
+        find.byKey(Key('pos-product-name-$_productId')),
+        findsOneWidget,
+      );
+      expect(
+        focusedFieldKey(tester),
+        'pos-search-field',
+        reason: 'focus is back on the cleared scan input',
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('the product panel stays usable for another add after a '
+        'scan — no navigation away and back', (tester) async {
+      await pumpPos(
+        tester,
+        barcodeLookups: {'8718114202402': _lookupHit()},
+      );
+      await focusSearchField(tester);
+      await tester.enterText(
+        find.byKey(const Key('pos-search-field')),
+        '8718114202402',
+      );
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+      expect(containerOf(tester).read(posCartProvider).lines, hasLength(1));
+
+      // The catalog card is still on screen and still adds: tapping it
+      // merges into the scanned line (quantity 2). No page navigation
+      // anywhere in this test.
+      await tester.tap(find.byKey(Key('pos-product-$_productId')));
+      await tester.pumpAndSettle();
+
+      final cart = containerOf(tester).read(posCartProvider);
+      expect(cart.lines, hasLength(1));
+      expect(cart.lines.single.quantity, '2');
+      expect(find.byKey(const Key('pos-no-products')), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('repeated scans keep the product list populated between '
+        'every scan', (tester) async {
+      await pumpPos(
+        tester,
+        barcodeLookups: {'8718114202402': _lookupHit()},
+      );
+      await focusSearchField(tester);
+
+      for (var scan = 1; scan <= 3; scan++) {
+        await tester.enterText(
+          find.byKey(const Key('pos-search-field')),
+          '8718114202402',
+        );
+        await tester.testTextInput.receiveAction(TextInputAction.done);
+        await tester.pumpAndSettle();
+
+        expect(
+          containerOf(tester).read(posCartProvider).lines.single.quantity,
+          '$scan',
+          reason: 'scan $scan adds exactly one unit',
+        );
+        expect(
+          find.byKey(const Key('pos-no-products')),
+          findsNothing,
+          reason: 'after scan $scan the panel must show the normal list',
+        );
+        expect(find.byKey(const Key('pos-product-grid')), findsOneWidget);
+        expect(
+          focusedFieldKey(tester),
+          'pos-search-field',
+          reason: 'scan $scan must leave the barcode field ready and must '
+              'never park focus in a quantity field',
+        );
+      }
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('search typing and the product list stay in sync after a '
+        'scan — query edits still filter, Escape still restores',
+        (tester) async {
+      await pumpPos(
+        tester,
+        barcodeLookups: {'8718114202402': _lookupHit()},
+      );
+      await focusSearchField(tester);
+      await tester.enterText(
+        find.byKey(const Key('pos-search-field')),
+        '8718114202402',
+      );
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+      expect(containerOf(tester).read(posCartProvider).lines, hasLength(1));
+      final search = containerOf(tester).read(posSearchProvider);
+      expect(search.query, isEmpty, reason: 'the scan input is cleared');
+      expect(
+        search.items,
+        isNotEmpty,
+        reason: 'the catalog reloaded right after the scan clear',
+      );
+
+      // A typed query after the scan behaves exactly as before: the
+      // provider query follows the field and the list stays in sync.
+      await tester.enterText(
+        find.byKey(const Key('pos-search-field')),
+        'bre',
+      );
+      await tester.pump(const Duration(milliseconds: 500));
+      expect(containerOf(tester).read(posSearchProvider).query, 'bre');
+      expect(find.byKey(const Key('pos-no-products')), findsNothing);
+
+      // Escape clears the query and the list returns to the full catalog
+      // — still without any navigation.
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pump(const Duration(milliseconds: 500));
+      expect(controllerText(tester, const Key('pos-search-field')), isEmpty);
+      expect(containerOf(tester).read(posSearchProvider).query, isEmpty);
+      expect(find.byKey(const Key('pos-no-products')), findsNothing);
+      expect(find.byKey(const Key('pos-product-grid')), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a scanner-origin add retried from the lookup-error toast '
+        'never auto-focuses the quantity field', (tester) async {
+      await pumpPos(
+        tester,
+        barcodeLookups: {'8718114202402': _lookupHit()},
+        variantsFailOnce: 1,
+      );
+      await focusSearchField(tester);
+      await tester.enterText(
+        find.byKey(const Key('pos-search-field')),
+        '8718114202402',
+      );
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+
+      // The first variants lookup failed: the product is OUT of the cart
+      // and the retry toast is up.
+      expect(containerOf(tester).read(posCartProvider).lines, isEmpty);
+      expect(find.byKey(const Key('pos-lookup-error')), findsOneWidget);
+      expect(find.byKey(const Key('pos-lookup-error-retry')), findsOneWidget);
+
+      // RETRY — the second lookup succeeds and writes the line. The add
+      // keeps its SCANNER origin, so the qty field must never receive
+      // focus (the scan input stays the keyboard home).
+      await tester.tap(find.byKey(const Key('pos-lookup-error-retry')));
+      await tester.pumpAndSettle();
+
+      final cart = containerOf(tester).read(posCartProvider);
+      expect(cart.lines, hasLength(1));
+      final key = cart.lines.single.key;
+      expect(
+        focusedFieldKey(tester),
+        isNot('cart-line-qty-$key'),
+        reason: 'a scanner-driven retry must never run the manual '
+            'post-add quantity focus (Phase 8 FIX #1 is for manual adds)',
+      );
+      expect(focusedFieldKey(tester), 'pos-search-field');
+      expect(tester.takeException(), isNull);
+    });
+  });
+
+  group('global barcode scan (workspace unfocused)', () {
+    late MockDio dio;
+
+    setUp(() {
+      dio = MockDio();
+      _mockDio(dio);
+    });
+
+    Future<void> pumpPos(
+      WidgetTester tester, {
+      Map<String, Map<String, dynamic>>? barcodeLookups,
+    }) async {
+      if (barcodeLookups != null) {
+        dio = MockDio();
+        _mockDio(dio, barcodeLookups: barcodeLookups);
+      }
+      await _pumpApp(tester, dio: dio);
+      await tester.pump(const Duration(milliseconds: 500));
+    }
+
+    Future<bool> press(WidgetTester tester, LogicalKeyboardKey key) async {
+      final handled = await tester.sendKeyEvent(key);
+      await tester.pump();
+      return handled;
+    }
+
+    Future<bool> pressSpace(WidgetTester tester) async {
+      final handled = await tester.sendKeyEvent(
+        LogicalKeyboardKey.space,
+        character: ' ',
+      );
+      await tester.pump();
+      return handled;
+    }
+
+    String? focusedFieldKey(WidgetTester tester) {
+      final context = FocusManager.instance.primaryFocus?.context;
+      if (context == null) return null;
+      final field = context.widget is TextField
+          ? context.widget as TextField
+          : context.findAncestorWidgetOfExactType<TextField>();
+      final key = field?.key;
+      return key is ValueKey<String> ? key.value : null;
+    }
+
+    String controllerText(WidgetTester tester, Key key) {
+      final field = tester.widget<TextField>(find.byKey(key));
+      return field.controller?.text ?? '';
+    }
+
+    ProviderContainer containerOf(WidgetTester tester) =>
+        ProviderScope.containerOf(
+          tester.element(find.byKey(const Key('pos-screen'))),
+        );
+
+    /// Escape with an empty search box hands the keyboard back to the
+    /// POS workspace node — no text field owns focus anymore.
+    Future<void> focusWorkspace(WidgetTester tester) async {
+      await press(tester, LogicalKeyboardKey.escape);
+      expect(focusedFieldKey(tester), isNull);
+    }
+
+    testWidgets('a raw wedge burst adds the product and returns focus to '
+        'the scan input, never the qty field', (tester) async {
+      await pumpPos(
+        tester,
+        barcodeLookups: {'8718114202402': _lookupHit()},
+      );
+      await focusWorkspace(tester);
+
+      await sendWedgeScan(tester, '8718114202402');
+      await tester.pumpAndSettle();
+
+      final cart = containerOf(tester).read(posCartProvider);
+      expect(cart.lines, hasLength(1));
+      expect(cart.lines.single.name, 'Bread');
+      expect(cart.lines.single.quantity, '1');
+      // Proof the app-level gateway ran instead of the focused-search
+      // path: the barcode box never saw the code during the burst — and
+      // post-add focus returns to the cleared scan input, never the qty
+      // field (a scanner add must never auto-focus quantity editing).
+      expect(controllerText(tester, const Key('pos-search-field')), isEmpty);
+      expect(focusedFieldKey(tester), 'pos-search-field');
+      verify(
+        () => dio.get(
+          '/api/v1/products/barcode-lookup',
+          queryParameters: {'barcode': '8718114202402'},
+        ),
+      ).called(1);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('every burst of a continuous session adds exactly one unit',
+        (tester) async {
+      await pumpPos(
+        tester,
+        barcodeLookups: {'8718114202402': _lookupHit()},
+      );
+      await focusWorkspace(tester);
+
+      await sendWedgeScan(tester, '8718114202402');
+      await tester.pumpAndSettle();
+      expect(
+        containerOf(tester).read(posCartProvider).lines.single.quantity,
+        '1',
+      );
+
+      // Post-add the empty scan input owns focus (disarming the gateway
+      // while a text field is focused); Escape hands the keyboard back to
+      // the workspace, and the next burst scans again — one dispatch per
+      // burst, never a double add.
+      await focusWorkspace(tester);
+      await sendWedgeScan(tester, '8718114202402');
+      await tester.pumpAndSettle();
+
+      final cart = containerOf(tester).read(posCartProvider);
+      expect(cart.lines, hasLength(1));
+      expect(cart.lines.single.quantity, '2');
+      verify(
+        () => dio.get(
+          '/api/v1/products/barcode-lookup',
+          queryParameters: {'barcode': '8718114202402'},
+        ),
+      ).called(2);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a burst that starts unfocused and hits a mid-run focus '
+        'move still adds exactly one unit', (tester) async {
+      // THE video sequence, re-grounded: scan #1 returns from the
+      // workspace; post-add focus lands in the cleared scan input. While
+      // the NEXT burst is already typing, focus moves into the line's
+      // qty field — the digits typed before that move belong to the
+      // gateway and must not be discarded (the remainder used to type on
+      // top of the committed quantity and Enter parsed the barcode
+      // prefix as a quantity).
+      await pumpPos(
+        tester,
+        barcodeLookups: {'8718114202402': _lookupHit()},
+      );
+      await focusWorkspace(tester);
+
+      // Scan #1: full burst from the workspace — adds Bread (qty 1) and
+      // post-add focus returns to the cleared scan input (never the
+      // line's qty field).
+      await sendWedgeScan(tester, '8718114202402');
+      await tester.pumpAndSettle();
+      final cart = containerOf(tester).read(posCartProvider);
+      expect(cart.lines.single.quantity, '1');
+      final key = cart.lines.single.key;
+      final qtyField = find.byKey(Key('cart-line-qty-$key'));
+      expect(focusedFieldKey(tester), 'pos-search-field');
+
+      // Hand the keyboard back to the workspace — scan #2 starts with NO
+      // field focused (the gateway is armed again).
+      await focusWorkspace(tester);
+
+      // First part of burst #2: consumed by the gateway, field untouched.
+      for (final character in '8718114'.split('')) {
+        await tester.sendKeyEvent(digitKey(character));
+      }
+      expect(controllerText(tester, Key('cart-line-qty-$key')), '1');
+
+      // A focus move lands mid-run: the cashier clicks into the qty
+      // field while the scanner is still typing.
+      await tester.tap(qtyField);
+      await tester.pump();
+      expect(focusedFieldKey(tester), 'cart-line-qty-$key');
+
+      // Remaining digits + terminator: still the gateway's run.
+      for (final character in '202402'.split('')) {
+        await tester.sendKeyEvent(digitKey(character));
+      }
+      expect(
+        controllerText(tester, Key('cart-line-qty-$key')),
+        '1',
+        reason: 'gateway-consumed digits never reach the focused field',
+      );
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+
+      final after = containerOf(tester).read(posCartProvider);
+      expect(after.lines, hasLength(1));
+      expect(
+        after.lines.single.quantity,
+        '2',
+        reason: 'one physical burst = exactly one unit, even when focus '
+            'moves mid-run',
+      );
+      expect(
+        controllerText(tester, Key('cart-line-qty-$key')),
+        '2',
+        reason: 'the field shows the merged quantity, never burst digits',
+      );
+      expect(
+        find.byKey(const Key('pos-barcode-not-found-toast')),
+        findsNothing,
+        reason: 'the full code resolved — no truncated-remainder lookup',
+      );
+      expect(
+        find.byKey(const Key('pos-qty-stock-error')),
+        findsNothing,
+      );
+      verify(
+        () => dio.get(
+          '/api/v1/products/barcode-lookup',
+          queryParameters: {'barcode': '8718114202402'},
+        ),
+      ).called(2);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('two scans whose lookups overlap both land — no stale '
+        'cart write', (tester) async {
+      // Scenario 7: scan #1's lookup is slow, scan #2 resolves first. The
+      // slow writer finishes LAST — if it had captured the cart before
+      // its await, scan #2's unit would be silently overwritten.
+      await pumpPos(
+        tester,
+        barcodeLookups: {'8718114202402': _lookupHit()},
+      );
+      var lookups = 0;
+      when(() => dio.get(
+            '/api/v1/products/barcode-lookup',
+            queryParameters: any(named: 'queryParameters'),
+          )).thenAnswer((invocation) async {
+        lookups++;
+        if (lookups == 1) {
+          await Future<void>.delayed(const Duration(milliseconds: 300));
+        }
+        return _ok(
+          '/api/v1/products/barcode-lookup',
+          _lookupHit(),
+        );
+      });
+
+      await focusWorkspace(tester);
+      await sendWedgeScan(tester, '8718114202402'); // slow chain (#1)
+      await sendWedgeScan(tester, '8718114202402'); // fast chain (#2)
+
+      // Fast chain lands first (line qty 1), slow chain lands after.
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(
+        containerOf(tester).read(posCartProvider).lines.single.quantity,
+        '1',
+      );
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pumpAndSettle();
+
+      final cart = containerOf(tester).read(posCartProvider);
+      expect(cart.lines, hasLength(1));
+      expect(
+        cart.lines.single.quantity,
+        '2',
+        reason: 'overlapping lookups must both merge — the later resolve '
+            'may never overwrite the earlier unit',
+      );
+      verify(
+        () => dio.get(
+          '/api/v1/products/barcode-lookup',
+          queryParameters: {'barcode': '8718114202402'},
+        ),
+      ).called(2);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('an unknown barcode from the workspace shows the not-found '
+        'toast and adds nothing', (tester) async {
+      await pumpPos(tester); // every code misses except the default '111'
+      await focusWorkspace(tester);
+
+      await sendWedgeScan(tester, '9998887776665');
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const Key('pos-barcode-not-found-toast')),
+        findsOneWidget,
+      );
+      expect(containerOf(tester).read(posCartProvider).lines, isEmpty);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a burst while the payment dialog is open never touches '
+        'the cart', (tester) async {
+      await pumpPos(
+        tester,
+        barcodeLookups: {'8718114202402': _lookupHit()},
+      );
+      // SPACE opens payment only with something to pay — add one line
+      // through the ordinary focused path first.
+      await tester.tap(find.byKey(const Key('pos-search-field')));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.enterText(
+        find.byKey(const Key('pos-search-field')),
+        '111',
+      );
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+      expect(containerOf(tester).read(posCartProvider).lines, hasLength(1));
+
+      await focusWorkspace(tester);
+      expect(await pressSpace(tester), isTrue);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('payment-dialog')), findsOneWidget);
+      expect(BarcodeScannerGateway.instance.hasActiveHandler, isFalse);
+
+      await sendWedgeScan(tester, '8718114202402');
+      await tester.pumpAndSettle();
+
+      // Never scan behind a modal dialog: the burst code is never even
+      // looked up, the cart keeps exactly the line from before, no
+      // not-found toast fires — and the dialog is still the live route.
+      verifyNever(
+        () => dio.get(
+          '/api/v1/products/barcode-lookup',
+          queryParameters: {'barcode': '8718114202402'},
+        ),
+      );
+      final cart = containerOf(tester).read(posCartProvider);
+      expect(cart.lines, hasLength(1));
+      expect(cart.lines.single.quantity, '1');
+      expect(
+        find.byKey(const Key('pos-barcode-not-found-toast')),
+        findsNothing,
+      );
+      expect(find.byKey(const Key('payment-dialog')), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('typing and workspace shortcuts keep working while scans '
+        'are armed', (tester) async {
+      await pumpPos(tester);
+      await focusWorkspace(tester);
+      expect(BarcodeScannerGateway.instance.hasActiveHandler, isTrue);
+
+      // Focus a text field: the gateway stands down instantly, typing
+      // is untouched.
+      await tester.tap(find.byKey(const Key('pos-search-field')));
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(
+        BarcodeScannerGateway.instance.hasActiveHandler,
+        isFalse,
+      );
+      await tester.enterText(
+        find.byKey(const Key('pos-search-field')),
+        '111',
+      );
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+      expect(containerOf(tester).read(posCartProvider).lines, hasLength(1));
+
+      // Back to the workspace (armed again): the `*` quantity shortcut
+      // must still claim its key from the focus system — a non-digit
+      // key the gateway never consumes.
+      await focusWorkspace(tester);
+      expect(BarcodeScannerGateway.instance.hasActiveHandler, isTrue);
+      await tester.sendKeyEvent(LogicalKeyboardKey.digit8, character: '*');
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('qty-multiplier-dialog')), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('the gateway releases POS once the screen unmounts',
+        (tester) async {
+      await pumpPos(tester);
+      expect(BarcodeScannerGateway.instance.handlerCount, 1);
+
+      await tester.pumpWidget(const SizedBox());
+      expect(BarcodeScannerGateway.instance.handlerCount, 0);
+      expect(BarcodeScannerGateway.instance.hasActiveHandler, isFalse);
+
+      // A burst into the void dispatches nowhere (and never crashes).
+      await sendWedgeScan(tester, '8718114202402');
       expect(tester.takeException(), isNull);
     });
   });
