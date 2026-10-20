@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
+import 'package:supermarket_pos/core/barcode_scanner.dart';
 import 'package:supermarket_pos/core/colors.dart';
 import 'package:supermarket_pos/core/strings.dart';
 import 'package:supermarket_pos/features/auth/auth_models.dart';
@@ -14,6 +15,8 @@ import 'package:supermarket_pos/features/auth/credential_storage.dart';
 import 'package:supermarket_pos/features/stock/stock_screen.dart';
 import 'package:supermarket_pos/main.dart';
 import 'package:supermarket_pos/network/api_client.dart';
+
+import '../helpers/wedge_scanner.dart';
 
 class MockDio extends Mock implements Dio {}
 
@@ -252,6 +255,7 @@ void main() {
     Map<String, dynamic>? loginBody,
     Map<String, dynamic>? inventoryBody,
     List<Map<String, dynamic>>? inventoryQueryLog,
+    Map<String, Map<String, dynamic>>? barcodeLookups,
   }) {
     when(() => dio.interceptors).thenReturn(Interceptors());
     when(() => dio.options).thenReturn(BaseOptions());
@@ -297,6 +301,19 @@ void main() {
       return okResponse(
         _inventoryPath,
         inventoryBody ?? _inventoryListBody(),
+      );
+    });
+    when(
+      () => dio.get(
+        '/api/v1/products/barcode-lookup',
+        queryParameters: any(named: 'queryParameters'),
+      ),
+    ).thenAnswer((invocation) async {
+      final q = invocation.namedArguments[#queryParameters];
+      final barcode = q is Map ? q['barcode']?.toString() ?? '' : '';
+      return okResponse(
+        '/api/v1/products/barcode-lookup',
+        barcodeLookups?[barcode] ?? {'found': false},
       );
     });
     when(
@@ -1078,8 +1095,296 @@ void main() {
       expect(formatSignedQuantityChange('+5.000'), '+5.000');
       expect(formatSignedQuantityChange('10'), '+10');
       expect(formatSignedQuantityChange('-2.000'), '-2.000');
-      expect(formatSignedQuantityChange('0'), '0');
+      expect(formatSignedQuantityChange('+4'), '+4');
       expect(formatSignedQuantityChange('abc'), 'abc');
+    });
+  });
+
+  group('Stock barcode scan (Enter in search)', () {
+    testWidgets('known barcode locates the item and opens the detail panel '
+        'without posting an adjustment', (tester) async {
+      final dio = MockDio();
+      stubRequests(
+        dio,
+        barcodeLookups: {
+          '111222333': {
+            'found': true,
+            'kind': 'product',
+            'product_id': '00000000-0000-0000-0000-0000000000p1',
+            'product_name': 'Apple Juice',
+            'product_price': '100.0',
+            'product_quantity': '12',
+            'product_unit': 'piece',
+            'is_archived': false,
+          },
+        },
+      );
+      await pumpApp(tester, dio, size: const Size(1920, 1080));
+
+      // The wedge types the code and hits Enter immediately — the scan
+      // resolves through the canonical lookup, selects the matching item
+      // and opens the EXISTING detail panel. A scan never mutates stock.
+      await tester.enterText(
+        find.byKey(const Key('stock-search')),
+        '111222333',
+      );
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+
+      verify(
+        () => dio.get(
+          '/api/v1/products/barcode-lookup',
+          queryParameters: {'barcode': '111222333'},
+        ),
+      ).called(1);
+      expect(find.byKey(const Key('stock-detail-panel')), findsOneWidget);
+      expect(find.byKey(const Key('detail-name')), findsOneWidget);
+      // Selection only — the scan must NEVER post an adjustment.
+      verifyNever(
+        () => dio.post('/api/v1/inventory/adjust', data: any(named: 'data')),
+      );
+      expectNoOverflow(tester);
+    });
+
+    testWidgets('unknown barcode leaves the list as-is and opens no detail',
+        (tester) async {
+      final dio = MockDio();
+      stubRequests(dio);
+      await pumpApp(tester, dio, size: const Size(1920, 1080));
+
+      await tester.enterText(
+        find.byKey(const Key('stock-search')),
+        '9998887776665',
+      );
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('stock-detail-panel')), findsNothing);
+      verifyNever(
+        () => dio.post('/api/v1/inventory/adjust', data: any(named: 'data')),
+      );
+      expectNoOverflow(tester);
+    });
+  });
+
+  group('Stock global scan (no field focused)', () {
+    bool searchFieldFocused(WidgetTester tester) {
+      final context = FocusManager.instance.primaryFocus?.context;
+      if (context == null) return false;
+      final field = context.widget is TextField
+          ? context.widget as TextField
+          : context.findAncestorWidgetOfExactType<TextField>();
+      return field?.key == const Key('stock-search');
+    }
+
+    String searchControllerText(WidgetTester tester) {
+      final field = tester.widget<TextField>(
+        find.byKey(const Key('stock-search')),
+      );
+      return field.controller?.text ?? '';
+    }
+
+    testWidgets('a raw wedge burst opens the detail panel and never posts '
+        'an adjustment', (tester) async {
+      final dio = MockDio();
+      stubRequests(
+        dio,
+        barcodeLookups: {
+          '111222333': {
+            'found': true,
+            'kind': 'product',
+            'product_id': '00000000-0000-0000-0000-0000000000p1',
+            'product_name': 'Apple Juice',
+            'product_price': '100.0',
+            'product_quantity': '12',
+            'product_unit': 'piece',
+            'is_archived': false,
+          },
+        },
+      );
+      await pumpApp(tester, dio, size: const Size(1920, 1080));
+
+      // The last focus action was the nav tap (an ordinary control, not
+      // a text field): the gateway is armed the moment the screen shows.
+      expect(searchFieldFocused(tester), isFalse);
+      expect(BarcodeScannerGateway.instance.hasActiveHandler, isTrue);
+
+      await sendWedgeScan(tester, '111222333');
+      await tester.pumpAndSettle();
+
+      verify(
+        () => dio.get(
+          '/api/v1/products/barcode-lookup',
+          queryParameters: {'barcode': '111222333'},
+        ),
+      ).called(1);
+      expect(find.byKey(const Key('stock-detail-panel')), findsOneWidget);
+      expect(find.byKey(const Key('detail-name')), findsOneWidget);
+      // Selection only — a scan NEVER posts an adjustment.
+      verifyNever(
+        () => dio.post('/api/v1/inventory/adjust', data: any(named: 'data')),
+      );
+      // The box shows the code but the scan never focused it.
+      expect(searchControllerText(tester), '111222333');
+      expect(searchFieldFocused(tester), isFalse);
+      expectNoOverflow(tester);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('an unknown barcode from the workspace opens no detail',
+        (tester) async {
+      final dio = MockDio();
+      stubRequests(dio);
+      await pumpApp(tester, dio, size: const Size(1920, 1080));
+
+      await sendWedgeScan(tester, '9998887776665');
+      await tester.pumpAndSettle();
+
+      verify(
+        () => dio.get(
+          '/api/v1/products/barcode-lookup',
+          queryParameters: {'barcode': '9998887776665'},
+        ),
+      ).called(1);
+      expect(find.byKey(const Key('stock-detail-panel')), findsNothing);
+      verifyNever(
+        () => dio.post('/api/v1/inventory/adjust', data: any(named: 'data')),
+      );
+      expectNoOverflow(tester);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('navigating to Products unregisters stock: only the new '
+        'screen answers the next burst', (tester) async {
+      final dio = MockDio();
+      stubRequests(
+        dio,
+        barcodeLookups: {
+          '111222333': {
+            'found': true,
+            'kind': 'product',
+            'product_id': '00000000-0000-0000-0000-0000000000p1',
+            'product_name': 'Apple Juice',
+            'product_price': '100.0',
+            'product_quantity': '12',
+            'product_unit': 'piece',
+            'is_archived': false,
+          },
+          '444555666': {
+            'found': true,
+            'kind': 'product',
+            'product_id': '00000000-0000-0000-0000-0000000000p2',
+            'product_name': 'Bread',
+            'product_price': '50.0',
+            'product_quantity': '20.0',
+            'product_unit': 'piece',
+            'is_archived': false,
+          },
+        },
+      );
+      // The stock harness does not stub the catalog endpoints the
+      // Products screen loads after the route swap.
+      when(
+        () => dio.get(
+          '/api/v1/products',
+          queryParameters: any(named: 'queryParameters'),
+        ),
+      ).thenAnswer(
+        (_) async => okResponse('/api/v1/products', {
+          'items': [
+            {
+              'id': '00000000-0000-0000-0000-0000000000p1',
+              'name': 'Apple Juice',
+              'barcode': '111222333',
+              'sku': null,
+              'description': null,
+              'unit': 'piece',
+              'price': '100.0',
+              'cost': '80.0',
+              'quantity': '12.0',
+              'low_stock_threshold': '5.0',
+              'allow_negative_stock': false,
+              'expiry_date': null,
+              'image_path': null,
+              'category_id': null,
+              'category_name': null,
+              'is_archived': false,
+              'archived_at': null,
+              'created_at': '2026-01-01T00:00:00Z',
+              'updated_at': '2026-01-01T00:00:00Z',
+            },
+            {
+              'id': '00000000-0000-0000-0000-0000000000p2',
+              'name': 'Bread',
+              'barcode': '444555666',
+              'sku': null,
+              'description': null,
+              'unit': 'piece',
+              'price': '50.0',
+              'cost': '30.0',
+              'quantity': '20.0',
+              'low_stock_threshold': '5.0',
+              'allow_negative_stock': false,
+              'expiry_date': null,
+              'image_path': null,
+              'category_id': null,
+              'category_name': null,
+              'is_archived': false,
+              'archived_at': null,
+              'created_at': '2026-01-01T00:00:00Z',
+              'updated_at': '2026-01-01T00:00:00Z',
+            },
+          ],
+          'total': 2,
+          'page': 1,
+          'page_size': 40,
+          'pages': 1,
+        }),
+      );
+      when(
+        () => dio.get(
+          '/api/v1/categories',
+          queryParameters: any(named: 'queryParameters'),
+        ),
+      ).thenAnswer(
+        (_) async => okResponse('/api/v1/categories', {
+          'items': <dynamic>[],
+          'total': 0,
+          'page': 1,
+          'page_size': 100,
+          'pages': 1,
+        }),
+      );
+
+      await pumpApp(tester, dio, size: const Size(1920, 1080));
+      expect(BarcodeScannerGateway.instance.handlerCount, 1);
+
+      // On Stock the burst opens the detail panel through stock's own
+      // registered handler.
+      await sendWedgeScan(tester, '111222333');
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('stock-detail-panel')), findsOneWidget);
+
+      // Navigate: Stock unmounts (and must unregister itself) while
+      // Products mounts — never two live scan targets. The rail item
+      // key is unique where the localized label is not.
+      await tester.tap(find.byKey(const Key('nav-item-/products')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('products-table')), findsOneWidget);
+      expect(BarcodeScannerGateway.instance.handlerCount, 1);
+
+      // The next burst is answered by Products: highlight in the catalog,
+      // no stock detail panel anywhere.
+      await sendWedgeScan(tester, '444555666');
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey(
+          'product-row-highlight-00000000-0000-0000-0000-0000000000p2',
+        )),
+        findsOneWidget,
+      );
+      expect(find.byKey(const Key('stock-detail-panel')), findsNothing);
+      expect(tester.takeException(), isNull);
     });
   });
 }

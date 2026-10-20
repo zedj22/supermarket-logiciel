@@ -14,6 +14,8 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/barcode_scanner.dart';
+import '../../core/scan_diagnostics.dart';
 import '../../core/colors.dart';
 import '../../core/number_format.dart';
 import '../../core/numeric_text.dart';
@@ -139,8 +141,63 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
   bool _labelMode = false;
   final Map<String, ProductModel> _labelSelected = {};
 
+  /// Product located by a barcode scan (Enter in the search field);
+  /// highlighted in the table / card list until the query changes.
+  String? _scannedProductId;
+
+  /// Enter in the search field: a barcode scan resolves through the
+  /// canonical exact lookup (selling unit → variant → product) instead of
+  /// the debounced catalog the keystrokes raced. A hit runs the immediate
+  /// search so the matching row is the list, then highlights it; a miss
+  /// simply leaves the (debounced) text filter in place — the filtered
+  /// list IS the result on a catalog screen.
+  Future<void> _submitScan() async {
+    final query = _searchController.text.trim();
+    if (query.isEmpty) return;
+    final lookup =
+        await ref.read(barcodeLookupProvider.notifier).lookup(query);
+    if (!mounted) return;
+    if (lookup == null || !lookup.found || lookup.productId == null) {
+      setState(() => _scannedProductId = null);
+      return;
+    }
+    await ref.read(productsProvider.notifier).searchNow(query);
+    if (!mounted) return;
+    setState(() => _scannedProductId = lookup.productId);
+  }
+
+  /// A burst captured by the app-level gateway (no field focused): the
+  /// code is seeded into the search box exactly as a wedge would have
+  /// typed it — a programmatic set, so the field's onChanged never fires
+  /// and the provider query is seeded here instead — then the same
+  /// canonical lookup runs as for a focused Enter.
+  Future<void> _handleGlobalScan(String code) async {
+    // First statement, synchronously: a dispatch routed here MUST leave a
+    // receive trace — a `dispatch` whose target is this screen never
+    // produces POS's `scan-receive`, and without this line it produced
+    // nothing at all.
+    scanDiag('scan-receive', {
+      'target': 'products',
+      'corr': lastScanCorr,
+      'len': code.length,
+      'suffix3': scanDiagSuffix3(code),
+    });
+    if (!mounted) return;
+    _searchController.value = TextEditingValue(
+      text: code,
+      selection: TextSelection.collapsed(offset: code.length),
+    );
+    ref.read(productsProvider.notifier).setSearch(code);
+    await _submitScan();
+  }
+
   /// Phase 17 §18 — page-level hooks for the shell's F4 / Ctrl+F / F5.
   late final PageShortcuts _pageShortcuts;
+
+  /// App-level scan target (core/barcode_scanner.dart): while this screen
+  /// is the live route and no text field has focus, wedge bursts resolve
+  /// here — locate + highlight, never stealing a focused field's keys.
+  late final BarcodeScanHandler _scanHandler;
 
   @override
   void initState() {
@@ -156,6 +213,14 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
       },
     );
     PageShortcutsRegistry.current = _pageShortcuts;
+    // Global barcode capture — the catalog screen answers scans while
+    // the workspace is idle (core/barcode_scanner.dart).
+    _scanHandler = BarcodeScanHandler(
+      context: context,
+      name: 'products',
+      onScan: _handleGlobalScan,
+    );
+    BarcodeScannerGateway.instance.register(_scanHandler);
     // The query outlives this page State: without re-seeding, returning
     // shows an empty box while the list is still filtered.
     seedSearchField(
@@ -170,6 +235,9 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
 
   @override
   void dispose() {
+    // Stop claiming global scans first — a half-torn-down screen must
+    // never receive (or block) another burst.
+    BarcodeScannerGateway.instance.unregister(_scanHandler);
     if (identical(PageShortcutsRegistry.current, _pageShortcuts)) {
       PageShortcutsRegistry.current = null;
     }
@@ -578,6 +646,7 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
                 icon: const Icon(Icons.close, size: 18),
                 onPressed: () {
                   _searchController.clear();
+                  setState(() => _scannedProductId = null);
                   ref.read(productsProvider.notifier).setSearch('');
                 },
               );
@@ -594,8 +663,11 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
           filled: true,
           fillColor: cs.surface,
         ),
-        onChanged: (value) =>
-            ref.read(productsProvider.notifier).setSearch(value),
+        onChanged: (value) {
+          setState(() => _scannedProductId = null);
+          ref.read(productsProvider.notifier).setSearch(value);
+        },
+        onSubmitted: (_) => _submitScan(),
       ),
     );
 
@@ -1359,13 +1431,22 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
             ),
             itemBuilder: (context, index) {
               final product = items[index];
-              return _HoverRow(
-                key: ValueKey('product-row-${product.id}'),
-                minHeight: 56,
-                hoverColor: cs.primary.withValues(alpha: 0.07),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: dataCells(product),
+              final highlighted = product.id == _scannedProductId;
+              return Container(
+                key: highlighted
+                    ? ValueKey('product-row-highlight-${product.id}')
+                    : null,
+                color: highlighted
+                    ? cs.primary.withValues(alpha: 0.10)
+                    : null,
+                child: _HoverRow(
+                  key: ValueKey('product-row-${product.id}'),
+                  minHeight: 56,
+                  hoverColor: cs.primary.withValues(alpha: 0.07),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: dataCells(product),
+                  ),
                 ),
               );
             },
@@ -1390,6 +1471,7 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
       itemCount: items.length,
       itemBuilder: (context, index) {
         final product = items[index];
+        final highlighted = product.id == _scannedProductId;
         final status = productStockStatus(product);
         final qtyColor = switch (status) {
           ProductStockStatus.out => AppColors.error,
@@ -1397,13 +1479,21 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
           _ => cs.onSurface,
         };
         return Card(
-          key: ValueKey('product-card-${product.id}'),
+          key: highlighted
+              ? ValueKey('product-card-highlight-${product.id}')
+              : ValueKey('product-card-${product.id}'),
           margin: const EdgeInsets.only(bottom: 10),
           elevation: 0,
-          color: cs.surfaceContainerHighest.withValues(alpha: 0.55),
+          color: highlighted
+              ? cs.primary.withValues(alpha: 0.10)
+              : cs.surfaceContainerHighest.withValues(alpha: 0.55),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(12),
-            side: BorderSide(color: cs.outline.withValues(alpha: 0.18)),
+            side: BorderSide(
+              color: highlighted
+                  ? cs.primary
+                  : cs.outline.withValues(alpha: 0.18),
+            ),
           ),
           child: Padding(
             padding: const EdgeInsets.all(12),

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
+import 'package:supermarket_pos/core/barcode_scanner.dart';
 import 'package:supermarket_pos/core/strings.dart';
 import 'package:supermarket_pos/features/auth/auth_provider.dart';
 import 'package:supermarket_pos/features/auth/credential_storage.dart';
@@ -11,6 +12,8 @@ import 'package:supermarket_pos/features/products/products_providers.dart';
 import 'package:supermarket_pos/features/products/products_screen.dart';
 import 'package:supermarket_pos/main.dart';
 import 'package:supermarket_pos/network/api_client.dart';
+
+import '../helpers/wedge_scanner.dart';
 
 class MockDio extends Mock implements Dio {}
 
@@ -207,6 +210,7 @@ void main() {
     Map<String, dynamic>? productsBody,
     Map<String, dynamic>? categoriesBody,
     List<Map<String, dynamic>>? productQueryLog,
+    Map<String, Map<String, dynamic>>? barcodeLookups,
   }) {
     when(() => dio.interceptors).thenReturn(Interceptors());
     when(() => dio.options).thenReturn(BaseOptions());
@@ -261,6 +265,19 @@ void main() {
         productQueryLog.add(Map<String, dynamic>.from(params));
       }
       return okResponse(_productsPath, productsBody ?? _productsListBody());
+    });
+    when(
+      () => dio.get(
+        '/api/v1/products/barcode-lookup',
+        queryParameters: any(named: 'queryParameters'),
+      ),
+    ).thenAnswer((invocation) async {
+      final params = invocation.namedArguments[#queryParameters];
+      final barcode = params is Map ? params['barcode']?.toString() ?? '' : '';
+      return okResponse(
+        '/api/v1/products/barcode-lookup',
+        barcodeLookups?[barcode] ?? {'found': false},
+      );
     });
     when(
       () => dio.get(
@@ -698,6 +715,276 @@ void main() {
         ),
         findsNothing,
       );
+      expect(tester.takeException(), isNull);
+    });
+  });
+
+  group('Products barcode scan (Enter in search)', () {
+    testWidgets('known barcode locates and highlights the matching row '
+        'without the debounce wait', (tester) async {
+      final dio = MockDio();
+      stubRequests(
+        dio,
+        barcodeLookups: {
+          '444555666': {
+            'found': true,
+            'kind': 'product',
+            'product_id': '00000000-0000-0000-0000-0000000000p2',
+            'product_name': 'Bread',
+            'product_price': '50.0',
+            'product_quantity': '20.0',
+            'product_unit': 'piece',
+            'is_archived': false,
+          },
+        },
+      );
+      await pumpApp(
+        tester,
+        dio,
+        userName: 'Admin',
+        pin: '1234',
+        navLabel: AppStrings.t('products', 'ar'),
+      );
+
+      // The wedge types the code and hits Enter immediately — the scan
+      // resolves through the canonical lookup, not the debounced catalog.
+      await tester.enterText(
+        find.byKey(const Key('products-search-field')),
+        '444555666',
+      );
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+
+      verify(
+        () => dio.get(
+          '/api/v1/products/barcode-lookup',
+          queryParameters: {'barcode': '444555666'},
+        ),
+      ).called(1);
+      // The matching row is highlighted (scan locate) — Bread is p2.
+      expect(
+        find.byKey(const ValueKey(
+          'product-row-highlight-00000000-0000-0000-0000-0000000000p2',
+        )),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey(
+          'product-row-highlight-00000000-0000-0000-0000-0000000000p1',
+        )),
+        findsNothing,
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('unknown barcode leaves the filtered list as the result '
+        'and highlights nothing', (tester) async {
+      final dio = MockDio();
+      stubRequests(dio);
+      await pumpApp(
+        tester,
+        dio,
+        userName: 'Admin',
+        pin: '1234',
+        navLabel: AppStrings.t('products', 'ar'),
+      );
+
+      await tester.enterText(
+        find.byKey(const Key('products-search-field')),
+        '9998887776665',
+      );
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+
+      // A miss never crashes and never falsely highlights a row — the
+      // (debounced) text filter is the visual result on a catalog screen.
+      expect(
+        find.byKey(const ValueKey(
+          'product-row-highlight-00000000-0000-0000-0000-0000000000p1',
+        )),
+        findsNothing,
+      );
+      expect(
+        find.byKey(const ValueKey(
+          'product-row-highlight-00000000-0000-0000-0000-0000000000p2',
+        )),
+        findsNothing,
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('typing after a scan clears the highlight', (tester) async {
+      final dio = MockDio();
+      stubRequests(
+        dio,
+        barcodeLookups: {
+          '444555666': {
+            'found': true,
+            'kind': 'product',
+            'product_id': '00000000-0000-0000-0000-0000000000p2',
+            'product_name': 'Bread',
+            'is_archived': false,
+          },
+        },
+      );
+      await pumpApp(
+        tester,
+        dio,
+        userName: 'Admin',
+        pin: '1234',
+        navLabel: AppStrings.t('products', 'ar'),
+      );
+
+      await tester.enterText(
+        find.byKey(const Key('products-search-field')),
+        '444555666',
+      );
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey(
+          'product-row-highlight-00000000-0000-0000-0000-0000000000p2',
+        )),
+        findsOneWidget,
+      );
+
+      // Fresh typing starts a new query — the previous scan locate is
+      // stale and must not keep a row highlighted.
+      await tester.enterText(
+        find.byKey(const Key('products-search-field')),
+        'Apple',
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey(
+          'product-row-highlight-00000000-0000-0000-0000-0000000000p2',
+        )),
+        findsNothing,
+      );
+      expect(tester.takeException(), isNull);
+    });
+  });
+
+  group('Products global scan (no field focused)', () {
+    bool searchFieldFocused(WidgetTester tester) {
+      final context = FocusManager.instance.primaryFocus?.context;
+      if (context == null) return false;
+      final field = context.widget is TextField
+          ? context.widget as TextField
+          : context.findAncestorWidgetOfExactType<TextField>();
+      return field?.key == const Key('products-search-field');
+    }
+
+    String searchControllerText(WidgetTester tester) {
+      final field = tester.widget<TextField>(
+        find.byKey(const Key('products-search-field')),
+      );
+      return field.controller?.text ?? '';
+    }
+
+    testWidgets('a raw wedge burst locates and highlights while the search '
+        'field stays unfocused', (tester) async {
+      final dio = MockDio();
+      stubRequests(
+        dio,
+        barcodeLookups: {
+          '444555666': {
+            'found': true,
+            'kind': 'product',
+            'product_id': '00000000-0000-0000-0000-0000000000p2',
+            'product_name': 'Bread',
+            'product_price': '50.0',
+            'product_quantity': '20.0',
+            'product_unit': 'piece',
+            'is_archived': false,
+          },
+        },
+      );
+      await pumpApp(
+        tester,
+        dio,
+        userName: 'Admin',
+        pin: '1234',
+        navLabel: AppStrings.t('products', 'ar'),
+      );
+
+      // The last focus action was the nav tap (an ordinary control, not
+      // a text field): the gateway is armed the moment the screen shows.
+      expect(searchFieldFocused(tester), isFalse);
+      expect(BarcodeScannerGateway.instance.hasActiveHandler, isTrue);
+
+      await sendWedgeScan(tester, '444555666');
+      await tester.pumpAndSettle();
+
+      verify(
+        () => dio.get(
+          '/api/v1/products/barcode-lookup',
+          queryParameters: {'barcode': '444555666'},
+        ),
+      ).called(1);
+      expect(
+        find.byKey(const ValueKey(
+          'product-row-highlight-00000000-0000-0000-0000-0000000000p2',
+        )),
+        findsOneWidget,
+      );
+      // The box shows the code (exactly as a wedge would have typed it)
+      // but the scan never moved focus into it.
+      expect(searchControllerText(tester), '444555666');
+      expect(searchFieldFocused(tester), isFalse);
+      expect(BarcodeScannerGateway.instance.hasActiveHandler, isTrue);
+
+      // Ordinary typing after the scan behaves exactly as before: the
+      // debounced text filter clears the stale highlight.
+      await tester.enterText(
+        find.byKey(const Key('products-search-field')),
+        'Apple',
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey(
+          'product-row-highlight-00000000-0000-0000-0000-0000000000p2',
+        )),
+        findsNothing,
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('an unknown barcode from the workspace highlights nothing '
+        'and leaves the filtered list as the result', (tester) async {
+      final dio = MockDio();
+      stubRequests(dio);
+      await pumpApp(
+        tester,
+        dio,
+        userName: 'Admin',
+        pin: '1234',
+        navLabel: AppStrings.t('products', 'ar'),
+      );
+
+      await sendWedgeScan(tester, '9998887776665');
+      await tester.pumpAndSettle();
+
+      verify(
+        () => dio.get(
+          '/api/v1/products/barcode-lookup',
+          queryParameters: {'barcode': '9998887776665'},
+        ),
+      ).called(1);
+      expect(
+        find.byKey(const ValueKey(
+          'product-row-highlight-00000000-0000-0000-0000-0000000000p1',
+        )),
+        findsNothing,
+      );
+      expect(
+        find.byKey(const ValueKey(
+          'product-row-highlight-00000000-0000-0000-0000-0000000000p2',
+        )),
+        findsNothing,
+      );
+      expect(searchControllerText(tester), '9998887776665');
+      expect(searchFieldFocused(tester), isFalse);
       expect(tester.takeException(), isNull);
     });
   });

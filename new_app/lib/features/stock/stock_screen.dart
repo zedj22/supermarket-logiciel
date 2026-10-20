@@ -9,6 +9,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/barcode_scanner.dart';
+import '../../core/scan_diagnostics.dart';
 import '../../core/colors.dart';
 import '../../core/numeric_text.dart';
 import '../../core/number_format.dart';
@@ -19,6 +21,7 @@ import '../../core/widgets/table_header.dart';
 import '../../l10n/locale_provider.dart';
 import '../../theme/app_theme.dart';
 import '../auth/permission_helpers.dart';
+import '../products/products_providers.dart';
 import 'adjust_dialog.dart';
 import 'inventory_models.dart';
 import 'inventory_providers.dart';
@@ -183,10 +186,23 @@ class _StockScreenState extends ConsumerState<StockScreen>
 
   InventoryItemModel? _selected;
 
+  /// App-level scan target (core/barcode_scanner.dart): while this screen
+  /// is the live route and no text field has focus, wedge bursts resolve
+  /// here — locate + open the detail panel, never a stock mutation.
+  late final BarcodeScanHandler _scanHandler;
+
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
+    // Global barcode capture — the inventory screen answers scans while
+    // the workspace is idle (core/barcode_scanner.dart).
+    _scanHandler = BarcodeScanHandler(
+      context: context,
+      name: 'stock',
+      onScan: _handleGlobalScan,
+    );
+    BarcodeScannerGateway.instance.register(_scanHandler);
     // The query outlives this page State: without re-seeding, returning
     // to Stock shows an empty box while the list is still filtered.
     seedSearchField(
@@ -201,6 +217,9 @@ class _StockScreenState extends ConsumerState<StockScreen>
 
   @override
   void dispose() {
+    // Stop claiming global scans first — a half-torn-down screen must
+    // never receive (or block) another burst.
+    BarcodeScannerGateway.instance.unregister(_scanHandler);
     _searchController.dispose();
     _tabController.dispose();
     super.dispose();
@@ -228,6 +247,59 @@ class _StockScreenState extends ConsumerState<StockScreen>
   void _clearDetail() {
     setState(() => _selected = null);
     ref.read(productStockDetailProvider.notifier).clear();
+  }
+
+  /// Enter in the search field: a barcode scan resolves through the
+  /// canonical exact lookup instead of the debounced catalog the
+  /// keystrokes raced. A hit runs the immediate search so the matching
+  /// item is the list, then opens the existing detail panel (selection
+  /// only — a scan NEVER posts an adjustment). A miss leaves the
+  /// debounced text filter in place — the filtered list is the result.
+  Future<void> _submitScan() async {
+    final query = _searchController.text.trim();
+    if (query.isEmpty) return;
+    final lookup =
+        await ref.read(barcodeLookupProvider.notifier).lookup(query);
+    if (!mounted || lookup == null || !lookup.found) return;
+    final productId = lookup.productId;
+    if (productId == null) return;
+    await ref.read(inventoryProvider.notifier).searchNow(query);
+    if (!mounted) return;
+    final items = ref.read(inventoryProvider).items;
+    InventoryItemModel? match;
+    for (final item in items) {
+      if (item.productId == productId) {
+        match = item;
+        break;
+      }
+    }
+    if (match != null) await _openDetail(match);
+  }
+
+  /// A burst captured by the app-level gateway (no field focused): the
+  /// code is seeded into the search box exactly as a wedge would have
+  /// typed it — a programmatic set, so the field's onChanged never fires
+  /// and the provider query is seeded here instead — then the same
+  /// canonical lookup runs as for a focused Enter (selection only; a
+  /// scan NEVER posts an adjustment).
+  Future<void> _handleGlobalScan(String code) async {
+    // First statement, synchronously: a dispatch routed here MUST leave a
+    // receive trace — a `dispatch` whose target is this screen never
+    // produces POS's `scan-receive`, and without this line it produced
+    // nothing at all.
+    scanDiag('scan-receive', {
+      'target': 'stock',
+      'corr': lastScanCorr,
+      'len': code.length,
+      'suffix3': scanDiagSuffix3(code),
+    });
+    if (!mounted) return;
+    _searchController.value = TextEditingValue(
+      text: code,
+      selection: TextSelection.collapsed(offset: code.length),
+    );
+    ref.read(inventoryProvider.notifier).setSearch(code);
+    await _submitScan();
   }
 
   @override
@@ -591,6 +663,7 @@ class _StockScreenState extends ConsumerState<StockScreen>
         ),
       ),
       onChanged: (v) => ref.read(inventoryProvider.notifier).setSearch(v),
+      onSubmitted: (_) => _submitScan(),
     );
 
     final statusFilter = DropdownButtonFormField<String>(

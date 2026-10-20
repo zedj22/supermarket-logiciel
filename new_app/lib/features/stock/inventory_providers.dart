@@ -171,6 +171,17 @@ class InventoryNotifier extends StateNotifier<InventoryState> {
     });
   }
 
+  /// Immediate search (scan / Enter path): cancels the debounce, applies
+  /// the query and loads page 1 right now.
+  Future<void> searchNow(String value) {
+    _debounce?.cancel();
+    state = state.copyWith(
+      query: state.query.copyWith(search: value, page: 1),
+      clearError: true,
+    );
+    return load();
+  }
+
   void setStatus(String status) {
     _debounce?.cancel();
     state = state.copyWith(
