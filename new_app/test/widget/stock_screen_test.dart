@@ -1,20 +1,28 @@
 // Phase 7 stock screen regression tests:
 // - Responsive StockScreen at 600×500, 800×600, 1024×768, 1366×768, 1920×1080 + Arabic RTL
 // - Inventory list / movement journal tabs, permission gates, adjust dialog
+// - Quantity vs average-cost column separation (RTL + LTR), see the
+//   'Inventory numeric column separation' group at the bottom.
+import 'dart:math' as math;
+
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:supermarket_pos/core/barcode_scanner.dart';
 import 'package:supermarket_pos/core/colors.dart';
 import 'package:supermarket_pos/core/strings.dart';
+import 'package:supermarket_pos/core/widgets/status_chip.dart';
 import 'package:supermarket_pos/features/auth/auth_models.dart';
 import 'package:supermarket_pos/features/auth/auth_provider.dart';
 import 'package:supermarket_pos/features/auth/credential_storage.dart';
 import 'package:supermarket_pos/features/stock/stock_screen.dart';
+import 'package:supermarket_pos/l10n/locale_provider.dart';
 import 'package:supermarket_pos/main.dart';
 import 'package:supermarket_pos/network/api_client.dart';
+import 'package:supermarket_pos/theme/app_theme.dart';
 
 import '../helpers/wedge_scanner.dart';
 
@@ -64,6 +72,17 @@ class FakeCredentialStorage extends SecureCredentialStorage {
 const _loginPath = '/api/v1/auth/login';
 const _inventoryPath = '/api/v1/inventory';
 const _movementsPath = '/api/v1/inventory/movements';
+
+/// Loads the bundled app font so layout tests measure production text
+/// metrics (`flutter test` falls back to 1em-per-glyph test glyphs for
+/// families it has not been given — which would wrap the average-cost
+/// value in its cell and fake the very collision under test).
+Future<void> _loadAppFonts() async {
+  final loader = FontLoader('IBMPlexSansArabic')
+    ..addFont(rootBundle.load('assets/fonts/IBMPlexSansArabic-Regular.ttf'))
+    ..addFont(rootBundle.load('assets/fonts/IBMPlexSansArabic-Bold.ttf'));
+  await loader.load();
+}
 
 Map<String, dynamic> _adminLoginBody({
   List<String> scopes = const [
@@ -145,6 +164,40 @@ Map<String, dynamic> _inventoryListBody() => {
       'page_size': 40,
       'pages': 1,
       'total_stock_value': '1056.0',
+    };
+
+/// Screenshot values for the quantity/average-cost separation tests:
+/// quantity `35.000` and average cost `1 500.000` (as rendered by
+/// [formatGrouped]) used to collide in the RTL table.
+Map<String, dynamic> _separationListBody() => {
+      'items': [
+        _inventoryItem(
+          id: '00000000-0000-0000-0000-0000000000p1',
+          name: 'Huile de table',
+          barcode: '111222333',
+          quantity: '35.000',
+          avgCost: '1500.000',
+          stockValue: '52500.000',
+          cost: '1400.000',
+        ),
+        _inventoryItem(
+          id: '00000000-0000-0000-0000-0000000000p2',
+          name: 'Bread',
+          barcode: '444555666',
+          quantity: '3',
+          avgCost: '30',
+          stockValue: '90',
+          categoryName: 'Bakery',
+        ),
+      ],
+      'total': 2,
+      'page': 1,
+      'page_size': 40,
+      'pages': 1,
+      // Deliberately NOT the sum of the cell values: the KPI total must
+      // never duplicate a table cell string the tests look up by exact
+      // text (find.text would then match twice).
+      'total_stock_value': '57750.000',
     };
 
 Map<String, dynamic> _movementJson({
@@ -406,6 +459,8 @@ void main() {
     MockDio dio, {
     required List<String> permissions,
     Size size = const Size(1366, 768),
+    Locale locale = const Locale('ar'),
+    ThemeData? theme,
   }) async {
     tester.view.physicalSize = size;
     tester.view.devicePixelRatio = 1.0;
@@ -419,15 +474,26 @@ void main() {
       permissions: permissions,
     );
 
+    // The screen reads its strings from localeProvider (not from
+    // MaterialApp), so both must follow the requested locale.
+    final appLocale = switch (locale.languageCode) {
+      'en' => AppLocale.en,
+      'fr' => AppLocale.fr,
+      _ => AppLocale.ar,
+    };
+
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
           apiClientProvider.overrideWithValue(ApiClient(dio: dio)),
           credentialStorageProvider.overrideWithValue(FakeCredentialStorage()),
           currentUserProvider.overrideWithValue(user),
+          localeProvider
+              .overrideWith((_) => LocaleNotifier()..setLocale(appLocale)),
         ],
         child: MaterialApp(
-          locale: const Locale('ar'),
+          locale: locale,
+          theme: theme,
           supportedLocales: appSupportedLocales,
           localizationsDelegates: appLocalizationsDelegates,
           home: const Scaffold(body: StockScreen()),
@@ -1385,6 +1451,482 @@ void main() {
       );
       expect(find.byKey(const Key('stock-detail-panel')), findsNothing);
       expect(tester.takeException(), isNull);
+    });
+  });
+
+  // ── Quantity vs average-cost separation ──────────────────────────
+  //
+  // Screenshot bug: in the RTL table the quantity value (Column cross
+  // alignment, resolved by the ambient direction) and the average-cost
+  // value (`TextAlign.end` inside numericText's LTR-forced paragraph)
+  // hugged the SAME shared cell boundary — `35.000` and `1 500.000`
+  // rendered collapsed together. These tests pin the separation in both
+  // locales plus the purchases-style contract: digits keep the LTR
+  // paragraph, the cell edge does the placing.
+
+  /// The pinned header label for one column, scoped to the table header
+  /// (the KPI row and detail panel reuse some of the same strings).
+  Finder stockHeading(String labelKey, String lang) => find.descendant(
+        of: find.byKey(const Key('stock-table-header')),
+        matching: find.text(AppStrings.t(labelKey, lang)),
+      );
+
+  /// Positive = clear horizontal space between the two text boxes,
+  /// negative = width of the overlap. Two values meeting exactly at the
+  /// shared cell boundary report 0.
+  double horizontalGap(Rect a, Rect b) =>
+      math.max(b.left - a.right, a.left - b.right);
+
+  /// A numeric value must sit at the same edge of its column as its
+  /// heading — ambient directional end (left under RTL, right under LTR).
+  void expectValueUnderHeading(
+    WidgetTester tester, {
+    required String labelKey,
+    required Finder value,
+    required String lang,
+    required TextDirection direction,
+  }) {
+    final heading = tester.getRect(stockHeading(labelKey, lang));
+    final rect = tester.getRect(value);
+    if (direction == TextDirection.rtl) {
+      expect(rect.left, closeTo(heading.left, 0.01),
+          reason: '$labelKey: under RTL the value must hug the heading '
+              'edge (ambient end = left), not the opposite cell edge');
+    } else {
+      expect(rect.right, closeTo(heading.right, 0.01),
+          reason: '$labelKey: under LTR the value must hug the heading '
+              'edge (ambient end = right)');
+    }
+  }
+
+  /// The numeric-cell contract: digits keep an LTR paragraph (grouped
+  /// numbers never mirror) while placement comes from the cell's
+  /// directional edge — `textAlign.end` inside that LTR paragraph is the
+  /// RTL bug: it hugs the opposite edge from the ambient-RTL heading.
+  void expectNumericCellContract(WidgetTester tester) {
+    for (final value in [
+      find.text('35.000'),
+      find.text('1 500.000'),
+      find.text('52 500.000'),
+    ]) {
+      final text = tester.widget<Text>(value);
+      expect(text.textDirection, TextDirection.ltr,
+          reason: '$value keeps the numericText LTR paragraph');
+      expect(
+        text.textAlign,
+        isNull,
+        reason: '$value must be placed by the cell edge '
+            '(AlignmentDirectional.centerEnd / Column cross alignment), '
+            'never by textAlign.end inside the LTR paragraph',
+      );
+    }
+  }
+
+  group('Inventory numeric column separation', () {
+    setUpAll(_loadAppFonts);
+
+    testWidgets('RTL (ar): quantity and average cost are distinct, '
+        'separated columns', (tester) async {
+      final dio = MockDio();
+      stubRequests(dio, inventoryBody: _separationListBody());
+      await pumpStockScreenDirect(
+        tester,
+        dio,
+        permissions: const ['inventory_view'],
+        size: const Size(1366, 768),
+        theme: AppTheme.light(),
+      );
+
+      expect(find.byKey(const Key('stock-list')), findsOneWidget);
+      final qty = find.text('35.000');
+      final avg = find.text('1 500.000');
+      final stock = find.text('52 500.000');
+      expect(qty, findsOneWidget);
+      expect(avg, findsOneWidget);
+      expect(stock, findsOneWidget);
+
+      // The screenshot bug: under RTL both values hugged the same
+      // shared cell boundary → no visible space between them.
+      expect(
+        horizontalGap(tester.getRect(qty), tester.getRect(avg)),
+        greaterThanOrEqualTo(16),
+        reason: 'quantity 35.000 and average cost 1 500.000 must be '
+            'visibly distinct columns under RTL',
+      );
+      expect(
+        horizontalGap(tester.getRect(avg), tester.getRect(stock)),
+        greaterThanOrEqualTo(16),
+        reason: 'average cost must not collide with the stock value',
+      );
+
+      expectValueUnderHeading(
+        tester,
+        labelKey: 'quantity',
+        value: qty,
+        lang: 'ar',
+        direction: TextDirection.rtl,
+      );
+      expectValueUnderHeading(
+        tester,
+        labelKey: 'avg_cost',
+        value: avg,
+        lang: 'ar',
+        direction: TextDirection.rtl,
+      );
+      expectValueUnderHeading(
+        tester,
+        labelKey: 'stock_value',
+        value: stock,
+        lang: 'ar',
+        direction: TextDirection.rtl,
+      );
+      expectNoOverflow(tester);
+    });
+
+    testWidgets('LTR (en): quantity and average cost keep their separation',
+        (tester) async {
+      final dio = MockDio();
+      stubRequests(dio, inventoryBody: _separationListBody());
+      await pumpStockScreenDirect(
+        tester,
+        dio,
+        permissions: const ['inventory_view'],
+        size: const Size(1366, 768),
+        locale: const Locale('en'),
+        theme: AppTheme.light(),
+      );
+
+      expect(find.byKey(const Key('stock-list')), findsOneWidget);
+      final qty = find.text('35.000');
+      final avg = find.text('1 500.000');
+      final stock = find.text('52 500.000');
+      expect(qty, findsOneWidget);
+      expect(avg, findsOneWidget);
+      expect(stock, findsOneWidget);
+
+      expect(
+        horizontalGap(tester.getRect(qty), tester.getRect(avg)),
+        greaterThanOrEqualTo(16),
+        reason: 'quantity and average cost must stay distinct under LTR',
+      );
+      expect(
+        horizontalGap(tester.getRect(avg), tester.getRect(stock)),
+        greaterThanOrEqualTo(16),
+        reason: 'average cost must not collide with the stock value',
+      );
+
+      expectValueUnderHeading(
+        tester,
+        labelKey: 'quantity',
+        value: qty,
+        lang: 'en',
+        direction: TextDirection.ltr,
+      );
+      expectValueUnderHeading(
+        tester,
+        labelKey: 'avg_cost',
+        value: avg,
+        lang: 'en',
+        direction: TextDirection.ltr,
+      );
+      expectValueUnderHeading(
+        tester,
+        labelKey: 'stock_value',
+        value: stock,
+        lang: 'en',
+        direction: TextDirection.ltr,
+      );
+      expectNoOverflow(tester);
+    });
+
+    testWidgets('numeric cells keep an LTR paragraph for the digits and '
+        'are placed by the cell edge, never textAlign.end', (tester) async {
+      final dio = MockDio();
+      stubRequests(dio, inventoryBody: _separationListBody());
+      await pumpStockScreenDirect(
+        tester,
+        dio,
+        permissions: const ['inventory_view'],
+        size: const Size(1366, 768),
+        theme: AppTheme.light(),
+      );
+
+      expect(find.text('35.000'), findsOneWidget);
+      expectNumericCellContract(tester);
+      expectNoOverflow(tester);
+    });
+
+    testWidgets('RTL medium (1024) keeps the separation without the '
+        'category column', (tester) async {
+      final dio = MockDio();
+      stubRequests(dio, inventoryBody: _separationListBody());
+      await pumpStockScreenDirect(
+        tester,
+        dio,
+        permissions: const ['inventory_view'],
+        size: const Size(1024, 768),
+        theme: AppTheme.light(),
+      );
+
+      expect(find.byKey(const Key('stock-list')), findsOneWidget);
+      // Medium drops the category column entirely (wide-only).
+      expect(stockHeading('category', 'ar'), findsNothing);
+      final qty = find.text('35.000');
+      final avg = find.text('1 500.000');
+      expect(qty, findsOneWidget);
+      expect(avg, findsOneWidget);
+      expect(
+        horizontalGap(tester.getRect(qty), tester.getRect(avg)),
+        greaterThanOrEqualTo(16),
+        reason: 'medium table must keep quantity and average cost apart '
+            'under RTL',
+      );
+      expectNoOverflow(tester);
+    });
+
+    testWidgets('RTL narrow cards keep quantity and average cost apart',
+        (tester) async {
+      final dio = MockDio();
+      stubRequests(dio, inventoryBody: _separationListBody());
+      await pumpStockScreenDirect(
+        tester,
+        dio,
+        permissions: const ['inventory_view'],
+        size: const Size(600, 500),
+        theme: AppTheme.light(),
+      );
+
+      expect(find.byKey(const Key('stock-cards')), findsOneWidget);
+      final card = find.byKey(
+        const Key('stock-card-00000000-0000-0000-0000-0000000000p1'),
+      );
+      expect(card, findsOneWidget);
+      // Card quantity renders value + unit in one line ('35.000 …').
+      final qty = find.descendant(
+        of: card,
+        matching: find.textContaining('35.000'),
+      );
+      final avg = find.descendant(
+        of: card,
+        matching: find.text('1 500.000'),
+      );
+      expect(qty, findsOneWidget);
+      expect(avg, findsOneWidget);
+      expect(
+        horizontalGap(tester.getRect(qty), tester.getRect(avg)),
+        greaterThanOrEqualTo(16),
+        reason: 'card stats must keep quantity and average cost apart',
+      );
+      expectNoOverflow(tester);
+    });
+  });
+
+  // ── Wide category-column distribution ─────────────────────────────
+  //
+  // Screenshot bug: Category was `Expanded(flex: 2)`, so at wide
+  // desktop every pixel the fixed numerics don't use was split 3:2
+  // between the product name and Category. At 1920 the Category cell
+  // measured ~576px; its start-aligned label hid against the name side
+  // and the whole leftover showed as a blank wedge between Category
+  // and Quantity. Category now shares the fixed-width cluster and the
+  // name column absorbs the fluid width.
+
+  /// The wide-distribution contract: the Category header and body cells
+  /// are bounded (fixed 180 + padding), the label sits at the ambient
+  /// end against the numeric cluster, every column shares one width
+  /// definition between header and body, and the name column is the
+  /// one that absorbs the fluid width.
+  void expectCategoryGroupedWithNumerics(
+    WidgetTester tester, {
+    required String lang,
+    required TextDirection direction,
+  }) {
+    final row = find.byKey(
+      const Key('stock-item-00000000-0000-0000-0000-0000000000p1'),
+    );
+
+    // Header and body cells must share one width definition by
+    // construction (same spec list drives both). The body keys repeat
+    // per row, so they resolve against the p1 row only.
+    for (var i = 0; i < 7; i++) {
+      final header = tester.getRect(find.byKey(Key('stock-header-col-$i')));
+      final body = tester.getRect(
+        find.descendant(
+          of: row,
+          matching: find.byKey(Key('stock-body-col-$i')),
+        ),
+      );
+      expect(body.width, closeTo(header.width, 0.01),
+          reason: 'column $i: header and body cells must be identical '
+              'boxes so headings sit exactly above their values');
+    }
+
+    final categoryHeader = tester.getRect(
+      find.byKey(const Key('stock-header-col-1')),
+    );
+    expect(
+      categoryHeader.width,
+      lessThanOrEqualTo(220),
+      reason: 'the category header must be a bounded fixed-width cell, '
+          'not an Expanded soaking up the leftover table width',
+    );
+
+    final category = find.descendant(of: row, matching: find.text('Drinks'));
+    expect(category, findsOneWidget);
+    final categoryRect = tester.getRect(category);
+    final categoryCell = tester.getRect(
+      find.descendant(
+        of: row,
+        matching: find.byKey(const Key('stock-body-col-1')),
+      ),
+    );
+    expect(
+      categoryCell.width,
+      lessThanOrEqualTo(220),
+      reason: 'the body cell must hug its bounded fixed width instead of '
+          'stretching across an oversized flex cell',
+    );
+
+    // The label sits against the cluster side (ambient end) in both
+    // directions: its far edge meets the cell's end content edge, so
+    // the only slack left between Category and Quantity is the
+    // quantity cell's own padding + figure slack — never the old
+    // start-against-the-name wedge of leftover cell width.
+    final qtyCell = tester.getRect(
+      find.descendant(
+        of: row,
+        matching: find.byKey(const Key('stock-body-col-2')),
+      ),
+    );
+    expect(
+      horizontalGap(categoryRect, tester.getRect(find.text('35.000'))),
+      lessThanOrEqualTo(300),
+      reason: 'category must sit against the numeric cluster — the gap '
+          'is bounded by the quantity cell ($qtyCell), not by category '
+          'cell remainder',
+    );
+    final end = direction == TextDirection.rtl
+        ? categoryRect.left
+        : categoryRect.right;
+    final cellEnd = direction == TextDirection.rtl
+        ? categoryCell.left + 10
+        : categoryCell.right - 10;
+    expect(end, closeTo(cellEnd, 0.01),
+        reason: 'the category label must hug the ambient end of its '
+            'cell (against the numeric cluster), not the name side');
+
+    // Fluid column: the name absorbs the leftover width.
+    final nameHeader = tester.getRect(
+      find.byKey(const Key('stock-header-col-0')),
+    );
+    final nameBody = tester.getRect(
+      find.descendant(
+        of: row,
+        matching: find.byKey(const Key('stock-body-col-0')),
+      ),
+    );
+    expect(
+      nameHeader.width,
+      greaterThanOrEqualTo(400),
+      reason: 'the name column is the fluid column and must absorb the '
+          'remaining width at wide desktop',
+    );
+    expect(nameHeader.width, lessThanOrEqualTo(900),
+        reason: 'the fluid share must stay a reasonable name column, '
+            'not the whole table');
+
+    // The figure cells keep a comfortable minimum so grouped values
+    // never crowd against their neighbours.
+    for (final i in [2, 3, 4]) {
+      expect(
+        tester
+            .getRect(find.descendant(
+              of: row,
+              matching: find.byKey(Key('stock-body-col-$i')),
+            ))
+            .width,
+        greaterThanOrEqualTo(150),
+        reason: 'figure column $i must keep a comfortable width',
+      );
+    }
+
+    // Header/value agreement for the clustered columns, and the name
+    // value at its cell's start edge.
+    expectValueUnderHeading(
+      tester,
+      labelKey: 'category',
+      value: category,
+      lang: lang,
+      direction: direction,
+    );
+    expectValueUnderHeading(
+      tester,
+      labelKey: 'status',
+      value: find.descendant(
+        of: row,
+        matching: find.byType(StatusChip),
+      ),
+      lang: lang,
+      direction: direction,
+    );
+    final nameValue = find.descendant(of: row, matching: find.text('Huile de table'));
+    expect(nameValue, findsOneWidget);
+    final nameRect = tester.getRect(nameValue);
+    final nameStart = direction == TextDirection.rtl
+        ? nameRect.right
+        : nameRect.left;
+    final nameCellStart = direction == TextDirection.rtl
+        ? nameBody.right - 10
+        : nameBody.left + 10;
+    expect(nameStart, closeTo(nameCellStart, 0.01),
+        reason: 'the name value must hug the ambient start of the '
+            'fluid cell');
+  }
+
+  group('Inventory category column distribution (wide)', () {
+    setUpAll(_loadAppFonts);
+
+    testWidgets('RTL wide (1920): category stays bounded and grouped '
+        'with the numeric columns', (tester) async {
+      final dio = MockDio();
+      stubRequests(dio, inventoryBody: _separationListBody());
+      await pumpStockScreenDirect(
+        tester,
+        dio,
+        permissions: const ['inventory_view'],
+        size: const Size(1920, 1080),
+        theme: AppTheme.light(),
+      );
+
+      expect(find.byKey(const Key('stock-list')), findsOneWidget);
+      expectCategoryGroupedWithNumerics(
+        tester,
+        lang: 'ar',
+        direction: TextDirection.rtl,
+      );
+      expectNoOverflow(tester);
+    });
+
+    testWidgets('LTR wide (1920): category keeps the same bounded '
+        'distribution', (tester) async {
+      final dio = MockDio();
+      stubRequests(dio, inventoryBody: _separationListBody());
+      await pumpStockScreenDirect(
+        tester,
+        dio,
+        permissions: const ['inventory_view'],
+        size: const Size(1920, 1080),
+        locale: const Locale('en'),
+        theme: AppTheme.light(),
+      );
+
+      expect(find.byKey(const Key('stock-list')), findsOneWidget);
+      expectCategoryGroupedWithNumerics(
+        tester,
+        lang: 'en',
+        direction: TextDirection.ltr,
+      );
+      expectNoOverflow(tester);
     });
   });
 }

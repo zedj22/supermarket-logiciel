@@ -33,6 +33,31 @@ StockLayoutMode stockLayoutModeFor(double width) {
   return StockLayoutMode.narrow;
 }
 
+/// One column spec shared by the inventory table header and every body
+/// row (the products `_Col` pattern): `flex` columns share the leftover
+/// width, `fixedWidth` columns keep a deliberate size, `endAligned`
+/// columns place their content at the ambient end — the figures, the
+/// chip/button cells, and the category label, which groups against the
+/// numeric cluster instead of hiding against the name side.
+class _StockCol {
+  const _StockCol(
+    this.label, {
+    this.flex = 0,
+    this.fixedWidth = 0,
+    this.endAligned = false,
+  });
+
+  final String label;
+  final int flex;
+  final double fixedWidth;
+  final bool endAligned;
+}
+
+/// Shrink-to-fit wrapper for figures: a grouped value wider than its
+/// column scales down instead of wrapping or colliding with the next
+/// cell (products `_fitEnd` pattern).
+Widget _fitEnd(Widget child) => FittedBox(fit: BoxFit.scaleDown, child: child);
+
 /// The three stock states map onto the shared status tones, so every pill
 /// in the app gets the same brightness-aware tinted fill and foreground
 /// (§17.4 — no screen invents its own "green means fine" recipe). `null` is
@@ -849,6 +874,58 @@ class _StockScreenState extends ConsumerState<StockScreen>
     final wide = mode == StockLayoutMode.wide;
     final cs = theme.colorScheme;
 
+    // One spec list drives the header and every row (products `_Col` +
+    // `cell()` pattern): the name column leads the flex share, the
+    // figure columns keep wider deliberate weights so grouped values
+    // never crowd, and only chip/button columns stay fixed. Each cell
+    // carries its own horizontal padding, so header and body boxes
+    // share one width definition by construction.
+    final cols = <_StockCol>[
+      _StockCol(AppStrings.t('name', loc), flex: 24),
+      if (wide)
+        // End-aligned: the label sits against the numeric cluster's
+        // side of its bounded cell (ambient end in both directions),
+        // never start-aligned against the name — that hides the label
+        // and leaves the leftover cell width as a blank wedge between
+        // Category and Quantity.
+        _StockCol(AppStrings.t('category', loc),
+            flex: 0, fixedWidth: 180, endAligned: true),
+      _StockCol(AppStrings.t('quantity', loc), flex: 10, endAligned: true),
+      _StockCol(AppStrings.t('avg_cost', loc), flex: 12, endAligned: true),
+      _StockCol(AppStrings.t('stock_value', loc), flex: 12, endAligned: true),
+      _StockCol(AppStrings.t('status', loc),
+          flex: 0, fixedWidth: 76, endAligned: true),
+      _StockCol(AppStrings.t('actions', loc),
+          flex: 0, fixedWidth: 48, endAligned: true),
+    ];
+
+    Widget cell(int index, Widget child, {bool header = false}) {
+      final col = cols[index];
+      Widget content = Align(
+        alignment: col.endAligned
+            ? AlignmentDirectional.centerEnd
+            : AlignmentDirectional.centerStart,
+        child: child,
+      );
+      if (col.fixedWidth > 0) {
+        content = SizedBox(width: col.fixedWidth, child: content);
+      }
+      if (header) {
+        content = DefaultTextStyle(
+          style: AppTheme.tableHeader(theme),
+          child: content,
+        );
+      }
+      final padded = Padding(
+        key:
+            Key(header ? 'stock-header-col-$index' : 'stock-body-col-$index'),
+        padding: const EdgeInsets.symmetric(horizontal: 10),
+        child: content,
+      );
+      if (col.fixedWidth > 0) return padded;
+      return Expanded(flex: col.flex, child: padded);
+    }
+
     return Container(
       key: const Key('stock-list'),
       decoration: stockCardDecoration(theme),
@@ -858,33 +935,17 @@ class _StockScreenState extends ConsumerState<StockScreen>
           // Header row — pinned above the scrolling body (§17.2).
           TableHeaderRow(
             testKey: const Key('stock-table-header'),
-            padding: const EdgeInsets.symmetric(horizontal: 12),
             children: [
-              Expanded(flex: 3, child: _th(theme, AppStrings.t('name', loc))),
-              if (wide)
-                Expanded(
-                    flex: 2,
-                    child: _th(theme, AppStrings.t('category', loc))),
-              SizedBox(
-                  width: 90,
-                  child: _th(theme, AppStrings.t('quantity', loc),
-                      numeric: true)),
-              SizedBox(
-                  width: 100,
-                  child: _th(theme, AppStrings.t('avg_cost', loc),
-                      numeric: true)),
-              SizedBox(
-                  width: 110,
-                  child: _th(theme, AppStrings.t('stock_value', loc),
-                      numeric: true)),
-              SizedBox(
-                  width: 76,
-                  child: _th(theme, AppStrings.t('status', loc),
-                      numeric: true)),
-              SizedBox(
-                  width: 48,
-                  child: _th(theme, AppStrings.t('actions', loc),
-                      numeric: true)),
+              for (var i = 0; i < cols.length; i++)
+                cell(
+                  i,
+                  Text(
+                    cols[i].label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  header: true,
+                ),
             ],
           ),
           Expanded(
@@ -914,6 +975,115 @@ class _StockScreenState extends ConsumerState<StockScreen>
                   ProductStockStatus.out => AppStrings.t('out_of_stock', loc),
                 };
 
+                var colIndex = 0;
+                final cells = <Widget>[
+                  cell(
+                    colIndex++,
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          item.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        if (item.barcode != null)
+                          Text(
+                            item.barcode!,
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: cs.onSurface.withValues(alpha: 0.7),
+                              fontSize: 12,
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                  if (wide)
+                    cell(
+                      colIndex++,
+                      Text(
+                        item.categoryName ?? AppStrings.t('no_category', loc),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style:
+                            theme.textTheme.bodySmall?.copyWith(color: cs.outline),
+                      ),
+                    ),
+                  // Numeric contract (purchases `_cell` pattern): the
+                  // LTR paragraph only orders the digits — placement
+                  // comes from the cell's ambient-direction Align
+                  // (never `textAlign.end` inside the LTR paragraph,
+                  // which hugs the opposite edge from the heading
+                  // under RTL and collapsed quantity against average
+                  // cost on their shared cell boundary).
+                  cell(
+                    colIndex++,
+                    _fitEnd(
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          numericText(
+                            formatGrouped(item.quantity),
+                            style: theme.textTheme.titleSmall?.copyWith(
+                              color: statusColor,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          Text(
+                            AppStrings.unitLabel(item.unit, loc),
+                            style: theme.textTheme.labelSmall?.copyWith(
+                              color: cs.onSurface.withValues(alpha: 0.7),
+                              fontSize: 11.5,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  cell(
+                    colIndex++,
+                    _fitEnd(
+                      numericText(
+                        formatGrouped(item.avgCost),
+                        style: theme.textTheme.bodySmall,
+                      ),
+                    ),
+                  ),
+                  cell(
+                    colIndex++,
+                    _fitEnd(
+                      numericText(
+                        formatGrouped(item.stockValue),
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ),
+                  cell(
+                    colIndex++,
+                    StatusChip(
+                      label: statusLabel,
+                      tone: stockTone(status),
+                      dense: true,
+                    ),
+                  ),
+                  cell(
+                    colIndex,
+                    canAdjust
+                        ? IconButton(
+                            key: Key('stock-adjust-${item.productId}'),
+                            tooltip: AppStrings.t('adjust_stock', loc),
+                            icon: const Icon(Icons.tune, size: 18),
+                            onPressed: () => _openAdjust(item),
+                          )
+                        : const SizedBox.shrink(),
+                  ),
+                ];
+
                 return InkWell(
                   key: Key('stock-item-${item.productId}'),
                   onTap: () => _openDetail(item),
@@ -922,110 +1092,10 @@ class _StockScreenState extends ConsumerState<StockScreen>
                     color: selected
                         ? cs.primary.withValues(alpha: 0.08)
                         : null,
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 12, vertical: 8),
+                    padding: const EdgeInsets.symmetric(vertical: 8),
                     child: Row(
-                      children: [
-                        Expanded(
-                          flex: 3,
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                item.name,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: theme.textTheme.bodyMedium?.copyWith(
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                              if (item.barcode != null)
-                                Text(
-                                  item.barcode!,
-                                  style: theme.textTheme.bodySmall?.copyWith(
-                                    color: cs.onSurface.withValues(alpha: 0.7),
-                                    fontSize: 12,
-                                  ),
-                                ),
-                            ],
-                          ),
-                        ),
-                        if (wide)
-                          Expanded(
-                            flex: 2,
-                            child: Text(
-                              item.categoryName ??
-                                  AppStrings.t('no_category', loc),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: theme.textTheme.bodySmall
-                                  ?.copyWith(color: cs.outline),
-                            ),
-                          ),
-                        SizedBox(
-                          width: 90,
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.end,
-                            children: [
-                              numericText(
-                                formatGrouped(item.quantity),
-                                textAlign: TextAlign.end,
-                                style: theme.textTheme.titleSmall?.copyWith(
-                                  color: statusColor,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                              Text(
-                                AppStrings.unitLabel(item.unit, loc),
-                                style: theme.textTheme.labelSmall?.copyWith(
-                                  color: cs.onSurface.withValues(alpha: 0.7),
-                                  fontSize: 11.5,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        SizedBox(
-                          width: 100,
-                          child: numericText(
-                            formatGrouped(item.avgCost),
-                            textAlign: TextAlign.end,
-                            style: theme.textTheme.bodySmall,
-                          ),
-                        ),
-                        SizedBox(
-                          width: 110,
-                          child: numericText(
-                            formatGrouped(item.stockValue),
-                            textAlign: TextAlign.end,
-                            style: theme.textTheme.bodyMedium?.copyWith(
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
-                        SizedBox(
-                          width: 76,
-                          child: Align(
-                            alignment: AlignmentDirectional.centerEnd,
-                            child: StatusChip(
-                              label: statusLabel,
-                              tone: stockTone(status),
-                              dense: true,
-                            ),
-                          ),
-                        ),
-                        SizedBox(
-                          width: 48,
-                          child: canAdjust
-                              ? IconButton(
-                                  key: Key('stock-adjust-${item.productId}'),
-                                  tooltip: AppStrings.t('adjust_stock', loc),
-                                  icon: const Icon(Icons.tune, size: 18),
-                                  onPressed: () => _openAdjust(item),
-                                )
-                              : const SizedBox.shrink(),
-                        ),
-                      ],
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: cells,
                     ),
                   ),
                 );
@@ -1034,16 +1104,6 @@ class _StockScreenState extends ConsumerState<StockScreen>
           ),
         ],
       ),
-    );
-  }
-
-  Widget _th(ThemeData theme, String label, {bool numeric = false}) {
-    return Text(
-      label,
-      maxLines: 1,
-      overflow: TextOverflow.ellipsis,
-      textAlign: numeric ? TextAlign.end : TextAlign.start,
-      style: AppTheme.tableHeader(theme),
     );
   }
 

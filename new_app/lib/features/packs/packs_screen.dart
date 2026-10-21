@@ -24,6 +24,32 @@ import 'pack_form_dialog.dart';
 import 'pack_models.dart';
 import 'packs_providers.dart';
 
+/// One column spec shared by the packs table header and every body row
+/// (the products `_Col` pattern): `flex` columns share the leftover
+/// width, `fixedWidth` columns keep a deliberate size, `numeric`
+/// columns place their content at the ambient end. [id] keeps the
+/// historical `<id>-header` keys on the heading cells.
+class _PackCol {
+  const _PackCol(
+    this.id,
+    this.label, {
+    this.flex = 0,
+    this.fixedWidth = 0,
+    this.numeric = false,
+  });
+
+  final String id;
+  final String label;
+  final int flex;
+  final double fixedWidth;
+  final bool numeric;
+}
+
+/// Shrink-to-fit wrapper for figures: a grouped value wider than its
+/// column scales down instead of wrapping or colliding with the next
+/// cell (products `_fitEnd` pattern).
+Widget _fitEnd(Widget child) => FittedBox(fit: BoxFit.scaleDown, child: child);
+
 class PacksScreen extends ConsumerStatefulWidget {
   const PacksScreen({super.key});
 
@@ -404,19 +430,151 @@ class _PacksScreenState extends ConsumerState<PacksScreen> {
     required bool canArchive,
   }) {
     final head = AppTheme.tableHeader(theme);
-    const widths = <int>[4, 2, 1, 2, 2, 2];
 
-    Widget th(int i, String key, {bool numeric = false}) => Expanded(
-          flex: widths[i],
-          child: Text(
-            AppStrings.t(key, loc),
-            key: Key('$key-header'),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: head,
-            textAlign: numeric ? TextAlign.end : TextAlign.start,
+    // One spec list drives the header and every row (products `_Col` +
+    // `cell()` pattern): the pack name leads the flex share, the money
+    // and count columns get deliberate weights so grouped decimals
+    // never collide, and status/actions keep fixed chip/button widths.
+    // Each cell carries its own horizontal padding, so header and body
+    // boxes share one width definition by construction. The previous
+    // layout split the width `[4,2,1,2,2,2]` across separately-built
+    // header/body cells: `price` got one thirteenth of the table (too
+    // narrow for decimals) and its `numericText(textAlign: end)`
+    // hugged the opposite edge from the heading under RTL.
+    final cols = <_PackCol>[
+      _PackCol('pack_name', AppStrings.t('pack_name', loc), flex: 24),
+      _PackCol('price', AppStrings.t('price', loc), flex: 13, numeric: true),
+      _PackCol('components', AppStrings.t('components', loc),
+          flex: 12, numeric: true),
+      _PackCol('sum_of_parts', AppStrings.t('sum_of_parts', loc),
+          flex: 13, numeric: true),
+      _PackCol('status', AppStrings.t('status', loc),
+          flex: 0, fixedWidth: 112),
+      _PackCol('actions', AppStrings.t('actions', loc),
+          flex: 0, fixedWidth: 144, numeric: true),
+    ];
+
+    Widget cell(int index, Widget child, {bool header = false}) {
+      final col = cols[index];
+      Widget content = Align(
+        alignment: col.numeric
+            ? AlignmentDirectional.centerEnd
+            : AlignmentDirectional.centerStart,
+        child: child,
+      );
+      if (col.fixedWidth > 0) {
+        content = SizedBox(width: col.fixedWidth, child: content);
+      }
+      if (header) {
+        content = DefaultTextStyle(style: head, child: content);
+      }
+      final padded = Padding(
+        key: Key(header ? 'packs-header-col-$index' : 'packs-body-col-$index'),
+        padding: const EdgeInsets.symmetric(horizontal: 10),
+        child: content,
+      );
+      if (col.fixedWidth > 0) return padded;
+      return Expanded(flex: col.flex, child: padded);
+    }
+
+    List<Widget> headerCells() => [
+          for (var i = 0; i < cols.length; i++)
+            cell(
+              i,
+              Text(
+                cols[i].label,
+                key: Key('${cols[i].id}-header'),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              header: true,
+            ),
+        ];
+
+    List<Widget> dataCells(PackModel pack) {
+      final body = theme.textTheme.bodyMedium;
+      var i = 0;
+      return [
+        cell(
+          i++,
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                pack.name,
+                key: Key('pack-row-name-${pack.id}'),
+                style: theme.textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              if (pack.barcode != null && pack.barcode!.isNotEmpty)
+                Text(
+                  pack.barcode!,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.outline,
+                  ),
+                ),
+            ],
           ),
-        );
+        ),
+        // Numeric contract: the LTR paragraph orders the digits, the
+        // cell's ambient-direction Align does the placing —
+        // `textAlign.end` inside the LTR paragraph flips the edge
+        // under RTL and left the price heading above empty space.
+        cell(
+          i++,
+          _fitEnd(numericText(formatGrouped(pack.price), style: body)),
+        ),
+        cell(
+          i++,
+          Text('${pack.componentsCount}', style: body),
+        ),
+        cell(
+          i++,
+          _fitEnd(
+            numericText(
+              pack.sumOfParts ?? '—',
+              key: Key('pack-row-sum-${pack.id}'),
+              style: body,
+            ),
+          ),
+        ),
+        cell(i++, _statusBadge(theme, loc, pack)),
+        cell(
+          i,
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              IconButton(
+                key: Key('pack-detail-${pack.id}'),
+                tooltip: AppStrings.t('pack_detail_title', loc),
+                icon: const Icon(Icons.visibility_outlined, size: 18),
+                onPressed: () => showPackDetailDialog(context, pack: pack),
+              ),
+              if (canUpdate)
+                IconButton(
+                  key: Key('pack-edit-${pack.id}'),
+                  tooltip: AppStrings.t('edit', loc),
+                  icon: const Icon(Icons.edit_outlined, size: 18),
+                  onPressed: pack.isArchived
+                      ? null
+                      : () => _edit(pack),
+                ),
+              if (canArchive && !pack.isArchived)
+                IconButton(
+                  key: Key('pack-archive-${pack.id}'),
+                  tooltip: AppStrings.t('delete', loc),
+                  icon: const Icon(Icons.archive_outlined, size: 18),
+                  onPressed: () => _confirmArchive(pack),
+                ),
+            ],
+          ),
+        ),
+      ];
+    }
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -424,15 +582,7 @@ class _PacksScreenState extends ConsumerState<PacksScreen> {
         // Pinned heading: stays put while the pack list scrolls (§17.2).
         TableHeaderRow(
           testKey: const Key('packs-table-header'),
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          children: [
-            th(0, 'pack_name'),
-            th(1, 'price', numeric: true),
-            th(2, 'components', numeric: true),
-            th(3, 'sum_of_parts', numeric: true),
-            th(4, 'status'),
-            th(5, 'actions', numeric: true),
-          ],
+          children: headerCells(),
         ),
         Expanded(
           child: ListView.separated(
@@ -442,111 +592,18 @@ class _PacksScreenState extends ConsumerState<PacksScreen> {
             separatorBuilder: (_, _) => const Divider(height: 1),
             itemBuilder: (context, index) {
               final pack = state.items[index];
-              return _row(theme, loc, pack,
-                  canUpdate: canUpdate, canArchive: canArchive);
+              return Padding(
+                key: Key('pack-row-${pack.id}'),
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: dataCells(pack),
+                ),
+              );
             },
           ),
         ),
       ],
-    );
-  }
-
-  Widget _row(
-    ThemeData theme,
-    String loc,
-    PackModel pack, {
-    required bool canUpdate,
-    required bool canArchive,
-  }) {
-    final body = theme.textTheme.bodyMedium;
-    return Padding(
-      key: Key('pack-row-${pack.id}'),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      child: Row(
-        children: [
-          Expanded(
-            flex: 4,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  pack.name,
-                  key: Key('pack-row-name-${pack.id}'),
-                  style: theme.textTheme.titleSmall?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                if (pack.barcode != null && pack.barcode!.isNotEmpty)
-                  Text(
-                    pack.barcode!,
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: theme.colorScheme.outline,
-                    ),
-                  ),
-              ],
-            ),
-          ),
-          Expanded(
-            flex: 1,
-            child: numericText(
-                formatGrouped(pack.price), textAlign: TextAlign.end, style: body),
-          ),
-          Expanded(
-            flex: 2,
-            child: Text(
-              '${pack.componentsCount}',
-              textAlign: TextAlign.end,
-              style: body,
-            ),
-          ),
-          Expanded(
-            flex: 2,
-            child: numericText(
-              pack.sumOfParts ?? '—',
-              key: Key('pack-row-sum-${pack.id}'),
-              textAlign: TextAlign.end,
-              style: body,
-            ),
-          ),
-          Expanded(
-            flex: 2,
-            child: _statusBadge(theme, loc, pack),
-          ),
-          Expanded(
-            flex: 2,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                IconButton(
-                  key: Key('pack-detail-${pack.id}'),
-                  tooltip: AppStrings.t('pack_detail_title', loc),
-                  icon: const Icon(Icons.visibility_outlined, size: 18),
-                  onPressed: () => showPackDetailDialog(context, pack: pack),
-                ),
-                if (canUpdate)
-                  IconButton(
-                    key: Key('pack-edit-${pack.id}'),
-                    tooltip: AppStrings.t('edit', loc),
-                    icon: const Icon(Icons.edit_outlined, size: 18),
-                    onPressed: pack.isArchived
-                        ? null
-                        : () => _edit(pack),
-                  ),
-                if (canArchive && !pack.isArchived)
-                  IconButton(
-                    key: Key('pack-archive-${pack.id}'),
-                    tooltip: AppStrings.t('delete', loc),
-                    icon: const Icon(Icons.archive_outlined, size: 18),
-                    onPressed: () => _confirmArchive(pack),
-                  ),
-              ],
-            ),
-          ),
-        ],
-      ),
     );
   }
 
