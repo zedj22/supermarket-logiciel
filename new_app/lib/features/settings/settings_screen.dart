@@ -12,6 +12,7 @@ import '../loyalty/loyalty_models.dart';
 import '../loyalty/loyalty_providers.dart';
 import 'backup_models.dart';
 import 'backup_provider.dart';
+import 'scan_settings_provider.dart';
 import 'settings_models.dart';
 import 'settings_provider.dart';
 
@@ -127,6 +128,8 @@ class SettingsScreen extends ConsumerWidget {
                 ),
               ),
             ),
+            const SizedBox(height: 16),
+            const _ScanActionsSection(),
             if (canManage) ...[
               const SizedBox(height: 16),
               const _StoreSettingsSection(),
@@ -141,6 +144,67 @@ class SettingsScreen extends ConsumerWidget {
               const SizedBox(height: 16),
               const _BackupSection(),
             ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Client-local scan-action toggles (POS): an unknown-barcode scan can
+/// raise the existing Add Product form with the code prefilled, and an
+/// out-of-stock scan can raise the existing Adjust Stock dialog. Both OFF
+/// by default, both persisted in SharedPreferences
+/// (scan_settings_provider.dart), both independent — deliberately NOT part
+/// of the server-owned StoreSettings surface, so no backend, schema or
+/// migration is involved. Like language/theme, every user sees them: they
+/// are operator preferences, not store permissions.
+class _ScanActionsSection extends ConsumerWidget {
+  const _ScanActionsSection();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    final loc = ref.watch(localeProvider).flutterLocale.languageCode;
+    final settings = ref.watch(scanSettingsProvider);
+    final notifier = ref.read(scanSettingsProvider.notifier);
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              AppStrings.t('settings_scan_actions', loc),
+              style: theme.textTheme.titleMedium,
+            ),
+            SwitchListTile(
+              key: const Key('settings-open-add-product-on-unknown-barcode'),
+              contentPadding: EdgeInsets.zero,
+              title: Text(
+                AppStrings.t('open_add_product_on_unknown_barcode', loc),
+              ),
+              subtitle: Text(
+                AppStrings.t('open_add_product_on_unknown_barcode_desc', loc),
+              ),
+              value: settings.openAddProductOnUnknownBarcode,
+              onChanged: (value) =>
+                  notifier.setOpenAddProductOnUnknownBarcode(value),
+            ),
+            SwitchListTile(
+              key: const Key('settings-open-adjust-stock-on-out-of-stock-scan'),
+              contentPadding: EdgeInsets.zero,
+              title: Text(
+                AppStrings.t('open_adjust_stock_on_out_of_stock_scan', loc),
+              ),
+              subtitle: Text(
+                AppStrings.t('open_adjust_stock_on_out_of_stock_scan_desc', loc),
+              ),
+              value: settings.openAdjustStockOnOutOfStockScan,
+              onChanged: (value) =>
+                  notifier.setOpenAdjustStockOnOutOfStockScan(value),
+            ),
           ],
         ),
       ),

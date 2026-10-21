@@ -66,13 +66,17 @@ import '../loyalty/loyalty_models.dart';
 import '../loyalty/loyalty_providers.dart';
 import '../packs/pack_models.dart';
 import '../products/models.dart';
+import '../products/product_form_dialog.dart';
 import '../products/products_providers.dart';
 import '../products/quantity_dialog.dart';
 import '../products/selling_unit_picker.dart';
 import '../products/variant_picker.dart';
 import '../returns/return_providers.dart';
+import '../settings/scan_settings_provider.dart';
 import '../settings/settings_provider.dart';
 import '../shell/shortcuts_help_dialog.dart';
+import '../stock/adjust_dialog.dart';
+import '../stock/inventory_models.dart';
 import 'customer_picker_dialog.dart';
 import 'holds_dialog.dart';
 import 'invoice_discount_dialog.dart';
@@ -118,6 +122,14 @@ class PosScreen extends ConsumerStatefulWidget {
   ConsumerState<PosScreen> createState() => _PosScreenState();
 }
 
+/// Result of the canonical barcode resolve: [hit] recognized and handed to
+/// the existing add flow; [miss] a DEFINITIVE lookup miss (the server
+/// answered — no product/variant/selling unit carries the code); [error]
+/// the lookup or the follow-up product fetch failed (transient — never a
+/// "no such barcode" verdict, so it can never raise the unknown-barcode
+/// scan action).
+enum _ScanResolve { hit, miss, error }
+
 class _PosScreenState extends ConsumerState<PosScreen> {
   final FocusNode _focusNode = FocusNode();
   final FocusNode _searchFocusNode = FocusNode();
@@ -141,6 +153,13 @@ class _PosScreenState extends ConsumerState<PosScreen> {
   /// (the tile mounts already selected, so didUpdateWidget never runs).
   final ValueNotifier<String?> _revealRequest = ValueNotifier<String?>(null);
   bool _cartDrawerOpen = false;
+
+  /// One scan-action dialog at a time: while the unknown-barcode Add
+  /// Product form or the out-of-stock Adjust Stock dialog is open, a
+  /// repeated scan (or a field-path submit) never stacks a second dialog.
+  /// The gateway already blocks bursts behind a modal route — this also
+  /// covers submits that reach the resolve path with a dialog on screen.
+  bool _scanActionDialogOpen = false;
 
   /// Standard cart list scroll position — [_moveActiveLine] jumps it to the
   /// matching end when a FIRST arrow press enters the list from the
@@ -636,7 +655,8 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     }
     _submitSearchInFlight = true;
     try {
-      if (await _resolveAndAddBarcode(query)) return;
+      final resolve = await _resolveAndAddBarcode(query);
+      if (resolve == _ScanResolve.hit) return;
       // Fresh results for THIS query (cancels the pending debounce), then
       // exact name/SKU/barcode match. The documented first-result fallback
       // applies to TYPED text only — a pure-digit query is a scan shape,
@@ -662,7 +682,10 @@ class _PosScreenState extends ConsumerState<PosScreen> {
         await _addProduct(exact, fromScan: true);
         _clearSearchAfterAdd();
       } else {
-        _showBarcodeNotFound();
+        await _handleUnknownBarcode(
+          query,
+          definitiveMiss: resolve == _ScanResolve.miss,
+        );
       }
     } finally {
       _submitSearchInFlight = false;
@@ -676,22 +699,26 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       RegExp(r'^\d+$').hasMatch(query);
 
   /// Canonical exact barcode resolve (string-preserving, server-side
-  /// selling-unit → variant → product). Returns true when the code was
-  /// recognized and handed to the existing add flow (which applies the
-  /// archived / out-of-stock / picker rules); false when the lookup
-  /// missed or failed, so callers may fall back to text search.
-  Future<bool> _resolveAndAddBarcode(String code) async {
+  /// selling-unit → variant → product). [_ScanResolve.hit] when the code
+  /// was recognized and handed to the existing add flow (which applies the
+  /// archived / out-of-stock / picker rules); [_ScanResolve.miss] on a
+  /// definitive lookup miss; [_ScanResolve.error] when the lookup or the
+  /// follow-up fetch failed — callers fall back to text search, and only
+  /// a true miss may raise the unknown-barcode scan action.
+  Future<_ScanResolve> _resolveAndAddBarcode(String code) async {
     final lookup =
         await ref.read(barcodeLookupProvider.notifier).lookup(code);
     final productId = lookup?.found == true ? lookup?.productId : null;
     if (!mounted || productId == null) {
       scanDiag('scan-resolve', {
-        'outcome': !mounted ? 'stale' : 'miss',
+        'outcome':
+            !mounted ? 'stale' : (lookup == null ? 'error' : 'miss'),
         'corr': lastScanCorr,
         'len': code.length,
         'suffix3': scanDiagSuffix3(code),
       });
-      return false;
+      if (!mounted) return _ScanResolve.miss;
+      return lookup == null ? _ScanResolve.error : _ScanResolve.miss;
     }
     scanDiag('scan-resolve', {
       'outcome': 'hit',
@@ -705,14 +732,23 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       final response = await dio.get('/api/v1/products/$productId');
       final product =
           ProductModel.fromJson(response.data as Map<String, dynamic>);
-      if (!mounted) return true; // recognized — never fall through
+      if (!mounted) {
+        // recognized — never fall through
+        return _ScanResolve.hit;
+      }
       // Gateway/qty-field scan add: the scan input keeps focus (see
       // [_clearSearchAfterAdd]); the qty field is never auto-focused.
       await _addProduct(product, fromScan: true);
       _clearSearchAfterAdd();
-      return true;
+      return _ScanResolve.hit;
     } on DioException {
-      return false;
+      scanDiag('scan-resolve', {
+        'outcome': 'error',
+        'corr': lastScanCorr,
+        'len': code.length,
+        'suffix3': scanDiagSuffix3(code),
+      });
+      return _ScanResolve.error;
     }
   }
 
@@ -757,8 +793,9 @@ class _PosScreenState extends ConsumerState<PosScreen> {
   /// A scan landed in a focused cart quantity field (the next scan of a
   /// continuous session — the cashier may have clicked a qty field
   /// mid-session): forward the code to the same canonical resolve path.
-  /// Unknown codes get the clear not-found toast; recognized codes reuse
-  /// every cart rule (merge-increment, stock guard, pickers).
+  /// Unknown codes get the configured unknown-barcode action (or the
+  /// clear not-found toast); recognized codes reuse every cart rule
+  /// (merge-increment, stock guard, pickers).
   Future<void> _handleLineScan(String code) async {
     // First statement, synchronously: every dispatch (gateway or field
     // path) leaves a receive trace here, correlated to its origin.
@@ -767,8 +804,92 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       'len': code.length,
       'suffix3': scanDiagSuffix3(code),
     });
-    if (await _resolveAndAddBarcode(code)) return;
+    final resolve = await _resolveAndAddBarcode(code);
+    if (resolve == _ScanResolve.hit) return;
+    await _handleUnknownBarcode(
+      code,
+      definitiveMiss: resolve == _ScanResolve.miss,
+    );
+  }
+
+  /// An unknown code reached the end of the resolve path: the configured
+  /// Behavior A (Add Product form with the barcode prefilled) fires only
+  /// when the setting is ON, the code is a real scan shape (a digit run
+  /// of barcode length — never a partial fragment or typed text, same
+  /// fingerprint the gateway dispatches) and the miss was DEFINITIVE (a
+  /// network failure is never a "no such product" verdict). Everything
+  /// else keeps the established not-found toast.
+  Future<void> _handleUnknownBarcode(
+    String code, {
+    required bool definitiveMiss,
+  }) async {
+    if (!mounted) return;
+    final openAddProduct = ref
+            .read(scanSettingsProvider)
+            .openAddProductOnUnknownBarcode &&
+        kBarcodeScanShape.hasMatch(code) &&
+        definitiveMiss;
+    if (openAddProduct) {
+      await _openAddProductForScan(code);
+      return;
+    }
     _showBarcodeNotFound();
+  }
+
+  /// Behavior A: the existing add-product form with the scanned code in
+  /// the barcode field (create mode — the form's own validation applies
+  /// unchanged). Serialized through [_scanActionDialogOpen] so a repeated
+  /// scan never stacks a second dialog; barcode/search focus is restored
+  /// after close so scanning resumes immediately.
+  Future<void> _openAddProductForScan(String code) async {
+    if (!mounted || _scanActionDialogOpen) return;
+    _scanActionDialogOpen = true;
+    try {
+      await showProductFormDialog(context, barcode: code);
+    } finally {
+      _scanActionDialogOpen = false;
+    }
+    if (mounted) _searchFocusNode.requestFocus();
+  }
+
+  /// Behavior B: the existing Adjust Stock dialog for a scan-driven add
+  /// that stock rejected (base ≤ 0 at the gates below, or the merge
+  /// guard's out-of-stock verdict via [_scanStockErrorHandler]). Only
+  /// ever called from those confirmed stock rejections — never for
+  /// network errors or unrelated validation failures. Serialized through
+  /// [_scanActionDialogOpen]; a submitted adjustment reloads the catalog
+  /// and the cart's stock snapshots so the next scan sees the new
+  /// quantity (the callers' [_clearSearchAfterAdd] then restores the
+  /// scan input).
+  Future<void> _openAdjustStockForScan({
+    required ProductModel product,
+    VariantModel? variant,
+  }) async {
+    if (!mounted || _scanActionDialogOpen) return;
+    _scanActionDialogOpen = true;
+    try {
+      final result = await showAdjustDialog(
+        context,
+        product: InventoryItemModel(
+          productId: product.id,
+          name: product.name,
+          barcode: product.barcode,
+          unit: product.unit,
+          quantity: product.quantity,
+          cost: product.cost,
+          price: product.price,
+          categoryId: product.categoryId,
+          isArchived: product.isArchived,
+        ),
+        variantId: variant?.id,
+        variantName: variant?.name,
+      );
+      if (result == null || !mounted) return;
+      await ref.read(posSearchProvider.notifier).load();
+      if (mounted) _syncCartStocks();
+    } finally {
+      _scanActionDialogOpen = false;
+    }
   }
 
   /// Phase E — barcode wedge scans a loyalty QR into the product search:
@@ -837,6 +958,16 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     // FIX #6/#7: base stock ≤ 0 → never open pickers, never mutate cart.
     if ((double.tryParse(product.quantity) ?? 0) <= 0) {
       if (!mounted) return;
+      // Behavior B — a confirmed stock rejection on a scan-driven add
+      // raises the existing Adjust Stock dialog (setting ON); otherwise
+      // the established out-of-stock toast, unchanged.
+      if (fromScan &&
+          ref
+              .read(scanSettingsProvider)
+              .openAdjustStockOnOutOfStockScan) {
+        await _openAdjustStockForScan(product: product);
+        return;
+      }
       showPosToast(
         context,
         message: AppStrings.t('cannot_add_out_of_stock', loc),
@@ -876,6 +1007,14 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     // FIX #8: selected variant with stock ≤ 0 → block before unit picker.
     if (variant != null && (double.tryParse(variant.quantity) ?? 0) <= 0) {
       if (!mounted) return;
+      // Behavior B, variant scope — the dialog adjusts THIS variant.
+      if (fromScan &&
+          ref
+              .read(scanSettingsProvider)
+              .openAdjustStockOnOutOfStockScan) {
+        await _openAdjustStockForScan(product: product, variant: variant);
+        return;
+      }
       showPosToast(
         context,
         message: AppStrings.t('cannot_add_out_of_stock', loc),
@@ -906,6 +1045,29 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     final promoPrice = price == product.price
         ? product.promotion?.price
         : null;
+
+    // Behavior B for the merge-aware cart guard: a scan-driven add that
+    // the shared stock rule rejected for INSUFFICIENT stock (the exact
+    // `out_of_stock` verdict — an invalid or too-large input keeps the
+    // single [_showQtyError] funnel) opens Adjust Stock when the setting
+    // is ON. [variant] is final here (every picker above resolved).
+    // Non-scan adds keep the plain toast funnel ([qtyErrorHandler] null).
+    final PosQuantityErrorHandler? qtyErrorHandler = !fromScan
+        ? null
+        : (message, isStockError) {
+            final loc = ref.read(localeProvider).flutterLocale.languageCode;
+            if (isStockError &&
+                message == AppStrings.t('out_of_stock', loc) &&
+                ref
+                    .read(scanSettingsProvider)
+                    .openAdjustStockOnOutOfStockScan) {
+              unawaited(
+                _openAdjustStockForScan(product: product, variant: variant),
+              );
+              return;
+            }
+            _showQtyError(message, isStockError);
+          };
 
     if (units.isEmpty) {
       // Weight/length base product with no configured selling units — the
@@ -955,6 +1117,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
           wholesaleMinQty: product.wholesaleMinQty,
           promotionPrice: promoPrice,
           fromScan: fromScan,
+          onError: qtyErrorHandler,
         );
         return;
       }
@@ -979,6 +1142,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
         wholesaleMinQty: product.wholesaleMinQty,
         promotionPrice: promoPrice,
         fromScan: fromScan,
+        onError: qtyErrorHandler,
       );
       return;
     }
@@ -1034,6 +1198,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       wholesaleMinQty: product.wholesaleMinQty,
       promotionPrice: pickPromoPrice,
       fromScan: fromScan,
+      onError: qtyErrorHandler,
     );
   }
 
@@ -1188,6 +1353,10 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     // NO cart-line quantity field is ever auto-focused after an add —
     // focus moves to a qty field only when the cashier clicks/taps it.
     bool fromScan = false,
+    // Quantity-error funnel override — Behavior B intercepts a confirmed
+    // scan-driven `out_of_stock` rejection here (see the handler built in
+    // [_addProduct]); null keeps the single [_showQtyError] toast funnel.
+    PosQuantityErrorHandler? onError,
   }) {
     final loc = ref.read(localeProvider).flutterLocale.languageCode;
     // Merge + stock guard in one place (UX FIX #12 — FIX #6): adding a
@@ -1228,7 +1397,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       newLine: line,
       rawInput: quantity,
       loc: loc,
-      onError: _showQtyError,
+      onError: onError ?? _showQtyError,
     );
     final cartAfter = ref.read(posCartProvider);
     String? qtyAfter;

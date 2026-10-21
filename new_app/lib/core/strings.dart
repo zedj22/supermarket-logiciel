@@ -255,6 +255,13 @@ class AppStrings {
     'settings_receipt': 'الفاتورة',
     'invoice_footer': 'تذييل الفاتورة',
     'settings_pos': 'نقطة البيع',
+    'settings_scan_actions': 'إجراءات المسح',
+    'open_add_product_on_unknown_barcode': 'فتح إضافة منتج عند مسح باركود غير معروف',
+    'open_add_product_on_unknown_barcode_desc':
+        'يعرض نموذج إضافة منتج مع ملء حقل الباركود تلقائيًا بدل رسالة عدم العثور',
+    'open_adjust_stock_on_out_of_stock_scan': 'فتح تعديل المخزون عند مسح منتج نفد مخزونه',
+    'open_adjust_stock_on_out_of_stock_scan_desc':
+        'يعرض نافذة تعديل المخزون مباشرة عندما يرفض نقطة البيع البيع لنفاد المخزون',
     'default_paper': 'حجم الورق الافتراضي',
     'allow_debt': 'السماح بالبيع بالدين',
     'auto_print_invoice': 'طباعة الفاتورة تلقائيًا',
@@ -1838,6 +1845,15 @@ class AppStrings {
     'settings_receipt': 'Reçu',
     'invoice_footer': 'Pied de page du reçu',
     'settings_pos': 'Point de vente',
+    'settings_scan_actions': 'Actions de scan',
+    'open_add_product_on_unknown_barcode':
+        "Ouvrir l'ajout d'un produit pour un code-barres inconnu",
+    'open_add_product_on_unknown_barcode_desc':
+        "Affiche le formulaire d'ajout d'un produit avec le code-barres pré-rempli au lieu du message « introuvable »",
+    'open_adjust_stock_on_out_of_stock_scan':
+        "Ouvrir l'ajustement du stock pour un article en rupture",
+    'open_adjust_stock_on_out_of_stock_scan_desc':
+        'Affiche la fenêtre d\'ajustement du stock dès que le POS refuse une vente pour rupture de stock',
     'default_paper': 'Format de papier par défaut',
     'allow_debt': 'Autoriser la vente à crédit',
     'auto_print_invoice': 'Imprimer la facture automatiquement',
@@ -3464,6 +3480,15 @@ class AppStrings {
     'settings_receipt': 'Receipt',
     'invoice_footer': 'Receipt footer',
     'settings_pos': 'Point of sale',
+    'settings_scan_actions': 'Scan actions',
+    'open_add_product_on_unknown_barcode':
+        'Open Add Product for an unknown barcode',
+    'open_add_product_on_unknown_barcode_desc':
+        'Shows the add-product form with the barcode prefilled instead of the not-found toast',
+    'open_adjust_stock_on_out_of_stock_scan':
+        'Open Adjust Stock for an out-of-stock scan',
+    'open_adjust_stock_on_out_of_stock_scan_desc':
+        'Shows the adjust-stock dialog whenever a scan-triggered add is rejected for insufficient stock',
     'default_paper': 'Default paper size',
     'allow_debt': 'Allow selling on credit',
     'auto_print_invoice': 'Print invoice automatically',

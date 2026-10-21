@@ -51,20 +51,28 @@ const List<String> kProductUnits = [
 /// Opens the product form. Returns the freshly created [ProductModel] on
 /// a successful create (so a caller like the purchase editor can select
 /// it immediately), or null on cancel / edit / failure.
+///
+/// [barcode] seeds the barcode field in CREATE mode (the POS unknown-
+/// barcode scan action passes the scanned code). Edit mode keeps the
+/// product's own barcode — the prefill can never rewrite an existing one.
 Future<ProductModel?> showProductFormDialog(
   BuildContext context, {
   ProductModel? product,
+  String? barcode,
 }) {
   return showDialog<ProductModel>(
     context: context,
-    builder: (_) => ProductFormDialog(product: product),
+    builder: (_) => ProductFormDialog(product: product, barcode: barcode),
   );
 }
 
 class ProductFormDialog extends ConsumerStatefulWidget {
   final ProductModel? product;
 
-  const ProductFormDialog({super.key, this.product});
+  /// Create-mode barcode prefill — ignored when [product] is set.
+  final String? barcode;
+
+  const ProductFormDialog({super.key, this.product, this.barcode});
 
   @override
   ConsumerState<ProductFormDialog> createState() => _ProductFormDialogState();
@@ -119,7 +127,7 @@ class _ProductFormDialogState extends ConsumerState<ProductFormDialog> {
     super.initState();
     final p = widget.product;
     _name = TextEditingController(text: p?.name ?? '');
-    _barcode = TextEditingController(text: p?.barcode ?? '');
+    _barcode = TextEditingController(text: p?.barcode ?? widget.barcode ?? '');
     _sku = TextEditingController(text: p?.sku ?? '');
     _price = TextEditingController(text: p != null ? _trimDecimal(p.price) : '');
     _cost = TextEditingController(text: p != null ? _trimDecimal(p.cost) : '');

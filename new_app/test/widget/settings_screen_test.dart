@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supermarket_pos/core/strings.dart';
 import 'package:supermarket_pos/features/auth/auth_models.dart';
 import 'package:supermarket_pos/features/auth/auth_provider.dart';
+import 'package:supermarket_pos/features/settings/scan_settings_provider.dart';
 import 'package:supermarket_pos/features/settings/settings_provider.dart';
 import 'package:supermarket_pos/features/settings/settings_screen.dart';
 import 'package:supermarket_pos/l10n/locale_provider.dart';
@@ -472,6 +473,187 @@ void main() {
 
       expect(find.byKey(const Key('settings-storage-title')), findsNothing);
       expect(find.byKey(const Key('settings-storage-open')), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Configurable scan actions — client-local POS preferences: both OFF by
+  // default, independent, persisted in SharedPreferences, and visible to
+  // every user (like language/theme — never permission-gated).
+  // -----------------------------------------------------------------------
+
+  group('Scan actions settings', () {
+    Future<ProviderContainer> pumpScanActions(
+      WidgetTester tester, {
+      AppLocale locale = AppLocale.en,
+      SharedPreferences? prefs,
+    }) async {
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            localeProvider.overrideWith(
+              (ref) => LocaleNotifier(prefs)..setLocale(locale),
+            ),
+            themeProvider.overrideWith((ref) => ThemeNotifier(prefs)),
+            scanSettingsProvider.overrideWith(
+              (ref) => ScanSettingsNotifier(prefs),
+            ),
+          ],
+          child: const _SettingsHarness(),
+        ),
+      );
+      await tester.pumpAndSettle();
+      return ProviderScope.containerOf(
+        tester.element(find.byType(MaterialApp)),
+      );
+    }
+
+    testWidgets(
+        'renders both scan-action toggles localized and OFF by default '
+        'for any user', (tester) async {
+      await pumpScanActions(tester, locale: AppLocale.en);
+
+      final add = find.byKey(
+        const Key('settings-open-add-product-on-unknown-barcode'),
+      );
+      final adjust = find.byKey(
+        const Key('settings-open-adjust-stock-on-out-of-stock-scan'),
+      );
+      expect(add, findsOneWidget);
+      expect(adjust, findsOneWidget);
+      expect(tester.widget<SwitchListTile>(add).value, isFalse);
+      expect(tester.widget<SwitchListTile>(adjust).value, isFalse);
+      expect(
+        find.text(AppStrings.t('settings_scan_actions', 'en')),
+        findsOneWidget,
+      );
+      expect(
+        find.text(AppStrings.t('open_add_product_on_unknown_barcode', 'en')),
+        findsOneWidget,
+      );
+      expect(
+        find.text(
+          AppStrings.t('open_add_product_on_unknown_barcode_desc', 'en'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.text(AppStrings.t('open_adjust_stock_on_out_of_stock_scan', 'en')),
+        findsOneWidget,
+      );
+      expect(
+        find.text(
+          AppStrings.t('open_adjust_stock_on_out_of_stock_scan_desc', 'en'),
+        ),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('renders the localized Arabic labels too', (tester) async {
+      await pumpScanActions(tester, locale: AppLocale.ar);
+
+      expect(
+        find.text(AppStrings.t('settings_scan_actions', 'ar')),
+        findsOneWidget,
+      );
+      expect(
+        find.text(AppStrings.t('open_add_product_on_unknown_barcode', 'ar')),
+        findsOneWidget,
+      );
+      expect(
+        find.text(AppStrings.t('open_adjust_stock_on_out_of_stock_scan', 'ar')),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'each toggle writes its own SharedPreferences key and the '
+        'switches stay independent', (tester) async {
+      SharedPreferences.setMockInitialValues(<String, Object>{});
+      final prefs = await SharedPreferences.getInstance();
+      final container = await pumpScanActions(tester, prefs: prefs);
+
+      final add = find.byKey(
+        const Key('settings-open-add-product-on-unknown-barcode'),
+      );
+      final adjust = find.byKey(
+        const Key('settings-open-adjust-stock-on-out-of-stock-scan'),
+      );
+
+      await _tap(tester, add);
+      expect(tester.widget<SwitchListTile>(add).value, isTrue);
+      expect(tester.widget<SwitchListTile>(adjust).value, isFalse);
+      expect(
+        prefs.getBool(
+          ScanSettingsNotifier.openAddProductOnUnknownBarcodeKey,
+        ),
+        isTrue,
+      );
+      expect(
+        prefs.getBool(
+          ScanSettingsNotifier.openAdjustStockOnOutOfStockScanKey,
+        ),
+        isNull,
+        reason: 'toggling one setting must never write the other key',
+      );
+      expect(
+        container.read(scanSettingsProvider).openAddProductOnUnknownBarcode,
+        isTrue,
+      );
+      expect(
+        container.read(scanSettingsProvider).openAdjustStockOnOutOfStockScan,
+        isFalse,
+      );
+
+      await _tap(tester, adjust);
+      expect(tester.widget<SwitchListTile>(adjust).value, isTrue);
+      expect(tester.widget<SwitchListTile>(add).value, isTrue);
+      expect(
+        prefs.getBool(
+          ScanSettingsNotifier.openAdjustStockOnOutOfStockScanKey,
+        ),
+        isTrue,
+      );
+
+      // Turning one back off never moves the other.
+      await _tap(tester, add);
+      expect(tester.widget<SwitchListTile>(add).value, isFalse);
+      expect(tester.widget<SwitchListTile>(adjust).value, isTrue);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a stored true restores ON after a restart-style remount',
+        (tester) async {
+      SharedPreferences.setMockInitialValues(<String, Object>{
+        ScanSettingsNotifier.openAddProductOnUnknownBarcodeKey: true,
+      });
+      final prefs = await SharedPreferences.getInstance();
+      await pumpScanActions(tester, prefs: prefs);
+
+      expect(
+        tester
+            .widget<SwitchListTile>(
+              find.byKey(
+                const Key('settings-open-add-product-on-unknown-barcode'),
+              ),
+            )
+            .value,
+        isTrue,
+      );
+      expect(
+        tester
+            .widget<SwitchListTile>(
+              find.byKey(
+                const Key('settings-open-adjust-stock-on-out-of-stock-scan'),
+              ),
+            )
+            .value,
+        isFalse,
+        reason: 'the two settings restore independently',
+      );
       expect(tester.takeException(), isNull);
     });
   });

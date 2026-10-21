@@ -173,11 +173,14 @@ void main() {
       // list rows and detail header — 1 key (1500). The POS barcode-
       // scanner integration pass added the not-found toast shown when a
       // scanned code resolves nowhere (canonical barcode lookup miss) —
-      // 1 key (1501).
+      // 1 key (1501). The configurable scan-actions pass added the
+      // settings section title plus the label/description of each of the
+      // two scan-action toggles (unknown barcode → Add Product,
+      // out-of-stock scan → Adjust Stock) — 5 keys (1506).
       // Update this deliberately when a subphase
       // adds strings — an unexplained drop means keys were deleted from
       // one map only.
-      expect(_map('en').keys.length, 1501);
+      expect(_map('en').keys.length, 1506);
       expect(_map('ar').keys.length, _map('en').keys.length);
       expect(_map('fr').keys.length, _map('en').keys.length);
     });

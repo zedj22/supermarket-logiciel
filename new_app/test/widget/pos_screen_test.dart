@@ -32,6 +32,9 @@ import 'package:supermarket_pos/features/pos/pos_screen.dart';
 import 'package:supermarket_pos/features/pos/pos_toast.dart';
 import 'package:supermarket_pos/features/pos/pdf_preview.dart';
 import 'package:supermarket_pos/features/pos/print_service.dart';
+import 'package:supermarket_pos/features/products/product_form_dialog.dart';
+import 'package:supermarket_pos/features/settings/scan_settings_provider.dart';
+import 'package:supermarket_pos/features/stock/adjust_dialog.dart';
 import 'package:supermarket_pos/l10n/locale_provider.dart';
 import 'package:supermarket_pos/main.dart';
 import 'package:supermarket_pos/network/api_client.dart';
@@ -381,6 +384,7 @@ void _mockDio(
   List<String>? recordPaths,
   Map<String, dynamic>? settingsBody,
   Map<String, Map<String, dynamic>>? barcodeLookups,
+  bool barcodeLookupNetworkError = false,
 }) {
   void record(String path) => recordPaths?.add(path);
   printRequestBodies.clear();
@@ -492,6 +496,12 @@ void _mockDio(
     final params =
         invocation.namedArguments[#queryParameters] as Map<String, dynamic>?;
     if (path == '/api/v1/products/barcode-lookup') {
+      // `barcodeLookupNetworkError`: the canonical lookup never answers —
+      // the resolve path must treat that as ERROR (transient), never as
+      // a definitive miss (the unknown-barcode scan action's guard).
+      if (barcodeLookupNetworkError) {
+        failPath(path, network: true);
+      }
       return _ok(path, bodyFor(path, barcode: params?['barcode'] as String?));
     }
     if (path == _catalogPath && !withProduct) {
@@ -675,6 +685,7 @@ Future<void> _pumpApp(
   SharedPreferences.setMockInitialValues(
     initialPrefs ?? <String, Object>{},
   );
+  final prefs = await SharedPreferences.getInstance();
   _fakePreview = _FakePdfPreview();
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1.0;
@@ -691,6 +702,7 @@ Future<void> _pumpApp(
         ),
         localeProvider
             .overrideWith((ref) => LocaleNotifier()..setLocale(locale)),
+        scanSettingsProvider.overrideWith((ref) => ScanSettingsNotifier(prefs)),
         pdfPreviewProvider.overrideWithValue(_fakePreview),
         if (printService != null)
           printServiceProvider.overrideWithValue(printService),
@@ -13563,6 +13575,470 @@ void main() {
 
       // A burst into the void dispatches nowhere (and never crashes).
       await sendWedgeScan(tester, '8718114202402');
+      expect(tester.takeException(), isNull);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Configurable scan actions (SharedPreferences — both OFF by default):
+  //   A: unknown barcode (definitive miss, scan shape) → Add Product form
+  //      with the barcode prefilled instead of the not-found toast;
+  //   B: scan-driven add rejected for stock → Adjust Stock dialog instead
+  //      of the out-of-stock / qty stock-error toast.
+  // Network errors and unrelated validation failures never raise either
+  // dialog; repeated scans never stack one; scanning resumes after close.
+  // -----------------------------------------------------------------------
+
+  group('configurable scan actions', () {
+    const unknownCode = '9998887776665';
+    const knownCode = '8718114202402';
+
+    const addProductAction = {
+      ScanSettingsNotifier.openAddProductOnUnknownBarcodeKey: true,
+    };
+    const adjustStockAction = {
+      ScanSettingsNotifier.openAdjustStockOnOutOfStockScanKey: true,
+    };
+
+    late MockDio dio;
+
+    setUp(() {
+      dio = MockDio();
+      _mockDio(dio);
+    });
+
+    Future<void> pumpPos(
+      WidgetTester tester, {
+      Map<String, Object>? initialPrefs,
+      Map<String, Map<String, dynamic>>? barcodeLookups,
+      String productQuantity = '20',
+      List<Map<String, dynamic>> variants = const [],
+      bool barcodeLookupNetworkError = false,
+    }) async {
+      dio = MockDio();
+      _mockDio(
+        dio,
+        barcodeLookups: barcodeLookups,
+        productQuantity: productQuantity,
+        variants: variants,
+        barcodeLookupNetworkError: barcodeLookupNetworkError,
+      );
+      await _pumpApp(tester, dio: dio, initialPrefs: initialPrefs);
+      await tester.pump(const Duration(milliseconds: 500));
+    }
+
+    String controllerText(WidgetTester tester, Key key) {
+      final field = tester.widget<TextField>(find.byKey(key));
+      return field.controller?.text ?? '';
+    }
+
+    ProviderContainer containerOf(WidgetTester tester) =>
+        ProviderScope.containerOf(
+          tester.element(find.byKey(const Key('pos-screen'))),
+        );
+
+    String? focusedFieldKey(WidgetTester tester) {
+      final context = FocusManager.instance.primaryFocus?.context;
+      if (context == null) return null;
+      final field = context.widget is TextField
+          ? context.widget as TextField
+          : context.findAncestorWidgetOfExactType<TextField>();
+      final key = field?.key;
+      return key is ValueKey<String> ? key.value : null;
+    }
+
+    /// Escape with an empty search box hands the keyboard back to the
+    /// POS workspace node — no text field owns focus anymore.
+    Future<void> focusWorkspace(WidgetTester tester) async {
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pump();
+      expect(focusedFieldKey(tester), isNull);
+    }
+
+    testWidgets('unknown scan with the Add Product action ON opens the form '
+        'prefilled and suppresses the not-found toast', (tester) async {
+      await pumpPos(tester, initialPrefs: addProductAction);
+      await focusWorkspace(tester);
+
+      await sendWedgeScan(tester, unknownCode);
+      await tester.pumpAndSettle();
+
+      expect(find.byType(ProductFormDialog), findsOneWidget);
+      expect(
+        controllerText(tester, const Key('product-barcode-field')),
+        unknownCode,
+        reason: 'the scanned code lands in the barcode field',
+      );
+      expect(
+        find.byKey(const Key('pos-barcode-not-found-toast')),
+        findsNothing,
+        reason: 'the dialog replaces the toast, never stacks with it',
+      );
+      expect(containerOf(tester).read(posCartProvider).lines, isEmpty);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('closing the unknown-barcode form restores scan input focus '
+        'and the next scan adds normally', (tester) async {
+      await pumpPos(
+        tester,
+        initialPrefs: addProductAction,
+        barcodeLookups: {knownCode: _lookupHit()},
+      );
+      await focusWorkspace(tester);
+      await sendWedgeScan(tester, unknownCode);
+      await tester.pumpAndSettle();
+      expect(find.byType(ProductFormDialog), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('product-form-cancel')));
+      await tester.pumpAndSettle();
+      expect(find.byType(ProductFormDialog), findsNothing);
+      expect(focusedFieldKey(tester), 'pos-search-field');
+
+      // Scanner resumed: hand the keyboard back to the workspace and scan
+      // a KNOWN code — it adds through the ordinary resolve path.
+      await focusWorkspace(tester);
+      await sendWedgeScan(tester, knownCode);
+      await tester.pumpAndSettle();
+
+      final cart = containerOf(tester).read(posCartProvider);
+      expect(cart.lines, hasLength(1));
+      expect(cart.lines.single.name, 'Bread');
+      expect(cart.lines.single.quantity, '1');
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('unknown scan with the action OFF keeps the not-found toast '
+        'and never opens the form', (tester) async {
+      await pumpPos(tester); // both settings default OFF
+      await focusWorkspace(tester);
+
+      await sendWedgeScan(tester, unknownCode);
+      await tester.pumpAndSettle();
+
+      expect(find.byType(ProductFormDialog), findsNothing);
+      expect(
+        find.byKey(const Key('pos-barcode-not-found-toast')),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a short digit fragment with the action ON keeps the toast '
+        '(a partial barcode never raises the form)', (tester) async {
+      await pumpPos(tester, initialPrefs: addProductAction);
+
+      await tester.tap(find.byKey(const Key('pos-search-field')));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.enterText(
+        find.byKey(const Key('pos-search-field')),
+        '999',
+      );
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+
+      expect(find.byType(ProductFormDialog), findsNothing);
+      expect(
+        find.byKey(const Key('pos-barcode-not-found-toast')),
+        findsOneWidget,
+      );
+      expect(containerOf(tester).read(posCartProvider).lines, isEmpty);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('typed text with the action ON still fuzzy-adds the first '
+        'result and never opens the form', (tester) async {
+      await pumpPos(tester, initialPrefs: addProductAction);
+
+      await tester.tap(find.byKey(const Key('pos-search-field')));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.enterText(
+        find.byKey(const Key('pos-search-field')),
+        'bre',
+      );
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+
+      expect(find.byType(ProductFormDialog), findsNothing);
+      final cart = containerOf(tester).read(posCartProvider);
+      expect(cart.lines, hasLength(1));
+      expect(cart.lines.single.name, 'Bread');
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a lookup network failure with the action ON keeps the '
+        'not-found toast (a failed lookup is never a definitive miss)',
+        (tester) async {
+      await pumpPos(
+        tester,
+        initialPrefs: addProductAction,
+        barcodeLookupNetworkError: true,
+      );
+      await focusWorkspace(tester);
+
+      await sendWedgeScan(tester, unknownCode);
+      await tester.pumpAndSettle();
+
+      expect(find.byType(ProductFormDialog), findsNothing);
+      expect(
+        find.byKey(const Key('pos-barcode-not-found-toast')),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a product-detail network failure with the action ON never '
+        'opens the form', (tester) async {
+      await pumpPos(
+        tester,
+        initialPrefs: addProductAction,
+        barcodeLookups: {knownCode: _lookupHit()},
+      );
+      when(() => dio.get('/api/v1/products/$_productId')).thenThrow(
+        DioException.connectionError(
+          requestOptions: RequestOptions(path: '/api/v1/products/$_productId'),
+          reason: 'connection refused',
+        ),
+      );
+      await focusWorkspace(tester);
+
+      await sendWedgeScan(tester, knownCode);
+      await tester.pumpAndSettle();
+
+      expect(find.byType(ProductFormDialog), findsNothing);
+      // The established error surface for a failed resolve stays the
+      // not-found toast — a transport error is not "no such product".
+      expect(
+        find.byKey(const Key('pos-barcode-not-found-toast')),
+        findsOneWidget,
+      );
+      expect(containerOf(tester).read(posCartProvider).lines, isEmpty);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a repeated unknown scan while the form is open never stacks '
+        'a second dialog', (tester) async {
+      await pumpPos(tester, initialPrefs: addProductAction);
+      await focusWorkspace(tester);
+      await sendWedgeScan(tester, unknownCode);
+      await tester.pumpAndSettle();
+      expect(find.byType(ProductFormDialog), findsOneWidget);
+
+      // A second code submitted through the focused search path while the
+      // form is open: the scan-action serialization swallows it — still
+      // exactly ONE form, and no toast sneaks in behind it.
+      await tester.enterText(
+        find.byKey(const Key('pos-search-field')),
+        '8887776665554',
+      );
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+
+      expect(find.byType(ProductFormDialog), findsOneWidget);
+      expect(
+        find.byKey(const Key('pos-barcode-not-found-toast')),
+        findsNothing,
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('an out-of-stock scan with the Adjust Stock action ON opens '
+        'the dialog and suppresses the out-of-stock toast', (tester) async {
+      await pumpPos(
+        tester,
+        initialPrefs: adjustStockAction,
+        barcodeLookups: {knownCode: _lookupHit()},
+        productQuantity: '0',
+      );
+      await focusWorkspace(tester);
+
+      await sendWedgeScan(tester, knownCode);
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('adjust-dialog')), findsOneWidget);
+      expect(find.byKey(const Key('adjust-product-name')), findsOneWidget);
+      expect(
+        find.byKey(const Key('pos-out-of-stock-error')),
+        findsNothing,
+        reason: 'the dialog replaces the toast, never stacks with it',
+      );
+      expect(containerOf(tester).read(posCartProvider).lines, isEmpty);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a submitted adjustment closes the dialog, posts the audit '
+        'call and restores scan input focus', (tester) async {
+      await pumpPos(
+        tester,
+        initialPrefs: adjustStockAction,
+        barcodeLookups: {knownCode: _lookupHit()},
+        productQuantity: '0',
+      );
+      await focusWorkspace(tester);
+      await sendWedgeScan(tester, knownCode);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('adjust-dialog')), findsOneWidget);
+
+      await tester.enterText(find.byKey(const Key('adjust-quantity')), '5');
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.tap(find.byKey(const Key('adjust-submit')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('adjust-dialog')), findsNothing);
+      expect(find.byKey(const Key('pos-out-of-stock-error')), findsNothing);
+      verify(
+        () => dio.post(
+          '/api/v1/inventory/adjust',
+          data: any(named: 'data'),
+        ),
+      ).called(1);
+      expect(focusedFieldKey(tester), 'pos-search-field');
+      expect(containerOf(tester).read(posCartProvider).lines, isEmpty);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('an out-of-stock scan with the action OFF keeps the '
+        'out-of-stock toast and never opens the dialog', (tester) async {
+      await pumpPos(
+        tester,
+        barcodeLookups: {knownCode: _lookupHit()},
+        productQuantity: '0',
+      );
+      await focusWorkspace(tester);
+
+      await sendWedgeScan(tester, knownCode);
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('adjust-dialog')), findsNothing);
+      expect(
+        find.byKey(const Key('pos-out-of-stock-error')),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a variant-level out-of-stock scan with the action ON opens '
+        'the dialog scoped to that variant', (tester) async {
+      await pumpPos(
+        tester,
+        initialPrefs: adjustStockAction,
+        barcodeLookups: {knownCode: _lookupHit()},
+        productQuantity: '20',
+        variants: [_variantJson(quantity: '0')],
+      );
+      await focusWorkspace(tester);
+
+      await sendWedgeScan(tester, knownCode);
+      await tester.pumpAndSettle();
+
+      final dialog = find.byType(AdjustDialog);
+      expect(dialog, findsOneWidget);
+      expect(tester.widget<AdjustDialog>(dialog).variantId, 'var-1');
+      expect(
+        find.byKey(const Key('pos-out-of-stock-error')),
+        findsNothing,
+      );
+      expect(containerOf(tester).read(posCartProvider).lines, isEmpty);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a merge that exceeds stock with the action ON opens Adjust '
+        'Stock instead of the qty stock-error toast', (tester) async {
+      await pumpPos(
+        tester,
+        initialPrefs: adjustStockAction,
+        barcodeLookups: {knownCode: _lookupHit()},
+        productQuantity: '1',
+      );
+      await focusWorkspace(tester);
+      await sendWedgeScan(tester, knownCode);
+      await tester.pumpAndSettle();
+      expect(
+        containerOf(tester).read(posCartProvider).lines.single.quantity,
+        '1',
+      );
+
+      // Second scan of the same product: the merge (1 + 1) exceeds the
+      // stock of 1 — the shared guard's out-of-stock verdict opens the
+      // dialog (setting ON) instead of the `pos-qty-stock-error` toast.
+      await focusWorkspace(tester);
+      await sendWedgeScan(tester, knownCode);
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('adjust-dialog')), findsOneWidget);
+      expect(find.byKey(const Key('pos-qty-stock-error')), findsNothing);
+
+      // Cancel keeps the committed unit — the rejection never mutated cart.
+      final cancel = find.descendant(
+        of: find.byKey(const Key('adjust-dialog')),
+        matching: find.text(AppStrings.t('cancel', 'en')),
+      );
+      await tester.tap(cancel);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('adjust-dialog')), findsNothing);
+      expect(
+        containerOf(tester).read(posCartProvider).lines.single.quantity,
+        '1',
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a merge that exceeds stock with the action OFF keeps the '
+        'established qty stock-error toast', (tester) async {
+      await pumpPos(
+        tester,
+        barcodeLookups: {knownCode: _lookupHit()},
+        productQuantity: '1',
+      );
+      await focusWorkspace(tester);
+      await sendWedgeScan(tester, knownCode);
+      await tester.pumpAndSettle();
+
+      await focusWorkspace(tester);
+      await sendWedgeScan(tester, knownCode);
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('adjust-dialog')), findsNothing);
+      expect(
+        find.byKey(const Key('pos-qty-stock-error')),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a manual catalog add that exceeds stock with both actions '
+        'ON keeps the qty stock-error toast (never the dialog)',
+        (tester) async {
+      // The grid tile for an out-of-stock product is INERT (onTap null) —
+      // the manual path that can still reach the stock funnel is the
+      // merge guard: tap once (adds the single available unit), tap
+      // again (merge exceeds stock). fromScan is false there, so the
+      // established toast wins even with both scan actions ON.
+      await pumpPos(
+        tester,
+        initialPrefs: {
+          ...addProductAction,
+          ...adjustStockAction,
+        },
+        productQuantity: '1',
+      );
+
+      await tester.tap(find.byKey(Key('pos-product-$_productId')));
+      await tester.pumpAndSettle();
+      expect(
+        containerOf(tester).read(posCartProvider).lines.single.quantity,
+        '1',
+      );
+
+      await tester.tap(find.byKey(Key('pos-product-$_productId')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('adjust-dialog')), findsNothing);
+      expect(find.byType(ProductFormDialog), findsNothing);
+      expect(
+        find.byKey(const Key('pos-qty-stock-error')),
+        findsOneWidget,
+      );
       expect(tester.takeException(), isNull);
     });
   });
