@@ -7,6 +7,7 @@ import 'dart:async';
 
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/strings.dart';
 import '../../l10n/locale_provider.dart';
@@ -15,6 +16,13 @@ import '../auth/auth_provider.dart';
 import 'models.dart';
 
 const Duration kSearchDebounce = Duration(milliseconds: 300);
+
+/// Page-size choices offered by the catalog footer. The backend caps
+/// `page_size` at `MAX_PAGE_SIZE = 100`, so 100 is the largest option.
+const List<int> kProductPageSizeOptions = [25, 50, 100];
+
+/// SharedPreferences key for the catalog page-size preference.
+const String kProductsPageSizeKey = 'products_page_size';
 
 class ProductQuery {
   final String search;
@@ -32,7 +40,7 @@ class ProductQuery {
     this.sortBy = 'name',
     this.sortOrder = 'asc',
     this.page = 1,
-    this.pageSize = 40,
+    this.pageSize = 100,
   });
 
   ProductQuery copyWith({
@@ -99,9 +107,12 @@ class ProductsNotifier extends StateNotifier<ProductsState> {
   final String Function() _localeCode;
   Timer? _debounce;
   int _requestId = 0;
+  bool _loadStarted = false;
 
   ProductsNotifier(this._dio, this._localeCode)
-      : super(const ProductsState());
+      : super(const ProductsState()) {
+    _restorePageSize();
+  }
 
   String _message(DioException e) {
     final loc = _localeCode();
@@ -129,7 +140,52 @@ class ProductsNotifier extends StateNotifier<ProductsState> {
     };
   }
 
-  Future<void> load() async {
+  /// Applies the persisted page-size preference. Fire-and-forget from
+  /// the constructor: on a real device it lands within milliseconds —
+  /// before any response could apply — and it never blocks [load]
+  /// itself (a test harness without a prefs backend never completes
+  /// it, where the built-in default simply stands). If a request built
+  /// for the old size is already under way once the preference lands,
+  /// it is invalidated and refetched, so items and page counts always
+  /// match the active page size.
+  Future<void> _restorePageSize() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final saved = prefs.getInt(kProductsPageSizeKey);
+      if (saved == null ||
+          !kProductPageSizeOptions.contains(saved) ||
+          saved == state.query.pageSize) {
+        return;
+      }
+      final started = _loadStarted;
+      state = state.copyWith(
+        query: state.query.copyWith(pageSize: saved, page: 1),
+      );
+      if (started) {
+        // A request for the old size may be in flight or applied.
+        _requestId++;
+        load();
+      }
+    } catch (_) {
+      // No prefs backend — keep the built-in default page size.
+    }
+  }
+
+  Future<void> _persistPageSize(int pageSize) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setInt(kProductsPageSizeKey, pageSize);
+    } catch (_) {
+      // No prefs backend — the preference simply is not remembered.
+    }
+  }
+
+  Future<void> load() {
+    _loadStarted = true;
+    return _load();
+  }
+
+  Future<void> _load({bool clampedRetry = false}) async {
     final query = state.query;
     final requestId = ++_requestId;
     state = state.copyWith(loading: true, clearError: true);
@@ -143,13 +199,23 @@ class ProductsNotifier extends StateNotifier<ProductsState> {
       final items = (data['items'] as List<dynamic>? ?? const [])
           .map((e) => ProductModel.fromJson(e as Map<String, dynamic>))
           .toList();
+      final pages = data['pages'] as int? ?? 1;
       state = state.copyWith(
         items: items,
         total: data['total'] as int? ?? 0,
-        pages: data['pages'] as int? ?? 1,
+        pages: pages,
         loading: false,
         clearError: true,
       );
+      if (!clampedRetry && query.page > pages) {
+        // A refresh/filtered result shrank below the page the user was
+        // on: land on the last real page instead of an empty window —
+        // one bounded retry, never a clamp loop.
+        state = state.copyWith(
+          query: state.query.copyWith(page: pages < 1 ? 1 : pages),
+        );
+        await _load(clampedRetry: true);
+      }
     } on DioException catch (e) {
       if (requestId != _requestId) return;
       state = state.copyWith(loading: false, error: _message(e));
@@ -218,7 +284,25 @@ class ProductsNotifier extends StateNotifier<ProductsState> {
       query: state.query.copyWith(pageSize: pageSize, page: 1),
       clearError: true,
     );
+    _persistPageSize(pageSize);
     load();
+  }
+
+  /// Route-activation hook (the screen's `initState`, rebuilt on every
+  /// visit while this provider survives navigation): returning to the
+  /// catalog starts a FRESH workspace instead of replaying the previous
+  /// session — search/filters/page back to the defaults, the pending
+  /// debounce cancelled and any in-flight response for the old query
+  /// invalidated by the stale-response guard (`_requestId` bump).
+  /// [ProductQuery.pageSize] survives: it is a display preference, not
+  /// a filter. Dialogs and detail panels never unmount the route, so
+  /// they never trigger this reset.
+  void resetForActivation() {
+    _debounce?.cancel();
+    _requestId++;
+    state = ProductsState(
+      query: ProductQuery(pageSize: state.query.pageSize),
+    );
   }
 
   void refresh() {

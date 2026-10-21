@@ -11,6 +11,11 @@
 // purchases supplier) keep their display label with the id in the query
 // itself. These tests type a term, leave the page, come back, and assert
 // the box shows what the provider is filtering by.
+//
+// Products (and Stock) went further on purpose: returning to the route
+// RESETS search/filters/page and reloads the unfiltered list — the box
+// is empty and the provider query is back to defaults. Their test
+// asserts that reset contract; the screens below still keep the query.
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -269,18 +274,47 @@ void main() {
     expect(tester.takeException(), isNull);
   }
 
-  testWidgets('products search survives page switching', (tester) async {
+  testWidgets('products search resets on page switching (fresh list)',
+      (tester) async {
     final dio = MockDio();
     stubRequests(dio);
     final container = await pumpApp(tester, dio);
-    await roundTrip(
-      tester,
-      container,
-      route: '/products',
-      fieldKey: const Key('products-search-field'),
-      term: 'olive oil',
-      currentQuery: (c) => c.read(productsProvider).query.search,
+
+    container.read(routerProvider).go('/products');
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+      find.byKey(const Key('products-search-field')),
+      'olive oil',
     );
+    // setSearch is debounced (300ms) — let it fire and the reload settle.
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pumpAndSettle();
+    expect(
+      container.read(productsProvider).query.search,
+      'olive oil',
+      reason: 'precondition: the provider really is filtering on "olive oil"',
+    );
+
+    // Leave the page (State disposed) and come back.
+    container.read(routerProvider).go('/about');
+    await tester.pumpAndSettle();
+    container.read(routerProvider).go('/products');
+    await tester.pumpAndSettle();
+
+    expect(
+      container.read(productsProvider).query.search,
+      isEmpty,
+      reason: 'returning to the route starts a fresh unfiltered catalog',
+    );
+    expect(
+      tester.widget<TextField>(find.byKey(const Key('products-search-field')))
+          .controller
+          ?.text,
+      isEmpty,
+      reason: 'the box matches the reset query (no hidden filter)',
+    );
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('suppliers search survives page switching', (tester) async {

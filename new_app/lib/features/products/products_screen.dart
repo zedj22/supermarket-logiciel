@@ -19,7 +19,6 @@ import '../../core/scan_diagnostics.dart';
 import '../../core/colors.dart';
 import '../../core/number_format.dart';
 import '../../core/numeric_text.dart';
-import '../../core/search_field_state.dart';
 import '../../core/shortcuts.dart';
 import '../../core/strings.dart';
 import '../../core/widgets/table_header.dart';
@@ -221,14 +220,19 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
       onScan: _handleGlobalScan,
     );
     BarcodeScannerGateway.instance.register(_scanHandler);
-    // The query outlives this page State: without re-seeding, returning
-    // shows an empty box while the list is still filtered.
-    seedSearchField(
-      _searchController,
-      ref.read(productsProvider).query.search,
-    );
+    // Route activation (this State is rebuilt on every visit while the
+    // provider survives navigation): start from the default list — the
+    // previous session's search, filters and page must not replay, and
+    // the fresh State already carries no barcode highlight — then
+    // reload. Dialogs / detail panels never unmount the route, so they
+    // never trigger this reset. The reset runs inside the microtask
+    // (outside the build phase) because Riverpod forbids provider
+    // writes while the widget tree is building.
     Future.microtask(() {
-      ref.read(productsProvider.notifier).load();
+      if (!mounted) return;
+      final products = ref.read(productsProvider.notifier);
+      products.resetForActivation();
+      products.load();
       ref.read(categoriesProvider.notifier).load(status: 'active');
     });
   }
@@ -1712,10 +1716,9 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
   // ── D. Pagination footer (inside workspace) ──────────────────
   Widget _buildFooter(ThemeData theme, String loc, ProductsState state) {
     final cs = theme.colorScheme;
-    const pageSizeOptions = [20, 40, 60, 100];
-    final currentSize = pageSizeOptions.contains(state.query.pageSize)
+    final currentSize = kProductPageSizeOptions.contains(state.query.pageSize)
         ? state.query.pageSize
-        : 40;
+        : kProductPageSizeOptions.first;
 
     Widget pageButton({
       required Widget child,
@@ -1798,7 +1801,7 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
                   value: currentSize,
                   isDense: true,
                   items: [
-                    for (final size in pageSizeOptions)
+                    for (final size in kProductPageSizeOptions)
                       DropdownMenuItem(
                         value: size,
                         child: Text(

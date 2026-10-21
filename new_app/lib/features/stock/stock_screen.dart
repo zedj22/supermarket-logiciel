@@ -14,7 +14,6 @@ import '../../core/scan_diagnostics.dart';
 import '../../core/colors.dart';
 import '../../core/numeric_text.dart';
 import '../../core/number_format.dart';
-import '../../core/search_field_state.dart';
 import '../../core/strings.dart';
 import '../../core/widgets/status_chip.dart';
 import '../../core/widgets/table_header.dart';
@@ -203,14 +202,19 @@ class _StockScreenState extends ConsumerState<StockScreen>
       onScan: _handleGlobalScan,
     );
     BarcodeScannerGateway.instance.register(_scanHandler);
-    // The query outlives this page State: without re-seeding, returning
-    // to Stock shows an empty box while the list is still filtered.
-    seedSearchField(
-      _searchController,
-      ref.read(inventoryProvider).query.search,
-    );
+    // Route activation (this State is rebuilt on every visit while the
+    // provider survives navigation): start from the default list — the
+    // previous session's search, filters and page must not replay —
+    // then reload so stock changes made elsewhere are picked up.
+    // Dialogs / detail panels never unmount the route, so they never
+    // trigger this reset. The reset runs inside the microtask (outside
+    // the build phase) because Riverpod forbids provider writes while
+    // the widget tree is building.
     Future.microtask(() {
-      ref.read(inventoryProvider.notifier).load();
+      if (!mounted) return;
+      final inventory = ref.read(inventoryProvider.notifier);
+      inventory.resetForActivation();
+      inventory.load();
       ref.read(movementsProvider.notifier).load();
     });
   }
@@ -789,11 +793,29 @@ class _StockScreenState extends ConsumerState<StockScreen>
         ? _buildItemCards(theme, loc, items, canAdjust)
         : _buildItemTable(theme, loc, mode, items, canAdjust);
 
+    // List region owns the pagination footer: it is the Expanded
+    // region, so the footer can never steal height from the stacked
+    // detail panel. The LayoutBuilder sees the region's bounded height
+    // (a Column alone would hand its children an unbounded main axis)
+    // and drops the footer when the window is so cramped that the
+    // region has no real room for it — otherwise it would overflow.
+    final content = LayoutBuilder(
+      builder: (context, region) {
+        final showFooter = region.maxHeight >= 60;
+        return Column(
+          children: [
+            Expanded(child: list),
+            if (showFooter) _buildPagination(theme, loc, state),
+          ],
+        );
+      },
+    );
+
     if (showDetailPanel) {
       return Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(child: list),
+          Expanded(child: content),
           const SizedBox(width: 12),
           SizedBox(
             width: 340,
@@ -805,7 +827,7 @@ class _StockScreenState extends ConsumerState<StockScreen>
 
     return Column(
       children: [
-        Expanded(child: list),
+        Expanded(child: content),
         if (_selected != null && mode != StockLayoutMode.wide) ...[
           const SizedBox(height: 8),
           ConstrainedBox(
@@ -813,7 +835,6 @@ class _StockScreenState extends ConsumerState<StockScreen>
             child: _buildDetailPanel(theme, loc, canAdjust, mode),
           ),
         ],
-        _buildPagination(theme, loc, state),
       ],
     );
   }
@@ -1011,10 +1032,6 @@ class _StockScreenState extends ConsumerState<StockScreen>
               },
             ),
           ),
-          Padding(
-            padding: const EdgeInsets.only(top: 4),
-            child: _buildPagination(theme, loc, ref.watch(inventoryProvider)),
-          ),
         ],
       ),
     );
@@ -1185,14 +1202,45 @@ class _StockScreenState extends ConsumerState<StockScreen>
     String loc,
     InventoryState state,
   ) {
-    if (state.pages <= 1) return const SizedBox.shrink();
+    final currentSize =
+        kInventoryPageSizeOptions.contains(state.query.pageSize)
+            ? state.query.pageSize
+            : kInventoryPageSizeOptions.first;
     return Padding(
       padding: const EdgeInsets.only(top: 6),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
+          Tooltip(
+            message: AppStrings.t('page_size', loc),
+            child: DropdownButtonHideUnderline(
+              child: DropdownButton<int>(
+                key: const Key('stock-page-size'),
+                value: currentSize,
+                isDense: true,
+                items: [
+                  for (final size in kInventoryPageSizeOptions)
+                    DropdownMenuItem(
+                      value: size,
+                      child: Text(
+                        '$size',
+                        style: theme.textTheme.bodySmall,
+                      ),
+                    ),
+                ],
+                onChanged: (v) {
+                  if (v != null) {
+                    ref.read(inventoryProvider.notifier).setPageSize(v);
+                  }
+                },
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
           IconButton(
+            key: const Key('stock-prev-page'),
             icon: const Icon(Icons.chevron_left, size: 20),
+            tooltip: AppStrings.t('prev', loc),
             onPressed: state.query.page > 1
                 ? () => ref
                     .read(inventoryProvider.notifier)
@@ -1201,10 +1249,15 @@ class _StockScreenState extends ConsumerState<StockScreen>
           ),
           Text(
             '${state.query.page} / ${state.pages}',
-            style: theme.textTheme.bodySmall,
+            key: const Key('stock-page-indicator'),
+            style: theme.textTheme.bodySmall?.copyWith(
+              fontWeight: FontWeight.w700,
+            ),
           ),
           IconButton(
+            key: const Key('stock-next-page'),
             icon: const Icon(Icons.chevron_right, size: 20),
+            tooltip: AppStrings.t('next', loc),
             onPressed: state.query.page < state.pages
                 ? () => ref
                     .read(inventoryProvider.notifier)

@@ -1149,11 +1149,11 @@ void main() {
       await tester.ensureVisible(pageSize);
       await tester.tap(pageSize);
       await tester.pumpAndSettle();
-      await tester.tap(find.text('20').last);
+      await tester.tap(find.text('25').last);
       await tester.pumpAndSettle();
 
       expect(queryLog, isNotEmpty);
-      expect(queryLog.last['page_size'], 20);
+      expect(queryLog.last['page_size'], 25);
       expect(queryLog.last['page'], 1);
       expectNoOverflow(tester);
     });
