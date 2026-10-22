@@ -1,5 +1,5 @@
 // Cart-panel regression suite (customer-attached clipping fixes):
-//  1. geometry  — the loyalty block must never clip the last cart line;
+//  1. geometry  — the checkout tail must never clip the last cart line;
 //     arrow reveal ALONE (no manual settle) keeps every row fully inside
 //     the lines viewport, return-mode chrome included;
 //  2. arrow nav — Up/Down walk the selection with NO prior row click and
@@ -102,14 +102,16 @@ Response<dynamic> _ok(String path, Object? data) => Response<dynamic>(
       data: data,
     );
 
-/// Balance with ONE redeemable reward → the loyalty block shows its full
-/// height (label row + reward dropdown row) under the customer row.
-Map<String, Object> _balanceJson() => <String, Object>{
+/// Balance with ONE redeemable reward → the loyalty entry point unlocks
+/// (the gate mirrors the server: available_rewards > 0 or a matching
+/// eligible preview). [eligible] false serves the disabled-path contract:
+/// zero rewards and a preview that denies redemption on this cart.
+Map<String, Object> _balanceJson({bool eligible = true}) => <String, Object>{
       'customer_id': _customerId,
       'has_account': true,
       'points_balance': '130.000',
       'cashback_balance': '25.000',
-      'available_rewards': 1,
+      'available_rewards': eligible ? 1 : 0,
       'remaining_points': '30.000',
       'min_reward_points': 100,
     };
@@ -134,10 +136,10 @@ Map<String, Object?> _catalogProduct(String id, String name) =>
       'is_archived': false,
     };
 
-void _mockPosDio(MockDio dio) {
+void _mockPosDio(MockDio dio, {bool loyaltyEligible = true}) {
   Object? getBody(String path) {
     if (path.startsWith('/api/v1/customers/') && path.endsWith('/loyalty')) {
-      return _balanceJson();
+      return _balanceJson(eligible: loyaltyEligible);
     }
     if (path == '/api/v1/products') {
       // Catalog for the add-to-cart arrow tests: two fresh products plus
@@ -184,7 +186,7 @@ void _mockPosDio(MockDio dio) {
         'reward_percent': percent,
         'reward_discount': discount.toStringAsFixed(3),
         'amount_due': (gross - discount).toStringAsFixed(3),
-        'available_rewards': 1,
+        'available_rewards': loyaltyEligible ? 1 : 0,
         'remaining_points': '30.000',
         'min_reward_points': 100,
         'max_reward_discount_percent': '20.000',
@@ -193,7 +195,7 @@ void _mockPosDio(MockDio dio) {
         'points_earned': '0.960',
         'cashback_earned': '0.500',
         'points_after_sale': '130.960',
-        'reward_eligible': true,
+        'reward_eligible': loyaltyEligible,
       };
     }
     return <String, dynamic>{};
@@ -251,11 +253,24 @@ Future<ProviderContainer> _pumpPos(
   // that shrinks the lines viewport — grant it only where its color is
   // asserted, so the geometry scenarios measure the default chrome.
   bool grantReturn = false,
+  // Short-viewport compaction scenarios (additive): reversed layout,
+  // OS text scaling and the drawer form of the narrow window.
+  bool reversed = false,
+  double textScale = 1.0,
+  bool openDrawer = false,
+  // Arabic/RTL pump for the sidebar loyalty card (bidi contract W7).
+  bool rtl = false,
 }) async {
-  SharedPreferences.setMockInitialValues(<String, Object>{});
+  SharedPreferences.setMockInitialValues(<String, Object>{
+    if (reversed) kPosLayoutSwitchKey: 'reversed',
+  });
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.reset);
+  if (textScale != 1.0) {
+    tester.platformDispatcher.textScaleFactorTestValue = textScale;
+    addTearDown(tester.platformDispatcher.clearAllTestValues);
+  }
 
   final cart = _SeededCart(dio, () => 'en', () async => 'pos-test');
   for (var i = 0; i < lines; i++) {
@@ -279,19 +294,19 @@ Future<ProviderContainer> _pumpPos(
           roles: const ['cashier'],
           permissions: grantReturn ? const ['pos_return'] : const [],
         )),
-        localeProvider
-            .overrideWith((ref) => LocaleNotifier()..setLocale(AppLocale.en)),
+        localeProvider.overrideWith((ref) => LocaleNotifier()
+          ..setLocale(rtl ? AppLocale.ar : AppLocale.en)),
         pdfPreviewProvider.overrideWithValue(_FakePdfPreview()),
         posCartProvider.overrideWith((ref) => cart),
       ],
       child: MaterialApp(
         theme: AppTheme.dark(),
-        locale: const Locale('en'),
+        locale: Locale(rtl ? 'ar' : 'en'),
         supportedLocales: appSupportedLocales,
         localizationsDelegates: appLocalizationsDelegates,
-        home: const Directionality(
-          textDirection: TextDirection.ltr,
-          child: Scaffold(body: PosScreen()),
+        home: Directionality(
+          textDirection: rtl ? TextDirection.rtl : TextDirection.ltr,
+          child: const Scaffold(body: PosScreen()),
         ),
       ),
     ),
@@ -299,6 +314,11 @@ Future<ProviderContainer> _pumpPos(
   await tester.pump(const Duration(milliseconds: 50));
   await tester.pump(const Duration(milliseconds: 400));
   await tester.pump(const Duration(milliseconds: 100));
+  if (openDrawer) {
+    await tester.tap(find.byKey(const Key('toggle-cart')));
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pump(const Duration(milliseconds: 300));
+  }
   return ProviderScope.containerOf(
     tester.element(find.byKey(const Key('pos-screen'))),
     listen: false,
@@ -531,6 +551,190 @@ void main() {
       final totals = tester.getRect(find.byKey(const Key('pos-totals-panel')));
       expect(totals.bottom, lessThanOrEqualTo(panel.bottom + 0.5),
           reason: 'the return totals must stay inside the panel');
+      expect(tester.takeException(), isNull);
+    });
+  });
+
+  group('short-viewport compaction — with customer + loyalty attached the '
+      'last cart row always stays fully visible', () {
+    /// Chrome-compaction probe distilled into permanent regressions: on
+    /// short windows the fixed tail (actions + totals/PAY) must shed
+    /// levels until the lines region keeps at least ONE full row — the
+    /// tail never obscures or clips the last visible row, and the money
+    /// keys stay inside the panel while the loyalty chrome lives only
+    /// inside the redemption dialog (closed during normal use).
+    Future<void> expectLastRowClear(
+      WidgetTester tester, {
+      required Size size,
+      int lines = 10,
+      bool reversed = false,
+      double textScale = 1.0,
+      bool openDrawer = false,
+    }) async {
+      final container = await _pumpPos(
+        tester,
+        dio: dio,
+        size: size,
+        lines: lines,
+        reversed: reversed,
+        textScale: textScale,
+        openDrawer: openDrawer,
+      );
+      await _attachCustomer(tester, container);
+      await _settleScrollToEnd(tester);
+
+      final viewport = tester.getRect(_lines().first);
+      final lastKey = container.read(posCartProvider).lines.last.key;
+      final last = tester.getRect(find.byKey(Key('cart-line-$lastKey')));
+      expect(viewport.height, greaterThanOrEqualTo(last.height - 0.75),
+          reason: 'the lines region must fit at least one full cart row');
+      expect(last.top, greaterThanOrEqualTo(viewport.top - 0.5),
+          reason: 'the last row must not hide above the viewport');
+      expect(last.bottom, lessThanOrEqualTo(viewport.bottom + 0.5),
+          reason: 'the last row must not be clipped by the loyalty/totals tail');
+
+      final panel = tester.getRect(find.byKey(const Key('pos-cart-panel')));
+      final totals = tester.getRect(find.byKey(const Key('pos-totals-panel')));
+      expect(totals.bottom, lessThanOrEqualTo(panel.bottom + 0.5),
+          reason: 'the totals panel stays inside the cart panel');
+      bool inside(Rect outer, Rect inner) =>
+          inner.left >= outer.left - 0.5 &&
+          inner.right <= outer.right + 0.5 &&
+          inner.top >= outer.top - 0.5 &&
+          inner.bottom <= outer.bottom + 0.5;
+      // The customer-facing keys survive every compaction level: the
+      // money keys stay inside the totals/PAY panel. The loyalty chrome
+      // (identity/balance/options/error) lives ONLY inside the loyalty
+      // discount dialog — closed during normal use, so it renders
+      // nowhere else: not in the cart panel, not in the totals card,
+      // not in the drawer, at ANY compaction level.
+      for (final key in [
+        'pos-pay-button',
+        'pos-subtotal-value',
+        'pos-discount-value',
+        'pos-total-label',
+        'pos-total-value',
+      ]) {
+        final finder = find.byKey(Key(key));
+        expect(finder, findsOneWidget, reason: '$key must stay rendered');
+        expect(inside(totals, tester.getRect(finder)),
+            isTrue,
+            reason: '$key must sit inside the totals/PAY panel');
+      }
+      for (final key in [
+        'pos-loyalty-label',
+        'pos-loyalty-balance',
+        'pos-loyalty-reward-select',
+        'pos-loyalty-error',
+      ]) {
+        expect(find.byKey(Key(key)), findsNothing,
+            reason: '$key renders only inside the (closed) dialog');
+      }
+      expect(tester.takeException(), isNull);
+    }
+
+    testWidgets('900x560: compaction yields a full row (was 153 < 166)',
+        (tester) async {
+      await expectLastRowClear(tester, size: const Size(900, 560));
+    });
+
+    testWidgets('800x540: compaction yields a full row (was 139 < 165)',
+        (tester) async {
+      await expectLastRowClear(tester, size: const Size(800, 540));
+    });
+
+    testWidgets('960x520: compaction yields a full row (was 119 < 165)',
+        (tester) async {
+      await expectLastRowClear(tester, size: const Size(960, 520));
+    });
+
+    testWidgets(
+        '600x500 drawer (standard): compaction yields a full row '
+        '(was 39 < 165)', (tester) async {
+      await expectLastRowClear(
+        tester,
+        size: const Size(600, 500),
+        openDrawer: true,
+      );
+    });
+
+    testWidgets(
+        '600x500 drawer (reversed): compaction yields a full dense row '
+        '(was 58 < 62)', (tester) async {
+      await expectLastRowClear(
+        tester,
+        size: const Size(600, 500),
+        reversed: true,
+        openDrawer: true,
+      );
+    });
+
+    testWidgets('1024x600 at text scale 1.3: full row, no render overflow',
+        (tester) async {
+      await expectLastRowClear(
+        tester,
+        size: const Size(1024, 600),
+        textScale: 1.3,
+      );
+    });
+
+    testWidgets(
+        '1280x720 reversed at text scale 1.3: full row, no render overflow',
+        (tester) async {
+      await expectLastRowClear(
+        tester,
+        size: const Size(1280, 720),
+        reversed: true,
+        textScale: 1.3,
+      );
+    });
+
+    testWidgets(
+        'compaction is presentation-only: money + loyalty values and PAY '
+        'are byte-identical to the providers (900x560)', (tester) async {
+      final container = await _pumpPos(
+        tester,
+        dio: dio,
+        size: const Size(900, 560),
+        lines: 6,
+      );
+      await _attachCustomer(tester, container);
+      await _settleScrollToEnd(tester);
+
+      final model = container.read(posCartProvider);
+      String textOf(String key) => tester
+          .widget<Text>(find.byKey(Key(key)))
+          .data ??
+          '';
+      expect(textOf('pos-subtotal-value'), model.totals.subtotalDisplay);
+      expect(textOf('pos-discount-value'),
+          '-${model.totals.invoiceDiscountDisplay}');
+      expect(textOf('pos-total-value'), contains(model.totals.totalDisplay));
+      // Loyalty money: the only write path the dialog's Confirm uses
+      // (single-slot setRewardPercent + authoritative preview) drives the
+      // footer's amount-due — the byte-for-byte provider mirror.
+      final notifier = container.read(posLoyaltyProvider.notifier);
+      notifier.setRewardPercent(5);
+      await notifier.previewNow();
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 300));
+      final loyalty = container.read(posLoyaltyProvider);
+      expect(loyalty.previewMatches, isTrue,
+          reason: 'the session preview answers 5% on this cart');
+      final dueText = textOf('pos-loyalty-amount-due');
+      expect(
+        dueText,
+        contains(PaymentMath.money(PaymentMath.amountDueOf(
+          total: model.totals.total,
+          rewardDiscount: loyalty.preview!.rewardDiscount,
+        ))),
+        reason: 'the footer amount-due shows the provider-mirrored due',
+      );
+      expect(find.byKey(const Key('pos-pay-button')), findsOneWidget);
+      expect(
+        tester.widget<FilledButton>(find.byKey(const Key('pos-pay-button'))),
+        isNotNull,
+      );
       expect(tester.takeException(), isNull);
     });
   });
@@ -967,82 +1171,7 @@ void main() {
     });
   });
 
-  group('loyalty merge and stacked total', () {
-    testWidgets(
-        'loyalty balance and reward selector ride the Total block — '
-        'Subtotal and Discount rows stay clean', (tester) async {
-      final container = await _pumpPos(tester, dio: dio, lines: 3);
-      await _attachCustomer(tester, container);
-
-      final disc = tester.getRect(find.byKey(const Key('pos-discount-value')));
-      final totalLabel =
-          tester.getRect(find.byKey(const Key('pos-total-label')));
-      final totalValue =
-          tester.getRect(find.byKey(const Key('pos-total-value')));
-      final label =
-          tester.getRect(find.byKey(const Key('pos-loyalty-label')));
-      final balance =
-          tester.getRect(find.byKey(const Key('pos-loyalty-balance')));
-      final select =
-          tester.getRect(find.byKey(const Key('pos-loyalty-reward-select')));
-
-      // Subtotal/Discount rows are clean: every loyalty chunk sits BELOW
-      // the discount row, inside the Total block's vertical band.
-      expect(label.top, greaterThanOrEqualTo(disc.bottom),
-          reason: 'the loyalty label must not ride the Subtotal row');
-      expect(balance.top, greaterThanOrEqualTo(disc.bottom),
-          reason: 'the balance must not ride the Subtotal row');
-      expect(select.top, greaterThanOrEqualTo(disc.bottom),
-          reason: 'the reward selector must not ride the Discount row');
-
-      // The chunks are visually associated with the large amount: inside
-      // the stacked Total band (label top → amount bottom, ± slack).
-      expect(label.top, greaterThanOrEqualTo(totalLabel.top - 8),
-          reason: 'the loyalty label sits in the Total band');
-      expect(balance.bottom, lessThanOrEqualTo(totalValue.bottom + 8),
-          reason: 'the balance sits in the Total band');
-      expect(select.top, greaterThanOrEqualTo(totalLabel.top - 8));
-      expect(select.bottom, lessThanOrEqualTo(totalValue.bottom + 8));
-
-      // Left cluster beside the money edge: loyalty never overlaps the
-      // dominant amount.
-      expect(balance.right, lessThanOrEqualTo(totalValue.left + 4),
-          reason: 'the balance stays clear of the Total amount');
-      expect(label.right, lessThanOrEqualTo(balance.right));
-      expect(select.right, lessThanOrEqualTo(totalValue.left + 4),
-          reason: 'the selector stays clear of the Total amount');
-
-      expect(find.byKey(const Key('pos-loyalty-error')), findsNothing);
-      expect(tester.takeException(), isNull);
-    });
-
-    testWidgets(
-        'reward selector stays usable beside the Total — picking a reward '
-        'updates the preview without touching PAY', (tester) async {
-      final container = await _pumpPos(tester, dio: dio, lines: 3);
-      await _attachCustomer(tester, container);
-
-      final payFinder = find.byKey(const Key('pos-pay-button'));
-      final payBefore = tester.getRect(payFinder);
-      await tester.tap(find.byKey(const Key('pos-loyalty-reward-select')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('5'));
-      await tester.pumpAndSettle();
-
-      final rewardPercent =
-          container.read(posLoyaltyProvider).rewardPercent;
-      expect(rewardPercent, 5.0, reason: 'the dropdown drives the state');
-      // The selector is inside the Total block, far from PAY — the tap
-      // must never hit the payment button.
-      final select =
-          tester.getRect(find.byKey(const Key('pos-loyalty-reward-select')));
-      final pay = tester.getRect(payFinder);
-      expect(pay, payBefore, reason: 'PAY does not move or react');
-      expect(select.bottom, lessThanOrEqualTo(pay.top),
-          reason: 'the selector never overlaps PAY');
-      expect(tester.takeException(), isNull);
-    });
-
+  group('totals panel layout', () {
     testWidgets(
         'Total label sits immediately above the amount, both right-aligned '
         'to the money edge, amount 44–48 and dominant', (tester) async {
@@ -1070,6 +1199,423 @@ void main() {
       expect(labelText.style!.fontSize!, inInclusiveRange(18, 20));
       expect(valueText.style!.fontSize!, greaterThan(labelText.style!.fontSize!));
       expect(tester.takeException(), isNull);
+    });
+  });
+
+  // The loyalty entry point: ONE compact button in the cart action row
+  // (server-owned eligibility) plus the redemption dialog that owns the
+  // percent selector. The workspace catalog stays clean, the totals panel
+  // keeps only Subtotal/Discount/TOTAL/(amount-due)/PAY, and NOTHING is
+  // written to the loyalty session until the dialog's Confirm.
+  group('loyalty discount button + redemption dialog', () {
+    Finder loyaltyButton() =>
+        find.byKey(const Key('pos-loyalty-discount-button'));
+
+    testWidgets(
+        'no customer: the button sits in the cart action row but stays '
+        'disabled — no loyalty chrome renders anywhere', (tester) async {
+      await _pumpPos(tester, dio: dio, lines: 2);
+
+      expect(loyaltyButton(), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byKey(const Key('pos-cart-panel')),
+          matching: loyaltyButton(),
+        ),
+        findsOneWidget,
+        reason: 'redemption lives in the CART action row, not the workspace',
+      );
+      expect(
+        tester.widget<OutlinedButton>(loyaltyButton()).onPressed,
+        isNull,
+        reason: 'nothing to redeem without a customer',
+      );
+      for (final key in [
+        'pos-loyalty-label',
+        'pos-loyalty-balance',
+        'pos-loyalty-reward-select',
+        'pos-loyalty-amount-due',
+        'pos-loyalty-dialog',
+      ]) {
+        expect(find.byKey(Key(key)), findsNothing,
+            reason: 'no loyalty chrome without a customer: $key');
+      }
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'ineligible customer (0 rewards, preview denies): the button '
+        'mirrors the server answer and stays disabled', (tester) async {
+      dio = MockDio();
+      _mockPosDio(dio, loyaltyEligible: false);
+      final container = await _pumpPos(tester, dio: dio, lines: 3);
+      await _attachCustomer(tester, container);
+
+      final loyalty = container.read(posLoyaltyProvider);
+      expect(loyalty.hasCustomer, isTrue);
+      expect(loyalty.canSelectReward, isFalse,
+          reason: 'the gate mirrors the SERVER answer');
+      expect(tester.widget<OutlinedButton>(loyaltyButton()).onPressed, isNull);
+      await tester.tap(loyaltyButton());
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('pos-loyalty-dialog')), findsNothing,
+          reason: 'a disabled entry never opens the dialog');
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'eligible customer: the button opens the dialog with the customer '
+        'identity, balance and the server-capped options', (tester) async {
+      final container = await _pumpPos(tester, dio: dio, lines: 3);
+      await _attachCustomer(tester, container);
+
+      expect(
+        tester.widget<OutlinedButton>(loyaltyButton()).onPressed,
+        isNotNull,
+      );
+      await tester.tap(loyaltyButton());
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('pos-loyalty-dialog')), findsOneWidget);
+      expect(
+        tester
+            .widget<Text>(find.byKey(const Key('pos-loyalty-dialog-customer')))
+            .data,
+        'Loyal Customer With A Long Name',
+      );
+      expect(
+        tester.widget<Text>(find.byKey(const Key('pos-loyalty-balance'))).data ??
+            '',
+        isNotEmpty,
+      );
+      final values = tester
+          .widget<DropdownButton<double>>(
+              find.byKey(const Key('pos-loyalty-reward-select')))
+          .items!
+          .map((i) => i.value)
+          .toList();
+      expect(values, [0.0, 5.0, 10.0, 15.0, 20.0],
+          reason: 'None + 5% steps up to the SERVER cap (20): 25 never '
+              'offered');
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'cancel or barrier-dismiss changes NOTHING — browsing a percent '
+        'never mutates the session, the sale or PAY', (tester) async {
+      final container = await _pumpPos(tester, dio: dio, lines: 3);
+      await _attachCustomer(tester, container);
+
+      String snap() {
+        final l = container.read(posLoyaltyProvider);
+        final c = container.read(posCartProvider);
+        return 'l:${l.customerId}|${l.rewardPercent}|'
+            '${l.preview?.rewardPercent}|${l.preview?.grossTotal}|'
+            '${l.exceeds}|${l.loading}|${l.error}|'
+            'c:${c.lines.length}|${c.totals.total}|${c.customer?.id}';
+      }
+
+      final before = snap();
+      final payBefore =
+          tester.getRect(find.byKey(const Key('pos-pay-button')));
+
+      // Browse 5%: the dialog fetches its preview LOCALLY — the session
+      // must not move a single field before any Confirm.
+      await tester.tap(loyaltyButton());
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('pos-loyalty-reward-select')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('5'));
+      await tester.pumpAndSettle();
+      expect(snap(), before,
+          reason: 'browsing a percent must not mutate any provider');
+      expect(
+        tester
+            .widget<Text>(find.byKey(const Key('pos-loyalty-dialog-due')))
+            .data,
+        isNotEmpty,
+      );
+
+      await tester.tap(find.byKey(const Key('pos-loyalty-dialog-cancel')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('pos-loyalty-dialog')), findsNothing);
+      expect(snap(), before);
+      expect(tester.getRect(find.byKey(const Key('pos-pay-button'))),
+          payBefore,
+          reason: 'PAY never moves or reacts');
+      expect(find.byKey(const Key('pos-loyalty-amount-due')), findsNothing,
+          reason: 'no discount was applied to the sale');
+
+      // The SAME contract for a barrier dismissal (the default dialog
+      // escape hatch — still zero writes without a Confirm).
+      await tester.tap(loyaltyButton());
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('pos-loyalty-reward-select')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('10'));
+      await tester.pumpAndSettle();
+      expect(snap(), before);
+      await tester.tapAt(const Offset(4, 4));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('pos-loyalty-dialog')), findsNothing);
+      expect(snap(), before);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'selecting 5% shows the SERVER numbers; confirm commits once and '
+        'the footer mirrors the same figure', (tester) async {
+      final container = await _pumpPos(tester, dio: dio, lines: 3);
+      await _attachCustomer(tester, container);
+      final payBefore =
+          tester.getRect(find.byKey(const Key('pos-pay-button')));
+      // 3 lines × 1 × 10 → gross 30 → 5% = 1.50 discount, due 28.50.
+
+      await tester.tap(loyaltyButton());
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('pos-loyalty-reward-select')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('5'));
+      await tester.pumpAndSettle();
+
+      final discountText = tester
+          .widget<Text>(find.byKey(const Key('pos-loyalty-dialog-discount')))
+          .data!;
+      final dueText = tester
+          .widget<Text>(find.byKey(const Key('pos-loyalty-dialog-due')))
+          .data!;
+      expect(discountText, contains(PaymentMath.money(1.5)),
+          reason: 'the server-issued discount for 5% of 30');
+      expect(dueText, contains(PaymentMath.money(28.5)),
+          reason: 'the server-issued due for 5% of 30');
+      expect(
+        tester
+            .widget<FilledButton>(
+                find.byKey(const Key('pos-loyalty-dialog-confirm')))
+            .onPressed,
+        isNotNull,
+        reason: 'server numbers known → confirmable',
+      );
+
+      await tester.tap(find.byKey(const Key('pos-loyalty-dialog-confirm')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('pos-loyalty-dialog')), findsNothing);
+
+      final loyalty = container.read(posLoyaltyProvider);
+      expect(loyalty.rewardPercent, 5.0);
+      expect(loyalty.previewMatches, isTrue);
+      expect(loyalty.preview!.rewardDiscount, closeTo(1.5, 0.001));
+      final footerDue = tester
+          .widget<Text>(find.byKey(const Key('pos-loyalty-amount-due')))
+          .data!;
+      expect(footerDue, PaymentMath.money(28.5),
+          reason: 'the footer renders the provider-mirrored due');
+      expect(dueText, contains(footerDue),
+          reason: 'dialog and footer show ONE server truth');
+      expect(tester.getRect(find.byKey(const Key('pos-pay-button'))),
+          payBefore,
+          reason: 'PAY never reacts to redemption');
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'the cap is server-owned: an out-of-cap session write flags the '
+        'state and the footer hides every previewed penny', (tester) async {
+      final container = await _pumpPos(tester, dio: dio, lines: 3);
+      await _attachCustomer(tester, container);
+      final notifier = container.read(posLoyaltyProvider.notifier);
+
+      // 25% is beyond the server's 20% cap — only reachable through a
+      // direct session write (the dialog's options never offer it).
+      notifier.setRewardPercent(25);
+      await tester.pump(const Duration(milliseconds: 50));
+      final loyalty = container.read(posLoyaltyProvider);
+      expect(loyalty.exceeds, isTrue,
+          reason: 'an out-of-cap percent flags exceeds immediately');
+      expect(loyalty.previewMatches, isFalse,
+          reason: 'the suppressed preview may drive no money');
+      expect(find.byKey(const Key('pos-loyalty-amount-due')), findsNothing);
+
+      // Drain the session's own scheduled revalidation (it re-asks the
+      // server; the server stays the final judge) so no timer outlives
+      // the test.
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'cart changes under the dialog: the due row refetches for the NEW '
+        'total (no stale money)', (tester) async {
+      final container = await _pumpPos(tester, dio: dio, lines: 2);
+      await _attachCustomer(tester, container);
+      // 2 lines × 10 → gross 20 → 5% → due 19.00.
+
+      await tester.tap(loyaltyButton());
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('pos-loyalty-reward-select')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('5'));
+      await tester.pumpAndSettle();
+      expect(
+        tester
+            .widget<Text>(find.byKey(const Key('pos-loyalty-dialog-due')))
+            .data,
+        contains(PaymentMath.money(19.0)),
+      );
+
+      // The cart moves under the modal (programmatic edit): 3 lines × 10
+      // → gross 30 → due 28.50 — the dialog must refetch, never go stale.
+      container.read(posCartProvider.notifier).addLine(CartLine(
+            productId: 'p-under-dialog',
+            name: 'Added Under Dialog',
+            quantity: '1',
+            unitPrice: '10',
+          ));
+      await tester.pumpAndSettle();
+      expect(
+        tester
+            .widget<Text>(find.byKey(const Key('pos-loyalty-dialog-due')))
+            .data,
+        contains(PaymentMath.money(28.5)),
+      );
+      expect(
+        tester
+            .widget<FilledButton>(
+                find.byKey(const Key('pos-loyalty-dialog-confirm')))
+            .onPressed,
+        isNotNull,
+        reason: 'the refetched preview re-enables confirm',
+      );
+      await tester.tap(find.byKey(const Key('pos-loyalty-dialog-cancel')));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'detaching the customer resets the session and disables the '
+        'redemption button', (tester) async {
+      final container = await _pumpPos(tester, dio: dio, lines: 3);
+      await _attachCustomer(tester, container);
+      expect(
+        tester.widget<OutlinedButton>(loyaltyButton()).onPressed,
+        isNotNull,
+      );
+
+      container.read(posCartProvider.notifier).setCustomer(null);
+      await tester.pump(const Duration(milliseconds: 50));
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pumpAndSettle();
+
+      final loyalty = container.read(posLoyaltyProvider);
+      expect(loyalty.hasCustomer, isFalse);
+      expect(loyalty.rewardPercent, 0.0);
+      expect(tester.widget<OutlinedButton>(loyaltyButton()).onPressed, isNull);
+      expect(find.byKey(const Key('pos-loyalty-amount-due')), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('redemption never stacks: a second confirm keeps ONE 5% '
+        'discount', (tester) async {
+      final container = await _pumpPos(tester, dio: dio, lines: 3);
+      await _attachCustomer(tester, container);
+
+      // First redemption: pick 5% in the menu (the dropdown is on None,
+      // so the menu copy is the only Text('5') in the tree) and Confirm.
+      await tester.tap(loyaltyButton());
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('pos-loyalty-reward-select')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.descendant(
+        of: find.byWidgetPredicate((w) => w is DropdownMenuItem),
+        matching: find.text('5'),
+      ));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('pos-loyalty-dialog-confirm')));
+      await tester.pumpAndSettle();
+
+      final first = container.read(posLoyaltyProvider);
+      expect(first.rewardPercent, 5.0);
+      final firstDiscount = first.preview!.rewardDiscount;
+
+      // Second Confirm on the SAME selection (the dialog reopens with the
+      // session's 5% already chosen — no menu interaction): the slot
+      // REPLACES, never accumulates.
+      await tester.tap(loyaltyButton());
+      await tester.pumpAndSettle();
+      expect(
+        tester
+            .widget<DropdownButton<double>>(
+                find.byKey(const Key('pos-loyalty-reward-select')))
+            .value,
+        5.0,
+        reason: 'the dialog reopens with the committed percent',
+      );
+      await tester.tap(find.byKey(const Key('pos-loyalty-dialog-confirm')));
+      await tester.pumpAndSettle();
+
+      final second = container.read(posLoyaltyProvider);
+      expect(second.rewardPercent, 5.0,
+          reason: 'a second confirm never doubles the discount');
+      expect(second.preview!.rewardPercent, 5.0);
+      expect(second.preview!.rewardDiscount, firstDiscount);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'return mode withholds the whole action row: the banner owns the '
+        'cart, redemption included', (tester) async {
+      final container =
+          await _pumpPos(tester, dio: dio, lines: 3, grantReturn: true);
+      await _attachCustomer(tester, container);
+      expect(loyaltyButton(), findsOneWidget);
+      expect(find.byKey(const Key('pos-return-button')), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('pos-return-button')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('pos-return-button')), findsNothing);
+      expect(loyaltyButton(), findsNothing,
+          reason: 'a return earns nothing — no redemption entry');
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'Arabic/RTL: the dialog renders identity, balance and options in '
+        'RTL without layout exceptions', (tester) async {
+      final container = await _pumpPos(tester, dio: dio, lines: 3, rtl: true);
+      await _attachCustomer(tester, container);
+
+      await tester.tap(loyaltyButton());
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('pos-loyalty-dialog')), findsOneWidget);
+      expect(
+          find.byKey(const Key('pos-loyalty-dialog-customer')), findsOneWidget);
+      expect(find.byKey(const Key('pos-loyalty-balance')), findsOneWidget);
+      expect(find.byKey(const Key('pos-loyalty-reward-select')), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'short viewport at text scale 1.3: the open dialog never overflows',
+        (tester) async {
+      final container = await _pumpPos(
+        tester,
+        dio: dio,
+        size: const Size(1024, 600),
+        lines: 3,
+        textScale: 1.3,
+      );
+      await _attachCustomer(tester, container);
+
+      await tester.tap(loyaltyButton());
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('pos-loyalty-dialog')), findsOneWidget);
+      expect(tester.takeException(), isNull,
+          reason: 'the dialog must ellipsize, never overflow, at 1.3x');
     });
   });
 
@@ -1124,9 +1670,13 @@ void main() {
         // The border carries the identity hue.
         expect(style.side!.resolve(enabled)!.color, accent,
             reason: '$key border must be its action hue');
-        // What the tree renders for the enabled button matches the style.
-        expect(paintedFill(key), bg,
-            reason: '$key must render the tint as its Material color');
+        // What the tree renders matches the style of the ACTUAL state —
+        // an enabled chip paints the tint, a disabled one paints its
+        // released (transparent) background.
+        final isEnabled = button.onPressed != null;
+        expect(paintedFill(key),
+            style.backgroundColor!.resolve(isEnabled ? enabled : disabled),
+            reason: '$key must render its resolved background');
         // Disabled: wash released, outline softened, label dimmed.
         final off = style.backgroundColor!.resolve(disabled)!;
         expect(off.a, 0.0, reason: '$key disabled must release the wash');
@@ -1139,6 +1689,7 @@ void main() {
       expectTint(const Key('pos-discount-button'), AppColors.warning);
       expectTint(const Key('pos-hold-button'), AppColors.actionHold);
       expectTint(const Key('pos-history-button'), AppColors.actionHistory);
+      expectTint(const Key('pos-loyalty-discount-button'), AppColors.success);
 
       // Return is the ONE solid chip: opaque red, white label, muted off.
       void expectSolid(Key key, Color accent) {
@@ -1210,6 +1761,7 @@ void main() {
         AppColors.warning,
         AppColors.actionHold,
         AppColors.actionHistory,
+        AppColors.success,
       ];
       for (final brightness in <Brightness>[Brightness.light, Brightness.dark]) {
         final surface =

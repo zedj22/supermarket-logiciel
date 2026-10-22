@@ -98,3 +98,76 @@ Future<void> typeWedgeScanIntoField(
   }
   await tester.testTextInput.receiveAction(TextInputAction.done);
 }
+
+/// One key-down of a FOREIGN-layout wedge: physical [physicalKey], the
+/// logical key the engine resolved, and the character it translates to.
+///
+/// Windows translates keyboard state to characters BEFORE Flutter sees the
+/// event, so a scan on AZERTY (`&é"'(-è_çà` on the unshifted number row),
+/// Arabic-101 or a fullwidth layout arrives with a non-ASCII `character`.
+/// These builders feed the diagnostic recorder and the experimental
+/// physical-capture tests the exact foreign shapes a field device can
+/// produce.
+KeyEvent foreignKeyDown({
+  required PhysicalKeyboardKey physicalKey,
+  required LogicalKeyboardKey logicalKey,
+  String? character,
+}) =>
+    KeyDownEvent(
+      physicalKey: physicalKey,
+      logicalKey: logicalKey,
+      timeStamp: Duration.zero,
+      character: character,
+    );
+
+/// One key-down of the EXPERIMENTAL physical-digit capture: the US
+/// number-row scan code (physical digitN — what a US-configured scanner
+/// sends on any layout) with the layout-translated [character] the
+/// engine delivers (`&` for the 1 position on AZERTY, an Arabic-Indic
+/// digit, a digit on US, or none when the engine delivered no text).
+KeyEvent physicalDigitKeyDown(
+  String digit, {
+  String? character,
+  bool untranslated = false,
+}) {
+  final base = wedgeKeyDown(digit) as KeyDownEvent;
+  return KeyDownEvent(
+    physicalKey: base.physicalKey,
+    logicalKey: base.logicalKey,
+    timeStamp: Duration.zero,
+    character: untranslated ? null : character ?? digit,
+  );
+}
+
+/// One complete foreign-layout wedge burst through the REAL event
+/// pipeline for the physical-capture experiment: US number-row scan
+/// codes (the test binding's default physical keys for digit logical
+/// keys) carrying their layout-translated characters (looked up per
+/// digit in [characters]; the digit itself when absent), then Enter.
+/// Mirrors a US-configured scanner scanning into Windows running
+/// AZERTY / Arabic / US.
+Future<void> sendForeignWedgeScan(
+  WidgetTester tester,
+  String code, {
+  Map<String, String>? characters,
+}) async {
+  for (final digit in code.split('')) {
+    await tester.sendKeyEvent(
+      digitKey(digit),
+      character: characters?[digit] ?? digit,
+    );
+  }
+  await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+}
+
+/// The engine's auto-repeat of a held key (what a scanner never produces
+/// but a human holding a key does).
+KeyEvent keyRepeat({
+  required LogicalKeyboardKey logicalKey,
+  required PhysicalKeyboardKey physicalKey,
+}) =>
+    KeyRepeatEvent(
+      physicalKey: physicalKey,
+      logicalKey: logicalKey,
+      timeStamp: Duration.zero,
+    );

@@ -80,6 +80,7 @@ import '../stock/inventory_models.dart';
 import 'customer_picker_dialog.dart';
 import 'holds_dialog.dart';
 import 'invoice_discount_dialog.dart';
+import 'loyalty_discount_dialog.dart';
 import 'pack_picker_dialog.dart';
 import 'payment_dialog.dart';
 import 'pos_error_message.dart';
@@ -153,6 +154,11 @@ class _PosScreenState extends ConsumerState<PosScreen> {
   /// (the tile mounts already selected, so didUpdateWidget never runs).
   final ValueNotifier<String?> _revealRequest = ValueNotifier<String?>(null);
   bool _cartDrawerOpen = false;
+
+  /// Cart-panel chrome compaction level (0..2), driven post-frame by the
+  /// lines-region probe so a full cart row always fits above the fixed
+  /// footer on short viewports (the footer never obscures the last row).
+  int _chromeLevel = 0;
 
   /// One scan-action dialog at a time: while the unknown-barcode Add
   /// Product form or the out-of-stock Adjust Stock dialog is open, a
@@ -1917,6 +1923,11 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       dense: reversedLayout,
       cart: cart,
       linesController: _linesController,
+      compaction: _chromeLevel,
+      onCompactionChange: (level) {
+        if (level == _chromeLevel) return;
+        setState(() => _chromeLevel = level);
+      },
       clearQtyTextRequest: _clearQtyTextRequest,
       revealRequest: _revealRequest,
       onRemoveLine: (key) =>
@@ -2043,8 +2054,14 @@ class _PosScreenState extends ConsumerState<PosScreen> {
               // Tight workspace (human QA: "RenderFlex overflowed by 59
               // pixels" on this toolbar at a 1127px window): the same
               // controls wrap instead of overflowing, and the view-mode
-              // switch drops to its compact icon form.
-              if (toolbarConstraints.maxWidth < 580) {
+              // switch drops to its compact icon form. The threshold
+              // grows with the text scale — at 1.3x full labels needed
+              // ~70px more room than 580px granted.
+              final toolbarTextUp = () {
+                final s = MediaQuery.textScalerOf(context).scale(1.0);
+                return s > 1.0 ? s : 1.0;
+              }();
+              if (toolbarConstraints.maxWidth < 580 * toolbarTextUp) {
                 return Wrap(
                   spacing: 8,
                   runSpacing: 8,
@@ -2078,30 +2095,47 @@ class _PosScreenState extends ConsumerState<PosScreen> {
                   shortcutsButton,
                   const SizedBox(width: 8),
                   // FIX #3: full labels when workspace allows; icons+tooltip
-                  // when tight.
+                  // when tight. Both toggles are scale-shrinkable
+                  // (Flexible + FittedBox): at large text scales their
+                  // intrinsic width pushed this Row past its box by a
+                  // fraction of a pixel — they now yield instead.
                   if (tightWorkspace)
-                    compactToggle
+                    Flexible(
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: compactToggle,
+                      ),
+                    )
                   else
-                    ConstrainedBox(
-                      // FIX #3: ≥190 when space allows; grow for full labels.
-                      constraints: const BoxConstraints(minWidth: 190),
-                      child: _ViewModeToggle(
-                        mode: viewMode,
-                        compact: false,
-                        onChanged: (m) => ref
-                            .read(posCatalogViewModeProvider.notifier)
-                            .setMode(m),
+                    Flexible(
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: ConstrainedBox(
+                          // FIX #3: ≥190 when space allows; grow for full labels.
+                          constraints: const BoxConstraints(minWidth: 190),
+                          child: _ViewModeToggle(
+                            mode: viewMode,
+                            compact: false,
+                            onChanged: (m) => ref
+                                .read(posCatalogViewModeProvider.notifier)
+                                .setMode(m),
+                          ),
+                        ),
                       ),
                     ),
                   const SizedBox(width: 8),
                   // Layout switch sits with the display-mode control it
                   // complements; full label only when even the worst case
                   // (full view-mode labels + min search width) still fits.
-                  if (toolbarConstraints.maxWidth >=
-                      (tightWorkspace ? 560 : 700))
-                    layoutToggleFull
-                  else
-                    layoutToggleCompact,
+                  Flexible(
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: toolbarConstraints.maxWidth >=
+                              (tightWorkspace ? 560 : 700)
+                          ? layoutToggleFull
+                          : layoutToggleCompact,
+                    ),
+                  ),
                 ],
               );
             },
@@ -3204,6 +3238,116 @@ class _FavoriteChip extends StatelessWidget {
   }
 }
 
+/// Measures the cart lines region after layout and drives the cart
+/// panel's chrome compaction level ([_CartPanel.compaction]).
+///
+/// The invariant: the lines region must always be at least one full row
+/// tall — otherwise the last visible row sits under the fixed tail
+/// (actions + totals/PAY) and reads as clipped/obscured. Below the
+/// measured row floor it asks for one more compaction level (max 2); above
+/// the floor + 120px of slack it relaxes one (hysteresis — one level is
+/// worth ~40–70px, so the band can never flap). The tail box itself
+/// never shrinks with compaction (topHeight is untouched), so no level
+/// can introduce a RenderFlex overflow; at absurd sizes the floor is
+/// unreachable and the panel degrades to exactly its previous behavior.
+///
+/// The floor is the tallest element keyed `cart-line-*` in the lines
+/// subtree (the row-level box of every built tile); with no built tile
+/// it falls back to a layout-class estimate (standard ≈ 170, dense
+/// reversed ≈ 66 at 1.0 text scale).
+class _LinesFloorProbe extends StatefulWidget {
+  const _LinesFloorProbe({
+    required this.dense,
+    required this.level,
+    required this.onLevel,
+    required this.child,
+  });
+
+  final bool dense;
+  final int level;
+  final ValueChanged<int> onLevel;
+  final Widget child;
+
+  @override
+  State<_LinesFloorProbe> createState() => _LinesFloorProbeState();
+}
+
+class _LinesFloorProbeState extends State<_LinesFloorProbe> {
+  /// Re-armed after every measurement: the region can shrink WITHOUT a
+  /// widget rebuild (scroll-to-end settling, drawer animations), so a
+  /// post-frame hook scheduled only from [build] would go blind exactly
+  /// when the floor is at risk. Re-arming never forces a frame of its
+  /// own — the chain parks until someone else paints.
+  bool _pending = false;
+
+  @override
+  Widget build(BuildContext context) {
+    _arm();
+    return widget.child;
+  }
+
+  void _arm() {
+    if (_pending || !mounted) return;
+    _pending = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _pending = false;
+      if (!mounted) return;
+      _measure();
+      _arm();
+    });
+  }
+
+  void _measure() {
+    if (!mounted) return;
+    // The floor applies to the SCROLL VIEWPORT, not this wrapper: the
+    // dense layout parks fixed column chrome above the list, which would
+    // otherwise masquerade as extra row room. No keyed viewport = empty
+    // state = no row to protect.
+    Element? viewportEl;
+    void find(Element e) {
+      if (viewportEl != null) return;
+      final k = e.widget.key;
+      if (k is ValueKey && k.value == 'pos-cart-lines') {
+        viewportEl = e;
+        return;
+      }
+      e.visitChildren(find);
+    }
+
+    find(context as Element);
+    final box = viewportEl?.renderObject;
+    if (box is! RenderBox || !box.hasSize) return;
+    final linesH = box.size.height;
+
+    // Row floor: tallest `cart-line-*` keyed box across the built
+    // tiles (the tile's own Padding carries the key at row level).
+    var rowMax = 0.0;
+    void walk(Element e) {
+      final k = e.widget.key;
+      if (k is ValueKey &&
+          k.value is String &&
+          (k.value as String).startsWith('cart-line-')) {
+        final r = e.renderObject;
+        if (r is RenderBox && r.hasSize && r.size.height > rowMax) {
+          rowMax = r.size.height;
+        }
+      }
+      e.visitChildren(walk);
+    }
+
+    walk(context as Element);
+    final floor = rowMax > 0 ? rowMax : (widget.dense ? 66.0 : 170.0);
+
+    var next = widget.level;
+    if (linesH < floor - 0.5) {
+      if (next < 2) next += 1;
+    } else if (linesH > floor + 120) {
+      if (next > 0) next -= 1;
+    }
+    if (next != widget.level) widget.onLevel(next);
+  }
+}
+
 class _CartPanel extends StatelessWidget {
   final PosCartState cart;
   final void Function(String) onRemoveLine;
@@ -3265,9 +3409,21 @@ class _CartPanel extends StatelessWidget {
   /// row eagerly and never needs it.
   final ScrollController linesController;
 
+  /// Progressive chrome compaction level (0 = full layout; ≥1 merged
+  /// action row + inline TOTAL + tightest rhythm; ≥2 merged
+  /// Subtotal/Discount band): raised by the lines-region probe while the
+  /// region would drop below one full cart row (short viewports), lowered
+  /// again when there is ample room. Owned by the POS screen state.
+  final int compaction;
+
+  /// Reports the next compaction level decided by the lines probe.
+  final ValueChanged<int> onCompactionChange;
+
   const _CartPanel({
     required this.cart,
     required this.linesController,
+    this.compaction = 0,
+    required this.onCompactionChange,
     this.dense = false,
     required this.clearQtyTextRequest,
     required this.revealRequest,
@@ -3310,17 +3466,26 @@ class _CartPanel extends StatelessWidget {
             '${AppStrings.t('lines_word', loc)} · '
             '${bidiIsolateLtr(_fmtQty(unitCount))} '
             '${AppStrings.t('units_word', loc)}';
-    final headerHeight = dense
-        ? (short ? 50.0 : 56.0)
-        : compact
-            ? 64.0
-            : 72.0;
+    // OS text scaling (Windows DPI display scaling): the fixed chrome rows
+    // were budgeted for 1.0 — beyond that they GROW with the text so the
+    // title/counts and the customer name/phone never overflow their box
+    // (unclipped Flex paint) onto the rows below. At 1.0 the factor is
+    // exactly 1, so existing layouts, goldens and geometry tests stand.
+    final ts = MediaQuery.textScalerOf(context).scale(1.0);
+    final textUp = ts > 1.0 ? ts : 1.0;
+    final headerHeight = (dense
+            ? (short ? 50.0 : 56.0)
+            : compact
+                ? 64.0
+                : 72.0) *
+        textUp;
     // A selected customer keeps the SAME essential content (name, phone,
     // change-customer action) in the dense 44px footprint — walk-in keeps
     // the roomy 48/52 row. Attaching a customer must never steal vertical
     // space from the cart lines region below (customer-attached clipping).
     final customerHeight =
-        dense || cart.customer != null ? 44.0 : compact ? 48.0 : 52.0;
+        (dense || cart.customer != null ? 44.0 : compact ? 48.0 : 52.0) *
+            textUp;
 
     return Container(
       key: const Key('pos-cart-panel'),
@@ -3417,6 +3582,7 @@ class _CartPanel extends StatelessWidget {
                                 fontSize: 15,
                                 fontWeight: FontWeight.w600,
                               ),
+                              maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                             ),
                             if (cart.customer?.phone != null)
@@ -3425,6 +3591,7 @@ class _CartPanel extends StatelessWidget {
                                 style: theme.textTheme.bodySmall?.copyWith(
                                   fontSize: 13,
                                 ),
+                                maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                               ),
                           ],
@@ -3517,7 +3684,15 @@ class _CartPanel extends StatelessWidget {
           // Only the line list scrolls — header/totals/PAY stay fixed.
           Expanded(
             flex: 1,
-            child: cart.isEmpty
+            // Post-frame probe: measures this region and the tallest built
+            // cart row, then escalates/lowers the chrome compaction level
+            // so a full row always fits above the fixed footer (the
+            // loyalty/totals block never obscures the last visible row).
+            child: _LinesFloorProbe(
+              dense: dense,
+              level: compaction,
+              onLevel: onCompactionChange,
+              child: cart.isEmpty
                 ? Center(
                     child: SingleChildScrollView(
                       padding: const EdgeInsets.all(12),
@@ -3598,17 +3773,18 @@ class _CartPanel extends StatelessWidget {
                       );
                     },
                   ),
+            ),
           ),
           // EXPLICIT checkout-section budget: the fixed chrome above the
           // lines (header + customer row + divider + optional return
           // banner) is computed from the same flags that rendered it, so
           // the section below the lines (divider, stock errors, actions,
           // totals/PAY) can never claim more than what remains. A taller
-          // customer/loyalty block (or a stock-error list) shrinks the
-          // scrollable lines region to >= 0 instead of overflowing the
-          // panel bottom, covering the last rows and the PAY button
-          // (customer-attached clipping). LayoutBuilder as a non-flex
-          // Column child receives the panel's own (full) height bound.
+          // customer row (or a stock-error list) shrinks the scrollable
+          // lines region to >= 0 instead of overflowing the panel bottom,
+          // covering the last rows and the PAY button (customer-attached
+          // clipping). LayoutBuilder as a non-flex Column child receives
+          // the panel's own (full) height bound.
           LayoutBuilder(
             builder: (context, tailConstraints) {
               final topHeight = headerHeight +
@@ -3619,6 +3795,97 @@ class _CartPanel extends StatelessWidget {
               final tailMax = maxH.isFinite
                   ? (maxH - topHeight > 0.0 ? maxH - topHeight : 0.0)
                   : double.infinity;
+              // Secondary actions — defined once, assembled as the 2×2
+              // grid (compaction 0) or as ONE compact row (compaction
+              // ≥ 1): the freed 44–52px band goes straight to the cart
+              // lines region on short viewports. Same keys, callbacks,
+              // badges and per-mode sizing in both arrangements.
+              final discountAction = _actionButton(
+                context: context,
+                key: const Key('pos-discount-button'),
+                icon: Icons.percent,
+                label: AppStrings.t('discount_shortcut', loc),
+                onPressed: onDiscount,
+                short: short || compact,
+                dense: dense,
+                accent: AppColors.warning,
+              );
+              final holdAction = _actionButton(
+                context: context,
+                key: const Key('pos-hold-button'),
+                icon: Icons.pause,
+                label: AppStrings.t('hold_shortcut', loc),
+                // Return mode owns the cart — holding it would
+                // shelve the pending return (a hold is a SALE
+                // snapshot).
+                onPressed:
+                    (cart.isEmpty || cart.returnMode) ? null : onHold,
+                short: short || compact,
+                dense: dense,
+                accent: AppColors.actionHold,
+              );
+              final holdsAction = _actionButton(
+                context: context,
+                key: const Key('pos-holds-button'),
+                icon: Icons.list_alt,
+                label: AppStrings.t('holds_shortcut', loc),
+                onPressed: onHolds,
+                short: short || compact,
+                dense: dense,
+                badgeCount: heldCount,
+              );
+              final historyAction = _actionButton(
+                context: context,
+                key: const Key('pos-history-button'),
+                icon: Icons.history,
+                label: AppStrings.t('history_shortcut', loc),
+                onPressed: onHistory,
+                short: short || compact,
+                dense: dense,
+                accent: AppColors.actionHistory,
+              );
+              final returnAction = _actionButton(
+                context: context,
+                key: const Key('pos-return-button'),
+                icon: Icons.replay,
+                label: AppStrings.t('pos_return', loc),
+                onPressed: cart.isEmpty ? null : onReturn,
+                short: short || compact,
+                dense: dense,
+                accent: AppColors.actionReturn,
+                // The one solid chip: entering return
+                // mode must stay an unmissable red.
+                solid: true,
+              );
+              // Loyalty redemption entry (server-owned eligibility): the
+              // same ONE dot every loyalty state change rebuilds — the
+              // button only hands a confirmed, eligible cart to the
+              // discount dialog; the session's own canSelectReward is
+              // the gate (never a client guess). Disabled in return
+              // mode (a return earns nothing) and on an empty cart
+              // (nothing to discount — same convention as HOLD/RETURN).
+              final loyaltyAction = Consumer(
+                builder: (context, ref, _) {
+                  final loyalty = ref.watch(posLoyaltyProvider);
+                  final enabled = !cart.returnMode &&
+                      !cart.isEmpty &&
+                      !loyalty.loading &&
+                      loyalty.error == null &&
+                      loyalty.canSelectReward;
+                  return _actionButton(
+                    context: context,
+                    key: const Key('pos-loyalty-discount-button'),
+                    icon: Icons.stars,
+                    label: AppStrings.t('loyalty_redeem', loc),
+                    onPressed: enabled
+                        ? () => showLoyaltyDiscountDialog(context)
+                        : null,
+                    short: short || compact,
+                    dense: dense,
+                    accent: AppColors.success,
+                  );
+                },
+              );
               return ConstrainedBox(
                 constraints: BoxConstraints(maxHeight: tailMax),
                 child: Column(
@@ -3655,90 +3922,61 @@ class _CartPanel extends StatelessWidget {
                               : const EdgeInsets.fromLTRB(10, 6, 10, 6),
                       child: Column(
                         children: [
-                          Row(
-                            children: [
-                              Expanded(
-                                child: _actionButton(
-                                  context: context,
-                                  key: const Key('pos-discount-button'),
-                                  icon: Icons.percent,
-                                  label: AppStrings.t('discount_shortcut', loc),
-                                  onPressed: onDiscount,
-                                  short: short || compact,
-                                  dense: dense,
-                                  accent: AppColors.warning,
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: _actionButton(
-                                  context: context,
-                                  key: const Key('pos-hold-button'),
-                                  icon: Icons.pause,
-                                  label: AppStrings.t('hold_shortcut', loc),
-                                  // Return mode owns the cart — holding it would
-                                  // shelve the pending return (a hold is a SALE
-                                  // snapshot).
-                                  onPressed:
-                                      (cart.isEmpty || cart.returnMode) ? null : onHold,
-                                  short: short || compact,
-                                  dense: dense,
-                                  accent: AppColors.actionHold,
-                                ),
-                              ),
-                            ],
-                          ),
-                          SizedBox(height: dense ? (short ? 2 : 4) : 8),
-                          Row(
-                            children: [
-                              Expanded(
-                                child: _actionButton(
-                                  context: context,
-                                  key: const Key('pos-holds-button'),
-                                  icon: Icons.list_alt,
-                                  label: AppStrings.t('holds_shortcut', loc),
-                                  onPressed: onHolds,
-                                  short: short || compact,
-                                  dense: dense,
-                                  badgeCount: heldCount,
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: _actionButton(
-                                  context: context,
-                                  key: const Key('pos-history-button'),
-                                  icon: Icons.history,
-                                  label: AppStrings.t('history_shortcut', loc),
-                                  onPressed: onHistory,
-                                  short: short || compact,
-                                  dense: dense,
-                                  accent: AppColors.actionHistory,
-                                ),
-                              ),
-                            ],
-                          ),
-                          // Return entry point (permission-gated): hidden while the
-                          // mode is active — the banner + Confirm/Cancel own it.
-                          if (canReturn && !cart.returnMode) ...[
+                          if (compaction >= 1)
+                            // One compact row: the four secondary actions
+                            // share a band so the fixed tail yields its
+                            // second row to the cart lines. The redemption
+                            // chip FOLDS INTO this band (never a row of its
+                            // own at compaction ≥ 1) so the entry point
+                            // costs the tight viewports not a single pixel.
+                            Row(
+                              children: [
+                                Expanded(child: discountAction),
+                                const SizedBox(width: 8),
+                                Expanded(child: holdAction),
+                                const SizedBox(width: 8),
+                                Expanded(child: holdsAction),
+                                const SizedBox(width: 8),
+                                Expanded(child: historyAction),
+                                if (!cart.returnMode) ...[
+                                  const SizedBox(width: 8),
+                                  Expanded(child: loyaltyAction),
+                                ],
+                              ],
+                            )
+                          else ...[
+                            Row(
+                              children: [
+                                Expanded(child: discountAction),
+                                const SizedBox(width: 8),
+                                Expanded(child: holdAction),
+                              ],
+                            ),
                             SizedBox(height: dense ? (short ? 2 : 4) : 8),
                             Row(
                               children: [
-                                Expanded(
-                                  child: _actionButton(
-                                    context: context,
-                                    key: const Key('pos-return-button'),
-                                    icon: Icons.replay,
-                                    label: AppStrings.t('pos_return', loc),
-                                    onPressed: cart.isEmpty ? null : onReturn,
-                                    short: short || compact,
-                                    dense: dense,
-                                    accent: AppColors.actionReturn,
-                                    // The one solid chip: entering return
-                                    // mode must stay an unmissable red.
-                                    solid: true,
-                                  ),
-                                ),
+                                Expanded(child: holdsAction),
+                                const SizedBox(width: 8),
+                                Expanded(child: historyAction),
+                              ],
+                            ),
+                          ],
+                          // Return entry point (permission-gated): hidden while the
+                          // mode is active — the banner + Confirm/Cancel own it.
+                          // At compaction 0 the redemption chip shares this row
+                          // beside it (or rides alone without the return
+                          // permission); the whole row is withheld in return
+                          // mode — that sale earns nothing.
+                          if (!cart.returnMode && (canReturn || compaction < 1)) ...[
+                            SizedBox(height: dense ? (short ? 2 : 4) : 8),
+                            Row(
+                              children: [
+                                if (canReturn) ...[
+                                  Expanded(child: returnAction),
+                                  const SizedBox(width: 8),
+                                ],
+                                if (compaction < 1)
+                                  Expanded(child: loyaltyAction),
                               ],
                             ),
                           ],
@@ -3750,6 +3988,7 @@ class _CartPanel extends StatelessWidget {
                     _PosTotalsPanel(
                       cart: cart,
                       dense: dense,
+                      compaction: compaction,
                       onPayment: onPayment,
                       onConfirmReturn: onConfirmReturn,
                       onCancelReturn: onCancelReturn,
@@ -4016,6 +4255,14 @@ class _PosTotalsPanel extends ConsumerStatefulWidget {
   /// the cart lines region above gets the height back. TOTAL and PAY stay
   /// prominent — only breathing room is removed.
   final bool dense;
+
+  /// Chrome compaction level from the cart-panel probe (0 = full layout;
+  /// ≥1 merged action row, inline TOTAL and tightest rhythm; ≥2 merged
+  /// Subtotal/Discount band). Presentation only — every value, key and
+  /// interaction is identical at all levels. Loyalty does NOT live in this
+  /// panel anymore (it rides the workspace sidebar card).
+  final int compaction;
+
   final VoidCallback onPayment;
   final VoidCallback onConfirmReturn;
   final VoidCallback onCancelReturn;
@@ -4023,6 +4270,7 @@ class _PosTotalsPanel extends ConsumerStatefulWidget {
   const _PosTotalsPanel({
     required this.cart,
     this.dense = false,
+    this.compaction = 0,
     required this.onPayment,
     required this.onConfirmReturn,
     required this.onCancelReturn,
@@ -4054,8 +4302,6 @@ class _PosTotalsPanelState extends ConsumerState<_PosTotalsPanel> {
     final rewardDiscount = preview?.rewardDiscount ?? 0.0;
     final amountDue =
         PaymentMath.amountDueOf(total: totals.total, rewardDiscount: rewardDiscount);
-    final pointsEarned = preview?.pointsEarned ?? 0.0;
-    final cashbackEarned = preview?.cashbackEarned ?? 0.0;
 
     return Material(
       key: const Key('pos-totals-panel'),
@@ -4106,146 +4352,179 @@ class _PosTotalsPanelState extends ConsumerState<_PosTotalsPanel> {
               labelSize = 20.0;
               payHeight = 60.0;
             }
-            final subSize = mediaH < 700 ? 14.0 : 15.0;
+            final tightest = widget.compaction >= 1;
+            final subSize = tightest
+                ? 13.0
+                : mediaH < 700
+                    ? 14.0
+                    : 15.0;
             final payFontSize = mediaH < 560 ? 15.0 : 17.0;
             final payIconSize = mediaH < 560 ? 20.0 : 22.0;
             // Dense (reversed): row padding, divider and post-TOTAL gap
             // yield their breathing room to the cart lines above (even
             // more so on short screens); the TOTAL size and PAY height
-            // are untouched (both prominent).
-            final rowPad = widget.dense
-                ? (mediaH < 560 ? 1.0 : 3.0)
-                : mediaH < 700
-                    ? 2.0
-                    : 3.0;
-            final gapAfterTotal = widget.dense
-                ? (mediaH < 560 ? 2.0 : 6.0)
-                : mediaH < 700
-                    ? 4.0
-                    : 6.0;
-            final dividerH = widget.dense
-                ? (mediaH < 560 ? 4.0 : 8.0)
-                : mediaH < 700
-                    ? 8.0
-                    : 10.0;
+            // are untouched (both prominent). Compaction ≥ 1 pins every
+            // rhythm knob to its tightest value regardless of window.
+            final rowPad = tightest
+                ? 1.0
+                : widget.dense
+                    ? (mediaH < 560 ? 1.0 : 3.0)
+                    : mediaH < 700
+                        ? 2.0
+                        : 3.0;
+            final gapAfterTotal = tightest
+                ? 2.0
+                : widget.dense
+                    ? (mediaH < 560 ? 2.0 : 6.0)
+                    : mediaH < 700
+                        ? 4.0
+                        : 6.0;
+            final dividerH = tightest
+                ? 4.0
+                : widget.dense
+                    ? (mediaH < 560 ? 4.0 : 8.0)
+                    : mediaH < 700
+                        ? 8.0
+                        : 10.0;
 
             // §4/§6: the label sits immediately ABOVE the dominant amount,
             // both right-aligned to the money edge — a stacked focal block.
             // `height: 1.0` keeps the label's line box to its font size.
-            final totalStack = Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  AppStrings.t('total_label', loc),
-                  key: const Key('pos-total-label'),
-                  style: theme.textTheme.titleMedium?.copyWith(
-                    fontSize: labelSize,
-                    height: 1.0,
-                    fontWeight: FontWeight.w700,
-                    color: cs.onSurface,
-                  ),
-                ),
-                FittedBox(
-                  fit: BoxFit.scaleDown,
-                  alignment: AlignmentDirectional.centerEnd,
-                  child: numericText(
-                    '${totals.totalDisplay} $currency',
-                    key: const Key('pos-total-value'),
-                    style: theme.textTheme.headlineSmall?.copyWith(
-                      fontSize: totalSize,
-                      fontWeight: FontWeight.w800,
-                      color: cs.primary,
-                      height: 1.05,
-                    ),
-                  ),
-                ),
-              ],
+            // Compaction ≥ 1 puts the label INLINE at the start of the same
+            // band (amount still right at the money edge) — same keys,
+            // same values, ~20px handed back to the lines region.
+            final totalLabel = Text(
+              AppStrings.t('total_label', loc),
+              key: const Key('pos-total-label'),
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontSize: labelSize,
+                height: 1.0,
+                fontWeight: FontWeight.w700,
+                color: cs.onSurface,
+              ),
             );
+            final totalAmount = FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: AlignmentDirectional.centerEnd,
+              child: numericText(
+                '${totals.totalDisplay} $currency',
+                key: const Key('pos-total-value'),
+                style: theme.textTheme.headlineSmall?.copyWith(
+                  fontSize: totalSize,
+                  fontWeight: FontWeight.w800,
+                  color: cs.primary,
+                  height: 1.05,
+                ),
+              ),
+            );
+            final totalStack = widget.compaction >= 1
+                ? Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      Expanded(child: totalLabel),
+                      const SizedBox(width: 8),
+                      Flexible(child: totalAmount),
+                    ],
+                  )
+                : Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      totalLabel,
+                      totalAmount,
+                    ],
+                  );
 
             return Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                // Subtotal stays clean — the loyalty chunks moved to the
-                // Total block below (task: balance/rewards ride the final
-                // amount, not the Subtotal row).
-                _totalsRow(
-                  label: AppStrings.t('subtotal_label', loc),
-                  value: totals.subtotalDisplay,
-                  valueKey: const Key('pos-subtotal-value'),
-                  color: cs.onSurface.withValues(alpha: 0.78),
-                  fontSize: subSize,
-                  verticalPad: rowPad,
-                ),
-                _totalsRow(
-                  label: AppStrings.t('invoice_discount', loc),
-                  value: '-${totals.invoiceDiscountDisplay}',
-                  valueKey: const Key('pos-discount-value'),
-                  color: AppColors.warning,
-                  fontSize: subSize,
-                  verticalPad: rowPad,
-                ),
-                if (showLoyalty && loyalty.error != null)
+                // Subtotal stays clean — loyalty lives in the workspace
+                // sidebar card (balance/rewards never ride these rows).
+                // Compaction ≥ 2 folds the discount into the same band on
+                // the tightest screens — both value keys and both amounts
+                // unchanged.
+                if (widget.compaction >= 2)
                   Padding(
-                    padding: EdgeInsets.only(top: rowPad / 2),
-                    child: Text(
-                      loyalty.error!,
-                      key: const Key('pos-loyalty-error'),
-                      textAlign: TextAlign.end,
-                      style: theme.textTheme.bodySmall
-                          ?.copyWith(color: cs.error),
+                    padding: EdgeInsets.symmetric(vertical: rowPad),
+                    child: Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            AppStrings.t('subtotal_label', loc),
+                            style: TextStyle(
+                              fontSize: subSize,
+                              fontWeight: FontWeight.w500,
+                              height: 1.3,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        numericText(
+                          totals.subtotalDisplay,
+                          key: const Key('pos-subtotal-value'),
+                          style: TextStyle(
+                            fontSize: subSize + 1,
+                            fontWeight: FontWeight.w700,
+                            height: 1.3,
+                            fontFeatures: const [
+                              FontFeature.tabularFigures(),
+                            ],
+                            color: cs.onSurface.withValues(alpha: 0.78),
+                          ),
+                        ),
+                        const SizedBox(width: 14),
+                        Flexible(
+                          child: Text(
+                            AppStrings.t('invoice_discount', loc),
+                            style: TextStyle(
+                              fontSize: subSize,
+                              fontWeight: FontWeight.w500,
+                              height: 1.3,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        numericText(
+                          '-${totals.invoiceDiscountDisplay}',
+                          key: const Key('pos-discount-value'),
+                          style: TextStyle(
+                            fontSize: subSize + 1,
+                            fontWeight: FontWeight.w700,
+                            height: 1.3,
+                            fontFeatures: const [
+                              FontFeature.tabularFigures(),
+                            ],
+                            color: AppColors.warning,
+                          ),
+                        ),
+                      ],
                     ),
+                  )
+                else ...[
+                  _totalsRow(
+                    label: AppStrings.t('subtotal_label', loc),
+                    value: totals.subtotalDisplay,
+                    valueKey: const Key('pos-subtotal-value'),
+                    color: cs.onSurface.withValues(alpha: 0.78),
+                    fontSize: subSize,
+                    verticalPad: rowPad,
                   ),
+                  _totalsRow(
+                    label: AppStrings.t('invoice_discount', loc),
+                    value: '-${totals.invoiceDiscountDisplay}',
+                    valueKey: const Key('pos-discount-value'),
+                    color: AppColors.warning,
+                    fontSize: subSize,
+                    verticalPad: rowPad,
+                  ),
+                ],
                 Divider(height: dividerH),
-                // Loyalty rides the TOTAL block: balance + reward selector
-                // sit alongside the large amount (left cluster of the same
-                // row), keeping Subtotal/Discount rows clean. The stacked
-                // amount stays the money edge; without a customer the
-                // block stands alone (full-width edge alignment).
-                if (!showLoyalty)
-                  totalStack
-                else
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      Flexible(
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          children: [
-                            _loyaltyBalance(
-                              theme: theme,
-                              cs: cs,
-                              loc: loc,
-                              loyalty: loyalty,
-                              preview: preview,
-                              currency: currency,
-                              fontSize: subSize,
-                            ),
-                            _loyaltyReward(
-                              theme: theme,
-                              cs: cs,
-                              loc: loc,
-                              loyalty: loyalty,
-                              preview: preview,
-                              fontSize: subSize,
-                            ),
-                          ],
-                        ),
-                      ),
-                      // The dominant figure yields only the slice the
-                      // loyalty cluster needs (dropdown + hint) — never
-                      // overlapping it, still far above every other size.
-                      ConstrainedBox(
-                        constraints: BoxConstraints(
-                          maxWidth: w - (w < 340 ? 96.0 : 148.0),
-                        ),
-                        child: totalStack,
-                      ),
-                    ],
-                  ),
+                // Loyalty rides the workspace sidebar card — this panel
+                // keeps only Subtotal / Discount / TOTAL / PAY.
+                totalStack,
                 SizedBox(height: gapAfterTotal),
                 if (showLoyalty && rewardDiscount > 0)
                   _totalsRow(
@@ -4255,83 +4534,6 @@ class _PosTotalsPanelState extends ConsumerState<_PosTotalsPanel> {
                     color: cs.primary,
                     fontSize: subSize,
                     verticalPad: rowPad,
-                  ),
-                // Points + cashback share ONE row (2-in-1 totals line):
-                // the customer chrome added to this panel must not steal
-                // the cart lines' scroll room (customer-attached clipping).
-                // Each half keeps its own value key; with a single metric
-                // the row matches [_totalsRow]'s space-between alignment.
-                if (showLoyalty &&
-                    (pointsEarned > 0 || cashbackEarned > 0))
-                  Padding(
-                    padding: EdgeInsets.symmetric(vertical: rowPad),
-                    child: Row(
-                      mainAxisAlignment:
-                          pointsEarned > 0 && cashbackEarned > 0
-                              ? MainAxisAlignment.start
-                              : MainAxisAlignment.spaceBetween,
-                      children: [
-                        if (pointsEarned > 0) ...[
-                          Flexible(
-                            child: Text(
-                              AppStrings.t('loyalty_points_earned', loc),
-                              style: TextStyle(
-                                fontSize: subSize,
-                                fontWeight: FontWeight.w500,
-                                height: 1.3,
-                              ),
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          numericText(
-                            '${formatLoyaltyPoints(pointsEarned)} '
-                            '${AppStrings.t('loyalty_points', loc)}',
-                            key: const Key('pos-loyalty-points-earned'),
-                            style: TextStyle(
-                              fontSize: subSize + 1,
-                              fontWeight: FontWeight.w700,
-                              height: 1.3,
-                              // Digits line up down the right edge of the
-                              // totals column (same as [_totalsRow]).
-                              fontFeatures: const [
-                                FontFeature.tabularFigures(),
-                              ],
-                              color: AppColors.success,
-                            ),
-                          ),
-                        ],
-                        if (pointsEarned > 0 && cashbackEarned > 0)
-                          const SizedBox(width: 16),
-                        if (cashbackEarned > 0) ...[
-                          Flexible(
-                            child: Text(
-                              AppStrings.t('loyalty_cashback_earned', loc),
-                              style: TextStyle(
-                                fontSize: subSize,
-                                fontWeight: FontWeight.w500,
-                                height: 1.3,
-                              ),
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          numericText(
-                            '${PaymentMath.money(cashbackEarned)} $currency',
-                            key: const Key('pos-loyalty-cashback-earned'),
-                            style: TextStyle(
-                              fontSize: subSize + 1,
-                              fontWeight: FontWeight.w700,
-                              height: 1.3,
-                              fontFeatures: const [
-                                FontFeature.tabularFigures(),
-                              ],
-                              color: AppColors.success,
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
                   ),
                 SafeArea(
                   top: false,
@@ -4443,193 +4645,6 @@ class _PosTotalsPanelState extends ConsumerState<_PosTotalsPanel> {
           },
         ),
       ),
-    );
-  }
-
-  /// Balance line + reward percent selector shown under the invoice
-  /// discount whenever a customer is attached (never in return mode).
-  /// Preview/hints are server numbers; the selected percent travels as
-  /// `loyalty_reward_percent` and the server re-validates everything.
-  /// With no reward yet the selector shows the progress toward the next
-  /// milestone (`remaining/100`) instead of the dropdown.
-  /// Loyalty balance chunk, merged INTO the Subtotal row (§4): points ·
-  /// rewards × · cashback, right-aligned against the money column inside
-  /// a bounded width so narrow panels ellipsis instead of overflowing.
-  /// Bidi: Arabic words stay natural; each numeric segment is its own LTR
-  /// isolate (the points value is grouped, and the rewards count follows
-  /// an Arabic word — both would swap inside a whole-string forced-LTR
-  /// paragraph — W7).
-  /// Loyalty balance chunk, riding the TOTAL block: the 'Loyalty' word +
-  /// key sit beside the large amount (left cluster of the total row).
-  /// Children shrink (Flexible, ellipsis) so narrow panels never overflow
-  /// next to the dominant figure.
-  Widget _loyaltyBalance({
-    required ThemeData theme,
-    required ColorScheme cs,
-    required String loc,
-    required PosLoyaltyState loyalty,
-    required LoyaltyPreview? preview,
-    required String currency,
-    required double fontSize,
-  }) {
-    final balance = loyalty.balance;
-    final points =
-        balance?.pointsBalance ?? preview?.pointsBalance ?? 0.0;
-    final cashback =
-        balance?.cashbackBalance ?? preview?.cashbackBalance ?? 0.0;
-    final rewards = loyalty.availableRewards;
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        // The 'Loyalty' word + key survive — repositioned from the old
-        // standalone line onto the Total block it now rides.
-        Flexible(
-          child: Text(
-            AppStrings.t('loyalty', loc),
-            key: const Key('pos-loyalty-label'),
-            overflow: TextOverflow.ellipsis,
-            style: theme.textTheme.bodySmall?.copyWith(
-              fontSize: fontSize,
-              fontWeight: FontWeight.w700,
-              color: cs.primary,
-            ),
-          ),
-        ),
-        const SizedBox(width: 6),
-        Flexible(
-          child: Text(
-            '${bidiIsolateLtr(formatLoyaltyPoints(points))} '
-            '${AppStrings.t('loyalty_points', loc)}'
-            ' · ${bidiIsolateLtr('$rewards×')} '
-            '${AppStrings.t('loyalty_reward', loc)}'
-            ' · ${bidiIsolateLtr(
-              '${PaymentMath.money(cashback)} $currency',
-            )}',
-            key: const Key('pos-loyalty-balance'),
-            textAlign: TextAlign.end,
-            overflow: TextOverflow.ellipsis,
-            style: theme.textTheme.bodySmall?.copyWith(
-              fontSize: fontSize,
-              color: cs.onSurface.withValues(alpha: 0.78),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  /// Reward selector chunk, riding the TOTAL block next to the balance:
-  /// the dropdown (or the progress slot) plus its hint — same keys, same
-  /// states, repositioned alongside the final amount. Children shrink
-  /// (Flexible) so narrow panels ellipsis instead of overflowing.
-  Widget _loyaltyReward({
-    required ThemeData theme,
-    required ColorScheme cs,
-    required String loc,
-    required PosLoyaltyState loyalty,
-    required LoyaltyPreview? preview,
-    required double fontSize,
-  }) {
-    final balance = loyalty.balance;
-    final points =
-        balance?.pointsBalance ?? preview?.pointsBalance ?? 0.0;
-    final minPoints = (loyalty.previewMatches
-            ? loyalty.preview!.minRewardPoints
-            : (balance?.minRewardPoints ?? loyaltyPointsPerReward))
-        .round();
-    final remaining = (loyalty.previewMatches
-            ? loyalty.preview!.remainingPoints
-            : (balance?.remainingPoints ?? points % minPoints))
-        .round();
-    final maxPercent = loyalty.maxRewardDiscountPercent;
-    final selected = loyalty.rewardPercent;
-    // Dropdown options: None + 5% steps up to the owner's cap, with the
-    // cap itself appended when it is not a multiple of 5 (e.g. 12%).
-    final options = <double>[
-      0,
-      for (var p = 5.0; p <= maxPercent + 0.0001; p += 5) p,
-    ];
-    if (maxPercent > 0 && !options.contains(maxPercent)) {
-      options.add(maxPercent);
-    }
-    if (selected > 0 && !options.contains(selected)) {
-      options.add(selected);
-    }
-    // A reward may be selected when the balance holds a milestone OR this
-    // sale's own earning reaches it (first purchase) — the server's
-    // `reward_eligible`, mirrored as `canSelectReward`.
-    final canSelect = loyalty.canSelectReward;
-    final hint = loyalty.exceeds
-        ? AppStrings.t('loyalty_redeem_exceeds', loc)
-        : canSelect
-            ? '${AppStrings.t('loyalty_redeem_max', loc)}: '
-                '${_percentLabel(maxPercent)}%'
-            : '$remaining/$minPoints';
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        if (canSelect) ...[
-          Flexible(
-            child: DropdownButton<double>(
-              key: const Key('pos-loyalty-reward-select'),
-              value: selected,
-              isExpanded: true,
-              isDense: true,
-              items: [
-                for (final p in options)
-                  DropdownMenuItem<double>(
-                    value: p,
-                    child: Text(
-                      p == 0
-                          ? AppStrings.t('loyalty_reward_none', loc)
-                          : _percentLabel(p),
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.bodySmall,
-                    ),
-                  ),
-              ],
-              onChanged: (value) => ref
-                  .read(posLoyaltyProvider.notifier)
-                  .setRewardPercent(value ?? 0),
-            ),
-          ),
-          if (selected > 0)
-            InkWell(
-              key: const Key('pos-loyalty-reward-clear'),
-              onTap: () =>
-                  ref.read(posLoyaltyProvider.notifier).clearReward(),
-              child: Padding(
-                padding: const EdgeInsets.all(2),
-                child: Icon(Icons.close, size: 16, color: cs.outline),
-              ),
-            ),
-        ] else
-          Flexible(
-            child: Text(
-              '$remaining/$minPoints',
-              key: const Key('pos-loyalty-reward-progress'),
-              textAlign: TextAlign.end,
-              overflow: TextOverflow.ellipsis,
-              style: theme.textTheme.bodySmall?.copyWith(color: cs.outline),
-            ),
-          ),
-        const SizedBox(width: 8),
-        Flexible(
-          child: numericText(
-            // Without a selectable reward the progress slot already shows
-            // `remaining/minPoints` — the hint stays rendered (key
-            // stability) but empty instead of duplicating it.
-            canSelect ? hint : '',
-            key: const Key('pos-loyalty-redeem-hint'),
-            textAlign: TextAlign.end,
-            overflow: TextOverflow.ellipsis,
-            style: theme.textTheme.bodySmall?.copyWith(
-              fontSize: fontSize,
-              color: loyalty.exceeds ? cs.error : cs.outline,
-            ),
-          ),
-        ),
-      ],
     );
   }
 
@@ -5934,16 +5949,5 @@ String _fmtPrice(String? raw) {
   if (v == null) return raw ?? '0';
   return formatGrouped(
     v == v.roundToDouble() ? v.toInt().toString() : v.toStringAsFixed(2),
-  );
-}
-
-/// Display label for a reward percent: `20` → `"20"`, `12.5` → `"12.5"`.
-String _percentLabel(double value) {
-  if (value == value.roundToDouble()) return value.toInt().toString();
-  return formatGrouped(
-    value
-        .toStringAsFixed(2)
-        .replaceFirst(RegExp(r'0+$'), '')
-        .replaceFirst(RegExp(r'\.$'), ''),
   );
 }

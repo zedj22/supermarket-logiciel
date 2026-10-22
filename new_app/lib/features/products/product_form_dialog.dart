@@ -25,6 +25,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/barcode_scanner.dart';
 import '../../core/number_format.dart';
 import '../../core/numeric_text.dart';
 import '../../core/strings.dart';
@@ -79,6 +80,7 @@ class ProductFormDialog extends ConsumerStatefulWidget {
 }
 
 class _ProductFormDialogState extends ConsumerState<ProductFormDialog> {
+  late final BarcodeScanHandler _scanHandler;
   late final TextEditingController _name;
   late final TextEditingController _barcode;
   late final TextEditingController _sku;
@@ -157,6 +159,22 @@ class _ProductFormDialogState extends ConsumerState<ProductFormDialog> {
     _price.addListener(_onPriceOrCostChanged);
     _cost.addListener(_onPriceOrCostChanged);
 
+    // Global wedge capture while the form is open: a scan must land in
+    // the barcode field even while another field holds focus. The
+    // `allowWhileEditing` opt-in lets this handler start a burst with an
+    // EditableText focused; the run passes through the focused field
+    // (typing is never consumed) and the gateway restores its snapshot
+    // at Enter before the scan is dispatched here. Registered last —
+    // above any screen handler, which the not-current-route gate already
+    // blocks while this dialog is up. Unregistered on dispose.
+    _scanHandler = BarcodeScanHandler(
+      context: context,
+      name: 'product-form',
+      allowWhileEditing: true,
+      onScan: _handleScan,
+    );
+    BarcodeScannerGateway.instance.register(_scanHandler);
+
     // Ensure category options are available for the dropdown.
     Future.microtask(
       () => ref.read(categoriesProvider.notifier).load(status: 'active'),
@@ -211,8 +229,23 @@ class _ProductFormDialogState extends ConsumerState<ProductFormDialog> {
     setState(() {});
   }
 
+  /// One completed wedge burst: replace the barcode field with the code.
+  /// The gateway restored the focused field's pre-run text before
+  /// dispatching, so the burst touched nothing but this field and the
+  /// form is never submitted — the user reviews and saves explicitly.
+  void _handleScan(String code) {
+    if (!mounted) return;
+    setState(() {
+      _barcode.value = TextEditingValue(
+        text: code,
+        selection: TextSelection.collapsed(offset: code.length),
+      );
+    });
+  }
+
   @override
   void dispose() {
+    BarcodeScannerGateway.instance.unregister(_scanHandler);
     _name.dispose();
     _barcode.dispose();
     _sku.dispose();

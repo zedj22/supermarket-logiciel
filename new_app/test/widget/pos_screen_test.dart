@@ -10545,7 +10545,10 @@ void main() {
           ),
         );
       }
-      await tester.pump();
+      // Let the lines-floor probe CONVERGE: escalation is post-frame
+      // (measure → setState → render on the next frame), so the assertion
+      // reads the settled compaction, not the frame before it lands.
+      await tester.pumpAndSettle();
 
       final cart = containerOf(tester).read(posCartProvider);
       final someTile = tester
@@ -10989,7 +10992,11 @@ void main() {
 
     testWidgets('Delete targets the tapped selection and stays out of a '
         'focused sibling quantity field', (tester) async {
-      await _pumpApp(tester, dio: dio);
+      // Tall surface (same rationale as the sibling tap test below): the
+      // two full-height cards must never crowd the lines region — focusing
+      // milk's field must not scroll bread's name out of the viewport, so
+      // the tap hits the name itself.
+      await _pumpApp(tester, dio: dio, size: const Size(1366, 1080));
       addLine(tester, bread);
       addLine(tester, milk);
       await tester.pump();
@@ -13675,6 +13682,42 @@ void main() {
         reason: 'the dialog replaces the toast, never stacks with it',
       );
       expect(containerOf(tester).read(posCartProvider).lines, isEmpty);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a scan into the open Add Product form replaces the '
+        'prefilled barcode and never touches the name field', (tester) async {
+      await pumpPos(tester, initialPrefs: addProductAction);
+      await focusWorkspace(tester);
+
+      await sendWedgeScan(tester, unknownCode);
+      await tester.pumpAndSettle();
+      expect(find.byType(ProductFormDialog), findsOneWidget);
+      expect(
+        controllerText(tester, const Key('product-barcode-field')),
+        unknownCode,
+        reason: 'prefill from the POS unknown-barcode scan',
+      );
+
+      // Type a name, then scan a DIFFERENT code while Name is focused:
+      // the form handler captures the burst and replaces only the
+      // barcode field — no submit, no lost keystrokes elsewhere.
+      await tester.enterText(
+        find.byKey(const Key('product-name-field')),
+        'Hummus 400g',
+      );
+      await sendWedgeScan(tester, '5901234123457');
+      await tester.pumpAndSettle();
+
+      expect(
+        controllerText(tester, const Key('product-barcode-field')),
+        '5901234123457',
+      );
+      expect(
+        controllerText(tester, const Key('product-name-field')),
+        'Hummus 400g',
+      );
+      expect(find.byType(ProductFormDialog), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
 

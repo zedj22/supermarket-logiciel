@@ -12,6 +12,7 @@ import '../loyalty/loyalty_models.dart';
 import '../loyalty/loyalty_providers.dart';
 import 'backup_models.dart';
 import 'backup_provider.dart';
+import 'scan_diagnostics_panel.dart';
 import 'scan_settings_provider.dart';
 import 'settings_models.dart';
 import 'settings_provider.dart';
@@ -130,6 +131,8 @@ class SettingsScreen extends ConsumerWidget {
             ),
             const SizedBox(height: 16),
             const _ScanActionsSection(),
+            const SizedBox(height: 16),
+            const ScanDiagnosticsSection(),
             if (canManage) ...[
               const SizedBox(height: 16),
               const _StoreSettingsSection(),

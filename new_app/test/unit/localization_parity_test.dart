@@ -176,11 +176,17 @@ void main() {
       // 1 key (1501). The configurable scan-actions pass added the
       // settings section title plus the label/description of each of the
       // two scan-action toggles (unknown barcode → Add Product,
-      // out-of-stock scan → Adjust Stock) — 5 keys (1506).
+      // out-of-stock scan → Adjust Stock) — 5 keys (1506). The Phase A
+      // privacy-safe scan-diagnostics pass added the settings section
+      // title, its privacy description, the four session controls
+      // (start/stop/clear/copy), the copy confirmation, the idle/running
+      // status labels, the total/dropped counters, the gateway buffer
+      // label, the armed/idle labels and the empty-history hint —
+      // 15 keys (1521).
       // Update this deliberately when a subphase
       // adds strings — an unexplained drop means keys were deleted from
       // one map only.
-      expect(_map('en').keys.length, 1506);
+      expect(_map('en').keys.length, 1521);
       expect(_map('ar').keys.length, _map('en').keys.length);
       expect(_map('fr').keys.length, _map('en').keys.length);
     });
