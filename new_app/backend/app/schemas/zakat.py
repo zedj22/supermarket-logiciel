@@ -26,7 +26,7 @@ INVENTORY_LINES_LIMIT = 500
 #: Hard cap on operator-entered line items per section.
 LINE_ITEMS_MAX = 200
 
-InventoryBasisLiteral = Literal["market", "cost", "override"]
+InventoryBasisLiteral = Literal["market", "cost", "wholesale", "override"]
 DebtTreatmentLiteral = Literal["deduct_all", "deduct_due_only", "no_deduction"]
 PaymentMethodLiteral = Literal["cash", "transfer", "cheque", "other"]
 
@@ -128,6 +128,11 @@ class ZakatResultResponse(StrictBaseModel):
     inventory_excluded_value: Decimal
     inventory_product_count: int
     inventory_included_count: int
+    #: Stock-only breakdown (defaults keep OLD stored snapshots valid).
+    inventory_quantity: Decimal | None = None
+    inventory_cost_value: Decimal | None = None
+    inventory_market_value: Decimal | None = None
+    inventory_stock_only_zakat: Decimal | None = None
 
     cash_provided: bool
     cash_total: Decimal | None

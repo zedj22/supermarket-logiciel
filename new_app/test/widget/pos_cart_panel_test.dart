@@ -22,6 +22,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supermarket_pos/core/colors.dart';
+import 'package:supermarket_pos/core/strings.dart';
 import 'package:supermarket_pos/features/auth/auth_models.dart';
 import 'package:supermarket_pos/features/auth/auth_provider.dart';
 import 'package:supermarket_pos/features/auth/credential_storage.dart';
@@ -624,7 +625,7 @@ void main() {
       for (final key in [
         'pos-loyalty-label',
         'pos-loyalty-balance',
-        'pos-loyalty-reward-select',
+        'pos-loyalty-reward-input',
         'pos-loyalty-error',
       ]) {
         expect(find.byKey(Key(key)), findsNothing,
@@ -1202,6 +1203,162 @@ void main() {
     });
   });
 
+  // The loyalty discount is CART-level (percent off the totals) — never a
+  // per-line price. The presentation contract: a GENUINE (preview-matched)
+  // discount strikes the original total through and demotes it, while the
+  // effective price below goes green, bold and LARGER. Suppressed/stale
+  // previews render the plain primary total with no strike anywhere, and
+  // every value/key stays byte-identical to the providers throughout.
+  group('loyalty discount price presentation', () {
+    testWidgets(
+        'before redemption: the total stays plain primary with no strike '
+        'and no effective-price row', (tester) async {
+      final container = await _pumpPos(tester, dio: dio, lines: 3);
+      await _attachCustomer(tester, container);
+
+      final total =
+          tester.widget<Text>(find.byKey(const Key('pos-total-value')));
+      expect(total.style!.decoration, TextDecoration.none,
+          reason: 'no discount yet → no strikethrough');
+      expect(total.style!.fontWeight, FontWeight.w800);
+      expect(find.byKey(const Key('pos-loyalty-amount-due')), findsNothing,
+          reason: 'the effective-price row exists only with a discount');
+      expect(container.read(posLoyaltyProvider).rewardDiscount, 0.0);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'genuine 5% preview: the original total strikes through, the '
+        'effective price is green and larger, totals stay byte-identical',
+        (tester) async {
+      final container = await _pumpPos(tester, dio: dio, lines: 3);
+      await _attachCustomer(tester, container);
+      String textOf(String key) =>
+          tester.widget<Text>(find.byKey(Key(key))).data ?? '';
+      final model = container.read(posCartProvider);
+      final notifier = container.read(posLoyaltyProvider.notifier);
+      notifier.setRewardPercent(5);
+      await notifier.previewNow();
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 300));
+      final loyalty = container.read(posLoyaltyProvider);
+      expect(loyalty.previewMatches, isTrue,
+          reason: 'the session preview answers 5% on this cart');
+
+      // The original: struck through the middle, demoted, still the FULL
+      // figure — display only, no recomputed money.
+      final original =
+          tester.widget<Text>(find.byKey(const Key('pos-total-value')));
+      expect(original.style!.decoration, TextDecoration.lineThrough);
+      expect(original.data, contains(model.totals.totalDisplay),
+          reason: 'the original price stays on screen with the strike');
+
+      // The effective price: the provider-mirrored due in money-green,
+      // w800, and larger than the struck original above it.
+      final due = tester
+          .widget<Text>(find.byKey(const Key('pos-loyalty-amount-due')));
+      expect(
+        due.data,
+        PaymentMath.money(PaymentMath.amountDueOf(
+          total: model.totals.total,
+          rewardDiscount: loyalty.preview!.rewardDiscount,
+        )),
+        reason: 'the footer renders the provider-mirrored due',
+      );
+      expect(due.style!.color, AppColors.success);
+      expect(due.style!.fontWeight, FontWeight.w800);
+      expect(
+        due.style!.fontSize!,
+        greaterThan(original.style!.fontSize!),
+        reason: 'the discounted price dominates the struck original',
+      );
+
+      // Totals unchanged: every money row is the provider value.
+      expect(textOf('pos-subtotal-value'), model.totals.subtotalDisplay);
+      expect(textOf('pos-discount-value'),
+          '-${model.totals.invoiceDiscountDisplay}');
+      expect(textOf('pos-total-value'), contains(model.totals.totalDisplay));
+      expect(find.byKey(const Key('pos-pay-button')), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'a suppressed preview (out-of-cap percent) drops the strike and '
+        'the effective row together — no green, no lineThrough', (tester) async {
+      final container = await _pumpPos(tester, dio: dio, lines: 3);
+      await _attachCustomer(tester, container);
+      final notifier = container.read(posLoyaltyProvider.notifier);
+
+      notifier.setRewardPercent(5);
+      await notifier.previewNow();
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(container.read(posLoyaltyProvider).previewMatches, isTrue);
+      expect(
+        tester
+            .widget<Text>(find.byKey(const Key('pos-total-value')))
+            .style!
+            .decoration,
+        TextDecoration.lineThrough,
+        reason: 'the genuine discount is live → strike shows',
+      );
+
+      // 25% is beyond the server cap — only reachable through a direct
+      // session write; the suppressed preview may drive no money, so the
+      // original un-strikes the moment the preview stops matching.
+      notifier.setRewardPercent(25);
+      await tester.pump(const Duration(milliseconds: 50));
+      final loyalty = container.read(posLoyaltyProvider);
+      expect(loyalty.previewMatches, isFalse);
+      final total =
+          tester.widget<Text>(find.byKey(const Key('pos-total-value')));
+      expect(total.style!.decoration, TextDecoration.none,
+          reason: 'a suppressed preview never strikes the total');
+      expect(find.byKey(const Key('pos-loyalty-amount-due')), findsNothing);
+
+      // Drain the session's own scheduled revalidation so no timer
+      // outlives the test.
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'Arabic/RTL: the struck original and the larger green effective '
+        'price keep their bidi-isolated money (no reordering, no overflow)',
+        (tester) async {
+      final container =
+          await _pumpPos(tester, dio: dio, lines: 3, rtl: true);
+      await _attachCustomer(tester, container);
+      final model = container.read(posCartProvider);
+      final notifier = container.read(posLoyaltyProvider.notifier);
+      notifier.setRewardPercent(5);
+      await notifier.previewNow();
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(container.read(posLoyaltyProvider).previewMatches, isTrue);
+
+      // Both money figures stay LTR paragraphs inside the RTL layout
+      // (numericText's bidi contract W7) — digits never reorder.
+      final original =
+          tester.widget<Text>(find.byKey(const Key('pos-total-value')));
+      expect(original.textDirection, TextDirection.ltr);
+      expect(original.style!.decoration, TextDecoration.lineThrough);
+      expect(original.data, contains(model.totals.totalDisplay));
+
+      final due = tester
+          .widget<Text>(find.byKey(const Key('pos-loyalty-amount-due')));
+      expect(due.textDirection, TextDirection.ltr);
+      expect(due.style!.color, AppColors.success);
+      expect(
+        due.style!.fontSize!,
+        greaterThan(original.style!.fontSize!),
+        reason: 'RTL keeps the discounted price dominant too',
+      );
+      expect(tester.takeException(), isNull);
+    });
+  });
+
   // The loyalty entry point: ONE compact button in the cart action row
   // (server-owned eligibility) plus the redemption dialog that owns the
   // percent selector. The workspace catalog stays clean, the totals panel
@@ -1233,7 +1390,7 @@ void main() {
       for (final key in [
         'pos-loyalty-label',
         'pos-loyalty-balance',
-        'pos-loyalty-reward-select',
+        'pos-loyalty-reward-input',
         'pos-loyalty-amount-due',
         'pos-loyalty-dialog',
       ]) {
@@ -1266,7 +1423,7 @@ void main() {
 
     testWidgets(
         'eligible customer: the button opens the dialog with the customer '
-        'identity, balance and the server-capped options', (tester) async {
+        'identity, balance and the server-capped free-entry field', (tester) async {
       final container = await _pumpPos(tester, dio: dio, lines: 3);
       await _attachCustomer(tester, container);
 
@@ -1289,15 +1446,17 @@ void main() {
             '',
         isNotEmpty,
       );
-      final values = tester
-          .widget<DropdownButton<double>>(
-              find.byKey(const Key('pos-loyalty-reward-select')))
-          .items!
-          .map((i) => i.value)
-          .toList();
-      expect(values, [0.0, 5.0, 10.0, 15.0, 20.0],
-          reason: 'None + 5% steps up to the SERVER cap (20): 25 never '
-              'offered');
+      final input = find.byKey(const Key('pos-loyalty-reward-input'));
+      expect(input, findsOneWidget,
+          reason: 'the dropdown is replaced by a free-entry percent field');
+      expect(
+        tester.widget<TextField>(input).controller!.text,
+        '',
+        reason: 'a fresh dialog starts on None (empty field)',
+      );
+      // The owner cap (20) is shown as the field helper — any valid value
+      // up to it may be typed (12, 17, 18.5 …), never above it.
+      expect(find.text('Max: 20%'), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
 
@@ -1324,9 +1483,10 @@ void main() {
       // must not move a single field before any Confirm.
       await tester.tap(loyaltyButton());
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const Key('pos-loyalty-reward-select')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('5'));
+      await tester.enterText(
+        find.byKey(const Key('pos-loyalty-reward-input')),
+        '5',
+      );
       await tester.pumpAndSettle();
       expect(snap(), before,
           reason: 'browsing a percent must not mutate any provider');
@@ -1351,9 +1511,10 @@ void main() {
       // escape hatch — still zero writes without a Confirm).
       await tester.tap(loyaltyButton());
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const Key('pos-loyalty-reward-select')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('10'));
+      await tester.enterText(
+        find.byKey(const Key('pos-loyalty-reward-input')),
+        '10',
+      );
       await tester.pumpAndSettle();
       expect(snap(), before);
       await tester.tapAt(const Offset(4, 4));
@@ -1374,9 +1535,10 @@ void main() {
 
       await tester.tap(loyaltyButton());
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const Key('pos-loyalty-reward-select')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('5'));
+      await tester.enterText(
+        find.byKey(const Key('pos-loyalty-reward-input')),
+        '5',
+      );
       await tester.pumpAndSettle();
 
       final discountText = tester
@@ -1420,6 +1582,179 @@ void main() {
     });
 
     testWidgets(
+        'arbitrary percents are accepted: 12%, 17% and 18.5% each price '
+        'through the server preview and commit exactly', (tester) async {
+      final container = await _pumpPos(tester, dio: dio, lines: 3);
+      await _attachCustomer(tester, container);
+      // 3 lines × 1 × 10 → gross 30 → the mock prices percent% of 30.
+
+      for (final entry in [
+        ('12', 3.6),
+        ('17', 5.1),
+        ('18.5', 5.55),
+      ]) {
+        await tester.tap(loyaltyButton());
+        await tester.pumpAndSettle();
+        await tester.enterText(
+          find.byKey(const Key('pos-loyalty-reward-input')),
+          entry.$1,
+        );
+        await tester.pumpAndSettle();
+
+        final discountText = tester
+            .widget<Text>(find.byKey(const Key('pos-loyalty-dialog-discount')))
+            .data!;
+        expect(discountText, contains(PaymentMath.money(entry.$2)),
+            reason: 'the server-issued discount for ${entry.$1}% of 30');
+        expect(
+          tester
+              .widget<FilledButton>(
+                  find.byKey(const Key('pos-loyalty-dialog-confirm')))
+              .onPressed,
+          isNotNull,
+          reason: 'a non-step percent within the cap is confirmable',
+        );
+
+        await tester.tap(find.byKey(const Key('pos-loyalty-dialog-confirm')));
+        await tester.pumpAndSettle();
+
+        final loyalty = container.read(posLoyaltyProvider);
+        expect(loyalty.rewardPercent, double.parse(entry.$1));
+        expect(loyalty.preview!.rewardDiscount, closeTo(entry.$2, 0.001));
+        expect(loyalty.exceeds, isFalse);
+      }
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'the cap is enforced on free entry: 25% (cap 20) shows the exceeds '
+        'error, disables Confirm and never mutates the session', (tester) async {
+      final container = await _pumpPos(tester, dio: dio, lines: 3);
+      await _attachCustomer(tester, container);
+
+      await tester.tap(loyaltyButton());
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const Key('pos-loyalty-reward-input')),
+        '25',
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        tester.widget<Text>(find.byKey(const Key('pos-loyalty-reward-error'))).data,
+        AppStrings.t('loyalty_redeem_exceeds', 'en'),
+        reason: 'an over-cap percent is REJECTED, never clamped to 20',
+      );
+      expect(
+        tester
+            .widget<FilledButton>(
+                find.byKey(const Key('pos-loyalty-dialog-confirm')))
+            .onPressed,
+        isNull,
+        reason: 'a rejected percent can never be confirmed',
+      );
+      // 25% of the 30 cart would be 7.50 — it must never be priced
+      // anywhere: the preview row still answers the last VALID choice.
+      final shownDiscount = tester
+              .widget<Text>(find.byKey(const Key('pos-loyalty-dialog-discount')))
+              .data ??
+          '';
+      expect(shownDiscount, isNot(contains('7.50')),
+          reason: 'the rejected percent never reaches the server preview');
+
+      // Fixing the field re-enables the flow — the rejection is live,
+      // not sticky.
+      await tester.enterText(
+        find.byKey(const Key('pos-loyalty-reward-input')),
+        '20',
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('pos-loyalty-reward-error')), findsNothing);
+      expect(
+        tester
+            .widget<FilledButton>(
+                find.byKey(const Key('pos-loyalty-dialog-confirm')))
+            .onPressed,
+        isNotNull,
+      );
+      await tester.tap(find.byKey(const Key('pos-loyalty-dialog-cancel')));
+      await tester.pumpAndSettle();
+
+      expect(container.read(posLoyaltyProvider).rewardPercent, 0.0,
+          reason: 'nothing was ever committed from the rejected session');
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'unparseable input shows the invalid-amount error and never '
+        'reaches the session', (tester) async {
+      final container = await _pumpPos(tester, dio: dio, lines: 3);
+      await _attachCustomer(tester, container);
+
+      await tester.tap(loyaltyButton());
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const Key('pos-loyalty-reward-input')),
+        '12.5.5',
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        tester.widget<Text>(find.byKey(const Key('pos-loyalty-reward-error'))).data,
+        AppStrings.t('invalid_amount', 'en'),
+      );
+      expect(
+        tester
+            .widget<FilledButton>(
+                find.byKey(const Key('pos-loyalty-dialog-confirm')))
+            .onPressed,
+        isNull,
+      );
+      await tester.tap(find.byKey(const Key('pos-loyalty-dialog-cancel')));
+      await tester.pumpAndSettle();
+      expect(container.read(posLoyaltyProvider).rewardPercent, 0.0);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'the clear button empties the field back to None (no reward)',
+        (tester) async {
+      final container = await _pumpPos(tester, dio: dio, lines: 3);
+      await _attachCustomer(tester, container);
+
+      await tester.tap(loyaltyButton());
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const Key('pos-loyalty-reward-input')),
+        '10',
+      );
+      await tester.pumpAndSettle();
+      expect(
+        tester
+            .widget<TextField>(
+                find.byKey(const Key('pos-loyalty-reward-input')))
+            .controller!
+            .text,
+        '10',
+      );
+
+      await tester.tap(find.byKey(const Key('pos-loyalty-reward-clear')));
+      await tester.pumpAndSettle();
+      expect(
+        tester
+            .widget<TextField>(
+                find.byKey(const Key('pos-loyalty-reward-input')))
+            .controller!
+            .text,
+        '',
+      );
+      expect(container.read(posLoyaltyProvider).rewardPercent, 0.0);
+      await tester.tap(find.byKey(const Key('pos-loyalty-dialog-cancel')));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
         'the cap is server-owned: an out-of-cap session write flags the '
         'state and the footer hides every previewed penny', (tester) async {
       final container = await _pumpPos(tester, dio: dio, lines: 3);
@@ -1454,9 +1789,10 @@ void main() {
 
       await tester.tap(loyaltyButton());
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const Key('pos-loyalty-reward-select')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('5'));
+      await tester.enterText(
+        find.byKey(const Key('pos-loyalty-reward-input')),
+        '5',
+      );
       await tester.pumpAndSettle();
       expect(
         tester
@@ -1521,16 +1857,13 @@ void main() {
       final container = await _pumpPos(tester, dio: dio, lines: 3);
       await _attachCustomer(tester, container);
 
-      // First redemption: pick 5% in the menu (the dropdown is on None,
-      // so the menu copy is the only Text('5') in the tree) and Confirm.
+      // First redemption: type 5% into the free-entry field and Confirm.
       await tester.tap(loyaltyButton());
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const Key('pos-loyalty-reward-select')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.descendant(
-        of: find.byWidgetPredicate((w) => w is DropdownMenuItem),
-        matching: find.text('5'),
-      ));
+      await tester.enterText(
+        find.byKey(const Key('pos-loyalty-reward-input')),
+        '5',
+      );
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('pos-loyalty-dialog-confirm')));
       await tester.pumpAndSettle();
@@ -1540,17 +1873,18 @@ void main() {
       final firstDiscount = first.preview!.rewardDiscount;
 
       // Second Confirm on the SAME selection (the dialog reopens with the
-      // session's 5% already chosen — no menu interaction): the slot
-      // REPLACES, never accumulates.
+      // session's 5% already prefilled — no typing): the slot REPLACES,
+      // never accumulates.
       await tester.tap(loyaltyButton());
       await tester.pumpAndSettle();
       expect(
         tester
-            .widget<DropdownButton<double>>(
-                find.byKey(const Key('pos-loyalty-reward-select')))
-            .value,
-        5.0,
-        reason: 'the dialog reopens with the committed percent',
+            .widget<TextField>(
+                find.byKey(const Key('pos-loyalty-reward-input')))
+            .controller!
+            .text,
+        '5',
+        reason: 'the dialog reopens with the committed percent prefilled',
       );
       await tester.tap(find.byKey(const Key('pos-loyalty-dialog-confirm')));
       await tester.pumpAndSettle();
@@ -1594,7 +1928,7 @@ void main() {
       expect(
           find.byKey(const Key('pos-loyalty-dialog-customer')), findsOneWidget);
       expect(find.byKey(const Key('pos-loyalty-balance')), findsOneWidget);
-      expect(find.byKey(const Key('pos-loyalty-reward-select')), findsOneWidget);
+      expect(find.byKey(const Key('pos-loyalty-reward-input')), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
 

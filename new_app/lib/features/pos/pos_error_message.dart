@@ -53,6 +53,12 @@ PosApiError posApiError(
   if (errorCode == 'PACK_STOCK_INSUFFICIENT') {
     return PosApiError(_packStockMessage(error, loc), detail);
   }
+  // Database integrity failures are decided by envelope code BEFORE the
+  // HTTP status: a 409 DATABASE_CONSTRAINT is a server-side data
+  // problem, not a stock conflict, so it never renders stock copy.
+  if (errorCode == 'DATABASE_CONSTRAINT') {
+    return PosApiError(AppStrings.t('database_constraint', loc), detail);
+  }
 
   final code = error.response?.statusCode;
   final String key;

@@ -104,11 +104,26 @@ class NotFoundError(AppError):
 
 
 class ConflictError(AppError):
-    """Resource conflict (duplicate, constraint violation)."""
+    """Resource conflict (duplicate, state clash)."""
 
     code = "CONFLICT"
     status_code = 409
     message_key = "errors.conflict"
+
+
+class DatabaseConstraintError(AppError):
+    """A database integrity constraint rejected the write.
+
+    NOT NULL / foreign key / check failures are server-side data
+    integrity problems, not business conflicts: clients must never
+    render them with conflict/stock copy ("stock conflict — review
+    quantities"), and they must not be confused with the unique-key
+    idempotency races that services catch as ``ConflictError``.
+    """
+
+    code = "DATABASE_CONSTRAINT"
+    status_code = 409
+    message_key = "errors.database"
 
 
 class BusinessRuleError(AppError):
@@ -140,19 +155,49 @@ class ServiceUnavailableError(AppError):
 # ---------------------------------------------------------------------------
 
 
+def _integrity_kind(exc: IntegrityError) -> str:
+    """Classify an IntegrityError by SQLSTATE, with text fallback.
+
+    psycopg2 exposes the SQLSTATE as ``orig.pgcode``; SQLite (unit
+    tests) has no SQLSTATE, so the driver message is matched instead.
+    """
+    sqlstate = getattr(getattr(exc, "orig", None), "pgcode", None)
+    text = str(exc).lower()
+    if sqlstate == "23505" or "unique" in text or "duplicate key" in text:
+        return "unique"
+    if sqlstate == "23502" or "not-null" in text or "not null constraint" in text:
+        return "not_null"
+    if sqlstate == "23503" or "foreign key" in text:
+        return "foreign_key"
+    if sqlstate == "23514" or "check constraint" in text:
+        return "check"
+    if sqlstate == "23P01" or "exclusion" in text:
+        return "exclusion"
+    return "other"
+
+
 def translate_db_error(exc: Exception) -> AppError:
     """Translate a SQLAlchemy/database exception into an AppError.
 
     Never exposes raw database details to clients. Logs the original
     exception for debugging.
+
+    IntegrityError classification matters for the client contract:
+    a generic integrity failure (NOT NULL / FK / CHECK ...) becomes
+    ``DATABASE_CONSTRAINT`` so clients show an accurate database error,
+    while a *unique* violation stays ``CONFLICT`` because the services'
+    idempotency-race handlers catch ``ConflictError`` to replay the
+    winning request.
     """
     logger.warning("database_exception", exc_type=type(exc).__name__, exc_message=str(exc))
 
     if isinstance(exc, IntegrityError):
-        return ConflictError(
-            message="A database constraint was violated",
-            details={"type": "integrity_violation"},
-        )
+        kind = _integrity_kind(exc)
+        message = "A database constraint was violated"
+        details = {"type": "integrity_violation", "kind": kind}
+        if kind == "unique":
+            return ConflictError(message=message, details=details)
+        return DatabaseConstraintError(message=message, details=details)
     if isinstance(exc, NoResultFound):
         return NotFoundError(message="The requested record was not found")
 

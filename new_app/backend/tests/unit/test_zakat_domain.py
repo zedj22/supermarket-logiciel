@@ -163,13 +163,16 @@ def test_missing_inputs_make_it_provisional_with_estimate():
 # ── inventory ─────────────────────────────────────────────────────────────
 
 
-def _row(qty, price, cost, included=True, pid="p1"):
+def _row(qty, price, cost, included=True, pid="p1", wholesale=None):
     return InventoryRow(
         product_id=pid,
         name=f"Product {pid}",
         quantity=Decimal(qty),
         market_unit_price=Decimal(price),
         cost_unit_price=Decimal(cost),
+        wholesale_unit_price=(
+            Decimal(wholesale) if wholesale is not None else None
+        ),
         included=included,
     )
 
@@ -216,6 +219,115 @@ def test_negative_stock_lines_are_flagged():
     result = _base(inventory_rows=[_row("-3", "100", "80")])
     assert "NEGATIVE_STOCK_LINES" in _codes(result)
     assert result.inventory_value == Decimal("-300.000")
+
+
+# ── wholesale / retail valuation choice ───────────────────────────────────
+
+
+def test_wholesale_basis_uses_the_configured_wholesale_price():
+    result = _base(
+        inventory_basis="wholesale",
+        inventory_rows=[_row("10", "500", "300", wholesale="420")],
+    )
+    assert result.inventory_value == Decimal("4200.000")
+    # every line had a configured wholesale price → no fallback warning
+    assert "WHOLESALE_RETAIL_FALLBACK" not in _codes(result)
+
+
+def test_wholesale_basis_falls_back_to_retail_transparently_with_warning():
+    result = _base(
+        inventory_basis="wholesale",
+        inventory_rows=[
+            _row("10", "500", "300", wholesale="420", pid="configured"),
+            _row("4", "1000", "800", wholesale=None, pid="unconfigured"),
+        ],
+    )
+    # configured line at wholesale (4,200) + unconfigured line at retail
+    # (4,000) — the fallback never silently drops stock value to zero.
+    assert result.inventory_value == Decimal("8200.000")
+    fallback = [
+        w for w in result.warnings if w.code == "WHOLESALE_RETAIL_FALLBACK"
+    ]
+    assert len(fallback) == 1
+    assert fallback[0].detail == {"count": "1"}
+
+
+def test_wholesale_zero_price_is_respected_not_treated_as_missing():
+    # 0 is a valid (free) configured price — only NULL means unconfigured.
+    result = _base(
+        inventory_basis="wholesale",
+        inventory_rows=[_row("10", "500", "300", wholesale="0")],
+    )
+    assert result.inventory_value == Decimal("0.000")
+    assert "WHOLESALE_RETAIL_FALLBACK" not in _codes(result)
+
+
+# ── stock-only breakdown (quantity / cost / market / 2.5 %) ───────────────
+
+
+def test_breakdown_reports_remaining_quantity_cost_and_market_values():
+    result = _base(
+        inventory_rows=[
+            _row("10", "500", "300", pid="a"),
+            _row("4", "1000", "800", pid="b"),
+        ]
+    )
+    # the rows carry CURRENT stock (sold units are simply not there);
+    # cost and market are reference valuations of the same quantity.
+    assert result.inventory_quantity == Decimal("14.000")
+    assert result.inventory_cost_value == Decimal("6200.000")
+    assert result.inventory_market_value == Decimal("9000.000")
+    assert result.inventory_value == Decimal("9000.000")  # market basis
+
+
+def test_cost_basis_valuation_differs_from_the_market_reference():
+    result = _base(
+        inventory_basis="cost",
+        inventory_rows=[_row("10", "500", "300")],
+    )
+    assert result.inventory_value == Decimal("3000.000")  # basis = cost
+    assert result.inventory_market_value == Decimal("5000.000")  # reference
+    assert result.inventory_cost_value == Decimal("3000.000")
+
+
+def test_empty_stock_breaks_down_to_zero_not_to_null():
+    result = _base(inventory_rows=[_row("0", "500", "300")])
+    assert result.inventory_quantity == Decimal("0.000")
+    assert result.inventory_cost_value == Decimal("0.000")
+    assert result.inventory_market_value == Decimal("0.000")
+    assert result.inventory_value == Decimal("0.000")
+    assert result.inventory_stock_only_zakat == Decimal("0.000")
+
+
+def test_stock_only_zakat_is_two_and_a_half_percent_of_merchandise_alone():
+    result = _base(
+        inventory_rows=[_row("10", "500", "300")],
+        cash_items=[LineItem(label="Caisse", amount=Decimal("3000000"))],
+    )
+    # stock-only: 2.5 % of the merchandise value (5,000) — informational.
+    assert result.inventory_stock_only_zakat == Decimal("125.000")
+    # the net counts the merchandise ONCE alongside cash and receivables
+    # (no double counting) and the due is computed on the whole net
+    # (3,005,000 ≥ nisab → 75,125), never on the stock-only figure.
+    assert result.net_zakatable == Decimal("3005000.000")
+    assert result.zakat_due == Decimal("75125.000")
+    assert result.inventory_stock_only_zakat != result.zakat_due
+
+
+def test_stock_only_breakdown_is_absent_without_imported_stock():
+    result = _base(inventory_imported=False)
+    assert result.inventory_quantity is None
+    assert result.inventory_cost_value is None
+    assert result.inventory_market_value is None
+    assert result.inventory_stock_only_zakat is None
+
+
+def test_stock_only_zakat_is_none_when_merchandise_value_is_unknown():
+    # override basis without a value: no merchandise figure → no stock-only
+    # estimate (never a fabricated 0).
+    result = _base(inventory_basis="override")
+    assert result.inventory_value is None
+    assert result.inventory_stock_only_zakat is None
 
 
 # ── receivables guards ───────────────────────────────────────────────────

@@ -7,6 +7,7 @@ import 'features/auth/auth_provider.dart';
 import 'features/auth/credential_storage.dart';
 import 'features/devices/connection_provider.dart';
 import 'features/devices/device_identity.dart';
+import 'features/settings/pos_settings_provider.dart';
 import 'features/settings/scan_settings_provider.dart';
 import 'network/api_client.dart';
 import 'theme/app_theme.dart';
@@ -51,6 +52,7 @@ Future<void> main() async {
         localeProvider.overrideWith((ref) => LocaleNotifier(prefs)),
         themeProvider.overrideWith((ref) => ThemeNotifier(prefs)),
         scanSettingsProvider.overrideWith((ref) => ScanSettingsNotifier(prefs)),
+        posSettingsProvider.overrideWith((ref) => PosSettingsNotifier(prefs)),
         apiClientProvider.overrideWithValue(apiClient),
         credentialStorageProvider.overrideWithValue(credentials),
         installBootstrappedProvider.overrideWithValue(true),

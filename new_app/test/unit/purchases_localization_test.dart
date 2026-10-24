@@ -96,6 +96,7 @@ const _reusedKeys = [
   'field_required',
   'invalid_amount',
   'stock_conflict',
+  'database_constraint',
   'permission_denied',
   'network_error_retry',
   'api_error_retry',

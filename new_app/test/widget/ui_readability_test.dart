@@ -13,6 +13,7 @@
 //  3. the map fits the window: it grows with the viewport and never runs
 //     past it, in LTR and in RTL, at the four supported desktop sizes.
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:supermarket_pos/core/strings.dart';
 import 'package:supermarket_pos/features/shell/shortcuts_help_dialog.dart';
@@ -42,18 +43,22 @@ Future<void> _openMap(
   addTearDown(tester.view.reset);
 
   await tester.pumpWidget(
-    MaterialApp(
-      theme: AppTheme.forMode(mode),
-      locale: locale,
-      supportedLocales: appSupportedLocales,
-      localizationsDelegates: appLocalizationsDelegates,
-      home: Scaffold(
-        body: Center(
-          child: Builder(
-            builder: (context) => ElevatedButton(
-              key: const Key('open-shortcuts'),
-              onPressed: () => showShortcutsDialog(context),
-              child: const Text('open'),
+    // The dialog reads the quick-sale setting (it swaps the Space row's
+    // meaning when ON), so it is a ConsumerWidget and needs a scope.
+    ProviderScope(
+      child: MaterialApp(
+        theme: AppTheme.forMode(mode),
+        locale: locale,
+        supportedLocales: appSupportedLocales,
+        localizationsDelegates: appLocalizationsDelegates,
+        home: Scaffold(
+          body: Center(
+            child: Builder(
+              builder: (context) => ElevatedButton(
+                key: const Key('open-shortcuts'),
+                onPressed: () => showShortcutsDialog(context),
+                child: const Text('open'),
+              ),
             ),
           ),
         ),

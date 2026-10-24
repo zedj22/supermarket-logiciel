@@ -3,6 +3,7 @@
 #include <windows.h>
 
 #include "flutter_window.h"
+#include "raw_scanner_input.h"
 #include "utils.h"
 
 int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
@@ -34,9 +35,19 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
 
   ::MSG msg;
   while (::GetMessage(&msg, nullptr, 0, 0)) {
+    // Isolated PoC: before TranslateMessage/DispatchMessage, forward
+    // WM_INPUT to the raw-scanner module and drop legacy key messages
+    // that it attributes to the learned scanner device. Dropping here
+    // (instead of in a window proc) also prevents WM_CHAR generation,
+    // because the message never reaches TranslateMessage.
+    if (RawScannerInput::Instance().FilterMessage(msg)) {
+      continue;
+    }
     ::TranslateMessage(&msg);
     ::DispatchMessage(&msg);
   }
+
+  RawScannerInput::Instance().Shutdown();
 
   ::CoUninitialize();
   return EXIT_SUCCESS;

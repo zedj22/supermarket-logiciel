@@ -314,6 +314,44 @@ class BarcodeScannerGateway {
     _resetBuffer();
   }
 
+  /// EXPERIMENTAL (raw-input PoC) entry point: dispatch an EXTERNALLY
+  /// decoded code — one the raw-scanner path reconstructed from the
+  /// scanner device's own MakeCodes, with the legacy key messages
+  /// suppressed before the engine ever saw them — through the same owner
+  /// resolution and arming gates as the Enter terminator.
+  ///
+  /// No pass-through restore can be needed: the suppressed digits never
+  /// reached a focused field, so there is nothing to roll back (the
+  /// [BarcodeScanHandler.allowWhileEditing] form receives the code through
+  /// its [BarcodeScanHandler.onScan] exactly like any other scan).
+  /// [kBarcodeScanShape] still decides what may dispatch; diagnostics
+  /// report the raw origin as its own event name (`raw-dispatch`) so a
+  /// hardware session can tell the two paths apart.
+  bool dispatchExternalScan(String code) {
+    if (!kBarcodeScanShape.hasMatch(code)) {
+      scanDiag('dispatch-drop', {'reason': 'shape', 'len': code.length});
+      return false;
+    }
+    final owner = _activeHandler();
+    if (owner == null) {
+      scanDiag('dispatch-drop', {
+        'reason': 'no-owner',
+        'len': code.length,
+        'suffix3': scanDiagSuffix3(code),
+      });
+      return false;
+    }
+    // Same correlation contract as the Enter path — the id below is what
+    // every downstream hop (scan-receive / scan-resolve / cart-add) reads.
+    lastScanCorr = scanDiag('raw-dispatch', {
+      'len': code.length,
+      'suffix3': scanDiagSuffix3(code),
+      'target': owner.name,
+    });
+    owner.onScan(code);
+    return true;
+  }
+
   /// Capture state machine — the [HardwareKeyboard] half. Runs for every
   /// key event, before the focus system sees it.
   ///

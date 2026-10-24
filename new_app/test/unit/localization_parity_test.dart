@@ -182,11 +182,31 @@ void main() {
       // (start/stop/clear/copy), the copy confirmation, the idle/running
       // status labels, the total/dropped counters, the gateway buffer
       // label, the armed/idle labels and the empty-history hint —
-      // 15 keys (1521).
+      // 15 keys (1521). The raw-scanner PoC pass added the settings PoC
+      // card surface — title, description, toggle, on/off status, layout
+      // selector label + the three layout names, learn + armed hint,
+      // learned-devices label + empty state, the raw-seen / matched /
+      // suppressed / passed counters, the order-violations label, reset,
+      // the last-decoded label + empty state and the unavailable note —
+      // 22 keys (1543). The POS discount / quick-sale pass added the two
+      // invoice-discount input-mode labels (amount DZD / percentage), the
+      // percent-ceiling error, the POS-actions settings section title plus
+      // the quick-sale-with-Space toggle label + help text, and the
+      // quick-sale action/description shown on the Space row of the
+      // shortcuts map while the setting is ON — 8 keys (1551). The
+      // purchase-save constraint regression pass added the database
+      // constraint headline used by the purchases/POS mappers when the
+      // backend reports a DB integrity failure (never a stock
+      // conflict) — 1 key (1552). The Zakat inventory-valuation pass
+      // added the wholesale valuation-basis option, the wholesale→
+      // retail fallback warning and the stock-only breakdown surface
+      // (remaining quantity, cost value, market selling value, the
+      // 2.5% stock-only estimate and its not-the-full-zakat note) —
+      // 7 keys (1559).
       // Update this deliberately when a subphase
       // adds strings — an unexplained drop means keys were deleted from
       // one map only.
-      expect(_map('en').keys.length, 1521);
+      expect(_map('en').keys.length, 1559);
       expect(_map('ar').keys.length, _map('en').keys.length);
       expect(_map('fr').keys.length, _map('en').keys.length);
     });

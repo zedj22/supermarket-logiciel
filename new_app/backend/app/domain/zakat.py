@@ -86,10 +86,18 @@ class DebtTreatment(str, enum.Enum):
 
 
 class InventoryBasis(str, enum.Enum):
-    """Valuation basis for the imported merchandise lines."""
+    """Valuation basis for the imported merchandise lines.
+
+    ``WHOLESALE`` values every line at the product's configured wholesale
+    price (``products.wholesale_price``); a line with no configured
+    wholesale price (NULL — never coerced to 0) falls back to the retail
+    market price and the fallback is reported through the
+    ``WHOLESALE_RETAIL_FALLBACK`` warning so the choice stays transparent.
+    """
 
     MARKET = "market"  # current selling price (market-price proxy)
     COST = "cost"  # moving average cost (PMP)
+    WHOLESALE = "wholesale"  # configured wholesale price (retail fallback)
     OVERRIDE = "override"  # operator-entered total, reason mandatory
 
 
@@ -146,10 +154,24 @@ class InventoryRow:
     quantity: Decimal
     market_unit_price: Decimal
     cost_unit_price: Decimal
+    #: Configured wholesale unit price — None = never configured (NULL
+    #: is never coerced to 0; 0 would be a valid free price).
+    wholesale_unit_price: Decimal | None = None
     included: bool = True
 
     def line_value(self, basis: str) -> Decimal:
-        unit = self.market_unit_price if basis == "market" else self.cost_unit_price
+        if basis == InventoryBasis.WHOLESALE.value:
+            # Transparent fallback: no configured wholesale price → the
+            # retail market price (the line is reported as a fallback).
+            unit = (
+                self.wholesale_unit_price
+                if self.wholesale_unit_price is not None
+                else self.market_unit_price
+            )
+        elif basis == InventoryBasis.MARKET.value:
+            unit = self.market_unit_price
+        else:
+            unit = self.cost_unit_price
         return to_decimal(self.quantity) * to_decimal(unit)
 
 
@@ -189,6 +211,14 @@ class ZakatResult:
     inventory_excluded_value: Decimal
     inventory_product_count: int
     inventory_included_count: int
+    #: Stock-only breakdown (informational — NEVER added to the net a
+    #: second time): quantity still in stock (base units), reference
+    #: cost value, reference market (retail) value, and the 2.5 % figure
+    #: on the merchandise value alone (clearly not the full liability).
+    inventory_quantity: Decimal | None
+    inventory_cost_value: Decimal | None
+    inventory_market_value: Decimal | None
+    inventory_stock_only_zakat: Decimal | None
 
     cash_provided: bool
     cash_total: Decimal | None
@@ -383,6 +413,53 @@ def calculate_zakat(
             ZakatWarning("NEGATIVE_STOCK_LINES", {"count": str(len(negative_stock))})
         )
 
+    # Stock-only breakdown — the quantity actually still in stock (the
+    # caller passes CURRENT ``products.quantity``; sold units are simply
+    # not there anymore) plus the two reference valuations. Informational
+    # only: none of these is added to the net again (no double counting).
+    inventory_quantity: Decimal | None = None
+    inventory_cost_value: Decimal | None = None
+    inventory_market_value: Decimal | None = None
+    if inventory_imported:
+        inventory_quantity = quantize_money(
+            sum((to_decimal(r.quantity) for r in included_rows), ZERO)
+        )
+        inventory_cost_value = quantize_money(
+            sum(
+                (
+                    to_decimal(r.quantity) * to_decimal(r.cost_unit_price)
+                    for r in included_rows
+                ),
+                ZERO,
+            )
+        )
+        inventory_market_value = quantize_money(
+            sum(
+                (
+                    to_decimal(r.quantity) * to_decimal(r.market_unit_price)
+                    for r in included_rows
+                ),
+                ZERO,
+            )
+        )
+        if inventory_basis == InventoryBasis.WHOLESALE.value:
+            fallback_rows = [
+                r for r in included_rows if r.wholesale_unit_price is None
+            ]
+            if fallback_rows:
+                warnings.append(
+                    ZakatWarning(
+                        "WHOLESALE_RETAIL_FALLBACK",
+                        {"count": str(len(fallback_rows))},
+                    )
+                )
+    # 2.5 % on the merchandise value ALONE — a clearly-labelled stock-only
+    # estimate, not the complete business zakat (cash, receivables and
+    # liabilities stay in the net formula below, once).
+    inventory_stock_only_zakat: Decimal | None = (
+        zakat_amount(inventory_value) if inventory_value is not None else None
+    )
+
     # -- 4. Cash ------------------------------------------------------
     cash_total: Decimal | None = None
     if not cash_provided:
@@ -533,6 +610,10 @@ def calculate_zakat(
         inventory_excluded_value=excluded_value,
         inventory_product_count=len(inventory_rows),
         inventory_included_count=len(included_rows),
+        inventory_quantity=inventory_quantity,
+        inventory_cost_value=inventory_cost_value,
+        inventory_market_value=inventory_market_value,
+        inventory_stock_only_zakat=inventory_stock_only_zakat,
         cash_provided=cash_provided,
         cash_total=cash_total,
         cash_item_count=len(cash_items),

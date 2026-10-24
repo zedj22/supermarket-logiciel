@@ -183,6 +183,10 @@ class ZakatResult {
     required this.inventoryExcludedValue,
     required this.inventoryProductCount,
     required this.inventoryIncludedCount,
+    this.inventoryQuantity,
+    this.inventoryCostValue,
+    this.inventoryMarketValue,
+    this.inventoryStockOnlyZakat,
     required this.cashProvided,
     required this.cashTotal,
     required this.cashItemCount,
@@ -222,6 +226,17 @@ class ZakatResult {
   final String inventoryExcludedValue;
   final int inventoryProductCount;
   final int inventoryIncludedCount;
+
+  /// Stock-only breakdown — CURRENT remaining stock quantity, its cost
+  /// and market (retail selling price) reference valuations, and the
+  /// 2.5 % estimate on the chosen merchandise value alone. Null on old
+  /// saved snapshots (the server defaults them to null) and when the
+  /// stock import was off. Informational: never added to the net again.
+  final String? inventoryQuantity;
+  final String? inventoryCostValue;
+  final String? inventoryMarketValue;
+  final String? inventoryStockOnlyZakat;
+
   final bool cashProvided;
   final String? cashTotal;
   final int cashItemCount;
@@ -271,6 +286,10 @@ class ZakatResult {
             (json['inventory_product_count'] as num?)?.toInt() ?? 0,
         inventoryIncludedCount:
             (json['inventory_included_count'] as num?)?.toInt() ?? 0,
+        inventoryQuantity: json['inventory_quantity'] as String?,
+        inventoryCostValue: json['inventory_cost_value'] as String?,
+        inventoryMarketValue: json['inventory_market_value'] as String?,
+        inventoryStockOnlyZakat: json['inventory_stock_only_zakat'] as String?,
         cashProvided: json['cash_provided'] as bool? ?? false,
         cashTotal: json['cash_total'] as String?,
         cashItemCount: (json['cash_item_count'] as num?)?.toInt() ?? 0,

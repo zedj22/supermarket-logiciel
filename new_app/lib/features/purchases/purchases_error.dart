@@ -41,6 +41,13 @@ PosApiError purchasesApiError(
     case 'PURCHASE_LINE_INVALID':
       key = 'purchase_line_invalid';
       break;
+    case 'DATABASE_CONSTRAINT':
+      // A database integrity failure (NOT NULL / FK / CHECK ...) is a
+      // server-side data problem — never a stock/quantity conflict, so
+      // it must not render the stock-conflict copy. The raw backend
+      // text travels in the detail line for support.
+      key = 'database_constraint';
+      break;
     case 'CONFLICT':
       // Cancel reversal conflicts (stock / sealed packages) surface
       // with the existing stock-conflict copy; detail carries the

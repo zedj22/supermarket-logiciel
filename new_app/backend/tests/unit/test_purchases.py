@@ -23,6 +23,7 @@ from decimal import Decimal
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -36,6 +37,7 @@ from app.models.inventory import InventoryMovement
 from app.models.party import Supplier
 from app.models.purchase import Purchase
 from app.models.supplier_ledger import SupplierLedgerEntry
+from app.repositories.purchase import PurchaseRepository
 from app.services.auth import AuthService
 
 
@@ -791,6 +793,11 @@ def test_cancel_negative_stock_conflict_rolls_back(
     )
     assert resp.status_code == 409, resp.text
     assert resp.json()["error"]["code"] == "CONFLICT"
+    # A genuine stock conflict keeps its own explanation — it is never
+    # the generic database-constraint message.
+    message = resp.json()["error"]["message"]
+    assert message == "Purchase cancellation would make stock negative"
+    assert message != "A database constraint was violated"
 
     # Whole reversal rolled back: still received, stock/payable untouched.
     fresh = client.get(
@@ -1115,6 +1122,63 @@ def test_create_without_supplier_is_allowed(client, admin_headers, db):
 
     p = _stock(db, product["id"])
     assert float(p.quantity) == pytest.approx(4.0)
+
+
+def test_integrity_error_on_save_reports_database_constraint_not_stock_conflict(
+    client, admin_headers, db, monkeypatch
+):
+    """Regression: a DB constraint failure on purchase save must NOT be
+    reported as a stock conflict.
+
+    Production failure: the live database was still at migration 0035
+    (purchases.supplier_id NOT NULL) while a purchase was saved without
+    a supplier (sport, qty 10 @ 1500). Postgres raised SQLSTATE 23502 on
+    purchases_supplier_id_not_null, and the generic IntegrityError ->
+    ConflictError mapping handed clients code CONFLICT — which Flutter
+    renders as the stock-conflict copy on a purchase screen. The wire
+    contract now is: integrity failure -> DATABASE_CONSTRAINT, never
+    CONFLICT, and the whole transaction rolls back untouched.
+    """
+    def _raise_supplier_not_null(self, obj):
+        raise IntegrityError(
+            "INSERT INTO purchases (id, invoice_number, supplier_id, ...) "
+            "VALUES (?, ?, NULL, ...)",
+            {"supplier_id": None},
+            Exception(
+                'null value in column "supplier_id" of relation '
+                '"purchases" violates not-null constraint'
+            ),
+        )
+
+    monkeypatch.setattr(PurchaseRepository, "create", _raise_supplier_not_null)
+
+    product = _create_product(client, admin_headers, quantity="0.000")
+    code, body = _create_purchase(
+        client,
+        admin_headers,
+        {
+            # No supplier — exactly what the editor sends for this invoice.
+            "lines": [
+                {"product_id": product["id"], "quantity": "10", "unit_cost": "1500"}
+            ],
+            "paid": "0",
+            "receive": True,
+        },
+    )
+
+    assert code == 409, body
+    error = body["error"]
+    assert error["code"] == "DATABASE_CONSTRAINT"
+    assert error["code"] != "CONFLICT"
+    assert error["message"] == "A database constraint was violated"
+    assert error["details"]["kind"] == "not_null"
+
+    # Atomicity: the failed transaction committed nothing — no purchase
+    # document and no stock movement (receive would have added 10).
+    listing = client.get("/api/v1/purchases", headers=admin_headers).json()
+    assert listing["total"] == 0
+    assert float(_stock(db, product["id"]).quantity) == pytest.approx(0.0)
+    assert _movements(db, product["id"]) == []
 
 
 def test_create_with_explicit_null_supplier(client, admin_headers):

@@ -529,4 +529,142 @@ void main() {
       findsOneWidget,
     );
   });
+
+  // ── Purchase save error surface (regression) ─────────────────────────
+  //
+  // Production failure: saving an invoice (sport, qty 10 @ 1500, no
+  // supplier) hit a database NOT NULL constraint on the server, and the
+  // form rendered the generic 409 as the stock-conflict copy — a message
+  // about stock on a screen about a database defect. The error surface
+  // must show the database-constraint copy (detail keeps the raw
+  // backend text), while a genuine CONFLICT keeps the stock copy.
+
+  void throwPurchaseError(
+    MockDio dio, {
+    required _Captures captures,
+    required String code,
+    required String message,
+  }) {
+    when(() => dio.post('/api/v1/purchases', data: any(named: 'data')))
+        .thenAnswer((invocation) async {
+      captures.purchasePosts
+          .add(Map<String, dynamic>.from(invocation.namedArguments[#data] as Map));
+      throw DioException(
+        requestOptions: RequestOptions(path: '/api/v1/purchases'),
+        type: DioExceptionType.badResponse,
+        response: Response<dynamic>(
+          requestOptions: RequestOptions(path: '/api/v1/purchases'),
+          statusCode: 409,
+          data: {
+            'error': {
+              'code': code,
+              'message': message,
+              'details': <String, dynamic>{},
+            },
+          },
+        ),
+      );
+    });
+  }
+
+  Future<void> addReportedLineAndSave(
+    WidgetTester tester, {
+    required Key saveKey,
+  }) async {
+    await tester.tap(find.byKey(const Key('purchase-form-add-line')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('purchase-line-pick-product')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('purchase-product-option-p-1')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('purchase-line-qty')), '10');
+    await tester.enterText(find.byKey(const Key('purchase-line-cost')), '1500');
+    await tester.tap(find.byKey(const Key('purchase-line-submit')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(saveKey));
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets(
+      'save failure with DATABASE_CONSTRAINT shows the database copy, '
+      'never the stock-conflict copy', (tester) async {
+    final dio = MockDio();
+    final captures = _Captures();
+    _stubApi(dio, captures);
+    throwPurchaseError(
+      dio,
+      captures: captures,
+      code: 'DATABASE_CONSTRAINT',
+      message: 'A database constraint was violated',
+    );
+
+    await _pumpHost(
+      tester,
+      dio: dio,
+      openKey: const Key('open-purchase-form'),
+      open: (context) => showPurchaseFormDialog(context),
+    );
+    await addReportedLineAndSave(
+      tester,
+      saveKey: const Key('purchase-form-save-receive'),
+    );
+
+    // The reported invoice shape really was sent (no supplier).
+    expect(captures.purchasePosts, hasLength(1));
+    final payload = captures.purchasePosts.single;
+    expect(payload['supplier_id'], isNull);
+    final lines = payload['lines'] as List<dynamic>;
+    expect(lines, hasLength(1));
+    expect((lines.first as Map)['quantity'], '10');
+    expect((lines.first as Map)['unit_cost'], '1500');
+
+    // Dialog stays open on failure with the localized database copy.
+    expect(find.byKey(const Key('purchase-form-dialog')), findsOneWidget);
+    expect(
+      find.text(AppStrings.t('database_constraint', 'en')),
+      findsOneWidget,
+    );
+    expect(
+      find.text(AppStrings.t('stock_conflict', 'en')),
+      findsNothing,
+    );
+    // Raw backend text travels as the secondary detail line.
+    expect(find.byKey(const Key('purchase-form-error-detail')), findsOneWidget);
+    expect(find.text('A database constraint was violated'), findsOneWidget);
+  });
+
+  testWidgets(
+      'save failure with CONFLICT keeps the genuine stock-conflict copy',
+      (tester) async {
+    final dio = MockDio();
+    final captures = _Captures();
+    _stubApi(dio, captures);
+    throwPurchaseError(
+      dio,
+      captures: captures,
+      code: 'CONFLICT',
+      message: 'Purchase cancellation would make stock negative',
+    );
+
+    await _pumpHost(
+      tester,
+      dio: dio,
+      openKey: const Key('open-purchase-form'),
+      open: (context) => showPurchaseFormDialog(context),
+    );
+    await addReportedLineAndSave(
+      tester,
+      saveKey: const Key('purchase-form-save-draft'),
+    );
+
+    expect(find.byKey(const Key('purchase-form-dialog')), findsOneWidget);
+    expect(
+      find.text(AppStrings.t('stock_conflict', 'en')),
+      findsOneWidget,
+    );
+    expect(
+      find.text(AppStrings.t('database_constraint', 'en')),
+      findsNothing,
+    );
+  });
 }

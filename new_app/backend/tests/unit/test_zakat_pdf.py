@@ -190,3 +190,95 @@ def test_arabic_report_is_rtl(db):
     )
     assert inp.rtl is True
     assert build_flowables(inp)
+
+
+def _report(db, payload, locale="en"):
+    from datetime import datetime, timezone
+
+    from app.schemas.zakat import ZakatCalculateRequest
+    from app.services.zakat import to_result_response
+
+    service = ZakatService(db)
+    request = ZakatCalculateRequest.model_validate(payload)
+    result, _products = service._compute(request)
+    store = service.settings.get()
+    return service._report_input(
+        result=to_result_response(result),
+        inputs=request,
+        store_name=store.store_name,
+        locale=locale,
+        notes=None,
+        calculation_id=None,
+        created_at=datetime.now(timezone.utc),
+    )
+
+
+def test_report_carries_the_stock_only_breakdown_when_stock_is_imported(db):
+    """The PDF mirrors the result card: remaining quantity + cost and
+    market reference values + the 2.5 % stock-only estimate, with the
+    stock-only note in meta — all presented as rows, never as a total
+    that could be mistaken for the complete business zakat."""
+    from app.models.catalog import Product
+    from app.printing.labels import label
+
+    db.add(
+        Product(
+            name="Sucre 1kg",
+            barcode="ZAKPDF1",
+            price=Decimal("100.000"),
+            cost=Decimal("70.000"),
+            avg_cost=Decimal("70.000"),
+            quantity=Decimal("20.000"),
+        )
+    )
+    db.commit()
+
+    payload = dict(COMPLETE_PAYLOAD, use_imported_inventory=True)
+    inp = _report(db, payload, locale="en")
+    assert len(inp.blocks) == 3
+
+    def dec(cell: str) -> Decimal:
+        return Decimal(cell.removesuffix(" DA").replace(" ", ""))
+
+    result_rows = inp.blocks[2].rows
+    by_label = {row[0]: row for row in result_rows}
+    qty_row = by_label[label("zakat_stock_qty", "en")]
+    assert dec(qty_row[1]) == Decimal("20.000")  # quantity, no currency
+    assert not qty_row[1].endswith(" DA")
+    cost_row = by_label[label("zakat_stock_cost_value", "en")]
+    assert dec(cost_row[1]) == Decimal("1400.000")
+    market_row = by_label[label("zakat_stock_market_value", "en")]
+    assert dec(market_row[1]) == Decimal("2000.000")
+    only_row = by_label[label("zakat_stock_only_zakat", "en")]
+    assert dec(only_row[1]) == Decimal("50.000")
+    assert only_row[2] == "2.5%"
+
+    assert any(
+        line == label("zakat_stock_only_note", "en") for line in inp.meta_lines
+    ), "the stock-only note must travel with the report"
+    # The stock-only rows sit in the result block only — the assets
+    # total still counts the merchandise value exactly once
+    # (2000 stock + 500000 cash + 3000000 receivables).
+    assert dec(inp.blocks[0].totals[1]) == Decimal("3502000.000")
+    assert build_flowables(inp)
+
+
+def test_report_omits_the_breakdown_when_stock_was_not_imported(db):
+    """Old payloads / no import → no stock-only rows, no note; the
+    report layout stays byte-identical to what existed before."""
+    from app.printing.labels import label
+
+    inp = _report(db, dict(COMPLETE_PAYLOAD, use_imported_inventory=False))
+    assert len(inp.blocks) == 3
+    result_labels = {row[0] for row in inp.blocks[2].rows}
+    for key in (
+        "zakat_stock_qty",
+        "zakat_stock_cost_value",
+        "zakat_stock_market_value",
+        "zakat_stock_only_zakat",
+    ):
+        assert label(key, "en") not in result_labels
+    assert not any(
+        line == label("zakat_stock_only_note", "en") for line in inp.meta_lines
+    )
+    assert build_flowables(inp)

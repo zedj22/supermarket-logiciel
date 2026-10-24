@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supermarket_pos/core/strings.dart';
 import 'package:supermarket_pos/features/auth/auth_models.dart';
 import 'package:supermarket_pos/features/auth/auth_provider.dart';
+import 'package:supermarket_pos/features/settings/pos_settings_provider.dart';
 import 'package:supermarket_pos/features/settings/scan_settings_provider.dart';
 import 'package:supermarket_pos/features/settings/settings_provider.dart';
 import 'package:supermarket_pos/features/settings/settings_screen.dart';
@@ -653,6 +654,185 @@ void main() {
             .value,
         isFalse,
         reason: 'the two settings restore independently',
+      );
+      expect(tester.takeException(), isNull);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // POS actions — client-local operator preference (quick sale with Space):
+  // OFF by default, persisted in SharedPreferences, visible to every user
+  // (like language/theme/scan actions — never permission-gated).
+  // -----------------------------------------------------------------------
+
+  group('POS actions settings', () {
+    Future<ProviderContainer> pumpPosActions(
+      WidgetTester tester, {
+      AppLocale locale = AppLocale.en,
+      SharedPreferences? prefs,
+      AuthUser? user,
+    }) async {
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            localeProvider.overrideWith(
+              (ref) => LocaleNotifier(prefs)..setLocale(locale),
+            ),
+            themeProvider.overrideWith((ref) => ThemeNotifier(prefs)),
+            scanSettingsProvider.overrideWith(
+              (ref) => ScanSettingsNotifier(prefs),
+            ),
+            posSettingsProvider.overrideWith(
+              (ref) => PosSettingsNotifier(prefs),
+            ),
+            if (user != null)
+              currentUserProvider.overrideWithValue(user),
+          ],
+          child: const _SettingsHarness(),
+        ),
+      );
+      await tester.pumpAndSettle();
+      return ProviderScope.containerOf(
+        tester.element(find.byType(MaterialApp)),
+      );
+    }
+
+    final toggle = find.byKey(const Key('settings-quick-sale-with-space'));
+
+    testWidgets(
+        'renders the quick-sale toggle localized and OFF by default for '
+        'a plain cashier (never permission-gated)', (tester) async {
+      await pumpPosActions(
+        tester,
+        locale: AppLocale.en,
+        user: _userWith(const ['pos_sale']),
+      );
+
+      expect(toggle, findsOneWidget);
+      expect(tester.widget<SwitchListTile>(toggle).value, isFalse);
+      expect(
+        find.text(AppStrings.t('settings_pos_actions', 'en')),
+        findsOneWidget,
+      );
+      expect(
+        find.text(AppStrings.t('quick_sale_with_space', 'en')),
+        findsOneWidget,
+      );
+      expect(
+        find.text(AppStrings.t('quick_sale_with_space_desc', 'en')),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('renders the localized Arabic labels too', (tester) async {
+      await pumpPosActions(tester, locale: AppLocale.ar);
+
+      expect(
+        find.text(AppStrings.t('settings_pos_actions', 'ar')),
+        findsOneWidget,
+      );
+      expect(
+        find.text(AppStrings.t('quick_sale_with_space', 'ar')),
+        findsOneWidget,
+      );
+      expect(
+        find.text(AppStrings.t('quick_sale_with_space_desc', 'ar')),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'toggling writes its own SharedPreferences key and turns OFF '
+        'again', (tester) async {
+      SharedPreferences.setMockInitialValues(<String, Object>{});
+      final prefs = await SharedPreferences.getInstance();
+      final container = await pumpPosActions(tester, prefs: prefs);
+
+      await _tap(tester, toggle);
+      expect(tester.widget<SwitchListTile>(toggle).value, isTrue);
+      expect(
+        prefs.getBool(PosSettingsNotifier.quickSaleWithSpaceKey),
+        isTrue,
+      );
+      expect(container.read(posSettingsProvider).quickSaleWithSpace, isTrue);
+      // The scan-action keys stay untouched — the settings are independent.
+      expect(
+        prefs.getBool(
+          ScanSettingsNotifier.openAddProductOnUnknownBarcodeKey,
+        ),
+        isNull,
+      );
+
+      await _tap(tester, toggle);
+      expect(tester.widget<SwitchListTile>(toggle).value, isFalse);
+      expect(
+        prefs.getBool(PosSettingsNotifier.quickSaleWithSpaceKey),
+        isFalse,
+        reason: 'turning it off persists the off state',
+      );
+      expect(container.read(posSettingsProvider).quickSaleWithSpace, isFalse);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a stored true restores ON after a restart-style remount',
+        (tester) async {
+      SharedPreferences.setMockInitialValues(<String, Object>{
+        PosSettingsNotifier.quickSaleWithSpaceKey: true,
+      });
+      final prefs = await SharedPreferences.getInstance();
+      await pumpPosActions(tester, prefs: prefs);
+
+      expect(tester.widget<SwitchListTile>(toggle).value, isTrue);
+      expect(tester.takeException(), isNull);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Scanner diagnostics are hidden from the Settings surface: the section
+  // is no longer rendered, while ScanDiagnosticsSection itself and its own
+  // test suite (scan_diagnostics_panel_test.dart) remain untouched so the
+  // surface can be re-added unchanged later.
+  // -----------------------------------------------------------------------
+
+  group('Scanner diagnostics hidden from Settings', () {
+    testWidgets(
+        'the settings screen renders no diagnostics controls or copy', (
+      tester,
+    ) async {
+      await pumpSettingsApp(tester, locale: AppLocale.en);
+
+      expect(find.byKey(const Key('settings-scan-diag-start')), findsNothing);
+      expect(find.byKey(const Key('settings-scan-diag-stop')), findsNothing);
+      expect(find.byKey(const Key('settings-scan-diag-status')), findsNothing);
+      expect(find.byKey(const Key('settings-scan-diag-counts')), findsNothing);
+      expect(
+        find.text(AppStrings.t('settings_scan_diagnostics', 'en')),
+        findsNothing,
+        reason: 'the diagnostics section header is not on the surface',
+      );
+      expect(
+        find.text(AppStrings.t('scan_diagnostics_desc', 'en')),
+        findsNothing,
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'the neighbouring sections around it still render (only the '
+        'diagnostics block was removed)', (tester) async {
+      await pumpSettingsApp(tester, locale: AppLocale.en);
+
+      expect(
+        find.text(AppStrings.t('settings_scan_actions', 'en')),
+        findsOneWidget,
+        reason: 'the scan actions section stays',
+      );
+      expect(
+        find.byKey(const Key('settings-quick-sale-with-space')),
+        findsOneWidget,
+        reason: 'the POS actions section stays',
       );
       expect(tester.takeException(), isNull);
     });

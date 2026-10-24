@@ -72,6 +72,7 @@ import '../products/quantity_dialog.dart';
 import '../products/selling_unit_picker.dart';
 import '../products/variant_picker.dart';
 import '../returns/return_providers.dart';
+import '../settings/pos_settings_provider.dart';
 import '../settings/scan_settings_provider.dart';
 import '../settings/settings_provider.dart';
 import '../shell/shortcuts_help_dialog.dart';
@@ -179,6 +180,14 @@ class _PosScreenState extends ConsumerState<PosScreen> {
   /// would otherwise double-toast it, and the return flow already has its
   /// own banner surface.
   PosApiError? _returnError;
+
+  /// Quick-sale re-entry guard: SPACE can auto-repeat and the checkout
+  /// pipeline has awaits (loyalty preview settle, POST) before the cart
+  /// empties — one in-flight quick sale swallows every repeat until the
+  /// attempt finishes. `PosCartNotifier.checkout` keeps its own
+  /// `checkoutPending` gate; this flag additionally covers the window
+  /// BEFORE checkout is even entered.
+  bool _quickSaleBusy = false;
 
   /// This screen's page-level shortcut hooks, published to the nav shell.
   late final PageShortcuts _pageShortcuts;
@@ -334,9 +343,17 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     // quantity field is focused; the space character never reaches that
     // quantity field, so its value cannot be touched by the pay key. The
     // empty-cart toast comes from the same `_openPayment()` the PAY button
-    // uses — one flow, one message.
+    // uses — one flow, one message. With Quick sale (Space) ON the SAME
+    // key completes the sale directly through the existing checkout
+    // pipeline (see [_quickSale]); the focus predicate above then declines
+    // in EVERY editable context, so Space keeps its normal typing meaning
+    // in the search box, quantity fields and any dialog input.
     if (key == LogicalKeyboardKey.space) {
-      await _openPayment();
+      if (ref.read(posSettingsProvider).quickSaleWithSpace) {
+        await _quickSale();
+      } else {
+        await _openPayment();
+      }
       if (mounted) _searchFocusNode.requestFocus();
       return;
     }
@@ -1485,6 +1502,108 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     }
   }
 
+  /// Quick sale (Space) — completes the CURRENT valid sale directly, with
+  /// NO payment dialog, as a full CASH payment of the amount due.
+  ///
+  /// Semantics (documented in the settings help text and the shortcuts
+  /// map): the sale is charged in full, exactly like accepting the payment
+  /// dialog's prefilled defaults (cash, paid = amount due). There is no
+  /// way to tender less or choose another method from this path — a
+  /// partial/credit sale would need the dialog — and nothing is ever
+  /// invented: the same [PaymentMath.validate] rules the dialog runs gate
+  /// the attempt, and the SAME `PosCartNotifier.checkout` pipeline
+  /// persists the sale (server re-validation, idempotency, stock,
+  /// inventory, loyalty, receipt) and clears the cart on success. Return
+  /// mode still owns SPACE (confirming the return, never charging).
+  Future<void> _quickSale() async {
+    final cart = ref.read(posCartProvider);
+    if (cart.returnMode) {
+      await _confirmReturn();
+      return;
+    }
+    if (cart.isEmpty) {
+      final loc = ref.read(localeProvider).flutterLocale.languageCode;
+      showPosToast(
+        context,
+        message: AppStrings.t('cart_empty', loc),
+        kind: PosToastKind.info,
+      );
+      return;
+    }
+    // One attempt at a time: SPACE auto-repeat and any second press while
+    // the preview settle / POST is in flight are swallowed here, before
+    // the pipeline can even be entered twice.
+    if (_quickSaleBusy || cart.checkoutPending) return;
+    final loc = ref.read(localeProvider).flutterLocale.languageCode;
+
+    // Settle the server preview FIRST — the amount due (and therefore the
+    // cash amount submitted) must be the authoritative figure, exactly as
+    // _openPayment does before the dialog reads it.
+    final loyalty = ref.read(posLoyaltyProvider);
+    if (loyalty.customerId != null && loyalty.rewardPercent > 0) {
+      await ref.read(posLoyaltyProvider.notifier).previewNow();
+    }
+    if (!mounted) return;
+    final settled = ref.read(posCartProvider);
+    final rewardDiscount = ref.read(posLoyaltyProvider).previewMatches
+        ? ref.read(posLoyaltyProvider).preview!.rewardDiscount
+        : 0.0;
+    final due = PaymentMath.amountDueOf(
+      total: settled.totals.total,
+      rewardDiscount: rewardDiscount,
+    );
+    // Fail safely: the exact rules the payment dialog would run, for the
+    // cash / paid-in-full choice this shortcut makes. An invalid state
+    // (empty after a race, total 0, …) surfaces as a toast — the cashier
+    // falls back to PAY for anything unusual.
+    final errorKey = PaymentMath.validate(
+      method: PaymentMethod.cash,
+      total: settled.totals.total,
+      paid: due,
+      hasCustomer: settled.customer != null,
+      canDiscount: ref.read(hasPermissionProvider('pos_discount')) ||
+          !settled.hasAnyDiscount,
+      canCredit: ref.read(hasPermissionProvider('pos_credit_sale')),
+      rewardDiscount: rewardDiscount,
+    );
+    if (errorKey != null) {
+      if (!mounted) return;
+      showPosToast(
+        context,
+        message: AppStrings.t(errorKey, loc),
+        kind: PosToastKind.error,
+      );
+      return;
+    }
+
+    setState(() => _quickSaleBusy = true);
+    CheckoutResult? result;
+    try {
+      result = await ref.read(posCartProvider.notifier).checkout(
+            method: PaymentMethod.cash,
+            paid: due,
+            // Percent only — never a money value or a balance; the server
+            // re-prices and re-validates the reward (payment_dialog.dart
+            // contract).
+            loyaltyRewardPercent:
+                ref.read(posLoyaltyProvider).rewardPercent,
+          );
+    } finally {
+      _quickSaleBusy = false;
+    }
+    if (!mounted) return;
+    if (result != null) {
+      await _afterCheckoutSuccess(result);
+    } else {
+      final failed = ref.read(posCartProvider);
+      showPosToast(
+        context,
+        message: failed.lastError ?? AppStrings.t('sale_failed', loc),
+        kind: PosToastKind.error,
+      );
+    }
+  }
+
   /// Enter / exit the POS return mode. Lines are never touched — the
   /// notifier's [PosCartNotifier.setReturnMode] only flips the flag — and
   /// any banner error from a previous attempt/session is dropped.
@@ -2298,10 +2417,17 @@ class _PosScreenState extends ConsumerState<PosScreen> {
         // While a POS-owned NON-TYPING field is focused the activator
         // claims the key anyway (allowWhileEditing) — the callback is
         // IDENTICAL, only the event precedence changes: handled key ⇒ the
-        // focused text input never sees the space character.
+        // focused text input never sees the space character. With Quick
+        // sale (Space) ON the claim is WITHDRAWN from every editable
+        // context: an immediate sale must never fire under the cashier's
+        // fingers mid-typing, so Space keeps its ordinary text meaning in
+        // the search box, quantity/discount fields and any dialog input,
+        // and the quick-sale path only answers from the bare workspace.
         TextFreeKeyActivator(
           LogicalKeyboardKey.space,
-          allowWhileEditing: spaceMayClaimFocusedField,
+          allowWhileEditing: () =>
+              !ref.read(posSettingsProvider).quickSaleWithSpace &&
+              spaceMayClaimFocusedField(),
         ): () => _handleShortcut(LogicalKeyboardKey.space),
         const SingleActivator(LogicalKeyboardKey.f9): () =>
             _handleShortcut(LogicalKeyboardKey.f9),
@@ -4302,6 +4428,13 @@ class _PosTotalsPanelState extends ConsumerState<_PosTotalsPanel> {
     final rewardDiscount = preview?.rewardDiscount ?? 0.0;
     final amountDue =
         PaymentMath.amountDueOf(total: totals.total, rewardDiscount: rewardDiscount);
+    // A GENUINE (preview-matched) loyalty discount restyles the money:
+    // the original total is struck through and demoted, and the effective
+    // price row below it goes green and larger. Presentation only — every
+    // value, key and provider number stays byte-identical, and a stale
+    // or suppressed preview (previewMatches false) renders the plain
+    // total with no strike anywhere.
+    final loyaltyApplied = showLoyalty && rewardDiscount > 0;
 
     return Material(
       key: const Key('pos-totals-panel'),
@@ -4410,10 +4543,21 @@ class _PosTotalsPanelState extends ConsumerState<_PosTotalsPanel> {
                 '${totals.totalDisplay} $currency',
                 key: const Key('pos-total-value'),
                 style: theme.textTheme.headlineSmall?.copyWith(
-                  fontSize: totalSize,
+                  // Struck + demoted only while a genuine loyalty
+                  // discount is live; the full figure stays on screen.
+                  fontSize: loyaltyApplied ? totalSize * 0.56 : totalSize,
                   fontWeight: FontWeight.w800,
-                  color: cs.primary,
+                  color: loyaltyApplied
+                      ? cs.onSurface.withValues(alpha: 0.55)
+                      : cs.primary,
                   height: 1.05,
+                  decoration: loyaltyApplied
+                      ? TextDecoration.lineThrough
+                      : TextDecoration.none,
+                  decorationColor: loyaltyApplied
+                      ? cs.onSurface.withValues(alpha: 0.65)
+                      : null,
+                  decorationThickness: 1.6,
                 ),
               ),
             );
@@ -4526,13 +4670,14 @@ class _PosTotalsPanelState extends ConsumerState<_PosTotalsPanel> {
                 // keeps only Subtotal / Discount / TOTAL / PAY.
                 totalStack,
                 SizedBox(height: gapAfterTotal),
-                if (showLoyalty && rewardDiscount > 0)
-                  _totalsRow(
+                if (loyaltyApplied)
+                  // The EFFECTIVE price: green, larger than the struck
+                  // original above it, same key/value contract as before.
+                  _loyaltyAmountDueRow(
                     label: AppStrings.t('amount_due', loc),
                     value: PaymentMath.money(amountDue),
-                    valueKey: const Key('pos-loyalty-amount-due'),
-                    color: cs.primary,
-                    fontSize: subSize,
+                    labelSize: subSize,
+                    valueSize: totalSize * 0.72,
                     verticalPad: rowPad,
                   ),
                 SafeArea(
@@ -4747,6 +4892,52 @@ class _PosTotalsPanelState extends ConsumerState<_PosTotalsPanel> {
           ),
         ),
       ],
+    );
+  }
+
+  /// The effective price after a genuine loyalty discount: green
+  /// (`AppColors.success`, the same money-green the redemption dialog
+  /// speaks) and larger than the struck-through original above it.
+  /// Value and key are byte-identical to the plain totals row — this
+  /// hook restyles presentation only.
+  static Widget _loyaltyAmountDueRow({
+    required String label,
+    required String value,
+    required double labelSize,
+    required double valueSize,
+    double verticalPad = 2,
+  }) {
+    return Padding(
+      padding: EdgeInsets.symmetric(vertical: verticalPad),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Flexible(
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: labelSize,
+                fontWeight: FontWeight.w500,
+                height: 1.3,
+              ),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          const SizedBox(width: 8),
+          numericText(
+            value,
+            key: const Key('pos-loyalty-amount-due'),
+            style: TextStyle(
+              fontSize: valueSize,
+              fontWeight: FontWeight.w800,
+              height: 1.1,
+              fontFeatures: const [FontFeature.tabularFigures()],
+              color: AppColors.success,
+            ),
+          ),
+        ],
+      ),
     );
   }
 

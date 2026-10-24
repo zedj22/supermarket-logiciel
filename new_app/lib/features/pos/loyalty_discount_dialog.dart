@@ -1,6 +1,12 @@
 // Loyalty Discount dialog — redeem a server-validated reward percent on
 // the CURRENT sale.
 //
+// The percent is FREE-ENTRY (12%, 17%, 18.5% …) in a numeric field, capped
+// by the owner's `max_reward_discount_percent`: an over-cap or invalid
+// value is REJECTED with a local error and can never be confirmed (the
+// session notifier and the server's `validate_reward_percent` re-enforce
+// the same boundary on every other path).
+//
 // Contract: NOTHING is written to the loyalty session until Confirm.
 // Every money figure shown is the preview endpoint's answer, fetched for
 // the chosen percent with the exact payload the totals-panel session path
@@ -14,6 +20,7 @@
 // read that authoritative state.
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/colors.dart';
@@ -48,12 +55,28 @@ class _LoyaltyDiscountDialogState extends ConsumerState<LoyaltyDiscountDialog> {
   /// selection and only the confirmed percent reaches the provider).
   late double _chosen;
 
+  /// Free-entry percent field: any valid value up to the server cap
+  /// (12, 17, 18.5 …) — the old fixed 5-step dropdown is gone. Empty
+  /// means "None" (no reward on this sale).
+  late final TextEditingController _percentInput;
+
+  /// Local input validation failure (unparseable, negative, above the
+  /// cap). While set, Confirm is disabled and [_chosen] keeps its last
+  /// VALID value — an invalid keystroke can never commit.
+  String? _inputError;
+
   /// Server preview fetched for [_chosen] on the current cart total —
   /// display source for the discount and amount-due rows. Null while a
   /// fetch is in flight or after a failure (Confirm stays disabled).
   LoyaltyPreview? _preview;
 
   bool _busy = false;
+
+  /// Monotonic token for the LOCAL preview fetches: a fast typist can
+  /// change the percent while a request is in flight, and only the
+  /// newest request's answer may land (older answers are dropped, never
+  /// rendered under a newer selection).
+  int _fetchToken = 0;
 
   /// Last local preview fetch FAILED (network/server) — the placeholder
   /// shows the error hint instead of a pending spinner. Reset by any
@@ -68,8 +91,11 @@ class _LoyaltyDiscountDialogState extends ConsumerState<LoyaltyDiscountDialog> {
   @override
   void initState() {
     super.initState();
-    _chosen = ref.read(posLoyaltyProvider).rewardPercent;
     final loyalty = ref.read(posLoyaltyProvider);
+    _chosen = loyalty.rewardPercent;
+    _percentInput = TextEditingController(
+      text: _chosen > 0 ? _percentLabel(_chosen) : '',
+    );
     // Reuse the session's own matching preview when it already answers
     // this percent + this total; otherwise fetch one right after mount.
     _preview = loyalty.previewMatches ? loyalty.preview : null;
@@ -79,6 +105,12 @@ class _LoyaltyDiscountDialogState extends ConsumerState<LoyaltyDiscountDialog> {
         if (mounted) _refresh();
       });
     }
+  }
+
+  @override
+  void dispose() {
+    _percentInput.dispose();
+    super.dispose();
   }
 
   /// Fetches the SERVER preview for the currently chosen percent (exact
@@ -114,9 +146,10 @@ class _LoyaltyDiscountDialogState extends ConsumerState<LoyaltyDiscountDialog> {
   }
 
   Future<void> _refresh() async {
+    final token = ++_fetchToken;
     setState(() => _busy = true);
     final preview = await _fetchPreview(_chosen);
-    if (!mounted) return;
+    if (!mounted || token != _fetchToken) return; // superseded
     setState(() {
       _preview = preview;
       _fetchFailed = preview == null;
@@ -125,12 +158,56 @@ class _LoyaltyDiscountDialogState extends ConsumerState<LoyaltyDiscountDialog> {
   }
 
   Future<void> _select(double percent) async {
-    if (_busy || percent == _chosen) return;
+    if (percent == _chosen) return;
     setState(() {
       _chosen = percent;
       _fetchFailed = false;
     });
     await _refresh();
+  }
+
+  /// Free-entry handler: only a VALID percent ever reaches [_chosen] —
+  /// anything else raises a local error and leaves the last valid choice
+  /// (plus the Confirm guard) untouched. Excessive percents are REJECTED,
+  /// never clamped — the same convention the server domain
+  /// (`validate_reward_percent`) and the session notifier enforce.
+  void _onPercentChanged(String raw) {
+    final loc = Localizations.localeOf(context).languageCode;
+    final text = raw.trim();
+    if (text.isEmpty) {
+      setState(() => _inputError = null);
+      _select(0);
+      return;
+    }
+    final value = double.tryParse(text);
+    if (value == null || value.isNaN || value.isInfinite || value < 0) {
+      setState(() => _inputError = AppStrings.t('invalid_amount', loc));
+      return;
+    }
+    // The server's hard ceiling is 100 (pydantic le=100) and the owner's
+    // cap only ever lowers it — so a percent the cap has not answered
+    // yet can already be refused above 100 without waiting.
+    if (value > 100) {
+      setState(() => _inputError = AppStrings.t('loyalty_redeem_exceeds', loc));
+      return;
+    }
+    final maxPercent =
+        ref.read(posLoyaltyProvider).maxRewardDiscountPercent;
+    final capKnown = ref.read(posLoyaltyProvider).previewOnCurrentCart;
+    if (value > 0 && capKnown && value > maxPercent + 0.0001) {
+      setState(() => _inputError = AppStrings.t('loyalty_redeem_exceeds', loc));
+      return;
+    }
+    setState(() => _inputError = null);
+    _select(value);
+  }
+
+  /// The "None" affordance the old dropdown's zero option provided: one
+  /// tap clears the field and the selection.
+  void _clearPercent() {
+    _percentInput.clear();
+    setState(() => _inputError = null);
+    _select(0);
   }
 
   /// Confirm: the ONE write path — the existing single-slot session
@@ -172,20 +249,11 @@ class _LoyaltyDiscountDialogState extends ConsumerState<LoyaltyDiscountDialog> {
         balance?.cashbackBalance ?? _preview?.cashbackBalance ?? 0.0;
     final rewards = loyalty.availableRewards;
 
-    // Dropdown options: the SAME server-capped set the totals panel used —
-    // None + 5% steps up to the owner's cap, cap appended when it is not a
-    // multiple of 5 (e.g. 12%), never a percent the cap would reject.
+    // Owner cap for the free-entry field: shown as the field's helper
+    // text and enforced on every keystroke (and again by the session
+    // notifier and the server at Confirm / checkout).
     final maxPercent = loyalty.maxRewardDiscountPercent;
-    final options = <double>[
-      0,
-      for (var p = 5.0; p <= maxPercent + 0.0001; p += 5) p,
-    ];
-    if (maxPercent > 0 && !options.contains(maxPercent)) {
-      options.add(maxPercent);
-    }
-    if (_chosen > 0 && !options.contains(_chosen)) {
-      options.add(_chosen);
-    }
+    final capKnown = loyalty.previewOnCurrentCart;
 
     final preview = _preview;
     final usable = preview != null && _usable(preview, cartTotal);
@@ -206,15 +274,21 @@ class _LoyaltyDiscountDialogState extends ConsumerState<LoyaltyDiscountDialog> {
     // eligibility answer must still hold (and the session must not be
     // mid-load or in error). Clearing (None) needs no eligibility, but a
     // percent beyond the owner's cap is never confirmable — the same
-    // boundary PosLoyaltyState.exceeds enforces.
+    // boundary PosLoyaltyState.exceeds enforces. A locally invalid
+    // keystroke (unparseable / negative / over-cap) also blocks Confirm:
+    // it never became [_chosen], but the field must not look committable.
     final eligibleNow = _chosen > 0
         ? !loyalty.loading &&
             loyalty.error == null &&
             loyalty.canSelectReward &&
             (maxPercent <= 0 || _chosen <= maxPercent + 0.0001)
         : true;
-    final canConfirm =
-        !_busy && usable && eligibleNow && !cart.isEmpty && customer != null;
+    final canConfirm = !_busy &&
+        _inputError == null &&
+        usable &&
+        eligibleNow &&
+        !cart.isEmpty &&
+        customer != null;
 
     return AlertDialog(
       key: const Key('pos-loyalty-dialog'),
@@ -309,7 +383,10 @@ class _LoyaltyDiscountDialogState extends ConsumerState<LoyaltyDiscountDialog> {
               ],
             ),
             const SizedBox(height: 10),
-            // Eligible redemption options — server-capped set (above).
+            // Free-entry percent: any valid value up to the server-owned
+            // cap (12, 17, 18.5 …). The field never mutates the session —
+            // Confirm is still the only write path — and an over-cap or
+            // unparseable value shows the error and blocks Confirm.
             Row(
               children: [
                 Flexible(
@@ -321,30 +398,45 @@ class _LoyaltyDiscountDialogState extends ConsumerState<LoyaltyDiscountDialog> {
                 ),
                 const SizedBox(width: 12),
                 Flexible(
-                  child: DropdownButton<double>(
-                    key: const Key('pos-loyalty-reward-select'),
-                    value: options.contains(_chosen) ? _chosen : 0,
-                    isExpanded: true,
-                    isDense: true,
-                    items: [
-                      for (final p in options)
-                        DropdownMenuItem<double>(
-                          value: p,
-                          child: Text(
-                            p == 0
-                                ? AppStrings.t('loyalty_reward_none', loc)
-                                : _percentLabel(p),
-                            overflow: TextOverflow.ellipsis,
-                            style: theme.textTheme.bodySmall,
-                          ),
-                        ),
+                  child: TextField(
+                    key: const Key('pos-loyalty-reward-input'),
+                    controller: _percentInput,
+                    keyboardType:
+                        const TextInputType.numberWithOptions(decimal: true),
+                    inputFormatters: [
+                      FilteringTextInputFormatter.allow(RegExp(r'[0-9.]')),
                     ],
-                    onChanged:
-                        _busy ? null : (value) => _select(value ?? 0),
+                    decoration: InputDecoration(
+                      isDense: true,
+                      labelText: AppStrings.t('loyalty_reward', loc),
+                      suffixText: '%',
+                      helperText: capKnown && maxPercent > 0
+                          ? '${AppStrings.t('loyalty_redeem_max', loc)}: '
+                              '${_percentLabel(maxPercent)}%'
+                          : null,
+                    ),
+                    onChanged: _onPercentChanged,
                   ),
+                ),
+                const SizedBox(width: 4),
+                IconButton(
+                  key: const Key('pos-loyalty-reward-clear'),
+                  tooltip: AppStrings.t('loyalty_reward_none', loc),
+                  onPressed: _busy ? null : _clearPercent,
+                  icon: const Icon(Icons.clear),
+                  iconSize: 20,
+                  visualDensity: VisualDensity.compact,
                 ),
               ],
             ),
+            if (_inputError != null) ...[
+              const SizedBox(height: 6),
+              Text(
+                _inputError!,
+                key: const Key('pos-loyalty-reward-error'),
+                style: theme.textTheme.bodySmall?.copyWith(color: cs.error),
+              ),
+            ],
             const SizedBox(height: 10),
             // Server preview rows: discount for the chosen percent, then
             // the amount the payment must cover. While a fetch is in

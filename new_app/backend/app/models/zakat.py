@@ -61,7 +61,7 @@ class ZakatCalculation(Base, UUIDMixin, TimestampMixin):
             name="ck_zakat_calculations_status",
         ),
         CheckConstraint(
-            "inventory_basis IN ('market', 'cost', 'override')",
+            "inventory_basis IN ('market', 'cost', 'wholesale', 'override')",
             name="ck_zakat_calculations_inventory_basis",
         ),
         CheckConstraint(

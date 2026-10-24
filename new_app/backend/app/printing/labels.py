@@ -342,6 +342,11 @@ LABELS: dict[str, tuple[str, str, str]] = {
     "zakat_inventory_basis": ("أساس تخزين البضائع", "Base d'évaluation des marchandises", "Merchandise valuation basis"),
     "zakat_basis_market": ("سعر السوق", "Prix du marché", "Market price"),
     "zakat_basis_cost": ("التكلفة (متوسط)", "Coût (moyenne)", "Cost (average)"),
+    "zakat_basis_wholesale": (
+        "بيع بالجملة",
+        "Vente en gros",
+        "Wholesale price",
+    ),
     "zakat_basis_override": ("إدخال يدوي", "Saisie manuelle", "Manual entry"),
     "zakat_debt_treatment": ("طريقة احتساب الديون", "Traitement des dettes", "Debt treatment"),
     "zakat_method_deduct_all": ("خصم كل الديون", "Déduction de toutes les dettes", "Deduct all debts"),
@@ -353,6 +358,28 @@ LABELS: dict[str, tuple[str, str, str]] = {
     "zakat_col_due": ("مستحق", "Échu", "Due"),
     "zakat_col_note": ("ملاحظة", "Note", "Note"),
     "zakat_row_inventory": ("البضائع (مخزون)", "Marchandises (stock)", "Merchandise (stock)"),
+    "zakat_stock_qty": ("كمية المخزون المتبقية", "Quantité restante en stock", "Remaining stock quantity"),
+    "zakat_stock_cost_value": ("قيمة تكلفة المخزون (للمرجع)", "Valeur au coût du stock (repère)", "Inventory cost value (reference)"),
+    "zakat_stock_market_value": (
+        "القيمة السوقية التقديرية للبضائع المتبقية",
+        "Valeur de revente estimée des marchandises",
+        "Estimated market selling value of stock",
+    ),
+    "zakat_stock_only_zakat": (
+        "تقدير الزكاة على المخزون فقط (2.5%)",
+        "Estimation de la Zakat sur le seul stock (2,5 %)",
+        "Stock-only Zakat estimate (2.5%)",
+    ),
+    "zakat_stock_only_note": (
+        "تقدير على المخزون فقط — زكاة العمل الكاملة تعتمد أيضًا على النقد "
+        "والديون القابلة للتحصيل والديون عليك والنصاب والمذهب الفقهي المطبق.",
+        "Estimation sur le seul stock — la Zakat complète de l'entreprise "
+        "dépend aussi des espèces, des créances recouvrables, des dettes, "
+        "du nisab et de la méthodologie juridique appliquée.",
+        "Stock-only estimate — the complete business Zakat also depends on "
+        "cash, eligible receivables, liabilities, the nisab, and the "
+        "applicable scholarly methodology.",
+    ),
     "zakat_row_cash": ("النقد", "Espèces", "Cash"),
     "zakat_row_collectible": ("الديون المتوقع تحصيلها", "Créances recouvrables", "Collectible receivables"),
     "zakat_row_other_receivables": ("ديون أخرى", "Autres créances", "Other receivables"),
@@ -486,6 +513,13 @@ LABELS: dict[str, tuple[str, str, str]] = {
         "سعر الذهب مُدخل يدويًا — تحقّق من السعر الرسمي.",
         "Prix de l'or saisi manuellement — vérifiez le prix officiel.",
         "Gold price entered manually — verify the official price.",
+    ),
+    "zakat_warn_wholesale_retail_fallback": (
+        "بعض الأسطر بلا سعر جملة مُهيّأ — قُدّمت بسعر البيع بالتجزئة.",
+        "Certaines lignes n'ont pas de prix de gros configuré — valorisées "
+        "au prix de détail.",
+        "Some lines have no configured wholesale price — valued at the "
+        "retail price.",
     ),
 }
 

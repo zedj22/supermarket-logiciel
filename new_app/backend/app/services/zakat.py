@@ -121,6 +121,10 @@ def to_result_response(result: ZakatResult) -> ZakatResultResponse:
         inventory_excluded_value=result.inventory_excluded_value,
         inventory_product_count=result.inventory_product_count,
         inventory_included_count=result.inventory_included_count,
+        inventory_quantity=result.inventory_quantity,
+        inventory_cost_value=result.inventory_cost_value,
+        inventory_market_value=result.inventory_market_value,
+        inventory_stock_only_zakat=result.inventory_stock_only_zakat,
         cash_provided=result.cash_provided,
         cash_total=result.cash_total,
         cash_item_count=result.cash_item_count,
@@ -323,6 +327,13 @@ class ZakatService(BaseService):
                         quantity=to_decimal(product.quantity),
                         market_unit_price=to_decimal(product.price),
                         cost_unit_price=to_decimal(product.avg_cost),
+                        # NULL = wholesale never configured (never 0);
+                        # the domain falls back to retail transparently.
+                        wholesale_unit_price=(
+                            to_decimal(product.wholesale_price)
+                            if product.wholesale_price is not None
+                            else None
+                        ),
                         included=str(product.id) not in excluded,
                     )
                 )
@@ -732,39 +743,71 @@ class ZakatService(BaseService):
             if result.zakat_due is None
             else result.zakat_due
         )
+        # Stock-only breakdown (CURRENT remaining stock) — informational
+        # rows on the report, exactly mirroring the result card. Absent
+        # on old snapshots (server defaults them to null) and when the
+        # stock import was off; never part of any totals row.
+        result_rows: list[list[str]] = [
+            [
+                label("zakat_net_zakatable", locale),
+                _money(result.net_zakatable),
+                label("zakat_status_" + result.status, locale),
+            ],
+            [
+                label("zakat_nisab", locale),
+                _money(result.nisab_amount),
+                _yes_no(result.reaches_nisab, locale),
+            ],
+            [
+                label("zakat_hawl", locale),
+                "",
+                _yes_no(result.hawl_completed, locale),
+            ],
+            [
+                label("zakat_rate", locale),
+                "2.5%",
+                label("zakat_rate_note", locale),
+            ],
+            [
+                due_label,
+                _money(due_value),
+                label("zakat_status_" + result.status, locale),
+            ],
+        ]
+        if result.inventory_quantity is not None:
+            result_rows.extend(
+                [
+                    [
+                        label("zakat_stock_qty", locale),
+                        # A quantity, not money — grouped but no currency.
+                        group_thousands(str(result.inventory_quantity)),
+                        "",
+                    ],
+                    [
+                        label("zakat_stock_cost_value", locale),
+                        _money(result.inventory_cost_value),
+                        "",
+                    ],
+                    [
+                        label("zakat_stock_market_value", locale),
+                        _money(result.inventory_market_value),
+                        "",
+                    ],
+                    [
+                        label("zakat_stock_only_zakat", locale),
+                        _money(result.inventory_stock_only_zakat),
+                        "2.5%",
+                    ],
+                ]
+            )
+            meta.append(label("zakat_stock_only_note", locale))
         result_block = ReportTableBlock(
             headers=[
                 label("zakat_col_item", locale),
                 label("zakat_col_amount", locale),
                 label("zakat_col_note", locale),
             ],
-            rows=[
-                [
-                    label("zakat_net_zakatable", locale),
-                    _money(result.net_zakatable),
-                    label("zakat_status_" + result.status, locale),
-                ],
-                [
-                    label("zakat_nisab", locale),
-                    _money(result.nisab_amount),
-                    _yes_no(result.reaches_nisab, locale),
-                ],
-                [
-                    label("zakat_hawl", locale),
-                    "",
-                    _yes_no(result.hawl_completed, locale),
-                ],
-                [
-                    label("zakat_rate", locale),
-                    "2.5%",
-                    label("zakat_rate_note", locale),
-                ],
-                [
-                    due_label,
-                    _money(due_value),
-                    label("zakat_status_" + result.status, locale),
-                ],
-            ],
+            rows=result_rows,
         )
 
         generated = (

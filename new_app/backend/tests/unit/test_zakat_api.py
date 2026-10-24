@@ -302,6 +302,116 @@ def test_amount_above_money_max_is_rejected(client, admin_headers):
     assert resp.status_code == 422, resp.text
 
 
+# ── stock-only breakdown + wholesale valuation ────────────────────────────
+
+
+def _warning_codes(result: dict) -> set[str]:
+    return {w["code"] for w in result["warnings"]}
+
+
+def test_calculate_returns_the_stock_only_breakdown(client, admin_headers):
+    resp = client.post(
+        "/api/v1/zakat/calculate", json=COMPLETE_PAYLOAD, headers=admin_headers
+    )
+    assert resp.status_code == 200, resp.text
+    result = resp.json()["result"]
+    # fixture product: 20 still in stock × (price 100 / avg_cost 70)
+    assert Decimal(result["inventory_quantity"]) == Decimal("20.000")
+    assert Decimal(result["inventory_market_value"]) == Decimal("2000.000")
+    assert Decimal(result["inventory_cost_value"]) == Decimal("1400.000")
+    # stock-only 2.5 % on the merchandise value alone (2,000 → 50.000),
+    # while the net still counts the stock exactly once.
+    assert Decimal(result["inventory_stock_only_zakat"]) == Decimal("50.000")
+    assert Decimal(result["net_zakatable"]) == Decimal("2000.000")
+
+
+def test_breakdown_is_null_when_stock_import_is_off(client, admin_headers):
+    payload = dict(COMPLETE_PAYLOAD, use_imported_inventory=False)
+    resp = client.post("/api/v1/zakat/calculate", json=payload, headers=admin_headers)
+    assert resp.status_code == 200, resp.text
+    result = resp.json()["result"]
+    assert result["inventory_quantity"] is None
+    assert result["inventory_cost_value"] is None
+    assert result["inventory_market_value"] is None
+    assert result["inventory_stock_only_zakat"] is None
+
+
+def test_wholesale_basis_valuation_with_configured_price(
+    client, admin_headers, db
+):
+    product = db.query(Product).one()
+    product.wholesale_price = Decimal("80")
+    product.wholesale_min_qty = Decimal("2")
+    db.commit()
+
+    payload = dict(COMPLETE_PAYLOAD, inventory_basis="wholesale")
+    resp = client.post("/api/v1/zakat/calculate", json=payload, headers=admin_headers)
+    assert resp.status_code == 200, resp.text
+    result = resp.json()["result"]
+    assert Decimal(result["inventory_value"]) == Decimal("1600.000")  # 20 × 80
+    assert "WHOLESALE_RETAIL_FALLBACK" not in _warning_codes(result)
+    # the retail market reference stays visible next to the chosen basis
+    assert Decimal(result["inventory_market_value"]) == Decimal("2000.000")
+
+
+def test_wholesale_basis_falls_back_to_retail_for_unconfigured_products(
+    client, admin_headers
+):
+    payload = dict(COMPLETE_PAYLOAD, inventory_basis="wholesale")
+    resp = client.post("/api/v1/zakat/calculate", json=payload, headers=admin_headers)
+    assert resp.status_code == 200, resp.text
+    result = resp.json()["result"]
+    # no configured wholesale price → retail fallback, reported loudly
+    assert Decimal(result["inventory_value"]) == Decimal("2000.000")
+    assert "WHOLESALE_RETAIL_FALLBACK" in _warning_codes(result)
+
+
+def test_unknown_inventory_basis_is_rejected(client, admin_headers):
+    payload = dict(COMPLETE_PAYLOAD, inventory_basis="retail_guess")
+    resp = client.post("/api/v1/zakat/calculate", json=payload, headers=admin_headers)
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["error"]["code"] == "VALIDATION_ERROR"
+
+
+def test_stock_quantity_follows_current_stock_after_a_sale(
+    client, admin_headers, db
+):
+    """The valuation reads CURRENT stock — sold units leave it at once."""
+    product = db.query(Product).one()
+    assert product.quantity == Decimal("20.000")
+
+    sale = {
+        "client_request_id": "zakat-after-sale-0001",
+        "items": [
+            {
+                "product_id": str(product.id),
+                "quantity": "5.000",
+                "unit_price": "100.000",
+                "line_discount": "0.000",
+            }
+        ],
+        "invoice_discount": "0.000",
+        "payment_method": "cash",
+        "paid": "500.000",
+        "device_id": "POS-1",
+    }
+    resp = client.post("/api/v1/sales", json=sale, headers=admin_headers)
+    assert resp.status_code in (200, 201), resp.text
+    db.expire_all()
+    assert db.query(Product).one().quantity == Decimal("15.000")
+
+    ctx = client.get("/api/v1/zakat/context", headers=admin_headers).json()
+    assert Decimal(ctx["inventory"]["total_market_value"]) == Decimal("1500.000")
+
+    calc = client.post(
+        "/api/v1/zakat/calculate", json=COMPLETE_PAYLOAD, headers=admin_headers
+    ).json()["result"]
+    assert Decimal(calc["inventory_quantity"]) == Decimal("15.000")
+    assert Decimal(calc["inventory_market_value"]) == Decimal("1500.000")
+    assert Decimal(calc["inventory_cost_value"]) == Decimal("1050.000")
+    assert Decimal(calc["inventory_stock_only_zakat"]) == Decimal("37.500")
+
+
 # ── save / history / get ─────────────────────────────────────────────────
 
 

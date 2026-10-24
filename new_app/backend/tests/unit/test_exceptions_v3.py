@@ -13,6 +13,7 @@ from app.core.exceptions import (
     AuthorizationError,
     BusinessRuleError,
     ConflictError,
+    DatabaseConstraintError,
     DatabaseError,
     ForbiddenError,
     NotFoundError,
@@ -163,15 +164,117 @@ def test_error_handler_preserves_custom_request_id(client):
 
 
 def test_translate_integrity_error():
-    """IntegrityError should translate to ConflictError."""
-    from sqlalchemy import create_engine
-    from sqlalchemy.orm import Session
+    """A UNIQUE integrity violation stays a ConflictError.
 
-    engine = create_engine("sqlite:///:memory:")
-
+    The services' idempotency-race handlers catch ConflictError to
+    replay the winning request, so unique violations keep code CONFLICT.
+    """
     result = translate_db_error(IntegrityError("stmt", {}, Exception("unique")))
     assert result.code == "CONFLICT"
     assert result.status_code == 409
+
+
+# ── Regression: purchase save NOT NULL violation (supplier_id) ────────
+#
+# Production failure this pins down: the live database was still at
+# migration 0035 (purchases.supplier_id NOT NULL) while a purchase was
+# saved without a supplier (sport, qty 10 @ 1500). Postgres raised
+# SQLSTATE 23502 on purchases_supplier_id_not_null; the generic
+# IntegrityError -> ConflictError mapping then handed clients code
+# CONFLICT, which Flutter renders as the stock-conflict copy
+# ("Stock conflict — review quantities") on a screen about a purchase.
+# That mislabel must never come back: a DB integrity failure is
+# DATABASE_CONSTRAINT, never CONFLICT/stock.
+
+_PG_NOT_NULL_MESSAGE = (
+    'null value in column "supplier_id" of relation "purchases" '
+    "violates not-null constraint"
+)
+
+
+def test_translate_not_null_violation_is_database_constraint():
+    result = translate_db_error(
+        IntegrityError("INSERT INTO purchases ...", {"supplier_id": None}, Exception(_PG_NOT_NULL_MESSAGE))
+    )
+    assert isinstance(result, DatabaseConstraintError)
+    assert not isinstance(result, ConflictError)
+    assert result.code == "DATABASE_CONSTRAINT"
+    assert result.code != "CONFLICT"
+    assert result.status_code == 409
+    assert result.message == "A database constraint was violated"
+    assert result.details["type"] == "integrity_violation"
+    assert result.details["kind"] == "not_null"
+
+
+def test_translate_foreign_key_violation_is_database_constraint():
+    result = translate_db_error(
+        IntegrityError(
+            "INSERT INTO purchase_lines ...",
+            {},
+            Exception(
+                'insert or update on table "purchase_lines" violates '
+                'foreign key constraint "purchase_lines_product_id_fkey"'
+            ),
+        )
+    )
+    assert isinstance(result, DatabaseConstraintError)
+    assert result.code == "DATABASE_CONSTRAINT"
+    assert result.details["kind"] == "foreign_key"
+
+
+def test_translate_check_violation_is_database_constraint():
+    result = translate_db_error(
+        IntegrityError(
+            "INSERT INTO purchase_lines ...",
+            {},
+            Exception('new row for relation "purchase_lines" violates check constraint'),
+        )
+    )
+    assert isinstance(result, DatabaseConstraintError)
+    assert result.code == "DATABASE_CONSTRAINT"
+    assert result.details["kind"] == "check"
+
+
+def test_translate_sqlite_not_null_violation_reproduces_the_failure():
+    """End-to-end reproduction of the failing constraint (no live DB).
+
+    Creates a purchases table the way migration 0035 left it (supplier
+    NOT NULL), performs the exact insert the purchase editor sends, and
+    asserts the translated AppError is DATABASE_CONSTRAINT — the wire
+    contract that stops clients from showing stock copy.
+    """
+    from sqlalchemy import create_engine, text
+
+    engine = create_engine("sqlite:///:memory:")
+    with engine.begin() as conn:
+        # Mirror the pre-0036 column: supplier NOT NULL.
+        conn.execute(
+            text(
+                "CREATE TABLE purchases ("
+                "id VARCHAR(32) PRIMARY KEY, "
+                "invoice_number VARCHAR(50) NOT NULL, "
+                "supplier_id VARCHAR(32) NOT NULL)"
+            )
+        )
+        raised = None
+        try:
+            conn.execute(
+                text(
+                    "INSERT INTO purchases (id, invoice_number, supplier_id) "
+                    "VALUES ('p1', 'PUR-20261023-0001', NULL)"
+                )
+            )
+        except Exception as exc:  # sqlalchemy wraps the driver error
+            raised = exc
+        assert raised is not None, "pre-0036 schema must reject a NULL supplier"
+        assert isinstance(raised, IntegrityError)
+        assert "not null constraint" in str(raised).lower()
+
+    result = translate_db_error(raised)
+    assert result.code == "DATABASE_CONSTRAINT"
+    assert result.code != "CONFLICT"
+    assert result.message == "A database constraint was violated"
+    engine.dispose()
 
 
 def test_translate_no_result_found():

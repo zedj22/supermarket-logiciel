@@ -33,6 +33,7 @@ const _warningCodes = <String>[
   'provisional_result',
   'below_nisab',
   'gold_price_manual',
+  'wholesale_retail_fallback',
 ];
 
 void main() {
@@ -50,7 +51,7 @@ void main() {
     test('debt-treatment / basis / status / nisab-source keys resolve', () {
       const families = <String, List<String>>{
         'zakat_method_': ['deduct_all', 'deduct_due_only', 'no_deduction'],
-        'zakat_basis_': ['market', 'cost', 'override'],
+        'zakat_basis_': ['market', 'cost', 'wholesale', 'override'],
         'zakat_status_': ['final', 'provisional'],
         'zakat_nisab_source_': ['gold_price', 'manual', 'none'],
         'zakat_pay_': ['cash', 'transfer', 'cheque', 'other'],
@@ -88,6 +89,11 @@ void main() {
         'zakat_save',
         'zakat_pdf',
         'zakat_disclaimer',
+        'zakat_stock_qty',
+        'zakat_stock_cost_value',
+        'zakat_stock_market_value',
+        'zakat_stock_only_zakat',
+        'zakat_stock_only_note',
         'zakat_idempotency_conflict',
         'zakat_calculation_not_found',
         'zakat_payment_title',

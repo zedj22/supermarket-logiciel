@@ -179,6 +179,27 @@ void main() {
       expect(result.provisionalZakatDue, '127.500');
       expect(result.missingFields, ['nisab', 'cash']);
     });
+
+    test('parses the stock-only breakdown (qty / cost / market / 2.5%)', () {
+      final json = resultJson()
+        ..['inventory_quantity'] = '40.000'
+        ..['inventory_cost_value'] = '2800.000'
+        ..['inventory_market_value'] = '4000.000'
+        ..['inventory_stock_only_zakat'] = '100.000';
+      final result = ZakatResult.fromJson(json);
+      expect(result.inventoryQuantity, '40.000');
+      expect(result.inventoryCostValue, '2800.000');
+      expect(result.inventoryMarketValue, '4000.000');
+      expect(result.inventoryStockOnlyZakat, '100.000');
+    });
+
+    test('breakdown fields default to null on old saved snapshots', () {
+      final result = ZakatResult.fromJson(resultJson());
+      expect(result.inventoryQuantity, isNull);
+      expect(result.inventoryCostValue, isNull);
+      expect(result.inventoryMarketValue, isNull);
+      expect(result.inventoryStockOnlyZakat, isNull);
+    });
   });
 
   group('ZakatContext.fromJson', () {

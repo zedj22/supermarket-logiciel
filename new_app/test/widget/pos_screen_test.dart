@@ -33,6 +33,7 @@ import 'package:supermarket_pos/features/pos/pos_toast.dart';
 import 'package:supermarket_pos/features/pos/pdf_preview.dart';
 import 'package:supermarket_pos/features/pos/print_service.dart';
 import 'package:supermarket_pos/features/products/product_form_dialog.dart';
+import 'package:supermarket_pos/features/settings/pos_settings_provider.dart';
 import 'package:supermarket_pos/features/settings/scan_settings_provider.dart';
 import 'package:supermarket_pos/features/stock/adjust_dialog.dart';
 import 'package:supermarket_pos/l10n/locale_provider.dart';
@@ -703,6 +704,7 @@ Future<void> _pumpApp(
         localeProvider
             .overrideWith((ref) => LocaleNotifier()..setLocale(locale)),
         scanSettingsProvider.overrideWith((ref) => ScanSettingsNotifier(prefs)),
+        posSettingsProvider.overrideWith((ref) => PosSettingsNotifier(prefs)),
         pdfPreviewProvider.overrideWithValue(_fakePreview),
         if (printService != null)
           printServiceProvider.overrideWithValue(printService),
@@ -9689,6 +9691,298 @@ void main() {
       await tester.tap(find.byKey(const Key('shortcuts-close')));
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('shortcuts-dialog')), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+  });
+
+  group('quick sale with Space (configurable)', () {
+    ProviderContainer containerOf(WidgetTester tester) =>
+        ProviderScope.containerOf(
+          tester.element(find.byKey(const Key('pos-screen'))),
+          listen: false,
+        );
+
+    void addLine(WidgetTester tester, CartLine line) {
+      containerOf(tester).read(posCartProvider.notifier).addLine(line);
+    }
+
+    /// Value key of the focused text field, if the focus is on one.
+    String? focusedFieldKey(WidgetTester tester) {
+      final context = FocusManager.instance.primaryFocus?.context;
+      if (context == null) return null;
+      final field = context.widget is TextField
+          ? context.widget as TextField
+          : context.findAncestorWidgetOfExactType<TextField>();
+      final key = field?.key;
+      return key is ValueKey<String> ? key.value : null;
+    }
+
+    Future<bool> press(WidgetTester tester, LogicalKeyboardKey key) async {
+      final handled = await tester.sendKeyEvent(key);
+      await tester.pump();
+      return handled;
+    }
+
+    /// With an empty search box Escape hands the keyboard back to the POS
+    /// workspace node (it NEVER touches the cart) — that is how SPACE
+    /// becomes reachable at all, since the search field is autofocused.
+    Future<void> focusWorkspace(WidgetTester tester) async {
+      await press(tester, LogicalKeyboardKey.escape);
+      expect(focusedFieldKey(tester), isNull);
+    }
+
+    Future<bool> pressSpace(WidgetTester tester) async {
+      final handled =
+          await tester.sendKeyEvent(LogicalKeyboardKey.space, character: ' ');
+      await tester.pump();
+      return handled;
+    }
+
+    const line24 = CartLine(
+      productId: 'p1',
+      name: 'Bread',
+      quantity: '24',
+      unitPrice: '10',
+      availableStock: '50',
+    );
+
+    Map<String, Object> quickSalePrefs() => <String, Object>{
+          PosSettingsNotifier.quickSaleWithSpaceKey: true,
+        };
+
+    testWidgets(
+        'default OFF (no saved value): SPACE still opens the payment '
+        'dialog — bit-for-bit the pre-quick-sale behaviour', (tester) async {
+      await _pumpApp(tester, dio: dio);
+      addLine(tester, line24);
+      await tester.pump();
+      await focusWorkspace(tester);
+
+      expect(await pressSpace(tester), isTrue);
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('payment-dialog')), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'ON: SPACE completes the sale directly as full cash of the amount '
+        'due — no dialog, one POST, cart cleared', (tester) async {
+      await _pumpApp(tester, dio: dio, initialPrefs: quickSalePrefs());
+      addLine(tester, line24);
+      await tester.pump();
+      await focusWorkspace(tester);
+
+      expect(await pressSpace(tester), isTrue);
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('payment-dialog')), findsNothing,
+          reason: 'quick sale never opens the payment dialog');
+      final cart = containerOf(tester).read(posCartProvider);
+      expect(cart.isEmpty, isTrue, reason: 'the sale completed and reset');
+      expect(cart.lastResult, isNotNull);
+      expect(cart.lastResult!.paymentMethod, 'cash');
+      expect(cart.lastResult!.status, 'completed');
+
+      final bodies = verify(
+        () => dio.post(
+          _salesPath,
+          data: captureAny(named: 'data'),
+          options: any(named: 'options'),
+        ),
+      ).captured;
+      expect(bodies, hasLength(1));
+      final payload = Map<String, dynamic>.from(bodies.single as Map);
+      expect(payload['payment_method'], 'cash');
+      expect(payload['paid'], '240.00',
+          reason: 'paid is exactly the amount due (24 × 10)');
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('ON: an empty cart is rejected — toast, no sale POST', (
+      tester,
+    ) async {
+      await _pumpApp(tester, dio: dio, initialPrefs: quickSalePrefs());
+      await focusWorkspace(tester);
+
+      expect(await pressSpace(tester), isTrue);
+      await tester.pump();
+
+      expect(find.byKey(const Key('payment-dialog')), findsNothing);
+      expect(find.text(AppStrings.t('cart_empty', 'en')), findsWidgets);
+      verifyNever(
+        () => dio.post(
+          _salesPath,
+          data: any(named: 'data'),
+          options: any(named: 'options'),
+        ),
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'ON: repeated SPACE presses never duplicate the sale — one POST '
+        'total', (tester) async {
+      await _pumpApp(tester, dio: dio, initialPrefs: quickSalePrefs());
+      addLine(tester, line24);
+      await tester.pump();
+      await focusWorkspace(tester);
+
+      // Hammer the key: the first press enters the pipeline, every repeat
+      // is swallowed by the in-flight guard (or sees the emptied cart).
+      await pressSpace(tester);
+      await pressSpace(tester);
+      await pressSpace(tester);
+      await tester.pumpAndSettle();
+      await pressSpace(tester);
+      await tester.pumpAndSettle();
+
+      final bodies = verify(
+        () => dio.post(
+          _salesPath,
+          data: captureAny(named: 'data'),
+          options: any(named: 'options'),
+        ),
+      ).captured;
+      expect(bodies, hasLength(1),
+          reason: 'exactly one sale may ever leave one quick-sale intent');
+      expect(containerOf(tester).read(posCartProvider).isEmpty, isTrue);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'ON: SPACE inside the search field keeps its normal typing meaning '
+        '— no sale, focus untouched', (tester) async {
+      await _pumpApp(tester, dio: dio, initialPrefs: quickSalePrefs());
+      addLine(tester, line24);
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('pos-search-field')));
+      await tester.pump();
+
+      final handled = await pressSpace(tester);
+
+      expect(handled, isFalse,
+          reason: 'with quick sale on, a focused text field keeps SPACE');
+      expect(find.byKey(const Key('payment-dialog')), findsNothing);
+      expect(containerOf(tester).read(posCartProvider).isEmpty, isFalse,
+          reason: 'the cart is untouched');
+      verifyNever(
+        () => dio.post(
+          _salesPath,
+          data: any(named: 'data'),
+          options: any(named: 'options'),
+        ),
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'ON: SPACE inside a cart quantity field never fires a sale', (
+      tester,
+    ) async {
+      await _pumpApp(tester, dio: dio, initialPrefs: quickSalePrefs());
+      addLine(tester, line24);
+      await tester.pump();
+      final key = containerOf(tester).read(posCartProvider).lines.first.key;
+      await tester.enterText(find.byKey(Key('cart-line-qty-$key')), '24');
+      await tester.pump();
+
+      final handled = await pressSpace(tester);
+
+      expect(handled, isFalse,
+          reason: 'an immediate sale must never fire under the fingers');
+      expect(find.byKey(const Key('payment-dialog')), findsNothing);
+      expect(containerOf(tester).read(posCartProvider).isEmpty, isFalse);
+      verifyNever(
+        () => dio.post(
+          _salesPath,
+          data: any(named: 'data'),
+          options: any(named: 'options'),
+        ),
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('ON: the PAY button still opens the payment dialog', (
+      tester,
+    ) async {
+      await _pumpApp(tester, dio: dio, initialPrefs: quickSalePrefs());
+      addLine(tester, line24);
+      await tester.pump();
+
+      await tester.tap(find.byKey(const Key('pos-pay-button')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('payment-dialog')), findsOneWidget,
+          reason: 'method choice stays reachable through PAY');
+      await tester.tap(find.byKey(const Key('payment-cancel')));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('ON: the other POS shortcuts keep working (F7 / F12)', (
+      tester,
+    ) async {
+      await _pumpApp(tester, dio: dio, initialPrefs: quickSalePrefs());
+      addLine(tester, line24);
+      await tester.pump();
+      await focusWorkspace(tester);
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.f7);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('invoice-discount-dialog')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('invoice-discount-submit')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('invoice-discount-dialog')), findsNothing);
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.f12);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('clear-cart-confirm')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('clear-cart-confirm')));
+      await tester.pumpAndSettle();
+      expect(containerOf(tester).read(posCartProvider).isEmpty, isTrue);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'ON: the shortcuts map documents the quick-sale semantics on the '
+        'Space row', (tester) async {
+      await _pumpApp(tester, dio: dio, initialPrefs: quickSalePrefs());
+      await tester.pump(const Duration(milliseconds: 500));
+
+      await tester.tap(find.byKey(const Key('pos-shortcuts-button')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('shortcuts-dialog')), findsOneWidget);
+      expect(find.text(AppStrings.t('sc_a_quick_sale', 'en')), findsOneWidget);
+      expect(
+        find.text(AppStrings.t('sc_d_quick_sale', 'en')),
+        findsOneWidget,
+      );
+      await tester.tap(find.byKey(const Key('shortcuts-close')));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'ON: a failed checkout surfaces the error and keeps the cart (no '
+        'silent fake success)', (tester) async {
+      _mockDio(dio, saleErrorStatus: 500);
+      await _pumpApp(tester, dio: dio, initialPrefs: quickSalePrefs());
+      addLine(tester, line24);
+      await tester.pump();
+      await focusWorkspace(tester);
+
+      await pressSpace(tester);
+      await tester.pumpAndSettle();
+
+      final cart = containerOf(tester).read(posCartProvider);
+      expect(cart.isEmpty, isFalse,
+          reason: 'a failed sale keeps the cart for a safe retry');
+      expect(cart.lastError, isNotNull,
+          reason: 'the server failure reached the cart state');
+      expect(find.byType(SnackBar), findsOneWidget,
+          reason: 'an error toast surfaced instead of silent success');
       expect(tester.takeException(), isNull);
     });
   });

@@ -17,8 +17,10 @@
 // a height that tracks the window, so the map never overflows at 800×600
 // nor stacks Arabic characters in a 78px cell.
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/strings.dart';
+import '../settings/pos_settings_provider.dart';
 
 /// One line of the keyboard map: key combination → action, scope, meaning.
 ///
@@ -79,15 +81,25 @@ void showShortcutsDialog(BuildContext context) {
   );
 }
 
-class ShortcutsHelpDialog extends StatelessWidget {
+class ShortcutsHelpDialog extends ConsumerWidget {
   const ShortcutsHelpDialog({super.key});
 
+  /// The Space row describes what the key actually DOES: the ordinary
+  /// payment dialog, or — when the operator preference is on — the
+  /// direct quick sale (full cash payment of the amount due, no dialog).
+  /// The map is documentation only, so it simply mirrors the setting.
+  static _ShortcutRow _effectiveRow(_ShortcutRow row, bool quickSale) {
+    if (!quickSale || row.keys != 'Space') return row;
+    return _ShortcutRow(row.keys, 'sc_a_quick_sale', row.scopeKey, 'sc_d_quick_sale');
+  }
+
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final loc = Localizations.localeOf(context).languageCode;
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
     final view = MediaQuery.sizeOf(context);
+    final quickSale = ref.watch(posSettingsProvider).quickSaleWithSpace;
 
     // Responsive sizing: the map grows with the window but always stays
     // inside the dialog's 40px inset, and the body height is what is left
@@ -236,7 +248,7 @@ class ShortcutsHelpDialog extends StatelessWidget {
                           height: 1,
                           color: cs.outline.withValues(alpha: 0.14),
                         ),
-                      bodyRow(_shortcutRows[i]),
+                      bodyRow(_effectiveRow(_shortcutRows[i], quickSale)),
                     ],
                   ],
                 ),

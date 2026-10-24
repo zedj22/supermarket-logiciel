@@ -27,7 +27,17 @@ import 'zakat_pdf.dart';
 import 'zakat_providers.dart';
 import 'zakat_widgets.dart';
 
-const List<String> _kInventoryBases = <String>['market', 'cost', 'override'];
+// Merchandise valuation bases — mirrors backend `InventoryBasis`. The
+// wholesale option values remaining stock at each product's configured
+// wholesale price (transparent retail fallback + warning when a product
+// has none); the override option stays the safe manual review path when
+// the data model cannot estimate market value reliably.
+const List<String> _kInventoryBases = <String>[
+  'market',
+  'cost',
+  'wholesale',
+  'override',
+];
 const List<String> _kDebtTreatments = <String>[
   'deduct_all',
   'deduct_due_only',
@@ -937,6 +947,46 @@ class _ZakatScreenState extends ConsumerState<ZakatScreen>
                 '${zakatMoneyLabel(r.inventoryValue)} '
                 '(${AppStrings.t(zakatBasisKey(r.inventoryBasis), loc)})',
           ),
+          // Stock-only breakdown — the CURRENT remaining quantity plus
+          // the two reference valuations and the 2.5 % estimate on the
+          // merchandise value alone. Server-computed; informational only
+          // (never added to the net again). Null on old snapshots.
+          if (r.inventoryQuantity != null) ...[
+            ZakatResultRow(
+              labelKey: 'zakat_stock_qty',
+              value: zakatMoneyLabel(r.inventoryQuantity),
+              testKey: const Key('zakat-result-stock-qty'),
+            ),
+            ZakatResultRow(
+              labelKey: 'zakat_stock_cost_value',
+              value: zakatMoneyLabel(r.inventoryCostValue),
+              testKey: const Key('zakat-result-stock-cost'),
+            ),
+            ZakatResultRow(
+              labelKey: 'zakat_stock_market_value',
+              value: zakatMoneyLabel(r.inventoryMarketValue),
+              testKey: const Key('zakat-result-stock-market'),
+            ),
+            ZakatResultRow(
+              labelKey: 'zakat_stock_only_zakat',
+              value:
+                  '${zakatMoneyLabel(r.inventoryStockOnlyZakat)} '
+                  '${AppStrings.t('currency', loc)}',
+              emphasized: true,
+              testKey: const Key('zakat-result-stock-only-zakat'),
+            ),
+            Padding(
+              padding: const EdgeInsets.only(top: 2, bottom: 4),
+              child: Text(
+                AppStrings.t('zakat_stock_only_note', loc),
+                key: const Key('zakat-stock-only-note'),
+                style: theme.textTheme.bodySmall?.copyWith(
+                  fontStyle: FontStyle.italic,
+                  color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
+                ),
+              ),
+            ),
+          ],
           ZakatResultRow(
             labelKey: 'zakat_row_cash',
             value: r.cashProvided

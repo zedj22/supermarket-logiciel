@@ -129,6 +129,42 @@ void main() {
     });
   });
 
+  group('DATABASE_CONSTRAINT envelope code (a 409 that is NOT stock)', () {
+    // Regression: a database integrity failure arrives as HTTP 409 and
+    // must never render the stock-conflict copy — the envelope code
+    // decides before the status fallback.
+    for (final loc in _locales) {
+      test('$loc 409 + DATABASE_CONSTRAINT → database_constraint', () {
+        final failure = posApiError(
+          _http(409, data: {
+            'error': {
+              'code': 'DATABASE_CONSTRAINT',
+              'message': 'A database constraint was violated',
+            },
+          }),
+          loc,
+        );
+        expect(failure.message, AppStrings.t('database_constraint', loc));
+        expect(failure.message, isNot('database_constraint'));
+        expect(failure.message, isNot(AppStrings.t('stock_conflict', loc)));
+        expect(failure.detail, 'A database constraint was violated');
+      });
+    }
+
+    test('409 with code CONFLICT still renders the stock copy', () {
+      final failure = posApiError(
+        _http(409, data: {
+          'error': {
+            'code': 'CONFLICT',
+            'message': 'Purchase cancellation would make stock negative',
+          },
+        }),
+        'en',
+      );
+      expect(failure.message, AppStrings.t('stock_conflict', 'en'));
+    });
+  });
+
   group('headline vs detail contract', () {
     test('posApiMessage returns the localized headline only', () {
       expect(
@@ -171,6 +207,7 @@ void main() {
         'permission_discount',
         'permission_credit',
         'stock_conflict',
+        'database_constraint',
         'validation_error',
         'api_error_retry',
         'network_error_retry',

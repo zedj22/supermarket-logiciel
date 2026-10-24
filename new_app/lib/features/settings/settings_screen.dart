@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/raw_scanner/raw_scanner_poc.dart';
 import '../../core/strings.dart';
 import '../../l10n/locale_provider.dart';
 import '../../theme/app_theme_mode.dart';
@@ -12,7 +13,8 @@ import '../loyalty/loyalty_models.dart';
 import '../loyalty/loyalty_providers.dart';
 import 'backup_models.dart';
 import 'backup_provider.dart';
-import 'scan_diagnostics_panel.dart';
+import 'pos_settings_provider.dart';
+import 'raw_scanner_poc_panel.dart';
 import 'scan_settings_provider.dart';
 import 'settings_models.dart';
 import 'settings_provider.dart';
@@ -132,7 +134,15 @@ class SettingsScreen extends ConsumerWidget {
             const SizedBox(height: 16),
             const _ScanActionsSection(),
             const SizedBox(height: 16),
-            const ScanDiagnosticsSection(),
+            const _PosActionsSection(),
+            // Scanner diagnostics (ScanDiagnosticsSection) is intentionally
+            // NOT rendered here for now — the implementation, its panel
+            // widget and its tests remain in scan_diagnostics_panel.dart
+            // so the surface can be re-added unchanged later.
+            if (kRawScannerPocEnabled) ...[
+              const SizedBox(height: 16),
+              const RawScannerPocSection(),
+            ],
             if (canManage) ...[
               const SizedBox(height: 16),
               const _StoreSettingsSection(),
@@ -207,6 +217,52 @@ class _ScanActionsSection extends ConsumerWidget {
               value: settings.openAdjustStockOnOutOfStockScan,
               onChanged: (value) =>
                   notifier.setOpenAdjustStockOnOutOfStockScan(value),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Client-local POS operator preferences (SharedPreferences, same
+/// synchronous-read pattern as the scan actions): currently the Quick Sale
+/// with Space toggle. OFF by default — an installation that never saved a
+/// value keeps the ordinary Space → payment-dialog flow. Deliberately not
+/// part of the server-owned StoreSettings surface: a per-device operator
+/// preference, no backend, schema or migration involved. Like
+/// language/theme/scan actions, every user sees it.
+class _PosActionsSection extends ConsumerWidget {
+  const _PosActionsSection();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    final loc = ref.watch(localeProvider).flutterLocale.languageCode;
+    final settings = ref.watch(posSettingsProvider);
+    final notifier = ref.read(posSettingsProvider.notifier);
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              AppStrings.t('settings_pos_actions', loc),
+              style: theme.textTheme.titleMedium,
+            ),
+            SwitchListTile(
+              key: const Key('settings-quick-sale-with-space'),
+              contentPadding: EdgeInsets.zero,
+              title: Text(
+                AppStrings.t('quick_sale_with_space', loc),
+              ),
+              subtitle: Text(
+                AppStrings.t('quick_sale_with_space_desc', loc),
+              ),
+              value: settings.quickSaleWithSpace,
+              onChanged: (value) => notifier.setQuickSaleWithSpace(value),
             ),
           ],
         ),

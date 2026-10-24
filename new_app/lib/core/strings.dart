@@ -262,6 +262,10 @@ class AppStrings {
     'open_adjust_stock_on_out_of_stock_scan': 'فتح تعديل المخزون عند مسح منتج نفد مخزونه',
     'open_adjust_stock_on_out_of_stock_scan_desc':
         'يعرض نافذة تعديل المخزون مباشرة عندما يرفض نقطة البيع البيع لنفاد المخزون',
+    'settings_pos_actions': 'إجراءات الكاشير',
+    'quick_sale_with_space': 'البيع السريع بزر المسافة',
+    'quick_sale_with_space_desc':
+        'عند التفعيل: يُكمل مفتاح المسافة البيع مباشرةً كدفع نقدي كامل بالمبلغ المستحق دون فتح نافذة الدفع. عند الإيقاف: يفتح المسافة نافذة الدفع كالمعتاد.',
     // تشخيص المسح (المرحلة A — مراقبة آمنة للخصوصية)
     'settings_scan_diagnostics': 'تشخيص المسح',
     'scan_diagnostics_desc':
@@ -476,6 +480,9 @@ class AppStrings {
     'line_discount': 'خصم السطر',
     'invoice_discount': 'خصم الفاتورة',
     'discount': 'خصم',
+    'discount_type_amount': 'المبلغ (دج)',
+    'discount_type_percent': 'النسبة (%)',
+    'discount_percent_too_high': 'النسبة لا يمكن أن تتجاوز 100%',
     'payment': 'الدفع',
     'card': 'بطاقة',
     'partial': 'دفع جزئي',
@@ -533,6 +540,7 @@ class AppStrings {
     'price_override_server_price': 'سعر الخادم (المعتمد)',
     'price_override_acknowledge': 'أقرّ بالفروق وأتابع',
     'stock_conflict': 'تعارض المخزون — راجع الكميات',
+    'database_constraint': 'خطأ في قاعدة البيانات — تواصل مع الدعم',
     'permission_discount': 'لا تملك صلاحية الخصومات',
     'permission_credit': 'لا تملك صلاحية البيع الآجل',
     'search_focus': 'بحث (F4)',
@@ -568,6 +576,7 @@ class AppStrings {
     'sc_a_customer': 'اختيار العميل',
     'sc_a_invoice_discount': 'خصم الفاتورة',
     'sc_a_payment': 'الدفع',
+    'sc_a_quick_sale': 'بيع سريع',
     'sc_a_hold': 'تعليق البيع',
     'sc_a_held_sales': 'المبيعات المعلقة',
     'sc_a_sales_history': 'سجل المبيعات',
@@ -585,6 +594,8 @@ class AppStrings {
     'sc_d_customer': 'اختيار عميل هذه البيعة',
     'sc_d_invoice_discount': 'خصم على الفاتورة كاملة',
     'sc_d_payment': 'فتح الدفع من مساحة البيع أو من حقل كمية السلة',
+    'sc_d_quick_sale':
+        'إتمام البيع مباشرة كدفع نقدي كامل بالمبلغ المستحق (بدون نافذة الدفع)',
     'sc_d_hold': 'تعليق البيع الحالي',
     'sc_d_held_sales': 'استعادة بيع معلق',
     'sc_d_sales_history': 'مراجعة المبيعات المنجزة',
@@ -1452,6 +1463,7 @@ class AppStrings {
     'zakat_inventory_basis': 'أساس تخزين البضائع',
     'zakat_basis_market': 'سعر السوق',
     'zakat_basis_cost': 'التكلفة (متوسط)',
+    'zakat_basis_wholesale': 'بيع بالجملة',
     'zakat_basis_override': 'إدخال يدوي',
     'zakat_debt_treatment': 'طريقة احتساب الديون',
     'zakat_method_deduct_all': 'خصم كل الديون',
@@ -1511,6 +1523,8 @@ class AppStrings {
     'zakat_warn_below_nisab': 'الصافي دون النصاب — لا زكاة واجبة.',
     'zakat_warn_gold_price_manual':
         'سعر الذهب مُدخل يدويًا — تحقّق من السعر الرسمي.',
+    'zakat_warn_wholesale_retail_fallback':
+        'بعض الأسطر بلا سعر جملة مُهيّأ — قُدّمت بسعر البيع بالتجزئة.',
     // ---- Zakat — screen-only labels ----
     'zakat': 'الزكاة',
     'zakat_title': 'حاسبة الزكاة (زكاة التجارة)',
@@ -1532,6 +1546,13 @@ class AppStrings {
     'zakat_official_nisab_note': 'من سعر الذهب الرسمي (85 غ)',
     'zakat_use_imported': 'استخدام مخزون المنتجات المستورد',
     'zakat_imported_summary': 'مخزون مستورد',
+    'zakat_stock_qty': 'كمية المخزون المتبقية',
+    'zakat_stock_cost_value': 'قيمة تكلفة المخزون (للمرجع)',
+    'zakat_stock_market_value': 'القيمة السوقية التقديرية للبضائع المتبقية',
+    'zakat_stock_only_zakat': 'تقدير الزكاة على المخزون فقط (2.5%)',
+    'zakat_stock_only_note':
+        'تقدير على المخزون فقط — زكاة العمل الكاملة تعتمد أيضًا على النقد '
+        'والديون القابلة للتحصيل والديون عليك والنصاب والمذهب الفقهي المطبق.',
     'zakat_override_value': 'قيمة البضائع اليدوية',
     'zakat_override_reason': 'سبب الإدخال اليدوي',
     'zakat_override_incomplete': 'القيمة اليدوية تتطلب المبلغ والسبب.',
@@ -1650,6 +1671,28 @@ class AppStrings {
     'hw_pnp_error': 'خطأ',
     'hw_pnp_unknown': 'غير معروف',
     'hw_port_probe_note': 'يُفحص الوجود فقط ولا يُفتح المنفذ، فقد يكون مستخدماً في البيع.',
+    'raw_scanner_title': 'قارئ الإدخال الخام (تجريبي)',
+    'raw_scanner_desc': 'POC: فك ترميز المسح من جهاز قارئ واحد مُتعلَّم بمعزل عن تخطيط لوحة مفاتيح ويندوز — دون إعادة ضبط التخطيط أو القارئ. تبقى البوابة الحالية تعمل كبديل. للجلسة فقط ومعطّلة افتراضياً: تعلَّم القارئ نفسه فقط (وليس لوحة مفاتيح للطباعة) وفعّله أثناء الاختبار فقط.',
+    'raw_scanner_enable': 'تفعيل / تعطيل POC',
+    'raw_scanner_status_on': 'POC مفعّل — تُحذف مفاتيح جهاز القارئ وتُفك ترميزها من الإدخال الخام',
+    'raw_scanner_status_off': 'POC معطّل — تعمل بوابة المسح المعتادة',
+    'raw_scanner_layout': 'تخطيط لوحة مفاتيح القارئ',
+    'raw_scanner_layout_us': 'أمريكي (QWERTY)',
+    'raw_scanner_layout_fr': 'فرنسي (AZERTY)',
+    'raw_scanner_layout_ar': 'عربي (الجزائر)',
+    'raw_scanner_learn': 'تعلّم القارئ',
+    'raw_scanner_learn_armed': 'جاهز — شغّل الآن مسحاً واحداً بالقارئ',
+    'raw_scanner_learned': 'الأجهزة المُتعلَّمة',
+    'raw_scanner_learned_none': 'لا يوجد جهاز مُتعلَّم بعد',
+    'raw_scanner_raw_seen': 'مفاتيح الخام المرصودة',
+    'raw_scanner_raw_matched': 'مفاتيح القارئ المطابَقة',
+    'raw_scanner_dropped': 'مفاتيح محذوفة',
+    'raw_scanner_passed': 'مفاتيح مُمرَّرة',
+    'raw_scanner_order_violations': 'مخالفات الترتيب',
+    'raw_scanner_reset_stats': 'إعادة تعيين العدّادات',
+    'raw_scanner_last_scan': 'آخر فك ترميز',
+    'raw_scanner_no_scans': 'لا يوجد',
+    'raw_scanner_unavailable': 'الإدخال الخام غير متاح — هذه البطاقة موجودة فقط في نسخة PoC على ويندوز',
   };
 
   static const Map<String, String> _french = {
@@ -1871,6 +1914,10 @@ class AppStrings {
         "Ouvrir l'ajustement du stock pour un article en rupture",
     'open_adjust_stock_on_out_of_stock_scan_desc':
         'Affiche la fenêtre d\'ajustement du stock dès que le POS refuse une vente pour rupture de stock',
+    'settings_pos_actions': 'Actions de caisse',
+    'quick_sale_with_space': 'Vente rapide avec la barre d\'espace',
+    'quick_sale_with_space_desc':
+        'Activé : la barre d\'espace encaisse directement le montant exact en espèces, sans dialogue de paiement. Désactivé : la barre d\'espace ouvre le dialogue de paiement.',
     // Diagnostique de scan (Phase A — observation respectueuse de la vie privée)
     'settings_scan_diagnostics': 'Diagnostique de scan',
     'scan_diagnostics_desc':
@@ -2088,6 +2135,9 @@ class AppStrings {
     'line_discount': 'Remise ligne',
     'invoice_discount': 'Remise facture',
     'discount': 'Remise',
+    'discount_type_amount': 'Montant (DZD)',
+    'discount_type_percent': 'Pourcentage (%)',
+    'discount_percent_too_high': 'Le pourcentage ne peut pas dépasser 100 %',
     'payment': 'Paiement',
     'card': 'Carte',
     'partial': 'Partiel',
@@ -2145,6 +2195,8 @@ class AppStrings {
     'price_override_server_price': 'Prix serveur (fait foi)',
     'price_override_acknowledge': 'J\u2019ai pris note et je continue',
     'stock_conflict': 'Conflit de stock — vérifiez les quantités',
+    'database_constraint':
+        'Erreur de contrainte en base de données — contactez le support',
     'permission_discount': 'Permission remise refusée',
     'permission_credit': 'Permission crédit refusée',
     'search_focus': 'Recherche (F4)',
@@ -2180,6 +2232,7 @@ class AppStrings {
     'sc_a_customer': 'Choisir le client',
     'sc_a_invoice_discount': 'Remise facture',
     'sc_a_payment': 'Paiement',
+    'sc_a_quick_sale': 'Vente rapide',
     'sc_a_hold': 'Mettre en attente',
     'sc_a_held_sales': 'Ventes en attente',
     'sc_a_sales_history': 'Historique des ventes',
@@ -2197,6 +2250,8 @@ class AppStrings {
     'sc_d_customer': 'Choisir le client de la vente',
     'sc_d_invoice_discount': 'Remise sur toute la facture',
     'sc_d_payment': 'Ouvrir le paiement depuis l’espace de vente ou un champ quantité',
+    'sc_d_quick_sale':
+        'Encaisser directement le montant exact en espèces (sans dialogue de paiement)',
     'sc_d_hold': 'Mettre la vente en attente',
     'sc_d_held_sales': 'Reprendre une vente en attente',
     'sc_d_sales_history': 'Consulter les ventes terminées',
@@ -3096,6 +3151,7 @@ class AppStrings {
     'zakat_inventory_basis': "Base d'évaluation des marchandises",
     'zakat_basis_market': 'Prix du marché',
     'zakat_basis_cost': 'Coût (moyenne)',
+    'zakat_basis_wholesale': 'Vente en gros',
     'zakat_basis_override': 'Saisie manuelle',
     'zakat_debt_treatment': 'Traitement des dettes',
     'zakat_method_deduct_all': 'Déduction de toutes les dettes',
@@ -3161,6 +3217,9 @@ class AppStrings {
     'zakat_warn_below_nisab': 'Net inférieur au nisab — aucune Zakat due.',
     'zakat_warn_gold_price_manual':
         "Prix de l'or saisi manuellement — vérifiez le prix officiel.",
+    'zakat_warn_wholesale_retail_fallback':
+        "Certaines lignes n'ont pas de prix de gros configuré — valorisées "
+        "au prix de détail.",
     // ---- Zakat — screen-only labels ----
     'zakat': 'Zakat',
     'zakat_title': 'Calculateur de Zakat (Zakat al-Tijarah)',
@@ -3183,6 +3242,14 @@ class AppStrings {
     'zakat_official_nisab_note': "D'après le prix officiel de l'or (85 g)",
     'zakat_use_imported': 'Utiliser le stock importé des produits',
     'zakat_imported_summary': 'Stock importé',
+    'zakat_stock_qty': 'Quantité restante en stock',
+    'zakat_stock_cost_value': 'Valeur au coût du stock (repère)',
+    'zakat_stock_market_value': 'Valeur de revente estimée des marchandises',
+    'zakat_stock_only_zakat': 'Estimation de la Zakat sur le seul stock (2,5 %)',
+    'zakat_stock_only_note':
+        "Estimation sur le seul stock — la Zakat complète de l'entreprise "
+        "dépend aussi des espèces, des créances recouvrables, des dettes, "
+        "du nisab et de la méthodologie juridique appliquée.",
     'zakat_override_value': 'Valeur manuelle des marchandises',
     'zakat_override_reason': 'Motif de la saisie manuelle',
     'zakat_override_incomplete': 'La valeur manuelle exige le montant et le motif.',
@@ -3301,6 +3368,28 @@ class AppStrings {
     'hw_pnp_error': 'Erreur',
     'hw_pnp_unknown': 'Inconnu',
     'hw_port_probe_note': 'Seule la présence est vérifiée : le port n\'est pas ouvert, il peut être utilisé par la caisse.',
+    'raw_scanner_title': 'Scanner en entrée raw (expérimental)',
+    'raw_scanner_desc': 'POC : décode les scans depuis un périphérique scanner appris, quelle que soit la disposition clavier Windows — sans reconfigurer la disposition ni le scanner. La passerelle existante reste active en secours. Session seule, désactivé par défaut : n\'apprenez que le scanner lui-même (jamais un clavier de saisie) et activez-le pendant un test uniquement.',
+    'raw_scanner_enable': 'Activer / désactiver le POC',
+    'raw_scanner_status_on': 'POC ACTIF — les touches du scanner sont supprimées et décodées depuis l\'entrée raw',
+    'raw_scanner_status_off': 'POC INACTIF — la passerelle scanner habituelle est utilisée',
+    'raw_scanner_layout': 'Disposition clavier du scanner',
+    'raw_scanner_layout_us': 'US (QWERTY)',
+    'raw_scanner_layout_fr': 'France (AZERTY)',
+    'raw_scanner_layout_ar': 'Arabe (Algérie)',
+    'raw_scanner_learn': 'Apprendre le scanner',
+    'raw_scanner_learn_armed': 'Armé — déclenchez maintenant un scan avec le scanner',
+    'raw_scanner_learned': 'Périphériques appris',
+    'raw_scanner_learned_none': 'Aucun périphérique appris pour l\'instant',
+    'raw_scanner_raw_seen': 'Touches brutes vues',
+    'raw_scanner_raw_matched': 'Touches scanner appariées',
+    'raw_scanner_dropped': 'Touches supprimées',
+    'raw_scanner_passed': 'Touches transmises',
+    'raw_scanner_order_violations': 'Violations d\'ordre',
+    'raw_scanner_reset_stats': 'Réinitialiser les compteurs',
+    'raw_scanner_last_scan': 'Dernier décodé',
+    'raw_scanner_no_scans': 'aucun',
+    'raw_scanner_unavailable': 'Entrée raw indisponible — cette carte n\'existe que dans un build PoC sous Windows',
   };
 
   static const Map<String, String> _english = {
@@ -3523,6 +3612,10 @@ class AppStrings {
         'Open Adjust Stock for an out-of-stock scan',
     'open_adjust_stock_on_out_of_stock_scan_desc':
         'Shows the adjust-stock dialog whenever a scan-triggered add is rejected for insufficient stock',
+    'settings_pos_actions': 'POS actions',
+    'quick_sale_with_space': 'Quick sale with Space',
+    'quick_sale_with_space_desc':
+        'On: Space completes the sale immediately as a full cash payment of the amount due — no payment dialog. Off: Space opens the payment dialog as usual.',
     // Scan diagnostics (Phase A — privacy-safe observation)
     'settings_scan_diagnostics': 'Scan diagnostics',
     'scan_diagnostics_desc':
@@ -3740,6 +3833,9 @@ class AppStrings {
     'line_discount': 'Line discount',
     'invoice_discount': 'Invoice discount',
     'discount': 'Discount',
+    'discount_type_amount': 'Amount (DZD)',
+    'discount_type_percent': 'Percentage (%)',
+    'discount_percent_too_high': 'Percentage cannot exceed 100%',
     'payment': 'Payment',
     'card': 'Card',
     'partial': 'Partial',
@@ -3797,6 +3893,7 @@ class AppStrings {
     'price_override_server_price': 'Server price (authoritative)',
     'price_override_acknowledge': 'I acknowledge and continue',
     'stock_conflict': 'Stock conflict — review quantities',
+    'database_constraint': 'Database constraint error — contact support',
     'permission_discount': 'You do not have discount permission',
     'permission_credit': 'You do not have credit sale permission',
     'search_focus': 'Search (F4)',
@@ -3832,6 +3929,7 @@ class AppStrings {
     'sc_a_customer': 'Choose customer',
     'sc_a_invoice_discount': 'Invoice discount',
     'sc_a_payment': 'Payment',
+    'sc_a_quick_sale': 'Quick sale',
     'sc_a_hold': 'Hold sale',
     'sc_a_held_sales': 'Held sales',
     'sc_a_sales_history': 'Sales history',
@@ -3849,6 +3947,8 @@ class AppStrings {
     'sc_d_customer': 'Pick the customer for this sale',
     'sc_d_invoice_discount': 'Discount on the whole invoice',
     'sc_d_payment': 'Open payment from the workspace or a cart quantity field',
+    'sc_d_quick_sale':
+        'Complete the sale directly as a full cash payment of the amount due (no payment dialog)',
     'sc_d_hold': 'Park the current sale',
     'sc_d_held_sales': 'Restore a parked sale',
     'sc_d_sales_history': 'Review completed sales',
@@ -4738,6 +4838,7 @@ class AppStrings {
     'zakat_inventory_basis': 'Merchandise valuation basis',
     'zakat_basis_market': 'Market price',
     'zakat_basis_cost': 'Cost (average)',
+    'zakat_basis_wholesale': 'Wholesale price',
     'zakat_basis_override': 'Manual entry',
     'zakat_debt_treatment': 'Debt treatment',
     'zakat_method_deduct_all': 'Deduct all debts',
@@ -4797,6 +4898,9 @@ class AppStrings {
     'zakat_warn_below_nisab': 'Net below the nisab — no zakat due.',
     'zakat_warn_gold_price_manual':
         'Gold price entered manually — verify the official price.',
+    'zakat_warn_wholesale_retail_fallback':
+        'Some lines have no configured wholesale price — valued at the '
+        'retail price.',
     // ---- Zakat — screen-only labels ----
     'zakat': 'Zakat',
     'zakat_title': 'Zakat Calculator (Zakat al-Tijarah)',
@@ -4819,6 +4923,14 @@ class AppStrings {
     'zakat_official_nisab_note': 'From the official gold price (85 g)',
     'zakat_use_imported': 'Use the imported product stock',
     'zakat_imported_summary': 'Imported stock',
+    'zakat_stock_qty': 'Remaining stock quantity',
+    'zakat_stock_cost_value': 'Inventory cost value (reference)',
+    'zakat_stock_market_value': 'Estimated market selling value of stock',
+    'zakat_stock_only_zakat': 'Stock-only Zakat estimate (2.5%)',
+    'zakat_stock_only_note':
+        'Stock-only estimate — the complete business Zakat also depends on '
+        'cash, eligible receivables, liabilities, the nisab, and the '
+        'applicable scholarly methodology.',
     'zakat_override_value': 'Manual merchandise value',
     'zakat_override_reason': 'Reason for manual entry',
     'zakat_override_incomplete': 'A manual value needs both the amount and the reason.',
@@ -4937,5 +5049,27 @@ class AppStrings {
     'hw_pnp_error': 'Error',
     'hw_pnp_unknown': 'Unknown',
     'hw_port_probe_note': 'Presence only: the port is never opened — the POS may be using it.',
+    'raw_scanner_title': 'Raw input scanner (experimental)',
+    'raw_scanner_desc': 'PoC: decode scans from one learned scanner device regardless of the Windows keyboard layout — no layout or scanner reconfiguration. The existing gateway stays active as fallback. Session-only, off by default: only learn the scanner itself (never a typing keyboard) and enable it during a test only.',
+    'raw_scanner_enable': 'Enable / disable PoC',
+    'raw_scanner_status_on': 'PoC ON — scanner-device keys are suppressed and decoded from raw input',
+    'raw_scanner_status_off': 'PoC OFF — the ordinary scanner gateway is in use',
+    'raw_scanner_layout': 'Scanner keyboard layout',
+    'raw_scanner_layout_us': 'US (QWERTY)',
+    'raw_scanner_layout_fr': 'France (AZERTY)',
+    'raw_scanner_layout_ar': 'Arabic (Algeria)',
+    'raw_scanner_learn': 'Learn scanner',
+    'raw_scanner_learn_armed': 'Armed — now trigger one scan with the scanner',
+    'raw_scanner_learned': 'Learned devices',
+    'raw_scanner_learned_none': 'No device learned yet',
+    'raw_scanner_raw_seen': 'Raw keys seen',
+    'raw_scanner_raw_matched': 'Scanner keys matched',
+    'raw_scanner_dropped': 'Keys suppressed',
+    'raw_scanner_passed': 'Keys passed through',
+    'raw_scanner_order_violations': 'Order violations',
+    'raw_scanner_reset_stats': 'Reset counters',
+    'raw_scanner_last_scan': 'Last decoded',
+    'raw_scanner_no_scans': 'none',
+    'raw_scanner_unavailable': 'Raw input unavailable — this card only exists in a PoC build on Windows',
   };
 }

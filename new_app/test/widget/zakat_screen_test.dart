@@ -247,6 +247,7 @@ void main() {
     MockDio dio, {
     List<String> scopes = _viewerScopes,
     String roleName = 'admin',
+    Map<String, dynamic> Function()? calculateJson,
   }) {
     when(() => dio.interceptors).thenReturn(Interceptors());
     when(() => dio.options).thenReturn(BaseOptions());
@@ -263,7 +264,10 @@ void main() {
         if (data is Map) {
           calculateBodies.add(Map<String, dynamic>.from(data));
         }
-        return okResponse(_calculatePath, _calculateJson());
+        return okResponse(
+          _calculatePath,
+          (calculateJson ?? _calculateJson)(),
+        );
       }
       if (path == _zakatPath) {
         return okResponse(_zakatPath, <String, dynamic>{}, );
@@ -588,6 +592,136 @@ void main() {
         find.text(AppStrings.t('field_required', 'ar')),
         findsWidgets,
       );
+    });
+  });
+
+  // Stock-only breakdown + wholesale valuation basis. The server values
+  // CURRENT remaining stock at the chosen basis and returns the qty /
+  // cost / market reference figures plus the 2.5 % estimate on the
+  // merchandise value alone — clearly labelled on screen as NOT the
+  // complete business zakat (cash / receivables / liabilities / nisab
+  // stay in the net formula).
+  group('Zakat screen — stock-only breakdown & wholesale basis', () {
+    Map<String, dynamic> calculateWithBreakdown() {
+      final json = _calculateJson();
+      final result =
+          Map<String, dynamic>.from(json['result'] as Map<String, dynamic>);
+      result
+        ..['inventory_quantity'] = '40.000'
+        ..['inventory_cost_value'] = '2800.000'
+        ..['inventory_market_value'] = '4000.000'
+        ..['inventory_stock_only_zakat'] = '100.000';
+      return Map<String, dynamic>.from(json)..['result'] = result;
+    }
+
+    Future<void> runCalculate(WidgetTester tester) async {
+      await tester.ensureVisible(find.byKey(const Key('zakat-field-collectible')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const Key('zakat-field-collectible')),
+        '100',
+      );
+      await tester.pump();
+      await tester.ensureVisible(find.byKey(const Key('zakat-calculate')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('zakat-calculate')));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets(
+        'result card shows remaining qty, cost vs market value and the '
+        'stock-only 2.5% estimate with its not-the-full-zakat note',
+        (tester) async {
+      final dio = MockDio();
+      stubRequests(dio, calculateJson: calculateWithBreakdown);
+      final container = await pumpLogin(tester, dio);
+      containerGoZakat(container);
+      await tester.pumpAndSettle();
+      await runCalculate(tester);
+
+      expect(find.byKey(const Key('zakat-result')), findsOneWidget);
+      final qty = tester.widget<Text>(
+        find.byKey(const Key('zakat-result-stock-qty')),
+      );
+      expect(qty.data, contains('40'));
+      final cost = tester.widget<Text>(
+        find.byKey(const Key('zakat-result-stock-cost')),
+      );
+      expect(cost.data, contains('2 800'),
+          reason: 'cost value shown for reference, at 3-decimal precision');
+      final market = tester.widget<Text>(
+        find.byKey(const Key('zakat-result-stock-market')),
+      );
+      expect(market.data, contains('4 000'),
+          reason: 'market selling value differs from cost');
+      final only = tester.widget<Text>(
+        find.byKey(const Key('zakat-result-stock-only-zakat')),
+      );
+      expect(only.data, contains('100'));
+      expect(only.data, contains(AppStrings.t('currency', 'ar')));
+      expect(only.style!.fontWeight, FontWeight.w700);
+      expect(find.byKey(const Key('zakat-stock-only-note')), findsOneWidget);
+      expect(
+        find.textContaining(AppStrings.t('zakat_stock_only_note', 'ar')),
+        findsOneWidget,
+        reason: 'the note states this is NOT the complete business zakat',
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('old snapshots without a breakdown render no stock-only rows',
+        (tester) async {
+      final dio = MockDio();
+      stubRequests(dio);
+      final container = await pumpLogin(tester, dio);
+      containerGoZakat(container);
+      await tester.pumpAndSettle();
+      await runCalculate(tester);
+
+      expect(find.byKey(const Key('zakat-result')), findsOneWidget);
+      for (final key in [
+        'zakat-result-stock-qty',
+        'zakat-result-stock-cost',
+        'zakat-result-stock-market',
+        'zakat-result-stock-only-zakat',
+        'zakat-stock-only-note',
+      ]) {
+        expect(find.byKey(Key(key)), findsNothing, reason: 'absent: $key');
+      }
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'the basis dropdown offers wholesale and the payload carries the '
+        'chosen basis (market default untouched)', (tester) async {
+      final dio = MockDio();
+      stubRequests(dio);
+      final container = await pumpLogin(tester, dio);
+      containerGoZakat(container);
+      await tester.pumpAndSettle();
+
+      await tester.ensureVisible(find.byKey(const Key('zakat-field-basis')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('zakat-field-basis')));
+      await tester.pumpAndSettle();
+      for (final basis in ['market', 'cost', 'wholesale', 'override']) {
+        // The selected value renders both on the closed button and in
+        // the open menu — every basis label must resolve at least once.
+        expect(
+          find.text(AppStrings.t('zakat_basis_$basis', 'ar')),
+          findsWidgets,
+          reason: 'basis option missing: $basis',
+        );
+      }
+
+      await tester.tap(
+        find.text(AppStrings.t('zakat_basis_wholesale', 'ar')).last,
+      );
+      await tester.pumpAndSettle();
+      await runCalculate(tester);
+
+      expect(calculateBodies.single['inventory_basis'], 'wholesale');
+      expect(tester.takeException(), isNull);
     });
   });
 
