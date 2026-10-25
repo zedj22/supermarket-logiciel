@@ -670,6 +670,15 @@ class PosSearchNotifier extends StateNotifier<PosSearchState> {
   final int _pageSize;
   Timer? _debounce;
 
+  /// The pending/typed search text. [PosSearchState.query] instead holds
+  /// the query the VISIBLE items were loaded with (set together with the
+  /// rows on a completed page-1 load, cleared by [clear]) — so a keystroke
+  /// updates ONLY this field and never notifies listeners: a wedge burst
+  /// typing a barcode must not rebuild the whole POS screen once per
+  /// digit. The debounced [load] still runs on this text, and a submit
+  /// that misses re-runs [load] with exactly what the cashier typed.
+  String _query = '';
+
   /// Monotonic token bumped whenever the RESULT SET changes (search text,
   /// category, reset, page-1 reload). In-flight responses from an older
   /// generation are discarded — a slow page-2 can never append rows into a
@@ -687,13 +696,25 @@ class PosSearchNotifier extends StateNotifier<PosSearchState> {
   // message the cashier reads.
   String _message(DioException e) => posApiMessage(e, _localeCode());
 
+  /// The search text this notifier tracks — the pending typed text, which
+  /// equals the loaded query once a page-1 load with it completes. What
+  /// [seedSearchField] restores on rebuild: the field and the notifier
+  /// always describe the same term, including a burst whose debounce had
+  /// not fired when the page State was disposed.
+  String get trackedQuery => _query;
+
   void setQuery(String value) {
+    // Bump at CALL time: a page-1 load or append already in flight must be
+    // dropped the moment the text changes, not when the debounce fires.
     _generation++;
-    state = state.copyWith(
-      query: value,
-      clearError: true,
-      clearLoadMoreError: true,
-    );
+    _query = value;
+    // Touch state ONLY when clearing an on-screen search error (typing
+    // must visibly dismiss it). Every other keystroke stays inside this
+    // notifier — per-digit notifications rebuilt the entire POS screen
+    // once per scanned character.
+    if (state.error != null || state.loadMoreError != null) {
+      state = state.copyWith(clearError: true, clearLoadMoreError: true);
+    }
     _debounce?.cancel();
     _debounce = Timer(kPosSearchDebounce, load);
   }
@@ -717,11 +738,31 @@ class PosSearchNotifier extends StateNotifier<PosSearchState> {
   void clear() {
     _debounce?.cancel();
     _generation++;
+    _query = '';
     state = PosSearchState(pageSize: _pageSize);
   }
 
-  Map<String, dynamic> _pageParams(int page) {
-    final q = state.query.trim();
+  /// A completed scan submit resolves ITS OWN code (the canonical barcode
+  /// lookup) — the pending digit-search debounce would only fire mid-chain
+  /// as a wasted catalog request racing the resolve. The typed text stays
+  /// in [_query]: a lookup miss still re-runs [load] with it.
+  void cancelPendingSearch() => _debounce?.cancel();
+
+  /// Continuous-scan hygiene: drop the typed text, the pending debounce
+  /// and any in-flight search WITHOUT touching the loaded rows — a scan
+  /// that never disturbed the panel must not refetch the catalog (the
+  /// browse list already on screen stays exactly as it is).
+  void resetQuery() {
+    _debounce?.cancel();
+    _generation++;
+    _query = '';
+    if (state.query.isNotEmpty) {
+      state = state.copyWith(query: '');
+    }
+  }
+
+  Map<String, dynamic> _pageParams(int page, String query) {
+    final q = query.trim();
     return <String, dynamic>{
       'page': page,
       'page_size': state.pageSize,
@@ -731,10 +772,10 @@ class PosSearchNotifier extends StateNotifier<PosSearchState> {
     };
   }
 
-  Future<Map<String, dynamic>> _fetch(int page) async {
+  Future<Map<String, dynamic>> _fetch(int page, String query) async {
     final response = await _dio.get(
       kPosCatalogPath,
-      queryParameters: _pageParams(page),
+      queryParameters: _pageParams(page, query),
     );
     final data = response.data;
     return data is Map ? Map<String, dynamic>.from(data) : const {};
@@ -758,8 +799,13 @@ class PosSearchNotifier extends StateNotifier<PosSearchState> {
   }
 
   /// Page-1 replacement: initial load, debounced search, category switch.
+  /// Fetches with the pending [_query] and lands [PosSearchState.query]
+  /// TOGETHER with the items — the state query always describes exactly
+  /// the rows on screen (the "was the panel disturbed?" signal a scan's
+  /// post-add hygiene reads).
   Future<void> load() async {
     _debounce?.cancel();
+    final query = _query;
     final generation = ++_generation;
     state = state.copyWith(
       loading: true,
@@ -769,13 +815,14 @@ class PosSearchNotifier extends StateNotifier<PosSearchState> {
       clearLoadMoreError: true,
     );
     try {
-      final data = await _fetch(1);
+      final data = await _fetch(1, query);
       if (generation != _generation) return;
       final items = _parseItems(data);
       final total = _parseTotal(data, items.length);
       final pages = _parsePages(data, total, state.pageSize);
       state = state.copyWith(
         items: items,
+        query: query,
         currentPage: 1,
         total: total,
         pages: pages,
@@ -798,7 +845,7 @@ class PosSearchNotifier extends StateNotifier<PosSearchState> {
     final page = state.currentPage + 1;
     state = state.copyWith(loadingMore: true, clearLoadMoreError: true);
     try {
-      final data = await _fetch(page);
+      final data = await _fetch(page, state.query);
       if (generation != _generation) return;
       final incoming = _parseItems(data);
       final merged = <ProductModel>[...state.items];

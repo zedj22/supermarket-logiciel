@@ -218,8 +218,13 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     );
     BarcodeScannerGateway.instance.register(_scanHandler);
     // The catalog query outlives this page State: restore the box so the
-    // visible input and the loaded catalog always describe the same term.
-    seedSearchField(_searchController, ref.read(posSearchProvider).query);
+    // visible input and the tracked catalog term always describe the same
+    // search (the notifier's text covers a burst whose debounce had not
+    // fired when this State was disposed).
+    seedSearchField(
+      _searchController,
+      ref.read(posSearchProvider.notifier).trackedQuery,
+    );
     Future.microtask(() async {
       // Await the catalog first: the cart's per-line stock snapshots are
       // re-seeded from what actually loads (a purchase received while the
@@ -678,6 +683,11 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     }
     _submitSearchInFlight = true;
     try {
+      // This submit resolves the code itself — the pending digit-search
+      // debounce would only fire mid-chain as a wasted catalog request
+      // racing the resolve (and a panel churn right before the add). The
+      // typed text stays: a lookup miss re-runs load() with exactly it.
+      ref.read(posSearchProvider.notifier).cancelPendingSearch();
       final resolve = await _resolveAndAddBarcode(query);
       if (resolve == _ScanResolve.hit) return;
       // Fresh results for THIS query (cancels the pending debounce), then
@@ -752,7 +762,16 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     });
     try {
       final dio = ref.read(apiClientProvider).dio;
-      final response = await dio.get('/api/v1/products/$productId');
+      // Round-trip triage: all three decision fetches depend only on the
+      // resolved product id, so they START together — the add costs one
+      // more sequential round trip (the product response, the only gate
+      // that can carry a fresh price/stock/promotion for the cart) instead
+      // of three. The lookup above still runs alone first: its productId
+      // keys everything here.
+      final productFuture = dio.get('/api/v1/products/$productId');
+      final variantsFuture = _fetchActiveVariants(productId);
+      final unitsFuture = _fetchActiveSellingUnits(productId);
+      final response = await productFuture;
       final product =
           ProductModel.fromJson(response.data as Map<String, dynamic>);
       if (!mounted) {
@@ -761,7 +780,12 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       }
       // Gateway/qty-field scan add: the scan input keeps focus (see
       // [_clearSearchAfterAdd]); the qty field is never auto-focused.
-      await _addProduct(product, fromScan: true);
+      await _addProduct(
+        product,
+        fromScan: true,
+        variantsFuture: variantsFuture,
+        unitsFuture: unitsFuture,
+      );
       _clearSearchAfterAdd();
       return _ScanResolve.hit;
     } on DioException {
@@ -781,13 +805,29 @@ class _PosScreenState extends ConsumerState<PosScreen> {
   void _clearSearchAfterAdd() {
     if (!mounted) return;
     _searchController.clear();
-    ref.read(posSearchProvider.notifier).clear();
-    // The clear above resets the catalog state to an EMPTY result set
-    // (no query, no items) — without an immediate reload the product
-    // panel sticks on the "No matching products" empty state until the
-    // cashier navigates away and back. Reload the normal product list
-    // right away (same clear + load pairing Escape already uses).
-    unawaited(ref.read(posSearchProvider.notifier).load());
+    final notifier = ref.read(posSearchProvider.notifier);
+    final search = ref.read(posSearchProvider);
+    // The panel only needs a reload when what it shows no longer IS the
+    // browse list: a search query consumed text (state.query — which lands
+    // together with its rows, so it reads exactly "the visible items are
+    // filtered"), or nothing has loaded yet (initial load still in flight
+    // or a previous error). Otherwise the browse rows on screen are
+    // exactly what this clear must leave visible — a scan that never
+    // disturbed the search must NOT refetch the whole catalog (that was a
+    // full page-1 request per scanned barcode).
+    if (search.query.isNotEmpty || search.items.isEmpty) {
+      notifier.clear();
+      // The clear above resets the catalog state to an EMPTY result set
+      // (no query, no items) — without an immediate reload the product
+      // panel sticks on the "No matching products" empty state until the
+      // cashier navigates away and back. Reload the normal product list
+      // right away (same clear + load pairing Escape already uses).
+      unawaited(notifier.load());
+    } else {
+      // Undisturbed: keep the browse rows, drop the typed text / pending
+      // debounce / in-flight search instead.
+      notifier.resetQuery();
+    }
     // One physical scan must complete in exactly ONE consumer: if the qty
     // field currently holds a burst-in-progress (or any focused field
     // holds uncommitted input), the post-add search refocus would yank the
@@ -827,6 +867,10 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       'len': code.length,
       'suffix3': scanDiagSuffix3(code),
     });
+    // Same rule as the submit path: this scan resolves its own code — a
+    // digit-search debounce left over from an earlier focus change must
+    // not fire mid-resolve as a wasted catalog request.
+    ref.read(posSearchProvider.notifier).cancelPendingSearch();
     final resolve = await _resolveAndAddBarcode(code);
     if (resolve == _ScanResolve.hit) return;
     await _handleUnknownBarcode(
@@ -967,7 +1011,19 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     }
   }
 
-  Future<void> _addProduct(ProductModel product, {bool fromScan = false}) async {
+  /// [variantsFuture] / [unitsFuture]: prefetched choice lookups for the
+  /// scan path (both were started with the product fetch, see
+  /// [_resolveAndAddBarcode] — they collapse the add from three sequential
+  /// round trips to one). A catalog/manual add fetches them here exactly
+  /// as before. If the cashier WAITS in the variant picker the prefetched
+  /// unit snapshot is arbitrarily old, so that path discards it and
+  /// refetches after the dialog — the fresh-fetch contract unchanged.
+  Future<void> _addProduct(
+    ProductModel product, {
+    bool fromScan = false,
+    Future<_ChoicesLookup<VariantModel>>? variantsFuture,
+    Future<_ChoicesLookup<SellingUnitModel>>? unitsFuture,
+  }) async {
     final loc = ref.read(localeProvider).flutterLocale.languageCode;
     if (product.isArchived) {
       if (!mounted) return;
@@ -1002,7 +1058,8 @@ class _PosScreenState extends ConsumerState<PosScreen> {
 
     // Fetch variants once — only for this product (minimal lookup).
     // Failure ≠ empty: never direct-add when the decision lookup failed.
-    final variantLookup = await _fetchActiveVariants(product.id);
+    final variantLookup =
+        await (variantsFuture ?? _fetchActiveVariants(product.id));
     if (variantLookup.error != null) {
       _showLookupError(product, variantLookup.error!, fromScan: fromScan);
       return;
@@ -1025,6 +1082,9 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       // Restore barcode/search focus after dialog closes (keyboard-first).
       if (mounted) _searchFocusNode.requestFocus();
       if (variant == null) return; // cancelled
+      // The cashier waited in a dialog: the unit snapshot started together
+      // with the scan is now arbitrarily old — refetch it fresh below.
+      unitsFuture = null;
     }
 
     // FIX #8: selected variant with stock ≤ 0 → block before unit picker.
@@ -1048,7 +1108,8 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     }
 
     // Fetch selling units once for this product to decide dialog vs direct.
-    final unitLookup = await _fetchActiveSellingUnits(product.id);
+    final unitLookup =
+        await (unitsFuture ?? _fetchActiveSellingUnits(product.id));
     if (unitLookup.error != null) {
       _showLookupError(product, unitLookup.error!, fromScan: fromScan);
       return;

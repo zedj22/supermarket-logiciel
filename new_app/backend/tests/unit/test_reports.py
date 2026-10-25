@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import date, datetime, timedelta, timezone
-from decimal import Decimal
+from decimal import ROUND_DOWN, Decimal
 
 import pytest
 from fastapi.testclient import TestClient
@@ -646,6 +646,138 @@ def test_invalid_range_and_caps_return_report_codes(client, admin_headers):
         sort="balance",
     )
     assert body["error"]["code"] == "REPORT_SORT_INVALID"
+
+
+# ── 5b. profit percentage — markup ON COST ────────────────────────────────
+#
+# The §5.8 `margin_pct` column is the app-wide profit percentage: markup
+# ON COST = gross_profit / (cogs - return_cost) * 100, truncated to 2
+# decimals — the exact figure the Flutter table, the client CSV and the
+# server export show. It is NOT profit / revenue. The financial KPI
+# `profit_margin_pct` (net_profit / net_sales) is a separate accounting
+# metric and keeps its meaning.
+
+
+def _markup(row: dict) -> Decimal | None:
+    """The client's formula, recomputed from the emitted columns."""
+    cogs_net = Decimal(row["cogs"]) - Decimal(row["return_cost"])
+    if cogs_net <= 0:
+        return None
+    return (Decimal(row["gross_profit"]) / cogs_net * 100).quantize(
+        Decimal("0.01"), rounding=ROUND_DOWN
+    )
+
+
+def test_product_margin_pct_is_markup_on_cost(client, admin_headers, scenario):
+    items = _get(client, admin_headers, "/reports/products")["items"]
+    alpha = _row(items, "product", "Alpha")
+    # Returns adjust BOTH sides: profit 145.000 over net cost
+    # 300.000 - 60.000 = 240.000 -> 60.41%. The revenue basis said 37.66%.
+    assert Decimal(str(alpha["margin_pct"])) == Decimal("60.41")
+    assert Decimal(str(alpha["margin_pct"])) != Decimal("37.66")
+    for row in items:
+        expected = _markup(row)
+        if expected is None:
+            assert row["margin_pct"] is None, f"{row['kind']}/{row['name']}"
+        else:
+            assert Decimal(str(row["margin_pct"])) == expected, (
+                f"{row['kind']}/{row['name']}"
+            )
+
+
+def test_category_margin_pct_uses_the_same_markup(client, admin_headers, scenario):
+    items = _get(client, admin_headers, "/reports/categories")["items"]
+    assert items
+    for row in items:
+        expected = _markup(row)
+        if expected is None:
+            assert row["margin_pct"] is None, row["category"]
+        else:
+            assert Decimal(str(row["margin_pct"])) == expected, row["category"]
+
+
+def test_margin_pct_is_null_when_there_is_no_cost(client, admin_headers):
+    """Free / missing cost: no denominator, so no percentage — but the
+    absolute profit is still reported exactly."""
+    product = _product(
+        client, admin_headers, name="Freebie", price="100.000", cost="0.000"
+    )
+    _sale(
+        client,
+        admin_headers,
+        [_line(product["id"], quantity="1.000", unit_price="100.000")],
+        payment_method="cash",
+        paid="100.000",
+    )
+    items = _get(client, admin_headers, "/reports/products")["items"]
+    row = _row(items, "product", "Freebie")
+    assert row["margin_pct"] is None
+    assert Decimal(row["gross_profit"]) == Decimal("100.000")
+    assert _markup(row) is None
+
+
+def test_margin_sort_orders_by_the_markup_the_ui_shows(client, admin_headers):
+    """`sort=margin_pct` ranks rows by markup on cost, never by revenue.
+
+    The three products all sell at the same 100.000 revenue, so the old
+    revenue basis put the free product (100% margin on price) first.
+    Markup on cost is undefined for it, so it must sort last, and the
+    percentages shown must never increase down the page.
+    """
+    high = _product(
+        client, admin_headers, name="Sort High", price="100.000", cost="20.000"
+    )
+    low = _product(
+        client, admin_headers, name="Sort Low", price="100.000", cost="90.000"
+    )
+    free = _product(
+        client, admin_headers, name="Sort Free", price="100.000", cost="0.000"
+    )
+    for product in (high, low, free):
+        _sale(
+            client,
+            admin_headers,
+            [_line(product["id"], quantity="1.000", unit_price="100.000")],
+            payment_method="cash",
+            paid="100.000",
+        )
+
+    body = _get(client, admin_headers, "/reports/products", sort="margin_pct")
+    rows = body["items"]
+    by_name = {row["name"]: row for row in rows}
+    assert Decimal(str(by_name["Sort High"]["margin_pct"])) == Decimal("400.00")
+    assert Decimal(str(by_name["Sort Low"]["margin_pct"])) == Decimal("11.11")
+    assert by_name["Sort Free"]["margin_pct"] is None
+
+    order = [row["name"] for row in rows]
+    assert order.index("Sort High") < order.index("Sort Low")
+    assert order.index("Sort Low") < order.index("Sort Free")
+    assert rows[-1]["name"] == "Sort Free"
+    shown = [
+        Decimal(str(row["margin_pct"]))
+        for row in rows
+        if row["margin_pct"] is not None
+    ]
+    assert shown == sorted(shown, reverse=True)
+
+
+def test_margin_sort_and_financial_kpi_stay_separate_metrics(
+    client, admin_headers, scenario
+):
+    """Same response window: the row markup and the financial KPI are
+    different ratios and must not be conflated."""
+    financial = _get(client, admin_headers, "/reports/financial")
+    kpi = Decimal(financial["profit_margin_pct"])
+    assert kpi == (
+        Decimal(financial["net_profit"]) / Decimal(financial["net_sales"]) * 100
+    ).quantize(Decimal("0.01"))
+
+    alpha = _row(
+        _get(client, admin_headers, "/reports/products")["items"], "product", "Alpha"
+    )
+    # 145 / 240 (markup) is not 145 / 385 (net revenue), nor the KPI.
+    assert Decimal(str(alpha["margin_pct"])) == Decimal("60.41")
+    assert kpi != Decimal(str(alpha["margin_pct"]))
 
 
 # ── 6. snapshots ──────────────────────────────────────────────────────────

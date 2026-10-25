@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import date, datetime, time, timedelta, timezone
-from decimal import Decimal
+from decimal import ROUND_DOWN, Decimal
 from typing import Any
 
 from app.core.exceptions import ValidationError
@@ -78,10 +78,35 @@ def _money(value: Decimal | int | float | str) -> Decimal:
 
 
 def _percent(numerator: Decimal, denominator: Decimal) -> Decimal:
-    """2-decimal percentage, 0.00 whenever the denominator is not positive."""
+    """2-decimal percentage, 0.00 whenever the denominator is not positive.
+
+    Accounting percentages (net margin on revenue, device share, …) — NOT
+    the app-wide profit figure, which is `_markup_percent` below.
+    """
     if denominator <= 0:
         return _ZERO.quantize(_PCT)
     return (to_decimal(numerator) / to_decimal(denominator) * 100).quantize(_PCT)
+
+
+def _markup_percent(gross_profit: Decimal, cogs_net: Decimal) -> Decimal | None:
+    """Markup ON COST for a §5.8 product/category row.
+
+    ``((selling_price - cost_price) / cost_price) * 100`` — for a report row
+    that is ``gross_profit / (cogs - return_cost) * 100`` (returns are cost
+    back out of the denominator too), never profit over revenue.
+
+    Truncated toward zero to 2 decimals so the export carries byte-identical
+    digits to the Flutter table and the client CSV
+    (`core/markup_percent.dart` truncates its integer hundredths the same
+    way). ``None`` when there is no positive net cost to divide by (free /
+    missing cost): the cell exports empty, exactly like the client CSV and
+    the table's em dash — never a fabricated 0.00 or an infinity.
+    """
+    if cogs_net <= 0:
+        return None
+    return (to_decimal(gross_profit) / to_decimal(cogs_net) * 100).quantize(
+        _PCT, rounding=ROUND_DOWN
+    )
 
 
 class ReportService:
@@ -314,6 +339,11 @@ class ReportService:
         net_after_returns = net_revenue - raw["return_amount"]
         cogs_net = raw["cogs"] - raw["return_cost"]
         gross_profit = net_after_returns - cogs_net
+        # Quantise first, then divide: the markup is derived from exactly
+        # the digits the client shows for `gross_profit` / `cogs` /
+        # `return_cost`, so table, client CSV and export always agree.
+        gross_profit_q = _money(gross_profit)
+        cogs_net_q = _money(raw["cogs"]) - _money(raw["return_cost"])
         return ProductReportRow(
             item_id=raw["item_id"],
             kind=raw["kind"],
@@ -330,8 +360,8 @@ class ReportService:
             return_amount=_money(raw["return_amount"]),
             cogs=_money(raw["cogs"]),
             return_cost=_money(raw["return_cost"]),
-            gross_profit=_money(gross_profit),
-            margin_pct=_percent(gross_profit, net_after_returns),
+            gross_profit=gross_profit_q,
+            margin_pct=_markup_percent(gross_profit_q, cogs_net_q),
         )
 
     @classmethod
@@ -340,6 +370,8 @@ class ReportService:
         net_after_returns = net_revenue - raw["return_amount"]
         cogs_net = raw["cogs"] - raw["return_cost"]
         gross_profit = net_after_returns - cogs_net
+        gross_profit_q = _money(gross_profit)
+        cogs_net_q = _money(raw["cogs"]) - _money(raw["return_cost"])
         return CategoryReportRow(
             category_id=raw["category_id"],
             category=raw["category"],
@@ -352,8 +384,8 @@ class ReportService:
             return_amount=_money(raw["return_amount"]),
             cogs=_money(raw["cogs"]),
             return_cost=_money(raw["return_cost"]),
-            gross_profit=_money(gross_profit),
-            margin_pct=_percent(gross_profit, net_after_returns),
+            gross_profit=gross_profit_q,
+            margin_pct=_markup_percent(gross_profit_q, cogs_net_q),
         )
 
     def products(

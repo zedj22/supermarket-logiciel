@@ -50,7 +50,11 @@ LABELS: dict[str, tuple[str, str, str]] = {
     "kpi_expenses_external": ("خارجية", "Externes", "External"),
     "kpi_gross_profit": ("الربح الإجمالي", "Bénéfice brut", "Gross profit"),
     "kpi_net_profit": ("صافي الربح", "Bénéfice net", "Net profit"),
-    "kpi_margin": ("هامش الربح", "Marge", "Margin"),
+    "kpi_margin": (
+        "هامش صافي الربح على المبيعات",
+        "Marge nette sur ventes",
+        "Net margin on sales",
+    ),
     "kpi_paid_cash": ("مدفوع نقدًا", "Payé espèces", "Paid cash"),
     "kpi_paid_card": ("مدفوع بالبطاقة", "Payé carte", "Paid card"),
     "kpi_paid_partial": ("دفعات جزئية", "Payé partiel", "Paid partial"),
@@ -206,7 +210,8 @@ LABELS: dict[str, tuple[str, str, str]] = {
     "col_returns_amount": ("قيمة المرتجع", "Montant retourné", "Returns amount"),
     "col_cogs": ("التكلفة", "Coût", "COGS"),
     "col_gross_profit": ("الربح الإجمالي", "Bénéfice brut", "Gross profit"),
-    "col_margin": ("الهامش", "Marge", "Margin"),
+    # Markup ON COST (profit / net COGS) — same wording as strings.dart.
+    "col_margin": ("الهامش على التكلفة", "Marge sur coût", "Markup on cost"),
     "col_expenses": ("المصروفات", "Dépenses", "Expenses"),
     "col_net_profit": ("صافي الربح", "Bénéfice net", "Net profit"),
     "col_category": ("الفئة", "Catégorie", "Category"),

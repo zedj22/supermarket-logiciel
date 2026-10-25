@@ -77,5 +77,19 @@ void main() {
         expect(value, contains('{available}'));
       }
     });
+
+    test('the pack percentage label names markup on cost in every locale', () {
+      // Same wording family as the product form's `markup` label: the
+      // figure under the pack estimate is profit / cost, never / price.
+      expect(AppStrings.t('estimated_margin', 'en'), 'Estimated markup on cost');
+      expect(AppStrings.t('estimated_margin', 'fr'), 'Marge estimée sur coût');
+      expect(
+        AppStrings.t('estimated_margin', 'ar'),
+        'الهامش المقدّر على التكلفة',
+      );
+      expect(AppStrings.t('markup', 'en'), 'Markup');
+      expect(AppStrings.t('markup', 'fr'), 'Marge sur coût');
+      expect(AppStrings.t('markup', 'ar'), 'هامش على التكلفة');
+    });
   });
 }

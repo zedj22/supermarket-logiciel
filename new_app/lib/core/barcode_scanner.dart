@@ -284,6 +284,22 @@ class BarcodeScannerGateway {
   /// staleness input for pass-through runs ([kBarcodeRunStaleGap]).
   Duration? _lastDigitAt;
 
+  /// Cross-origin duplicate record — the last SUCCESSFULLY dispatched
+  /// code, its origin, and the wall-clock millisecond of that dispatch
+  /// (see [_dropCrossOriginDuplicate]).
+  String? _dupLastCode;
+  bool _dupLastFromRaw = false;
+  int _dupLastAtMs = 0;
+
+  /// Window in which the SAME code arriving from the OTHER dispatch
+  /// origin counts as the same physical burst. One wedge burst spans
+  /// well over this as a whole, but the two observations of ONE burst —
+  /// the raw-PoC decoder's terminator and the legacy Enter key-down —
+  /// land within milliseconds of each other; a second burst cannot
+  /// complete inside the window, and same-origin repeats are never
+  /// matched anyway (see [_dropCrossOriginDuplicate]).
+  static const int kCrossOriginDispatchDupMs = 250;
+
   /// Installs (or re-arms) the listeners and claims [handler] as the
   /// current scan target.
   ///
@@ -341,6 +357,21 @@ class BarcodeScannerGateway {
       });
       return false;
     }
+    // Rule 8 — one burst, one action: the native suppression that keeps
+    // legacy key messages off the raw path is best-effort with a
+    // documented order-violation window, so the legacy Enter dispatch may
+    // already have handed THIS run to a handler moments ago (or vice
+    // versa below). Only reached with a live owner, so a dropped
+    // observation here can never suppress the other origin's legitimate
+    // dispatch — it just refuses to act twice.
+    if (_dropCrossOriginDuplicate(code, fromRaw: true)) {
+      scanDiag('dispatch-drop', {
+        'reason': 'cross-origin-duplicate',
+        'len': code.length,
+        'suffix3': scanDiagSuffix3(code),
+      });
+      return false;
+    }
     // Same correlation contract as the Enter path — the id below is what
     // every downstream hop (scan-receive / scan-resolve / cart-add) reads.
     lastScanCorr = scanDiag('raw-dispatch', {
@@ -350,6 +381,28 @@ class BarcodeScannerGateway {
     });
     owner.onScan(code);
     return true;
+  }
+
+  /// Cross-origin duplicate suppression for completed dispatches: true =
+  /// [code] was ALREADY dispatched from the other origin within
+  /// [kCrossOriginDispatchDupMs] and this observation must be dropped.
+  ///
+  /// Only a dispatch that is about to reach a handler updates the record
+  /// (a dropped attempt — no-owner, shape — never does), so the raw path
+  /// being disarmed (dialog open, focused field) leaves the legacy path
+  /// free to act, and vice versa. Same-origin repeats never match: rapid
+  /// re-scans of one product must each add their own line.
+  bool _dropCrossOriginDuplicate(String code, {required bool fromRaw}) {
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    if (code == _dupLastCode &&
+        fromRaw != _dupLastFromRaw &&
+        nowMs - _dupLastAtMs <= kCrossOriginDispatchDupMs) {
+      return true;
+    }
+    _dupLastCode = code;
+    _dupLastFromRaw = fromRaw;
+    _dupLastAtMs = nowMs;
+    return false;
   }
 
   /// Capture state machine — the [HardwareKeyboard] half. Runs for every
@@ -437,6 +490,20 @@ class BarcodeScannerGateway {
         final owner = _runOwner();
         if (owner != null) {
           _consumed[event] = true;
+          // Rule 8 — one burst, one action: the raw-PoC decoder may have
+          // dispatched this very run through [dispatchExternalScan]
+          // moments ago (the native suppression's order-violation
+          // window lets both observations through). The run is still
+          // consumed — it IS a scan shape, never typing — but the ACTION
+          // belongs to exactly one dispatch.
+          if (_dropCrossOriginDuplicate(code, fromRaw: false)) {
+            scanDiag('dispatch-drop', {
+              'reason': 'cross-origin-duplicate',
+              'len': code.length,
+              'suffix3': scanDiagSuffix3(code),
+            });
+            return true;
+          }
           // `dispatch` is an ORIGIN: its seq id becomes the correlation id
           // of every downstream hop (scan-receive / scan-resolve /
           // cart-add). `target` names the screen that will consume it —
@@ -737,6 +804,19 @@ class BarcodeScannerGateway {
   @visibleForTesting
   bool handleKeyForTest(KeyEvent event) => _handleKeyEvent(event);
 
+  /// Test seam: forget only the cross-origin duplicate record. The record
+  /// is wall-clock based, so a test whose OWN two dispatches must both be
+  /// evaluated cannot inherit the previous test's dispatch even when the
+  /// two tests ran within the same [kCrossOriginDispatchDupMs] window.
+  /// Handlers and burst state stay untouched (the registered screens keep
+  /// scanning).
+  @visibleForTesting
+  void resetDispatchDedupForTest() {
+    _dupLastCode = null;
+    _dupLastFromRaw = false;
+    _dupLastAtMs = 0;
+  }
+
   /// Test hermeticity: forget every handler and any burst in progress,
   /// and restore the experimental flag to its default (OFF).
   /// The test binding already clears both listener lists between tests
@@ -745,6 +825,7 @@ class BarcodeScannerGateway {
   void resetForTest() {
     _handlers.clear();
     _resetBuffer();
+    resetDispatchDedupForTest();
     experimentalPhysicalDigitCapture = false;
   }
 }

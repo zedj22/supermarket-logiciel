@@ -130,7 +130,7 @@ class _PackDetailDialogState extends ConsumerState<PackDetailDialog> {
               ),
               if (pack.estimatedCost != null ||
                   pack.estimatedProfit != null ||
-                  pack.estimatedMarginPercent != null) ...[
+                  pack.estimatedMarkupPercent != null) ...[
                 const SizedBox(height: 4),
                 Text(
                   [
@@ -140,9 +140,12 @@ class _PackDetailDialogState extends ConsumerState<PackDetailDialog> {
                     if (pack.estimatedProfit != null)
                       '${AppStrings.t('estimated_profit', loc)}: '
                       '${bidiIsolateLtr(formatGrouped(pack.estimatedProfit!))}',
-                    if (pack.estimatedMarginPercent != null)
+                    // Markup ON COST, recomputed client-side from the two
+                    // figures above (the backend's `estimated_margin_percent`
+                    // is profit / price — never displayed).
+                    if (pack.estimatedMarkupPercent != null)
                       '${AppStrings.t('estimated_margin', loc)}: '
-                      '${bidiIsolateLtr('${pack.estimatedMarginPercent}%')}',
+                      '${bidiIsolateLtr(pack.estimatedMarkupPercent!)}',
                   ].join('  ·  '),
                   key: const Key('pack-detail-estimate'),
                   style: theme.textTheme.bodySmall?.copyWith(

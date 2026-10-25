@@ -216,7 +216,9 @@ String productsCsv(ProductReportPage page, String loc) {
         row.cogs,
         row.returnCost,
         row.grossProfit,
-        row.marginPct,
+        // Markup on cost; an empty cell (like the totals row) when the
+        // row has no positive cost — a percentage cannot be derived.
+        row.marginPct ?? '',
       ],
     _productTotalsRow(page.totals, loc),
   ];
@@ -255,7 +257,9 @@ String categoriesCsv(CategoryReportPage page, String loc) {
         row.cogs,
         row.returnCost,
         row.grossProfit,
-        row.marginPct,
+        // Markup on cost; an empty cell (like the totals row) when the
+        // row has no positive cost — a percentage cannot be derived.
+        row.marginPct ?? '',
       ],
     <String>[
       _t('label_total', loc),

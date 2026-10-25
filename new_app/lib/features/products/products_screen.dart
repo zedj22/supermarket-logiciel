@@ -17,6 +17,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/barcode_scanner.dart';
 import '../../core/scan_diagnostics.dart';
 import '../../core/colors.dart';
+import '../../core/markup_percent.dart';
 import '../../core/number_format.dart';
 import '../../core/numeric_text.dart';
 import '../../core/shortcuts.dart';
@@ -25,7 +26,6 @@ import '../../core/widgets/table_header.dart';
 import '../../l10n/locale_provider.dart';
 import '../../theme/app_theme.dart';
 import '../auth/permission_helpers.dart';
-import '../clients/customer_models.dart';
 import 'categories_dialog.dart';
 import 'label_print_dialog.dart';
 import 'models.dart';
@@ -81,27 +81,19 @@ String productStatusLabel(ProductStockStatus status, String loc) {
   }
 }
 
-/// Phase 17 — profit and margin for one product row (display only).
+/// Phase 17 — profit and markup for one product row (display only).
 ///
-/// Returns `(profit, margin)`: profit is `price - cost` in exact
-/// thousandths (`100.000 - 60.000` → `'40.000'`), margin is
-/// `profit / price` rendered `NN.NN%`. Margin is null when the price is 0
-/// — never divide by zero, the same rule the pack form applies to its
-/// estimated margin. Nothing here is persisted or sent anywhere.
-(String?, String?) productProfitMargin(ProductModel product) {
-  final priceMilli = moneyToMilli(product.price);
-  final costMilli = moneyToMilli(product.cost);
-  if (priceMilli == null || costMilli == null) return (null, null);
-  final value = priceMilli - costMilli;
-  if (priceMilli == 0) return (milliToMoney(value), null);
-  // hundredths of a percent, so 40.000 / 100.000 reads "40.00%".
-  final hundredths = (value * 10000) ~/ priceMilli;
-  final negative = hundredths < 0;
-  final abs = hundredths.abs();
-  final margin = '${negative ? '-' : ''}'
-      '${abs ~/ 100}.${(abs % 100).toString().padLeft(2, '0')}%';
-  return (milliToMoney(value), margin);
-}
+/// Returns `(profit, markup)`: profit is `price - cost` in exact
+/// thousandths (`100.000 - 60.000` → `'40.000'`), markup is
+/// `profit / cost` rendered `NN.NN%` — the app-wide profit percentage
+/// (profit as a percentage of COST, shared with the product form and the
+/// pack estimate, see `core/markup_percent.dart`).
+///
+/// Markup is null when the cost is not strictly positive — never divide
+/// by zero, never print a percentage that cannot mean anything. Nothing
+/// here is persisted or sent anywhere.
+(String?, String?) productProfitMarkup(ProductModel product) =>
+    profitAndMarkupRaw(priceRaw: product.price, costRaw: product.cost);
 
 /// Deterministic subdued category color from identity/name (no DB change).
 /// The palette itself lives with the other centralized tokens in
@@ -1116,7 +1108,7 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
     final showCost = canUpdate;
     final showUnit = mode == ProductsLayoutMode.wide;
     final showCategory = mode == ProductsLayoutMode.wide;
-    // Profit / margin / wholesale are wide-screen columns. Three extra
+    // Profit / markup / wholesale are wide-screen columns. Three extra
     // figures at 800–1199px squeeze the name cell under 50px — below the
     // thumbnail — so the medium table keeps the columns it always had.
     final showFinancials =
@@ -1134,7 +1126,7 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
       if (showFinancials)
         _Col(AppStrings.t('profit', loc), flex: 10, numeric: true),
       if (showFinancials)
-        _Col(AppStrings.t('margin', loc), flex: 15, numeric: true),
+        _Col(AppStrings.t('markup', loc), flex: 15, numeric: true),
       if (showFinancials)
         _Col(AppStrings.t('wholesale_price', loc), flex: 16, numeric: true),
       _Col(AppStrings.t('quantity', loc), flex: 10, numeric: true),
@@ -1307,9 +1299,9 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
             )),
           ),
         );
-        // Phase 17 pricing — profit / margin / wholesale columns.
+        // Phase 17 pricing — profit / markup / wholesale columns.
         if (showFinancials) {
-          final (profit, margin) = productProfitMargin(product);
+          final (profit, markup) = productProfitMarkup(product);
           cells.add(
             cell(
               i++,
@@ -1329,8 +1321,8 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
             cell(
               i++,
               _fitEnd(numericText(
-                margin ?? '—',
-                key: Key('product-margin-${product.id}'),
+                markup ?? '—',
+                key: Key('product-markup-${product.id}'),
                 style: AppTheme.numeric(theme, size: 14).copyWith(
                   fontWeight: FontWeight.w600,
                   color: cs.onSurface.withValues(alpha: 0.8),

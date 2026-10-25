@@ -25,6 +25,11 @@ String _m(String raw) => formatMoney(raw);
 
 String _pct(String raw) => '${formatMoney(raw)}%';
 
+/// Percentage cell for a derived metric: `'—'` when it is undefined (the
+/// row has no positive cost behind it), otherwise the same `NN.NN%` as
+/// [_pct]. Never renders `null%`.
+String _pctCell(String? raw) => raw == null ? '—' : _pct(raw);
+
 /// Localized enum label with a graceful raw fallback (never a `label_*`
 /// key leaking to the screen when the server sends an unknown code).
 String _enumLabel(String key, String raw, String loc) {
@@ -361,7 +366,7 @@ class _ProductsTabState extends ConsumerState<ProductsTab>
                                 _m(row.cogs),
                                 _m(row.returnCost),
                                 _m(row.grossProfit),
-                                _pct(row.marginPct),
+                                _pctCell(row.marginPct),
                               ],
                           ],
                           totalsRow: [
@@ -480,7 +485,7 @@ class _CategoriesTabState extends ConsumerState<CategoriesTab>
                     _m(row.cogs),
                     _m(row.returnCost),
                     _m(row.grossProfit),
-                    _pct(row.marginPct),
+                    _pctCell(row.marginPct),
                   ],
               ],
               totalsRow: [

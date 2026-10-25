@@ -399,7 +399,7 @@ const Map<String, Map<String, String>> docContent = <String, Map<String, String>
         'optional.',
     'cat_basics.s1.step1':
         'Enter the name, then the selling price. The cost field (and the '
-        'live profit/margin row) requires the product-update permission.',
+        'live profit/markup row) requires the product-update permission.',
     'cat_basics.s1.step2':
         'Scan or type a barcode if you use one — barcode scanners work '
         'keyboard-style anywhere in the form.',
@@ -1530,8 +1530,8 @@ const Map<String, Map<String, String>> docContent = <String, Map<String, String>
         'وسعر على الأقل؛ الباركود وSKU والتصنيف والوحدة وحدّ المخزون '
         'المنخفض ومعدل الضريبة والوصف وتاريخ الصلاحية اختيارية.',
     'cat_basics.s1.step1':
-        'أدخل الاسم ثم سعر البيع. حقل التكلفة (ومربحة/هامش الربح '
-        'الحي) يتطلب صلاحية تعديل المنتجات.',
+        'أدخل الاسم ثم سعر البيع. حقل التكلفة (ومربحة/هامش الربح على '
+        'التكلفة الحي) يتطلب صلاحية تعديل المنتجات.',
     'cat_basics.s1.step2':
         'امسح أو اكتب الباركود إن وُجد — تعمل قارئات الباركود بأسلوب '
         'لوحة المفاتيح في أي مكان داخل النموذج.',
@@ -2696,7 +2696,7 @@ const Map<String, Map<String, String>> docContent = <String, Map<String, String>
         'et date de péremption sont facultatifs.',
     'cat_basics.s1.step1':
         'Saisissez le nom, puis le prix de vente. Le champ coût (et la '
-        'ligne bénéfice/marge en direct) requiert la permission de '
+        'ligne bénéfice/marge sur coût en direct) requiert la permission de '
         'modification des produits.',
     'cat_basics.s1.step2':
         'Scannez ou tapez un code-barres si vous en utilisez — les '

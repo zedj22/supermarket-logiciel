@@ -192,7 +192,8 @@ def _products() -> ProductReportResponse:
         cogs=D("600.000"),
         return_cost=D("0.000"),
         gross_profit=D("400.000"),
-        margin_pct=D("40.00"),
+        # Markup ON COST: 400 / 600 = 66.66% (the revenue basis said 40.00%).
+        margin_pct=D("66.66"),
     )
     return ProductReportResponse(
         date_from=_EPOCH,
@@ -219,7 +220,8 @@ def _categories() -> CategoryReportResponse:
         cogs=D("600.000"),
         return_cost=D("0.000"),
         gross_profit=D("400.000"),
-        margin_pct=D("40.00"),
+        # Markup ON COST: 400 / 600 = 66.66% (the revenue basis said 40.00%).
+        margin_pct=D("66.66"),
     )
     return CategoryReportResponse(
         date_from=_EPOCH, date_to=_END, items=[row], totals=_report_totals()
@@ -596,6 +598,66 @@ def test_totals_rules_match_csv_contract():
 def test_build_spec_unknown_report():
     with pytest.raises(KeyError):
         build_spec("nope", _fin(), locale="en")
+
+
+# ── 2b. the `col_margin` column is markup ON COST ─────────────────────────
+
+
+@pytest.mark.parametrize("report", ["products", "categories"])
+def test_export_margin_column_is_markup_on_cost(report):
+    """400 profit on 600 cost exports as 66.66 — never 40.00, which is
+    profit over revenue. Same digits the Flutter table shows."""
+    spec = build_spec(report, _payload(report), locale="en")
+    block = spec.blocks[0]
+    assert block.headers[-1] == label("col_margin", "en")
+    assert block.headers[-1] == "Markup on cost"
+    assert block.kinds[-1] == "percent"
+    assert block.rows[0][-1] == "66.66"
+    assert block.rows[0][-1] != "40.00"
+
+
+def test_export_margin_column_is_empty_without_a_cost():
+    """No cost to divide by → `None` → empty cell (never a fabricated
+    0.00 or an infinity), like the client CSV's empty cell."""
+    payload = _products()
+    payload.items[0] = payload.items[0].model_copy(
+        update={"cogs": D("0.000"), "return_cost": D("0.000"), "margin_pct": None}
+    )
+    spec = build_spec("products", payload, locale="en")
+    assert spec.blocks[0].headers[-1] == label("col_margin", "en")
+    assert spec.blocks[0].rows[0][-1] == ""
+
+
+def test_export_margin_column_uses_returns_adjusted_cost():
+    """COGS basis includes returns: profit 145 over net cost 240 → 60.41."""
+    payload = _products()
+    payload.items[0] = payload.items[0].model_copy(
+        update={
+            "cogs": D("300.000"),
+            "return_cost": D("60.000"),
+            "gross_profit": D("145.000"),
+            "margin_pct": D("60.41"),
+        }
+    )
+    spec = build_spec("products", payload, locale="en")
+    row = spec.blocks[0].rows[0]
+    assert row[-1] == "60.41"  # col_margin
+    assert row[-4] == "300.000"  # col_cogs
+    assert row[-3] == "60.000"  # kpi_returns_cost
+    assert row[-2] == "145.000"  # col_gross_profit
+
+
+def test_export_keeps_the_net_margin_on_sales_kpi():
+    """The financial KPI stays net_profit / net_sales (an accounting
+    metric on revenue) and is only relabeled, never recomputed."""
+    payload = _fin(net_sales=D("735.000"), net_profit=D("300.000"),
+                   profit_margin_pct=D("40.82"))
+    spec = build_spec("financial", payload, locale="en")
+    block = spec.blocks[0]
+    index = block.headers.index(label("kpi_margin", "en"))
+    assert block.headers[index] == "Net margin on sales"
+    assert block.rows[0][index] == "40.82"
+    assert block.kinds[index] == "percent"
 
 
 # ── 3. meta lines (default omission) ──────────────────────────────────────

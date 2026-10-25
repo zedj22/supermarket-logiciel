@@ -202,11 +202,13 @@ void main() {
       // retail fallback warning and the stock-only breakdown surface
       // (remaining quantity, cost value, market selling value, the
       // 2.5% stock-only estimate and its not-the-full-zakat note) —
-      // 7 keys (1559).
+      // 7 keys (1559). The product-form markup-on-cost pass added the
+      // pricing-row percentage label (markup on cost, distinct from the
+      // products table's margin) — 1 key (1560).
       // Update this deliberately when a subphase
       // adds strings — an unexplained drop means keys were deleted from
       // one map only.
-      expect(_map('en').keys.length, 1559);
+      expect(_map('en').keys.length, 1560);
       expect(_map('ar').keys.length, _map('en').keys.length);
       expect(_map('fr').keys.length, _map('en').keys.length);
     });

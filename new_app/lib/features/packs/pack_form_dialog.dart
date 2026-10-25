@@ -12,8 +12,11 @@
 // product has no selling units only its base unit is offered.
 //
 // The dialog also renders the informational profitability preview
-// (estimated cost / profit / margin) from each component's live
-// `avg_cost` (Phase 7 PMP) — display only, nothing is persisted.
+// (estimated cost / profit / markup on cost) from each component's live
+// `avg_cost` (Phase 7 PMP) — display only, nothing is persisted. The
+// percentage is the app-wide profit-as-a-percentage-of-cost metric from
+// `core/markup_percent.dart`, computed on the pack's AGGREGATE estimated
+// cost (never on the selling price).
 //
 // Prices and quantities travel as decimal strings; no binary float is ever
 // written to the payload.
@@ -24,6 +27,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/markup_percent.dart';
 import '../../core/number_format.dart';
 import '../../core/numeric_text.dart';
 import '../../core/strings.dart';
@@ -264,10 +268,21 @@ class _PackFormDialogState extends ConsumerState<PackFormDialog> {
     return sum;
   }
 
-  double? get _estimatedMargin {
+  /// Markup on cost — profit as a percentage of the pack's AGGREGATE
+  /// estimated cost (Σ base quantity × avg_cost, the exact basis the
+  /// cost and profit figures above are built on).
+  ///
+  /// Shared definition: `core/markup_percent.dart`. Null whenever there is
+  /// no cost to divide by (an empty / free component list) or no selling
+  /// price typed yet — never divide by zero, never print a percentage that
+  /// cannot mean anything yet.
+  String? get _estimatedMarkup {
     final price = double.tryParse(_price.text.trim()) ?? 0;
-    if (price == 0) return null; // never divide by zero
-    return (_estimatedProfit / price) * 100;
+    if (price <= 0) return null; // nothing to be profitable about yet
+    final costMilli = (_estimatedCost * 1000).round();
+    if (costMilli <= 0) return null; // never divide by zero
+    final profitMilli = (_estimatedProfit * 1000).round();
+    return markupPercent(profitMilli: profitMilli, costMilli: costMilli);
   }
 
   double get _estimatedProfit {
@@ -468,17 +483,32 @@ class _PackFormDialogState extends ConsumerState<PackFormDialog> {
                     child: Text(
                       AppStrings.t('components', loc),
                       key: const Key('pack-components-label'),
+                      overflow: TextOverflow.ellipsis,
                       style: theme.textTheme.titleSmall?.copyWith(
                         fontWeight: FontWeight.w700,
                       ),
                     ),
                   ),
-                  Text(
-                    '${AppStrings.t('sum_of_parts', loc)}: $_sumOfParts',
-                    key: const Key('pack-sum-of-parts'),
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: theme.colorScheme.outline,
-                    ),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        AppStrings.t('sum_of_parts', loc),
+                        key: const Key('pack-sum-of-parts-label'),
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.outline,
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      numericText(
+                        _sumOfParts,
+                        key: const Key('pack-sum-of-parts'),
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.outline,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),
@@ -686,7 +716,7 @@ class _PackFormDialogState extends ConsumerState<PackFormDialog> {
   Widget _estimateBox(String loc, ThemeData theme) {
     final cost = _estimatedCost;
     final profit = _estimatedProfit;
-    final margin = _estimatedMargin;
+    final markup = _estimatedMarkup;
 
     return Container(
       key: const Key('pack-estimate'),
@@ -734,18 +764,18 @@ class _PackFormDialogState extends ConsumerState<PackFormDialog> {
               ),
             ],
           ),
-          if (margin != null)
+          if (markup != null)
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Text(
                   AppStrings.t('estimated_margin', loc),
-                  key: const Key('pack-estimated-margin-label'),
+                  key: const Key('pack-estimated-markup-label'),
                   style: theme.textTheme.bodySmall,
                 ),
                 numericText(
-                  '${_fmt(margin)}%',
-                  key: const Key('pack-estimated-margin'),
+                  markup,
+                  key: const Key('pack-estimated-markup'),
                   style: theme.textTheme.bodySmall?.copyWith(
                     fontWeight: FontWeight.w700,
                   ),

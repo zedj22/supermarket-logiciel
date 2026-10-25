@@ -120,7 +120,11 @@ class ProductReportRow(StrictBaseModel):
     cogs: Decimal
     return_cost: Decimal
     gross_profit: Decimal
-    margin_pct: Decimal
+    margin_pct: Decimal | None = None
+    """Markup ON COST — ``gross_profit / (cogs - return_cost) * 100``,
+    truncated to 2 decimals so it matches the Flutter table and the client
+    CSV digit for digit. ``None`` when net COGS is not positive (free /
+    missing cost): nothing to divide by, so no percentage is reported."""
 
 
 class ProductReportResponse(StrictBaseModel):
@@ -151,7 +155,9 @@ class CategoryReportRow(StrictBaseModel):
     cogs: Decimal
     return_cost: Decimal
     gross_profit: Decimal
-    margin_pct: Decimal
+    margin_pct: Decimal | None = None
+    """Markup ON COST — see ``ProductReportRow.margin_pct`` (same formula,
+    same truncation, ``None`` when net COGS is not positive)."""
 
 
 class CategoryReportResponse(StrictBaseModel):

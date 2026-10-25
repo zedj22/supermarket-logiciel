@@ -7,15 +7,45 @@
 // (§8 note: "Reports screens are the only place that assembles these;
 // no screen may compute money").
 //
+// EXCEPTION — the profit PERCENTAGE of a product / category row: money
+// totals are never touched, but the displayed percentage is derived here
+// from the returned money strings (markup on cost, `core/money.dart` +
+// `core/markup_percent.dart`) because the backend's `margin_pct` is a
+// different metric (gross profit / net revenue). See
+// `ProductReportRow.marginPct`.
+//
 // Dates: `date` fields arrive as `YYYY-MM-DD`, timestamps as ISO 8601.
 // Both are kept as the raw string so CSV export can echo them verbatim
 // (§12.2: ISO 8601 inside CSV, locale-independent).
 
+import '../../core/markup_percent.dart';
+import '../../core/money.dart';
 import '../../core/strings.dart';
 
 /// Tolerant field reader: JSON numbers and strings both become String,
 /// `null` stays `null`.
 String? _str(Object? value) => value?.toString();
+
+/// Net cost behind a §5.8 row: `cogs - return_cost`, in thousandths.
+/// `null` when either side is unparsable — then no percentage is shown.
+int? _netCostMilli(String cogs, String returnCost) {
+  final cost = moneyToMilli(cogs);
+  final returned = moneyToMilli(returnCost);
+  if (cost == null || returned == null) return null;
+  return cost - returned;
+}
+
+/// Money string that MAY be negative (`gross_profit` on a losing row) in
+/// thousandths. `moneyToMilli` itself rejects the sign, so it is peeled
+/// off first — still exact integer math, never a `double`.
+int? _signedMilli(String raw) {
+  final value = raw.trim();
+  if (value.isEmpty) return null;
+  final negative = value.startsWith('-');
+  final milli = moneyToMilli(negative ? value.substring(1) : value);
+  if (milli == null) return null;
+  return negative ? -milli : milli;
+}
 
 class DeviceBreakdownRow {
   /// §8 R15 — `null` → the client renders `label_unknown_device`.
@@ -256,7 +286,18 @@ class ProductReportRow {
   final String cogs;
   final String returnCost;
   final String grossProfit;
-  final String marginPct;
+
+  /// Markup ON COST — `gross_profit / (cogs - return_cost) * 100`,
+  /// rendered `NN.NN%` by the shared `core/markup_percent.dart` helper.
+  ///
+  /// Derived in the model from the money strings above (money totals are
+  /// NOT recomputed — only this percentage is). The backend also returns
+  /// `margin_pct`, which is gross profit / net revenue; it is a different
+  /// metric, kept on the wire for API compatibility and never displayed.
+  ///
+  /// `null` when the net cost is missing, unparsable or not strictly
+  /// positive — never divide by zero, never print a meaningless percentage.
+  final String? marginPct;
 
   const ProductReportRow({
     required this.itemId,
@@ -279,6 +320,9 @@ class ProductReportRow {
   });
 
   factory ProductReportRow.fromJson(Map<String, dynamic> json) {
+    final grossProfit = _str(json['gross_profit']) ?? '0';
+    final cogs = _str(json['cogs']) ?? '0';
+    final returnCost = _str(json['return_cost']) ?? '0';
     return ProductReportRow(
       itemId: _str(json['item_id']) ?? '',
       kind: _str(json['kind']) ?? 'product',
@@ -293,10 +337,13 @@ class ProductReportRow {
       netRevenue: _str(json['net_revenue']) ?? '0',
       returnQty: _str(json['return_qty']) ?? '0',
       returnAmount: _str(json['return_amount']) ?? '0',
-      cogs: _str(json['cogs']) ?? '0',
-      returnCost: _str(json['return_cost']) ?? '0',
-      grossProfit: _str(json['gross_profit']) ?? '0',
-      marginPct: _str(json['margin_pct']) ?? '0',
+      cogs: cogs,
+      returnCost: returnCost,
+      grossProfit: grossProfit,
+      marginPct: markupPercent(
+        profitMilli: _signedMilli(grossProfit),
+        costMilli: _netCostMilli(cogs, returnCost),
+      ),
     );
   }
 }
@@ -362,7 +409,11 @@ class CategoryReportRow {
   final String cogs;
   final String returnCost;
   final String grossProfit;
-  final String marginPct;
+
+  /// See [ProductReportRow.marginPct] — same markup-on-cost derivation,
+  /// same rules (money totals untouched, `null` without a positive net
+  /// cost, backend `margin_pct` never displayed).
+  final String? marginPct;
 
   const CategoryReportRow({
     this.categoryId,
@@ -381,6 +432,9 @@ class CategoryReportRow {
   });
 
   factory CategoryReportRow.fromJson(Map<String, dynamic> json) {
+    final grossProfit = _str(json['gross_profit']) ?? '0';
+    final cogs = _str(json['cogs']) ?? '0';
+    final returnCost = _str(json['return_cost']) ?? '0';
     return CategoryReportRow(
       categoryId: _str(json['category_id']),
       category: _str(json['category']),
@@ -391,10 +445,13 @@ class CategoryReportRow {
       netRevenue: _str(json['net_revenue']) ?? '0',
       returnQty: _str(json['return_qty']) ?? '0',
       returnAmount: _str(json['return_amount']) ?? '0',
-      cogs: _str(json['cogs']) ?? '0',
-      returnCost: _str(json['return_cost']) ?? '0',
-      grossProfit: _str(json['gross_profit']) ?? '0',
-      marginPct: _str(json['margin_pct']) ?? '0',
+      cogs: cogs,
+      returnCost: returnCost,
+      grossProfit: grossProfit,
+      marginPct: markupPercent(
+        profitMilli: _signedMilli(grossProfit),
+        costMilli: _netCostMilli(cogs, returnCost),
+      ),
     );
   }
 }

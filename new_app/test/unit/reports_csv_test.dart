@@ -308,6 +308,14 @@ void main() {
       // RFC 4180: comma + embedded quotes are escaped as one field.
       expect(lines[1], contains('"Widget, ""big"""'));
       expect(lines[1], contains(AppStrings.t('label_uncategorized', 'en')));
+      // Markup ON COST: gross_profit 12 / net COGS 18 = 66.66%. The
+      // backend's `margin_pct` fixture is 40.00 (profit / revenue) and
+      // must never be echoed back — that metric is not displayed anywhere.
+      expect(lines[1], contains('66.66%'));
+      expect(lines[1], isNot(contains('40.00')));
+      expect(lines[0], contains(AppStrings.t('col_margin', 'en')));
+      // The column label says what the number is.
+      expect(AppStrings.t('col_margin', 'en'), 'Markup on cost');
       // Totals row: label_total, blanks where §5 has no aggregate, then
       // items_sold / gross / … verbatim.
       final totals = lines[2].split(',');
@@ -353,6 +361,9 @@ void main() {
       expect(lines, hasLength(3));
       expect(lines[1].split(',').first,
           AppStrings.t('label_uncategorized', 'en'));
+      // Markup ON COST: gross_profit 4 / cogs 6 = 66.66% (not 40% on revenue).
+      expect(lines[1], contains('66.66%'));
+      expect(lines[1], isNot(contains('40.00')));
       expect(lines[2].split(',').length, 12);
       expect(lines[2].split(',')[0], AppStrings.t('label_total', 'en'));
       expect(lines[2].split(',')[1], '1'); // items_sold

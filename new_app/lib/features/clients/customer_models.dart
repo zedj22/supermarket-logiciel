@@ -5,7 +5,13 @@
 /// [moneyToMilli] / [formatMoney] for exact 3-decimal math.
 library;
 
+// `moneyToMilli` / `milliToMoney` moved to `core/money.dart` (shared with
+// the markup-on-cost helper) and are RE-EXPORTED here, so every existing
+// `customer_models.dart` import keeps resolving unchanged.
+import '../../core/money.dart';
 import '../../core/number_format.dart';
+
+export '../../core/money.dart';
 
 class CustomerModel {
   final String id;
@@ -164,40 +170,12 @@ class DebtSummaryModel {
 }
 
 // ---------------------------------------------------------------------------
-// Exact decimal helpers (thousandths of the currency unit)
+// Display helpers (thousandths of the currency unit)
 // ---------------------------------------------------------------------------
-
-final RegExp _moneyPattern = RegExp(r'^(\d+)(?:\.(\d{1,3}))?$');
-
-/// Parses a money string to integer thousandths without floating point.
-///
-/// `'120.500'` → `120500`, `'7'` → `7000`. Returns null for empty,
-/// negative, or more-than-3-decimal input (reject instead of rounding
-/// client-side — the backend is authoritative).
-int? moneyToMilli(String raw) {
-  // Accept space-grouped display values defensively (`'1 500'` → `'1500'`):
-  // grouping is presentation-only and must never change the parsed value.
-  final value = raw.replaceAll(' ', '').trim();
-  if (value.isEmpty) return null;
-  final match = _moneyPattern.firstMatch(value);
-  if (match == null) return null;
-  final whole = int.tryParse(match.group(1)!);
-  if (whole == null) return null;
-  final fraction = (match.group(2) ?? '').padRight(3, '0');
-  final frac = int.tryParse(fraction);
-  if (frac == null) return null;
-  return whole * 1000 + frac;
-}
-
-/// Renders thousandths back to a money string: `120500` → `'120.500'`.
-String milliToMoney(int milli) {
-  final negative = milli < 0;
-  final abs = milli.abs();
-  final whole = abs ~/ 1000;
-  final fraction = (abs % 1000).toString().padLeft(3, '0');
-  return '${negative ? '-' : ''}$whole.$fraction';
-}
-
+//
+// `moneyToMilli` / `milliToMoney` now live in `core/money.dart` and are
+// re-exported at the top of this file — see the import block.
+//
 /// Display form: trailing zeros trimmed and thousands grouped with a regular
 /// space — `'300.000'` → `'300'`, `'120.500'` → `'120.5'`,
 /// `'218095577.85'` → `'218 095 577.85'`.

@@ -315,4 +315,29 @@ void main() {
       }
     });
   });
+
+  group('profit percentage labels — markup on cost vs net margin', () {
+    test('the product/category column says markup on cost in every locale', () {
+      expect(AppStrings.t('col_margin', 'en'), 'Markup on cost');
+      expect(AppStrings.t('col_margin', 'fr'), 'Marge sur coût');
+      expect(AppStrings.t('col_margin', 'ar'), 'الهامش على التكلفة');
+    });
+
+    test('the financial KPI says net margin on sales in every locale', () {
+      // This KPI stays profit / net sales — its label must say so, so it
+      // can never be mistaken for the app-wide markup-on-cost figure.
+      expect(AppStrings.t('kpi_margin', 'en'), 'Net margin on sales');
+      expect(AppStrings.t('kpi_margin', 'fr'), 'Marge nette sur ventes');
+      expect(AppStrings.t('kpi_margin', 'ar'), 'هامش صافي الربح على المبيعات');
+    });
+
+    test('the two labels are never identical', () {
+      for (final locale in _locales) {
+        expect(
+          AppStrings.t('col_margin', locale),
+          isNot(AppStrings.t('kpi_margin', locale)),
+        );
+      }
+    });
+  });
 }

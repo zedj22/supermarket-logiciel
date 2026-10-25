@@ -668,8 +668,15 @@ class ReportRepository:
         )
         return_amount = func.sum(agg.c.return_amount)
         profit = revenue - return_amount - (func.sum(agg.c.cogs) - func.sum(agg.c.return_cost))
-        margin = case(
-            (revenue - return_amount > 0, profit * 100 / (revenue - return_amount)),
+        # `margin_pct` ordering must follow the figure the UI shows: markup
+        # ON COST = profit / (COGS - return cost), not profit / revenue.
+        # Scaled x10 000 purely for ordering precision (same monotone value,
+        # more resolution than the displayed 2 decimals so near-equal rows
+        # do not tie). Rows without a positive net cost have no defined
+        # markup and sort last, matching the emitted `null` / empty cell.
+        cogs_net = func.sum(agg.c.cogs) - func.sum(agg.c.return_cost)
+        markup = case(
+            (cogs_net > 0, profit * 1000000 / cogs_net),
             else_=0,
         )
         order_map = {
@@ -677,7 +684,7 @@ class ReportRepository:
             "qty_sold": func.sum(agg.c.qty_sold),
             "gross_profit": profit,
             "return_qty": func.sum(agg.c.return_qty),
-            "margin_pct": margin,
+            "margin_pct": markup,
         }
 
         # §5.8 caps this report at REPORT_ROW_CAP rows: aggregate once, order

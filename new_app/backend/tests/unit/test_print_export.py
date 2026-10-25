@@ -554,6 +554,121 @@ def test_export_sales_detail_contains_sale(client, admin_headers):
     assert ws.cell(row=5, column=1).value == got["items"][0]["invoice_number"]
 
 
+# ── Export — product/category percentage is markup ON COST ────────────────
+
+
+def test_export_products_xlsx_margin_is_markup_on_cost(client, admin_headers):
+    """POST /api/v1/exports prints the same percentage as the app table:
+    profit / net COGS (66.66 for 80 on 120), never profit / revenue
+    (40.00 on the same row). A free product exports an empty cell."""
+    costly = _product(
+        client, admin_headers, name="Export Costly", price="100.000", cost="60.000"
+    )
+    free = _product(
+        client, admin_headers, name="Export Free", price="100.000", cost="0.000"
+    )
+    for product in (costly, free):
+        _sale(client, admin_headers, product["id"])
+
+    today = _today().isoformat()
+    resp = _export(
+        client,
+        admin_headers,
+        {
+            "report": "products",
+            "format": "xlsx",
+            "locale": "en",
+            "date_from": today,
+            "date_to": today,
+        },
+    )
+    assert resp.status_code == 200, resp.text
+
+    ws = load_workbook(io.BytesIO(resp.content)).active
+    headers = [ws.cell(row=4, column=c).value for c in range(1, ws.max_column + 1)]
+    assert headers[-1] == label("col_margin", "en") == "Markup on cost"
+
+    seen: dict[str, str | None] = {}
+    for row in range(5, ws.max_row + 1):
+        name = ws.cell(row=row, column=1).value
+        if name in ("Export Costly", "Export Free"):
+            seen[name] = ws.cell(row=row, column=len(headers)).value
+
+    # 200 revenue - 120 cost = 80 profit; 80 / 120 = 66.66% markup on cost.
+    # The workbook stores percentages as numbers with a `0.00"%"` format.
+    assert seen["Export Costly"] == pytest.approx(66.66)
+    assert seen["Export Costly"] != pytest.approx(40.00)  # old revenue basis
+    # No cost → no percentage, and nothing blew up computing it.
+    assert seen["Export Free"] in (None, "")
+    assert set(seen) == {"Export Costly", "Export Free"}
+
+
+def test_export_categories_xlsx_margin_is_markup_on_cost(client, admin_headers):
+    product = _product(
+        client, admin_headers, name="Cat Markup", price="100.000", cost="60.000"
+    )
+    _sale(client, admin_headers, product["id"])
+
+    today = _today().isoformat()
+    resp = _export(
+        client,
+        admin_headers,
+        {
+            "report": "categories",
+            "format": "xlsx",
+            "locale": "en",
+            "date_from": today,
+            "date_to": today,
+        },
+    )
+    assert resp.status_code == 200, resp.text
+
+    ws = load_workbook(io.BytesIO(resp.content)).active
+    headers = [ws.cell(row=4, column=c).value for c in range(1, ws.max_column + 1)]
+    assert headers[-1] == label("col_margin", "en") == "Markup on cost"
+    last_col = len(headers)
+    values = [
+        ws.cell(row=row, column=last_col).value
+        for row in range(5, ws.max_row + 1)
+        if ws.cell(row=row, column=1).value not in (None, label("label_total", "en"))
+    ]
+    assert any(value == pytest.approx(66.66) for value in values)
+    assert not any(value == pytest.approx(40.00) for value in values)
+
+
+def test_export_financial_margin_kpi_is_net_margin_on_sales(client, admin_headers):
+    """The financial KPI keeps its accounting meaning (net_profit /
+    net_sales); only the label changed."""
+    product = _product(client, admin_headers)
+    _sale(client, admin_headers, product["id"])
+    today = _today().isoformat()
+
+    got = client.get(
+        f"/api/v1/reports/financial?date_from={today}&date_to={today}",
+        headers=admin_headers,
+    ).json()
+    resp = _export(
+        client,
+        admin_headers,
+        {
+            "report": "financial",
+            "format": "xlsx",
+            "locale": "en",
+            "date_from": today,
+            "date_to": today,
+        },
+    )
+    assert resp.status_code == 200, resp.text
+
+    ws = load_workbook(io.BytesIO(resp.content)).active
+    headers = [ws.cell(row=4, column=c).value for c in range(1, ws.max_column + 1)]
+    index = headers.index(label("kpi_margin", "en")) + 1
+    assert headers[index - 1] == "Net margin on sales"
+    assert ws.cell(row=5, column=index).value == pytest.approx(
+        float(got["profit_margin_pct"])
+    )
+
+
 # ── Export — report PDFs (orientation) ────────────────────────────────────
 
 

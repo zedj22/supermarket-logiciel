@@ -26,12 +26,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/barcode_scanner.dart';
+import '../../core/markup_percent.dart';
 import '../../core/number_format.dart';
 import '../../core/numeric_text.dart';
 import '../../core/strings.dart';
 import '../../l10n/locale_provider.dart';
 import '../auth/permission_helpers.dart';
-import '../clients/customer_models.dart';
 import 'models.dart';
 import 'product_image_picker_service.dart';
 import 'products_providers.dart';
@@ -66,6 +66,26 @@ Future<ProductModel?> showProductFormDialog(
     builder: (_) => ProductFormDialog(product: product, barcode: barcode),
   );
 }
+
+/// Phase 17 — the two figures shown under the product form's Pricing row.
+///
+/// Returns `(profit, markup)`, both DISPLAY ONLY (nothing is persisted):
+/// * `profit` = `price - cost` in exact thousandths (`'2000.000'`),
+/// * `markup` = `((price - cost) / cost) * 100`, rendered `NN.NN%` — the
+///   percentage the selling price adds ON TOP of the cost (markup on
+///   cost).
+///
+/// The maths itself is NOT duplicated here: it delegates to the shared
+/// [profitAndMarkupRaw] helper in `core/markup_percent.dart`, the single
+/// definition of the app-wide profit percentage (markup on cost, never
+/// margin on selling price). This wrapper only keeps the form's own
+/// name and positional signature.
+///
+/// Either half is null when its input cannot be parsed; `markup` is also
+/// null when the cost is not strictly positive — never divide by zero and
+/// never show a percentage that cannot mean anything.
+(String?, String?) productFormProfitMarkup(String priceRaw, String costRaw) =>
+    profitAndMarkupRaw(priceRaw: priceRaw, costRaw: costRaw);
 
 class ProductFormDialog extends ConsumerStatefulWidget {
   final ProductModel? product;
@@ -154,8 +174,8 @@ class _ProductFormDialogState extends ConsumerState<ProductFormDialog> {
     _unit = p?.unit ?? 'piece';
     _imagePath = p?.imagePath;
 
-    // Phase 17 — live profit / margin: a price or cost keystroke repaints
-    // the margin row only (no dialog-wide rebuild needed elsewhere).
+    // Phase 17 — live profit / markup: a price or cost keystroke repaints
+    // the profit / markup row only (no dialog-wide rebuild needed elsewhere).
     _price.addListener(_onPriceOrCostChanged);
     _cost.addListener(_onPriceOrCostChanged);
 
@@ -223,7 +243,7 @@ class _ProductFormDialogState extends ConsumerState<ProductFormDialog> {
     return trimmed.substring(0, trimmed.length - 1);
   }
 
-  /// Rebuild so the profit / margin row tracks the live field values.
+  /// Rebuild so the profit / markup row tracks the live field values.
   void _onPriceOrCostChanged() {
     if (!mounted) return;
     setState(() {});
@@ -619,6 +639,7 @@ class _ProductFormDialogState extends ConsumerState<ProductFormDialog> {
                       ),
                       if (canSeeCost)
                         TextField(
+                          key: const Key('product-cost-field'),
                           controller: _cost,
                           keyboardType: const TextInputType.numberWithOptions(
                             decimal: true,
@@ -633,7 +654,7 @@ class _ProductFormDialogState extends ConsumerState<ProductFormDialog> {
                   ),
                   if (canSeeCost) ...[
                     const SizedBox(height: 12),
-                    _marginRow(theme, loc),
+                    _profitMarkupRow(theme, loc),
                   ],
                   const SizedBox(height: 12),
                   _fieldRow(
@@ -826,29 +847,18 @@ class _ProductFormDialogState extends ConsumerState<ProductFormDialog> {
     );
   }
 
-  /// Phase 17 — live profit / margin for the Pricing section.
+  /// Phase 17 — live profit / markup for the Pricing section.
   ///
-  /// Both figures are DISPLAY ONLY (nothing is persisted): profit is
-  /// `price - cost` in exact thousandths, margin is `profit / price`.
-  /// A zero price yields a null margin — never divide by zero, the same
-  /// rule the pack form applies to its estimated margin.
-  Widget _marginRow(ThemeData theme, String loc) {
-    final priceMilli = moneyToMilli(_price.text);
-    final costMilli = moneyToMilli(_cost.text);
-    String? profit;
-    String? margin;
-    if (priceMilli != null && costMilli != null) {
-      final value = priceMilli - costMilli;
-      profit = milliToMoney(value);
-      if (priceMilli != 0) {
-        // hundredths of a percent, so 40.000 / 100.000 reads "40.00%".
-        final hundredths = (value * 10000) ~/ priceMilli;
-        final negative = hundredths < 0;
-        final abs = hundredths.abs();
-        margin = '${negative ? '-' : ''}'
-            '${abs ~/ 100}.${(abs % 100).toString().padLeft(2, '0')}%';
-      }
-    }
+  /// Both figures come from [productFormProfitMarkup] and are DISPLAY
+  /// ONLY: profit is `price - cost`, markup is `(price - cost) / cost`
+  /// — the percentage the price adds ON TOP of the cost, not the margin
+  /// on the selling price (the products table keeps showing true
+  /// margin). A zero or unparsable cost yields no percentage — never
+  /// divide by zero, the same rule the pack form applies to its
+  /// estimated margin.
+  Widget _profitMarkupRow(ThemeData theme, String loc) {
+    final (profit, markup) =
+        productFormProfitMarkup(_price.text, _cost.text);
 
     final cs = theme.colorScheme;
     Widget block(String key, String label, String value, {Color? color}) {
@@ -901,9 +911,9 @@ class _ProductFormDialogState extends ConsumerState<ProductFormDialog> {
           ),
           Expanded(
             child: block(
-              'product-form-margin',
-              AppStrings.t('margin', loc),
-              margin ?? '—',
+              'product-form-markup',
+              AppStrings.t('markup', loc),
+              markup ?? '—',
             ),
           ),
         ],

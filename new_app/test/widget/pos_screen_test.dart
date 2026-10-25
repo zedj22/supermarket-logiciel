@@ -386,9 +386,17 @@ void _mockDio(
   Map<String, dynamic>? settingsBody,
   Map<String, Map<String, dynamic>>? barcodeLookups,
   bool barcodeLookupNetworkError = false,
+  Duration latency = Duration.zero,
 }) {
   void record(String path) => recordPaths?.add(path);
   printRequestBodies.clear();
+
+  // Simulated network round-trip — every GET waits [latency] before it
+  // resolves. The scan-latency measurement advances the fake clock one
+  // [latency] per pump, so sequential round trips are countable.
+  Future<void> tick() async {
+    if (latency > Duration.zero) await Future<void>.delayed(latency);
+  }
 
   Never failPath(String path, {required bool network, int? status}) {
     if (network) {
@@ -494,6 +502,7 @@ void _mockDio(
       .thenAnswer((invocation) async {
     final path = invocation.positionalArguments.first as String? ?? '';
     record(path);
+    await tick();
     final params =
         invocation.namedArguments[#queryParameters] as Map<String, dynamic>?;
     if (path == '/api/v1/products/barcode-lookup') {
@@ -514,12 +523,14 @@ void _mockDio(
   when(() => dio.get(any())).thenAnswer((invocation) async {
     final path = invocation.positionalArguments.first as String? ?? '';
     record(path);
+    await tick();
     return _ok(path, bodyFor(path));
   });
 
-  when(() => dio.get(_favoritesPath)).thenAnswer(
-    (_) async => _ok(_favoritesPath, {'items': <dynamic>[], 'total': 0}),
-  );
+  when(() => dio.get(_favoritesPath)).thenAnswer((_) async {
+    await tick();
+    return _ok(_favoritesPath, {'items': <dynamic>[], 'total': 0});
+  });
 
   Response<dynamic> postAnswer(Invocation invocation) {
     final path = invocation.positionalArguments.first as String? ?? '';
@@ -14375,6 +14386,228 @@ void main() {
       expect(
         find.byKey(const Key('pos-qty-stock-error')),
         findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    });
+  });
+
+  // ------------------------------------------------------------------------
+  // Scan-latency optimization contract — MEASURED, not claimed. Every
+  // request in this group resolves after one simulated 100ms round trip,
+  // so the fake clock counts real sequential hops:
+  //  - typing a burst must not rebuild the POS screen per keystroke
+  //    (posSearchProvider must stay silent while digits arrive),
+  //  - submit → cart update must cost 2 sequential round trips
+  //    (barcode lookup, then product ∥ variants ∥ units) — never 4,
+  //  - an undisturbed scan must not refetch the catalog at all
+  //    (the pending digit-search debounce is cancelled and the
+  //    post-add reload is skipped when no query disturbed the panel),
+  //  - one physical burst observed by BOTH dispatch origins (the raw-PoC
+  //    decode and the legacy Enter) must produce exactly ONE cart action.
+  // ------------------------------------------------------------------------
+  group('scan-to-cart latency (measured)', () {
+    late MockDio dio;
+    late List<String> recordPaths;
+
+    const rtt = Duration(milliseconds: 100);
+    const scanCode = '8718114202402';
+
+    ProviderContainer containerOf(WidgetTester tester) =>
+        ProviderScope.containerOf(
+          tester.element(find.byKey(const Key('pos-screen'))),
+        );
+
+    Future<void> focusSearchField(WidgetTester tester) async {
+      await tester.tap(find.byKey(const Key('pos-search-field')));
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+
+    /// Escape with an empty search box hands the keyboard back to the
+    /// POS workspace node — no text field owns focus anymore.
+    Future<void> focusWorkspace(WidgetTester tester) async {
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pump();
+      final context = FocusManager.instance.primaryFocus?.context;
+      expect(
+        context == null ||
+            context.findAncestorWidgetOfExactType<TextField>() == null,
+        isTrue,
+        reason: 'Escape must hand focus back to the workspace',
+      );
+    }
+
+    Future<void> pumpPos(WidgetTester tester) async {
+      dio = MockDio();
+      recordPaths = <String>[];
+      _mockDio(
+        dio,
+        barcodeLookups: {scanCode: _lookupHit()},
+        recordPaths: recordPaths,
+        latency: rtt,
+      );
+      await _pumpApp(tester, dio: dio);
+      final container = containerOf(tester);
+      for (var i = 0; i < 40; i++) {
+        await tester.pump(rtt);
+        if (container.read(posSearchProvider).items.isNotEmpty) break;
+      }
+      expect(
+        container.read(posSearchProvider).items,
+        isNotEmpty,
+        reason: 'the initial catalog load must have landed before measuring',
+      );
+    }
+
+    testWidgets(
+        'scan input → cart: keystroke rebuilds, sequential round trips '
+        'and catalog refetches are all bounded', (tester) async {
+      await pumpPos(tester);
+      final container = containerOf(tester);
+
+      await focusSearchField(tester);
+
+      var searchNotifications = 0;
+      container.listen(
+        posSearchProvider,
+        (_, _) => searchNotifications++,
+        fireImmediately: false,
+      );
+
+      // One digit at a time — exactly the state churn a wedge burst
+      // causes — without ever advancing the debounce clock.
+      for (var i = 1; i <= scanCode.length; i++) {
+        await tester.enterText(
+          find.byKey(const Key('pos-search-field')),
+          scanCode.substring(0, i),
+        );
+        await tester.pump();
+      }
+      final notificationsWhileTyping = searchNotifications;
+
+      final catalogBefore =
+          recordPaths.where((p) => p == kPosCatalogPath).length;
+
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+
+      // One simulated round trip per step until the cart line exists.
+      var scanToCartMs = 0;
+      while (container.read(posCartProvider).lines.isEmpty &&
+          scanToCartMs < 5000) {
+        await tester.pump(rtt);
+        scanToCartMs += rtt.inMilliseconds;
+      }
+      // Let every post-scan timer (debounce / reload) land before counting.
+      await tester.pump(rtt * 5);
+
+      final catalogDuringScan =
+          recordPaths.where((p) => p == kPosCatalogPath).length -
+              catalogBefore;
+
+      debugPrint(
+        'SCAN-LATENCY scan-to-cart=${scanToCartMs}ms | '
+        'keystroke notifications=$notificationsWhileTyping | '
+        'catalog requests around scan=$catalogDuringScan',
+      );
+
+      expect(container.read(posCartProvider).lines, hasLength(1));
+      expect(container.read(posCartProvider).lines.single.quantity, '1');
+      expect(
+        notificationsWhileTyping,
+        0,
+        reason: 'a keystroke must not rebuild the POS screen — the query '
+            'lives inside the notifier until the debounced load runs',
+      );
+      expect(
+        scanToCartMs,
+        lessThanOrEqualTo(250),
+        reason: 'barcode lookup + (product ∥ variants ∥ units) = 2 '
+            'sequential round trips at a 100ms simulated RTT',
+      );
+      expect(
+        catalogDuringScan,
+        0,
+        reason: 'an undisturbed scan neither runs the digit-search '
+            'debounce (cancelled at submit) nor reloads the catalog '
+            'after the add',
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'one physical burst observed by BOTH dispatch origins (legacy '
+        'Enter first, raw-PoC dispatch second) adds exactly one cart action',
+        (tester) async {
+      await pumpPos(tester);
+      await focusWorkspace(tester);
+      BarcodeScannerGateway.instance.resetDispatchDedupForTest();
+
+      await sendWedgeScan(tester, scanCode);
+      // The native suppression race's second observation: the raw PoC
+      // decoder completed the same run and dispatches it through the
+      // external entry point moments later.
+      final dispatched = BarcodeScannerGateway.instance
+          .dispatchExternalScan(scanCode);
+      // Drive the fake clock one simulated RTT at a time — pumpAndSettle
+      // stops at the next frame boundary while the request timer pends.
+      for (var i = 0; i < 12; i++) {
+        await tester.pump(rtt);
+        if (containerOf(tester).read(posCartProvider).lines.isNotEmpty) {
+          break;
+        }
+      }
+      await tester.pump(rtt * 5);
+
+      final cart = containerOf(tester).read(posCartProvider);
+      expect(cart.lines, hasLength(1));
+      expect(
+        cart.lines.single.quantity,
+        '1',
+        reason: 'the cross-origin duplicate dispatch must be dropped — '
+            'one physical scan, one cart action',
+      );
+      expect(
+        dispatched,
+        isFalse,
+        reason: 'the second observation is the dropped one',
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'one physical burst observed by BOTH dispatch origins (raw-PoC '
+        'dispatch first, legacy Enter second) adds exactly one cart action',
+        (tester) async {
+      await pumpPos(tester);
+      await focusWorkspace(tester);
+      final gateway = BarcodeScannerGateway.instance;
+      gateway.resetDispatchDedupForTest();
+
+      // Raw observation first…
+      final dispatched = gateway.dispatchExternalScan(scanCode);
+      // …then the legacy observation of the same run through the gateway's
+      // synchronous key seam (no platform round trips — the two dispatches
+      // sit milliseconds apart exactly like the real race does).
+      for (final character in scanCode.split('')) {
+        gateway.handleKeyForTest(wedgeKeyDown(character));
+      }
+      final legacyHandled = gateway.handleKeyForTest(wedgeEnter());
+      for (var i = 0; i < 12; i++) {
+        await tester.pump(rtt);
+        if (containerOf(tester).read(posCartProvider).lines.isNotEmpty) {
+          break;
+        }
+      }
+      await tester.pump(rtt * 5);
+
+      final cart = containerOf(tester).read(posCartProvider);
+      expect(cart.lines, hasLength(1));
+      expect(cart.lines.single.quantity, '1');
+      expect(dispatched, isTrue);
+      expect(
+        legacyHandled,
+        isTrue,
+        reason: 'the duplicate run is still consumed as a scan — only '
+            'its second ACTION is dropped',
       );
       expect(tester.takeException(), isNull);
     });

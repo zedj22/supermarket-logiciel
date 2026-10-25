@@ -103,8 +103,11 @@ class AppStrings {
     'daily_report': 'تقرير يومي',
     'monthly_report': 'تقرير شهري',
     'profit': 'الربح',
-    // Phase 17 pricing — wholesale + TVA + margin
+    // Phase 17 pricing — wholesale + TVA + markup on cost.
+    // `margin` (margin on the selling price) is no longer displayed by any
+    // screen — the app-wide profit percentage is `markup`, profit / cost.
     'margin': 'هامش الربح',
+    'markup': 'هامش على التكلفة',
     'wholesale': 'الجملة',
     'wholesale_price': 'سعر الجملة',
     'wholesale_min_qty': 'الحد الأدنى للجملة',
@@ -758,7 +761,7 @@ class AppStrings {
     'pack_shortage_detail': '{product} — المطلوب {required}، المتاح {available}',
   'estimated_cost': 'التكلفة المقدّرة',
   'estimated_profit': 'الربح المقدّر',
-  'estimated_margin': 'الهامش المقدّر',
+  'estimated_margin': 'الهامش المقدّر على التكلفة',
   'estimate_pmp_note': 'حساب تقديري حسب متوسط التكلفة المتحرك (PMP)',
   // ── Phase 11: Suppliers ──
   'suppliers': 'الموردون',
@@ -970,7 +973,7 @@ class AppStrings {
   'kpi_expenses_external': 'خارجية',
   'kpi_gross_profit': 'الربح الإجمالي',
   'kpi_net_profit': 'صافي الربح',
-  'kpi_margin': 'هامش الربح',
+  'kpi_margin': 'هامش صافي الربح على المبيعات',
   'kpi_paid_cash': 'مدفوع نقدًا',
   'kpi_paid_card': 'مدفوع بالبطاقة',
   'kpi_paid_partial': 'دفعات جزئية',
@@ -1034,7 +1037,7 @@ class AppStrings {
   'col_returns_amount': 'قيمة المرتجع',
   'col_cogs': 'التكلفة',
   'col_gross_profit': 'الربح الإجمالي',
-  'col_margin': 'الهامش',
+  'col_margin': 'الهامش على التكلفة',
   'col_expenses': 'المصروفات',
   'col_net_profit': 'صافي الربح',
   'col_category': 'الفئة',
@@ -1747,8 +1750,11 @@ class AppStrings {
     'daily_report': 'Rapport quotidien',
     'monthly_report': 'Rapport mensuel',
     'profit': 'Profit',
-    // Phase 17 pricing — wholesale + TVA + margin
+    // Phase 17 pricing — wholesale + TVA + markup on cost.
+    // `margin` (marge sur prix de vente) is no longer displayed — the
+    // app-wide profit percentage is `markup`, profit / coût.
     'margin': 'Marge',
+    'markup': 'Marge sur coût',
     'wholesale': 'Gros',
     'wholesale_price': 'Prix de gros',
     'wholesale_min_qty': 'Quantité min. de gros',
@@ -2421,7 +2427,7 @@ class AppStrings {
         '{product} — requis {required}, disponible {available}',
   'estimated_cost': 'Coût estimé',
   'estimated_profit': 'Profit estimé',
-  'estimated_margin': 'Marge estimée',
+  'estimated_margin': 'Marge estimée sur coût',
   'estimate_pmp_note': 'Estimation basée sur le PMP actuel (coût moyen mobile)',
   // ── Phase 11: Suppliers ──
   'suppliers': 'Fournisseurs',
@@ -2637,7 +2643,7 @@ class AppStrings {
   'kpi_expenses_external': 'Externes',
   'kpi_gross_profit': 'Bénéfice brut',
   'kpi_net_profit': 'Bénéfice net',
-  'kpi_margin': 'Marge',
+  'kpi_margin': 'Marge nette sur ventes',
   'kpi_paid_cash': 'Payé espèces',
   'kpi_paid_card': 'Payé carte',
   'kpi_paid_partial': 'Payé partiel',
@@ -2701,7 +2707,7 @@ class AppStrings {
   'col_returns_amount': 'Montant retourné',
   'col_cogs': 'Coût',
   'col_gross_profit': 'Bénéfice brut',
-  'col_margin': 'Marge',
+  'col_margin': 'Marge sur coût',
   'col_expenses': 'Dépenses',
   'col_net_profit': 'Bénéfice net',
   'col_category': 'Catégorie',
@@ -3444,8 +3450,11 @@ class AppStrings {
     'daily_report': 'Daily Report',
     'monthly_report': 'Monthly Report',
     'profit': 'Profit',
-    // Phase 17 pricing — wholesale + TVA + margin
+    // Phase 17 pricing — wholesale + TVA + markup on cost.
+    // `margin` (margin on the selling price) is no longer displayed — the
+    // app-wide profit percentage is `markup`, profit / cost.
     'margin': 'Margin',
+    'markup': 'Markup',
     'wholesale': 'Wholesale',
     'wholesale_price': 'Wholesale price',
     'wholesale_min_qty': 'Min. wholesale qty',
@@ -4114,7 +4123,7 @@ class AppStrings {
         '{product} — required {required}, available {available}',
   'estimated_cost': 'Estimated cost',
   'estimated_profit': 'Estimated profit',
-  'estimated_margin': 'Estimated margin',
+  'estimated_margin': 'Estimated markup on cost',
   'estimate_pmp_note': 'Estimate based on the current moving average cost (PMP)',
   // ── Phase 11: Suppliers ──
   'suppliers': 'Suppliers',
@@ -4328,7 +4337,7 @@ class AppStrings {
   'kpi_expenses_external': 'External',
   'kpi_gross_profit': 'Gross profit',
   'kpi_net_profit': 'Net profit',
-  'kpi_margin': 'Margin',
+  'kpi_margin': 'Net margin on sales',
   'kpi_paid_cash': 'Paid cash',
   'kpi_paid_card': 'Paid card',
   'kpi_paid_partial': 'Paid partial',
@@ -4392,7 +4401,7 @@ class AppStrings {
   'col_returns_amount': 'Returns amount',
   'col_cogs': 'COGS',
   'col_gross_profit': 'Gross profit',
-  'col_margin': 'Margin',
+  'col_margin': 'Markup on cost',
   'col_expenses': 'Expenses',
   'col_net_profit': 'Net profit',
   'col_category': 'Category',

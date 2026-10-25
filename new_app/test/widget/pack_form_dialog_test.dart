@@ -14,6 +14,7 @@
 // - ar / fr / en labels + RTL rendering for the new preview.
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
@@ -592,13 +593,15 @@ void main() {
 
       // 2 Box ×24 = 48 base × avg_cost 5 → cost 240.
       expect(_estimate(tester, 'pack-estimated-cost'), '240');
-      expect(find.byKey(const Key('pack-estimated-margin')), findsNothing);
+      expect(find.byKey(const Key('pack-estimated-markup')), findsNothing);
 
       await tester.enterText(find.byKey(const Key('pack-price-field')), '320');
       await tester.pump();
       expect(_estimate(tester, 'pack-estimated-cost'), '240');
       expect(_estimate(tester, 'pack-estimated-profit'), '80');
-      expect(_estimate(tester, 'pack-estimated-margin'), '25%');
+      // Markup ON COST: 80 / 240 = 33.33% (the old price-based margin
+      // showed 25% for the very same pack).
+      expect(_estimate(tester, 'pack-estimated-markup'), '33.33%');
 
       // Quantity is expressed in the SELECTED unit: 1 Box = 24 → cost 120.
       await tester.enterText(
@@ -608,7 +611,8 @@ void main() {
       await tester.pump();
       expect(_estimate(tester, 'pack-estimated-cost'), '120');
       expect(_estimate(tester, 'pack-estimated-profit'), '200');
-      expect(_estimate(tester, 'pack-estimated-margin'), '62.5%');
+      // 200 / 120 = 166.66% markup (not 62.5% on price).
+      expect(_estimate(tester, 'pack-estimated-markup'), '166.66%');
 
       // Back to the base unit: 1 piece × avg_cost 5 → cost 5.
       await _selectUnit(
@@ -621,16 +625,16 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('a zero price hides the margin row (never divide by zero)', (
+    testWidgets('a zero price hides the markup row (never divide by zero)', (
       tester,
     ) async {
       await openWithBoxComponent(tester);
       await tester.enterText(find.byKey(const Key('pack-price-field')), '0');
       await tester.pump();
 
-      expect(find.byKey(const Key('pack-estimated-margin')), findsNothing);
+      expect(find.byKey(const Key('pack-estimated-markup')), findsNothing);
       expect(
-        find.byKey(const Key('pack-estimated-margin-label')),
+        find.byKey(const Key('pack-estimated-markup-label')),
         findsNothing,
       );
       expect(_estimate(tester, 'pack-estimated-profit'), '-240');
@@ -638,8 +642,39 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
+    testWidgets('a zero-cost pack hides the markup row (never divide by zero)',
+        (tester) async {
+      final dio = MockDio();
+      _mockDio(
+        dio,
+        getBodies: {
+          _searchPath: {
+            'items': [_productJson(avgCost: '0')],
+            'total': 1,
+          },
+        },
+      );
+      await _pumpHost(tester, dio);
+      await _openCreateForm(tester);
+      await _addComponent(tester);
+
+      await tester.enterText(find.byKey(const Key('pack-price-field')), '500');
+      await tester.pump();
+
+      // 1 piece × avg_cost 0 → cost 0 and profit = price, but there is no
+      // cost to divide by: the percentage row simply does not render.
+      expect(_estimate(tester, 'pack-estimated-cost'), '0');
+      expect(_estimate(tester, 'pack-estimated-profit'), '500');
+      expect(find.byKey(const Key('pack-estimated-markup')), findsNothing);
+      expect(
+        find.byKey(const Key('pack-estimated-markup-label')),
+        findsNothing,
+      );
+      expect(tester.takeException(), isNull);
+    });
+
     testWidgets(
-      'priced components report a real margin - never the buggy 100%',
+      'priced components report a real markup on cost - never the buggy 100%',
       (tester) async {
         final dio = MockDio();
         _mockDio(
@@ -670,11 +705,13 @@ void main() {
         );
         await tester.pump();
 
-        // 240 x1 + 180 x1 = 420 of PMP cost -> profit 80 -> margin 16%.
+        // 240 x1 + 180 x1 = 420 of PMP cost -> profit 80 -> markup on cost
+        // 80 / 420 = 19.04% (the price-based margin was 16%).
         expect(_estimate(tester, 'pack-estimated-cost'), '420');
         expect(_estimate(tester, 'pack-estimated-profit'), '80');
-        expect(_estimate(tester, 'pack-estimated-margin'), '16%');
-        expect(_estimate(tester, 'pack-estimated-margin'), isNot('100%'));
+        expect(_estimate(tester, 'pack-estimated-markup'), '19.04%');
+        expect(_estimate(tester, 'pack-estimated-markup'), isNot('16%'));
+        expect(_estimate(tester, 'pack-estimated-markup'), isNot('100%'));
         expect(tester.takeException(), isNull);
       },
     );
@@ -709,10 +746,12 @@ void main() {
         expect(find.text('Box \u00d724'), findsOneWidget);
         expect(_qtyText(tester, 0), '2');
         expect(find.text('2 Box = 48 piece'), findsOneWidget);
-        // Static estimate from the detail response.
+        // Static cost/profit from the detail response; the PERCENTAGE is
+        // recomputed here as markup on cost (80 / 240) — the backend's
+        // `estimated_margin_percent: '25'` (profit / price) is ignored.
         expect(_estimate(tester, 'pack-estimated-cost'), '240');
         expect(_estimate(tester, 'pack-estimated-profit'), '80');
-        expect(_estimate(tester, 'pack-estimated-margin'), '25%');
+        expect(_estimate(tester, 'pack-estimated-markup'), '33.33%');
         expect(tester.takeException(), isNull);
       },
     );
@@ -829,13 +868,20 @@ void main() {
       await tester.tap(find.byKey(const Key('open-detail')));
       await tester.pumpAndSettle();
 
-      expect(find.byKey(const Key('pack-detail-dialog')), findsOneWidget);
-      // Static estimate from the detail payload.
-      expect(find.byKey(const Key('pack-detail-estimate')), findsOneWidget);
-      expect(
-        find.byKey(const Key('pack-detail-estimate-note')),
-        findsOneWidget,
-      );
+        expect(find.byKey(const Key('pack-detail-dialog')), findsOneWidget);
+        // Static estimate from the detail payload.
+        expect(find.byKey(const Key('pack-detail-estimate')), findsOneWidget);
+        // The percentage is recomputed client-side as markup ON COST
+        // (80 / 240 = 33.33%) — the backend's `estimated_margin_percent`
+        // (25 = profit / price) is never displayed.
+        final estimate =
+            tester.widget<Text>(find.byKey(const Key('pack-detail-estimate'))).data!;
+        expect(estimate, contains('33.33%'));
+        expect(estimate, isNot(contains('25%')));
+        expect(
+          find.byKey(const Key('pack-detail-estimate-note')),
+          findsOneWidget,
+        );
       // Component row: base columns + the pinned-unit conversion line.
       expect(find.text('Sugar'), findsOneWidget);
       expect(find.text('2 Box = 48 piece'), findsOneWidget);
@@ -893,6 +939,241 @@ void main() {
             .textDirection,
         TextDirection.rtl,
       );
+      expect(tester.takeException(), isNull);
+    });
+  });
+
+  // ------------------------------------------------------------------
+  // Bundle header + estimate box: where labels and numbers sit in RTL.
+  //
+  // The old header was ONE Text — `'<label>: <grouped sum>'` — so under
+  // Arabic the bidi algorithm reversed the digit groups and the colon
+  // landed wherever the run resolved. The fix keeps the label an
+  // ordinary RTL paragraph and the number its own LTR paragraph
+  // (`numericText`), laid out label-then-value in LOGICAL order: right
+  // in Arabic, left in English / French. Only the paragraphs flip —
+  // the dialog itself stays RTL.
+  // ------------------------------------------------------------------
+  group('Pack form — component total and estimate RTL layout', () {
+    Rect rectOf(WidgetTester tester, Key key) =>
+        tester.getRect(find.byKey(key));
+
+    Future<void> openEditIn(WidgetTester tester, AppLocale locale) async {
+      final dio = MockDio();
+      _mockDio(
+        dio,
+        getBodies: {
+          '/api/v1/products/$_prod1/selling-units': {
+            'items': _unitsBody(),
+            'total': 2,
+          },
+        },
+      );
+      await _pumpHost(tester, dio, locale: locale);
+      await tester.tap(find.byKey(const Key('open-form-edit')));
+      await tester.pumpAndSettle();
+    }
+
+    Future<void> typeInto(WidgetTester tester, Key key, String text) async {
+      await tester.enterText(find.byKey(key), text);
+      await tester.pump();
+    }
+
+    testWidgets('Arabic: label sits to the right of its LTR value, no overlap',
+        (tester) async {
+      await openEditIn(tester, AppLocale.ar);
+
+      final label = tester.widget<Text>(
+        find.byKey(const Key('pack-sum-of-parts-label')),
+      );
+      final value = tester.widget<Text>(
+        find.byKey(const Key('pack-sum-of-parts')),
+      );
+
+      // Label: natural RTL paragraph, never forced LTR.
+      expect(label.textDirection, isNull);
+      expect(label.data, AppStrings.t('sum_of_parts', 'ar'));
+      // Value: a bare number in its own LTR paragraph (readable digits,
+      // grouping spaces and separators in logical order).
+      expect(value.textDirection, TextDirection.ltr);
+      expect(value.data, '480',
+          reason: 'the label no longer rides inside the value Text');
+
+      final labelRect = rectOf(tester, const Key('pack-sum-of-parts-label'));
+      final valueRect = rectOf(tester, const Key('pack-sum-of-parts'));
+      expect(labelRect.left, greaterThan(valueRect.left),
+          reason: 'RTL order: the label comes first (to the right)');
+      expect(valueRect.right, lessThanOrEqualTo(labelRect.left),
+          reason: 'the value must never overlap or sit past its label');
+      expect(labelRect.left - valueRect.right, greaterThan(0),
+          reason: 'a visible gap separates label and value');
+
+      // The section header keeps its own side of the row (it is the
+      // first child, i.e. the rightmost one under RTL).
+      final header = rectOf(tester, const Key('pack-components-label'));
+      expect(header.right, greaterThan(labelRect.right));
+      expect(header.left, greaterThanOrEqualTo(labelRect.right));
+
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('Arabic: grouped digits keep left-to-right glyph order', (
+      tester,
+    ) async {
+      await openEditIn(tester, AppLocale.ar);
+
+      // 100 Box × 24 × 10 = 24 000 — grouped, so the value now contains
+      // the regular-space separators the bidi algorithm loves to reverse.
+      await typeInto(tester, const Key('pack-component-qty-0'), '100');
+      final value = tester.widget<Text>(
+        find.byKey(const Key('pack-sum-of-parts')),
+      );
+      expect(value.data, '24 000');
+
+      final paragraph = tester.renderObject<RenderParagraph>(
+        find.byKey(const Key('pack-sum-of-parts')),
+      );
+      final data = value.data!;
+      final spaceAt = data.lastIndexOf(' ');
+      expect(spaceAt, greaterThan(0));
+      double leftOf(int from, int to) => paragraph
+          .getBoxesForSelection(
+            TextSelection(baseOffset: from, extentOffset: to),
+          )
+          .first
+          .left;
+      expect(
+        leftOf(spaceAt - 1, spaceAt),
+        lessThan(leftOf(spaceAt + 1, data.length)),
+        reason: 'the first digit group must render LEFT of the second',
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('Arabic: cost, profit and the PMP note share one grid', (
+      tester,
+    ) async {
+      await openEditIn(tester, AppLocale.ar);
+
+      final costLabel = tester.widget<Text>(
+        find.byKey(const Key('pack-estimated-cost-label')),
+      );
+      final costValue = tester.widget<Text>(
+        find.byKey(const Key('pack-estimated-cost')),
+      );
+      final profitLabel = rectOf(tester, const Key('pack-estimated-profit-label'));
+      final profitValue = rectOf(tester, const Key('pack-estimated-profit'));
+      final markupLabel = rectOf(tester, const Key('pack-estimated-markup-label'));
+      final markupValue = rectOf(tester, const Key('pack-estimated-markup'));
+      final note = rectOf(tester, const Key('pack-estimate-note'));
+
+      final costLabelRect = rectOf(
+        tester,
+        const Key('pack-estimated-cost-label'),
+      );
+      final costValueRect = rectOf(tester, const Key('pack-estimated-cost'));
+
+      // Label at the row start (right), value at the row end (left).
+      expect(costLabelRect.left, greaterThan(costValueRect.right));
+      expect(profitLabel.left, greaterThan(profitValue.right));
+      expect(markupLabel.left, greaterThan(markupValue.right));
+
+      // Every label shares one right edge, every value one left edge.
+      expect(profitLabel.right, costLabelRect.right);
+      expect(markupLabel.right, costLabelRect.right);
+      expect(profitValue.left, costValueRect.left);
+      expect(markupValue.left, costValueRect.left);
+
+      // The PMP note spans the very same band it sits under.
+      expect(note.left, costValueRect.left);
+      expect(note.right, costLabelRect.right);
+
+      // Only the numbers are pinned LTR; labels inherit the RTL dialog.
+      expect(costLabel.textDirection, isNull);
+      expect(costValue.textDirection, TextDirection.ltr);
+      expect(
+        tester.widget<Text>(find.byKey(const Key('pack-estimate-note')))
+            .textDirection,
+        isNull,
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    for (final locale in [AppLocale.en, AppLocale.fr]) {
+      testWidgets('$locale: the total reads label-then-value left to right', (
+        tester,
+      ) async {
+        await openEditIn(tester, locale);
+        final code = locale.name;
+
+        final label = tester.widget<Text>(
+          find.byKey(const Key('pack-sum-of-parts-label')),
+        );
+        final value = tester.widget<Text>(
+          find.byKey(const Key('pack-sum-of-parts')),
+        );
+        expect(label.data, AppStrings.t('sum_of_parts', code));
+        expect(label.textDirection, isNull);
+        expect(value.data, '480');
+        expect(value.textDirection, TextDirection.ltr);
+
+        final labelRect = rectOf(tester, const Key('pack-sum-of-parts-label'));
+        final valueRect = rectOf(tester, const Key('pack-sum-of-parts'));
+        expect(labelRect.left, lessThan(valueRect.left),
+            reason: 'LTR: the label comes first (to the left)');
+        expect(labelRect.right, lessThanOrEqualTo(valueRect.left));
+        expect(valueRect.left - labelRect.right, greaterThan(0));
+
+        // The estimate rows mirror as well: labels at the start, values
+        // at the end, on the same two edges as in Arabic.
+        final costLabel = rectOf(tester, const Key('pack-estimated-cost-label'));
+        final costValue = rectOf(tester, const Key('pack-estimated-cost'));
+        final profitLabel =
+            rectOf(tester, const Key('pack-estimated-profit-label'));
+        final profitValue = rectOf(tester, const Key('pack-estimated-profit'));
+        final note = rectOf(tester, const Key('pack-estimate-note'));
+
+        expect(costLabel.left, lessThan(costValue.left));
+        expect(costLabel.right, lessThanOrEqualTo(costValue.left));
+        expect(profitLabel.left, costLabel.left);
+        expect(profitValue.right, costValue.right);
+        expect(note.left, costLabel.left);
+        expect(note.right, costValue.right);
+
+        expect(
+          tester
+              .widget<Directionality>(
+                find
+                    .ancestor(
+                      of: find.byKey(const Key('pack-form-dialog')),
+                      matching: find.byType(Directionality),
+                    )
+                    .first,
+              )
+              .textDirection,
+          TextDirection.ltr,
+        );
+        expect(tester.takeException(), isNull);
+      });
+    }
+
+    testWidgets('bundle calculations are unchanged by the layout fix', (
+      tester,
+    ) async {
+      await openEditIn(tester, AppLocale.en);
+
+      // 2 Box × 24 = 48 base units @ price 10, PMP 5 — display only.
+      expect(_estimate(tester, 'pack-sum-of-parts'), '480');
+      expect(_estimate(tester, 'pack-estimated-cost'), '240');
+      expect(_estimate(tester, 'pack-estimated-profit'), '80');
+      expect(_estimate(tester, 'pack-estimated-markup'), '33.33%');
+
+      // Recompute on a quantity change: 1 Box = 24 base units.
+      await typeInto(tester, const Key('pack-component-qty-0'), '1');
+      expect(_estimate(tester, 'pack-sum-of-parts'), '240');
+      expect(_estimate(tester, 'pack-estimated-cost'), '120');
+      expect(_estimate(tester, 'pack-estimated-profit'), '200');
+      expect(_estimate(tester, 'pack-estimated-markup'), '166.66%');
       expect(tester.takeException(), isNull);
     });
   });

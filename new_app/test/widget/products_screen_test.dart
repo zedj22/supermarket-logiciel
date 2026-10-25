@@ -416,6 +416,47 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
+    testWidgets('profit percentage column shows MARKUP ON COST', (
+      tester,
+    ) async {
+      final dio = MockDio();
+      stubRequests(dio);
+      await pumpApp(
+        tester,
+        dio,
+        userName: 'Admin',
+        pin: '1234',
+        navLabel: AppStrings.t('products', 'ar'),
+      );
+
+      // The column header names the metric (markup on cost, ar locale).
+      expect(find.text(AppStrings.t('markup', 'ar')), findsOneWidget);
+      expect(
+        find.byKey(const Key(
+          'product-markup-00000000-0000-0000-0000-0000000000p1',
+        )),
+        findsOneWidget,
+      );
+
+      // Apple Juice: cost 80 / price 100 → profit 20 → 20 / 80 = 25.00%
+      // (the price-based margin would have been 20.00%).
+      expect(find.text('25.00%'), findsOneWidget);
+      expect(find.text('20.00%'), findsNothing);
+      // Bread: cost 30 / price 50 → profit 20 → 20 / 30 = 66.66%
+      // (the price-based margin would have been 40.00%).
+      expect(find.text('66.66%'), findsOneWidget);
+      expect(find.text('40.00%'), findsNothing);
+      // Absolute profit is unchanged: 100 - 80 = 20.000, 50 - 30 = 20.000.
+      expect(
+        find.byKey(const Key(
+          'product-profit-00000000-0000-0000-0000-0000000000p1',
+        )),
+        findsOneWidget,
+      );
+      expect(find.text('20.000'), findsWidgets);
+      expect(tester.takeException(), isNull);
+    });
+
     testWidgets('Add Product dialog validates and POSTs the new product',
         (tester) async {
       final dio = MockDio();

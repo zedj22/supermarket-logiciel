@@ -3,6 +3,8 @@
 // Mirrors the `app/schemas/pack.py` contract exactly: money and quantity
 // values travel as decimal STRINGS (NUMERIC(18,3) on the wire) so no
 // binary float ever touches a persisted business value.
+import '../../core/markup_percent.dart';
+
 class PackComponentModel {
   /// BASE units one pack consumes (GATE 2 — the column semantics are
   /// unchanged, and this is what stock / availability / checkout use).
@@ -91,6 +93,10 @@ class PackModel {
   /// `null` whenever the backend omits it (list rows, price == 0 margin).
   final String? estimatedCost;
   final String? estimatedProfit;
+
+  /// Backend field `estimated_margin_percent` — profit / selling price ×
+  /// 100. Kept verbatim for API compatibility but NEVER displayed: the
+  /// app-wide profit percentage is [estimatedMarkupPercent].
   final String? estimatedMarginPercent;
   final String createdAt;
   final String updatedAt;
@@ -116,6 +122,20 @@ class PackModel {
   });
 
   bool get isSaleable => isActive && !isArchived;
+
+  /// The app-wide profit percentage for a pack: profit as a percentage of
+  /// the pack's ESTIMATED COST (markup on cost), from the shared helper
+  /// `core/markup_percent.dart`.
+  ///
+  /// Computed here rather than taken from the backend's
+  /// `estimated_margin_percent`, which is profit / price × 100 — a
+  /// different metric. `null` when the cost is missing, unparsable or not
+  /// strictly positive (never divide by zero); the absolute
+  /// [estimatedCost] / [estimatedProfit] strings are untouched.
+  String? get estimatedMarkupPercent => markupPercentRaw(
+        profitRaw: estimatedProfit,
+        costRaw: estimatedCost,
+      );
 
   factory PackModel.fromJson(Map<String, dynamic> json) {
     return PackModel(

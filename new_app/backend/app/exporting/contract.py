@@ -437,6 +437,9 @@ def _products(payload, locale: str) -> list[ExportBlock]:
             cell(row.cogs),
             cell(row.return_cost),
             cell(row.gross_profit),
+            # `col_margin` here is markup ON COST: profit / (COGS - return
+            # cost). `None` (free / missing cost) exports an empty cell,
+            # like the client CSV.
             cell(row.margin_pct),
         ]
         for row in payload.items
@@ -479,6 +482,7 @@ def _categories(payload, locale: str) -> list[ExportBlock]:
             cell(row.cogs),
             cell(row.return_cost),
             cell(row.gross_profit),
+            # Markup ON COST — see `_products`; `None` → empty cell.
             cell(row.margin_pct),
         ]
         for row in payload.items
