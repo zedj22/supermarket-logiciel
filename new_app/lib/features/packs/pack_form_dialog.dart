@@ -27,6 +27,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/barcode_scanner.dart';
 import '../../core/markup_percent.dart';
 import '../../core/number_format.dart';
 import '../../core/numeric_text.dart';
@@ -816,6 +817,7 @@ class PackProductPicker extends ConsumerStatefulWidget {
 
 class _PackProductPickerState extends ConsumerState<PackProductPicker> {
   final TextEditingController _search = TextEditingController();
+  late final BarcodeScanHandler _scanHandler;
   Timer? _debounce;
   int _requestId = 0;
 
@@ -826,11 +828,19 @@ class _PackProductPickerState extends ConsumerState<PackProductPicker> {
   @override
   void initState() {
     super.initState();
+    _scanHandler = BarcodeScanHandler.forTextController(
+      context: context,
+      name: 'pack-product-picker',
+      controller: _search,
+      onScan: _handleBarcodeScan,
+    );
+    BarcodeScannerGateway.instance.register(_scanHandler);
     _load('');
   }
 
   @override
   void dispose() {
+    BarcodeScannerGateway.instance.unregister(_scanHandler);
     _debounce?.cancel();
     _search.dispose();
     super.dispose();
@@ -839,6 +849,15 @@ class _PackProductPickerState extends ConsumerState<PackProductPicker> {
   void _onChanged(String value) {
     _debounce?.cancel();
     _debounce = Timer(kSearchDebounce, () => _load(value));
+  }
+
+  void _handleBarcodeScan(String code) {
+    _debounce?.cancel();
+    _search.value = TextEditingValue(
+      text: code,
+      selection: TextSelection.collapsed(offset: code.length),
+    );
+    unawaited(_load(code));
   }
 
   Future<void> _load(String query) async {
