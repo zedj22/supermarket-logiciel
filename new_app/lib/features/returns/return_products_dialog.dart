@@ -21,10 +21,13 @@
 //
 // One `client_request_id` per dialog open keeps double-submit idempotent
 // (GATE 16).
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/barcode_scanner.dart';
 import '../../core/number_format.dart';
 import '../../core/numeric_text.dart';
 import '../../core/strings.dart';
@@ -74,6 +77,7 @@ class _ReturnProductsDialogState extends ConsumerState<ReturnProductsDialog> {
   final _search = TextEditingController();
   final _note = TextEditingController();
   final _focusNode = FocusNode();
+  late final BarcodeScanHandler _scanHandler;
   final Map<String, TextEditingController> _qty = {};
 
   final List<_SelectedLine> _lines = [];
@@ -91,10 +95,21 @@ class _ReturnProductsDialogState extends ConsumerState<ReturnProductsDialog> {
     super.initState();
     _clientRequestId =
         '${DateTime.now().microsecondsSinceEpoch}-${identityHashCode(this)}';
+    _scanHandler = BarcodeScanHandler(
+      context: context,
+      name: 'return-products',
+      allowWhileEditingFor: (editable) =>
+          identical(editable.controller, _search),
+      allowIncompletePassThrough: true,
+      allowReplacementPassThrough: true,
+      onScan: (code) => unawaited(_handleScan(code)),
+    );
+    BarcodeScannerGateway.instance.register(_scanHandler);
   }
 
   @override
   void dispose() {
+    BarcodeScannerGateway.instance.unregister(_scanHandler);
     _search.dispose();
     _note.dispose();
     _focusNode.dispose();
@@ -193,8 +208,8 @@ class _ReturnProductsDialogState extends ConsumerState<ReturnProductsDialog> {
   }
 
   /// Enter = committed scan (keyboard-wedge scanners send Enter).
-  Future<void> _handleScan() async {
-    final term = _search.text.trim();
+  Future<void> _handleScan([String? scannedCode]) async {
+    final term = (scannedCode ?? _search.text).trim();
     if (term.isEmpty || _submitting) return;
     final api = ref.read(returnsApiProvider);
 

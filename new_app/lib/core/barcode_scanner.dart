@@ -90,6 +90,7 @@
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 
+import 'barcode/barcode_normalizer.dart';
 import 'keyboard.dart';
 import 'scan_diagnostics.dart';
 
@@ -126,17 +127,17 @@ final RegExp _singleDigit = RegExp(r'^[0-9]$');
 /// arrive as digit characters and take the character path).
 const List<PhysicalKeyboardKey> _physicalMainRowDigitKeys =
     <PhysicalKeyboardKey>[
-  PhysicalKeyboardKey.digit0,
-  PhysicalKeyboardKey.digit1,
-  PhysicalKeyboardKey.digit2,
-  PhysicalKeyboardKey.digit3,
-  PhysicalKeyboardKey.digit4,
-  PhysicalKeyboardKey.digit5,
-  PhysicalKeyboardKey.digit6,
-  PhysicalKeyboardKey.digit7,
-  PhysicalKeyboardKey.digit8,
-  PhysicalKeyboardKey.digit9,
-];
+      PhysicalKeyboardKey.digit0,
+      PhysicalKeyboardKey.digit1,
+      PhysicalKeyboardKey.digit2,
+      PhysicalKeyboardKey.digit3,
+      PhysicalKeyboardKey.digit4,
+      PhysicalKeyboardKey.digit5,
+      PhysicalKeyboardKey.digit6,
+      PhysicalKeyboardKey.digit7,
+      PhysicalKeyboardKey.digit8,
+      PhysicalKeyboardKey.digit9,
+    ];
 
 /// Index of the main-row physical digit [key] stands for (0–9), or -1
 /// when [key] is not one.
@@ -189,11 +190,30 @@ bool _shiftPressed() {
 /// the reversed walk resolves the mount-before-unmount overlap of a
 /// route swap to the NEW screen).
 class BarcodeScanHandler {
+  factory BarcodeScanHandler.forTextController({
+    required BuildContext context,
+    required String name,
+    required TextEditingController controller,
+    required ValueChanged<String> onScan,
+  }) =>
+      BarcodeScanHandler(
+        context: context,
+        name: name,
+        allowWhileEditingFor: (editable) =>
+            identical(editable.controller, controller),
+        allowIncompletePassThrough: true,
+        allowReplacementPassThrough: true,
+        onScan: onScan,
+      );
+
   BarcodeScanHandler({
     required this.onScan,
     this.context,
     this.name = 'screen',
     this.allowWhileEditing = false,
+    this.allowWhileEditingFor,
+    this.allowIncompletePassThrough = false,
+    this.allowReplacementPassThrough = false,
   });
 
   /// Diagnostic label for this handler (`pos`, `products`, `stock`) —
@@ -219,6 +239,23 @@ class BarcodeScanHandler {
   /// with nothing focused is never half-typed into a field that takes
   /// focus mid-run.
   final bool allowWhileEditing;
+
+  /// Optional narrower exception for a particular editable controller.
+  /// Unlike [allowWhileEditing], this does not enable every text field in
+  /// the screen (for example, POS quantity editors).
+  final bool Function(EditableText editable)?
+      allowWhileEditingFor;
+
+  /// Some platform text-input paths can omit one or more layout-translated
+  /// characters even though the gateway observed every physical digit key.
+  /// When enabled for a dedicated scan field, a scanner-shaped run may be
+  /// restored if the field contains only a bounded append to its snapshot.
+  final bool allowIncompletePassThrough;
+
+  /// A focused field may replace its current value with the first scanner
+  /// character (rather than appending). Permit a verified scan run to roll
+  /// the field back to its pre-run snapshot before dispatch.
+  final bool allowReplacementPassThrough;
 
   /// Handles one completed burst (already matched [kBarcodeScanShape]).
   /// May be async; the gateway never awaits it.
@@ -255,11 +292,34 @@ class BarcodeScannerGateway {
   /// key, and whenever the gateway abandons a run).
   final StringBuffer _buffer = StringBuffer();
 
+  // Diagnostic-only observations since the last Enter. These counters do
+  // not participate in capture or arming; they let a Windows hardware run
+  // distinguish digit characters from layout-translated physical keys
+  // without logging any key character or barcode content.
+  int _diagCharacterDigitKeyDowns = 0;
+  int _diagPhysicalDigitKeyDowns = 0;
+  int _diagOtherKeyDowns = 0;
+  int _scanAttemptSequence = 0;
+  int? _activeScanAttemptId;
+  int? _dispatchingScanAttemptId;
+
+  /// True only while a scanner burst is being captured or synchronously
+  /// handed to its scan callback. POS quantity shortcuts consult this
+  /// boundary so layout translated barcode symbols cannot trigger them.
+  bool get isScanAttemptActive =>
+      _activeScanAttemptId != null || _dispatchingScanAttemptId != null;
+
   /// Decision handoff between the two listeners: events the capture
   /// state machine consumed. Weak, identity-keyed ([KeyEvent] has no ==
   /// override), so entries die with the event objects themselves.
-  final Expando<bool> _consumed =
-      Expando<bool>('barcode_scanner_consumed_event');
+  final Expando<bool> _consumed = Expando<bool>(
+    'barcode_scanner_consumed_event',
+  );
+  final Expando<bool> _scannerOwnedShortcutEvents = Expando<bool>(
+    'barcode_scanner_owned_shortcut_event',
+  );
+  final Set<PhysicalKeyboardKey> _scanPhysicalKeysDown =
+      <PhysicalKeyboardKey>{};
 
   /// Pass-through run state (an `allowWhileEditing` run started while an
   /// [EditableText] holds focus): whether the current run transits that
@@ -276,6 +336,7 @@ class BarcodeScannerGateway {
   /// restore check matches by snapshot prefix and per-digit growth
   /// instead of exact ASCII text.
   bool _runThroughForeign = false;
+  final StringBuffer _runThroughText = StringBuffer();
   BarcodeScanHandler? _runThroughHandler;
   TextEditingController? _runThroughController;
   TextEditingValue? _runThroughValue;
@@ -379,7 +440,26 @@ class BarcodeScannerGateway {
       'suffix3': scanDiagSuffix3(code),
       'target': owner.name,
     });
-    owner.onScan(code);
+    scanDiag('scan-dispatch', {
+      'phase': 'attempt',
+      'origin': 'raw-input',
+      'target': owner.name,
+      'len': code.length,
+      'result': 'attempted',
+    });
+    _dispatchingScanAttemptId = ++_scanAttemptSequence;
+    try {
+      owner.onScan(code);
+    } finally {
+      _dispatchingScanAttemptId = null;
+    }
+    scanDiag('scan-dispatch', {
+      'phase': 'complete',
+      'origin': 'raw-input',
+      'target': owner.name,
+      'len': code.length,
+      'result': 'callback-invoked',
+    });
     return true;
   }
 
@@ -419,21 +499,63 @@ class BarcodeScannerGateway {
   /// Hard gates still abandon a run: a dialog/route change, a modifier
   /// chord or a dead screen.
   bool _handleKeyEvent(KeyEvent event) {
-    // Only key-downs build or terminate a scan. KeyUps pass without
-    // touching the buffer (the wedge interleaves one per character, and a
-    // stray up must not eat a burst mid-run); auto-repeat passes without
-    // appending (a held key can never fabricate a barcode).
+    // Track physical key-up/repeat events separately from the barcode
+    // buffer. A repeat of a scanner-owned `Digit 6` must not fall through
+    // to POS '-' while the burst remains active.
+    if (event is KeyUpEvent) {
+      _scanPhysicalKeysDown.remove(event.physicalKey);
+      return false;
+    }
+    if (event is KeyRepeatEvent) {
+      final attemptId = _activeScanAttemptId ?? _dispatchingScanAttemptId;
+      final handlerName = _posQuantityShortcutFor(event);
+      if (attemptId != null &&
+          _scanPhysicalKeysDown.contains(event.physicalKey) &&
+          handlerName != null) {
+        _logSuppressedPosShortcut(event, attemptId, handlerName);
+        _consumed[event] = true;
+        return true;
+      }
+      return false;
+    }
+    // Only key-downs build or terminate a scan. A stray up or repeat never
+    // appends to the barcode buffer (a held key cannot fabricate a code).
     if (event is! KeyDownEvent) return false;
 
     final logicalKey = event.logicalKey;
     if (logicalKey == LogicalKeyboardKey.enter ||
         logicalKey == LogicalKeyboardKey.numpadEnter) {
-      final code = _buffer.toString();
+      final rawCode = _buffer.toString();
+      final code = normalizeScannerBarcode(rawCode);
+      final attemptId = _activeScanAttemptId;
+      if (rawCode.isNotEmpty) {
+        scanDiag('scan-terminator', {
+          'attemptId': attemptId,
+          'rawLength': rawCode.length,
+          'normalizedLength': code.length,
+          'normalized': rawCode != code,
+          'validShape': kBarcodeScanShape.hasMatch(code),
+          'runThrough': _runThrough,
+        });
+      }
+      if (scanDiagObservationEnabled) {
+        scanDiag('key-burst-observed', {
+          'characterDigits': _diagCharacterDigitKeyDowns,
+          'physicalDigits': _diagPhysicalDigitKeyDowns,
+          'otherKeys': _diagOtherKeyDowns,
+          'bufferedDigits': code.length,
+          'editableFocus': editableTextHasFocus(),
+        });
+      }
+      _diagCharacterDigitKeyDowns = 0;
+      _diagPhysicalDigitKeyDowns = 0;
+      _diagOtherKeyDowns = 0;
       // Capture the pass-through run state BEFORE the reset: the
       // terminator below must still know which field the digits transited
       // and where it started.
       final runThrough = _runThrough;
       final runThroughForeign = _runThroughForeign;
+      final runThroughText = _runThroughText.toString();
       final runThroughHandler = _runThroughHandler;
       final runThroughController = _runThroughController;
       final runThroughValue = _runThroughValue;
@@ -452,6 +574,18 @@ class BarcodeScannerGateway {
             runThroughValue != null) {
           final text = runThroughController.text;
           final snapshot = runThroughValue.text;
+          final appendedText = text.startsWith(snapshot)
+              ? text.substring(snapshot.length)
+              : null;
+          final partialRunMatches =
+              runThroughHandler.allowIncompletePassThrough &&
+              appendedText != null &&
+              appendedText.length <= runThroughText.length &&
+              _isSubsequence(appendedText, runThroughText);
+          final replacementRunMatches =
+              runThroughHandler.allowReplacementPassThrough &&
+              text.length <= runThroughText.length &&
+              _isSubsequence(text, runThroughText);
           // The field must show the snapshot followed by EXACTLY this
           // run. A US (character-digit) run lands as the ASCII code
           // itself, matched verbatim. A foreign-layout run transited the
@@ -463,9 +597,14 @@ class BarcodeScannerGateway {
           // one such unit). Same confidence, same restore; nothing is
           // ever remapped.
           final matchesRun = runThroughForeign
-              ? text.length == snapshot.length + code.length &&
-                  text.startsWith(snapshot)
-              : text == snapshot + code;
+              ? text.startsWith(snapshot) &&
+                    (text.length ==
+                            snapshot.length +
+                                rawCode.length ||
+                        partialRunMatches || replacementRunMatches)
+              : text == snapshot + code ||
+                    partialRunMatches ||
+                    replacementRunMatches;
           if (matchesRun) {
             // The whole burst landed in the field (real device): strip
             // it — the dispatch below routes the code to the barcode.
@@ -498,6 +637,7 @@ class BarcodeScannerGateway {
           // belongs to exactly one dispatch.
           if (_dropCrossOriginDuplicate(code, fromRaw: false)) {
             scanDiag('dispatch-drop', {
+              'attemptId': attemptId,
               'reason': 'cross-origin-duplicate',
               'len': code.length,
               'suffix3': scanDiagSuffix3(code),
@@ -513,13 +653,33 @@ class BarcodeScannerGateway {
             'suffix3': scanDiagSuffix3(code),
             'target': owner.name,
           });
-          owner.onScan(code);
+          scanDiag('scan-dispatch', {
+            'attemptId': attemptId,
+            'phase': 'attempt',
+            'target': owner.name,
+            'len': code.length,
+            'result': 'attempted',
+          });
+          _dispatchingScanAttemptId = attemptId;
+          try {
+            owner.onScan(code);
+          } finally {
+            _dispatchingScanAttemptId = null;
+          }
+          scanDiag('scan-dispatch', {
+            'attemptId': attemptId,
+            'phase': 'complete',
+            'target': owner.name,
+            'len': code.length,
+            'result': 'callback-invoked',
+          });
           return true;
         }
         // Shape-matching run but no live owner (dialog, dead screen,
         // gates): the consumed digits must never be silently dropped —
         // say so with an explicit reason.
         scanDiag('dispatch-drop', {
+          'attemptId': attemptId,
           'reason': 'no-owner',
           'len': code.length,
           'suffix3': scanDiagSuffix3(code),
@@ -529,6 +689,7 @@ class BarcodeScannerGateway {
         // barcode-shaped — a human quantity: consumed runs dropped them
         // on purpose, pass-through runs left them in the focused field.
         scanDiag('dispatch-drop', {
+          'attemptId': attemptId,
           'reason': 'shape',
           'len': code.length,
         });
@@ -542,9 +703,34 @@ class BarcodeScannerGateway {
     // Ordinary capture, UNCHANGED: an ASCII digit in `character` (US and
     // correctly configured scanners, NumLock-on numpads — and, on AZERTY,
     // the Shift layer a FR-configured scanner or a human produces).
-    final characterDigit = character != null &&
+    final characterDigit =
+        character != null &&
         character.isNotEmpty &&
         _singleDigit.hasMatch(character);
+    final physicalDigitIndex = _physicalDigitIndexOf(event.physicalKey);
+    final azertySymbol = character != null &&
+        _azertyScannerCharacters.contains(character) &&
+        physicalDigitIndex >= 0 &&
+        !_shiftPressed();
+    final arabicDigit = character != null &&
+        character.runes.length == 1 &&
+        physicalDigitIndex >= 0 &&
+        ((character.runes.single >= 0x0660 &&
+                character.runes.single <= 0x0669) ||
+            (character.runes.single >= 0x06F0 &&
+                character.runes.single <= 0x06F9));
+    final scannerTokenCharacter = characterDigit || azertySymbol || arabicDigit;
+    if (scanDiagObservationEnabled) {
+      if (scannerTokenCharacter && characterDigit) {
+        _diagCharacterDigitKeyDowns++;
+      }
+      if (physicalDigitIndex >= 0 && scannerTokenCharacter) {
+        _diagPhysicalDigitKeyDowns++;
+      }
+      if (_buffer.isNotEmpty && !scannerTokenCharacter) {
+        _diagOtherKeyDowns++;
+      }
+    }
     // EXPERIMENTAL, gated by [experimentalPhysicalDigitCapture] (default
     // OFF): capture on the PHYSICAL key identity — the scan code, 1:1
     // with the US number row for a US-configured scanner on ANY Windows
@@ -562,19 +748,46 @@ class BarcodeScannerGateway {
     // runs: `digit` stays null for every non-character-digit event and
     // the gateway behaves exactly as before the experiment.
     String? digit;
-    if (characterDigit) {
+    String? captureOrigin;
+    if (scannerTokenCharacter) {
       digit = character;
+      captureOrigin = characterDigit
+          ? 'character'
+          : azertySymbol
+          ? 'azerty-symbol'
+          : 'arabic-digit';
     } else if (experimentalPhysicalDigitCapture) {
-      final physicalDigitIndex = _physicalDigitIndexOf(event.physicalKey);
-      final blocked = _shiftPressed() ||
+      final blocked =
+          _shiftPressed() ||
           (character != null &&
               character.isNotEmpty &&
               _shortcutOwnedCharacters.contains(character));
       if (physicalDigitIndex >= 0 && !blocked) {
         digit = _digitFromPhysicalIndex(physicalDigitIndex);
+        captureOrigin = 'physical-key';
+      }
+    }
+    if (digit == null && physicalDigitIndex >= 0) {
+      final rejectionReason = character == null
+          ? 'no-character'
+          : _shiftPressed() && _azertyScannerCharacters.contains(character)
+          ? 'shift-modifier'
+          : _shortcutOwnedCharacters.contains(character)
+          ? 'shortcut-owned'
+          : experimentalPhysicalDigitCapture
+          ? 'unsupported-layout-character'
+          : 'layout-character-unmapped';
+      if (character == null || !characterDigit) {
+        scanDiag('scan-key-rejected', {
+          'origin': 'physical-key',
+          'reason': rejectionReason,
+          'bufferBefore': _buffer.length,
+          'bufferAfter': _buffer.length,
+        });
       }
     }
     if (digit != null) {
+      final bufferBefore = _buffer.length;
       // Pass-through staleness (its runs only): a pause longer than
       // [kBarcodeRunStaleGap] means the buffered residue and its snapshot
       // describe typing, not one burst — drop them and evaluate this
@@ -586,6 +799,7 @@ class BarcodeScannerGateway {
             event.timeStamp > last &&
             event.timeStamp - last > kBarcodeRunStaleGap) {
           scanDiag('run-abandon', {
+            'attemptId': _activeScanAttemptId,
             'reason': 'stale-gap',
             'len': _buffer.length,
           });
@@ -597,26 +811,71 @@ class BarcodeScannerGateway {
         // a dead screen means this digit belongs to the field/shortcut,
         // never to the gateway.
         final owner = _activeHandler();
-        if (owner == null) return false;
+        if (owner == null) {
+          scanDiag('scan-key-rejected', {
+            'origin': captureOrigin,
+            'reason': 'no-active-handler',
+            'bufferBefore': bufferBefore,
+            'bufferAfter': _buffer.length,
+          });
+          return false;
+        }
         _buffer.write(digit);
+        _activeScanAttemptId = ++_scanAttemptSequence;
         _lastDigitAt = event.timeStamp;
         // Non-character digit = the experimental physical path fired:
         // the field will receive layout-translated text, so the
         // terminator must match by growth, not exact ASCII.
         if (!characterDigit) _runThroughForeign = true;
-        if (owner.allowWhileEditing) {
-          final editable = _focusedEditable();
-          if (editable != null) {
-            // Pass-through run: the digit reaches this field as ordinary
-            // typing (NOT consumed — that is the whole point: typing in
-            // the form must work), and the snapshot taken here is
-            // restored at Enter when the run turns out to be a scan.
-            _runThrough = true;
-            _runThroughHandler = owner;
-            _runThroughController = editable.controller;
-            _runThroughValue = editable.controller.value;
-            return false;
+        final editable = _focusedEditable();
+        if (editable != null && _allowsWhileEditing(owner, editable)) {
+          // Pass-through run: the digit reaches this field as ordinary
+          // typing (NOT consumed — that is the whole point: typing in
+          // the form must work), and the snapshot taken here is
+          // restored at Enter when the run turns out to be a scan.
+          _runThrough = true;
+          _runThroughHandler = owner;
+          _runThroughController = editable.controller;
+          _runThroughValue = editable.controller.value;
+          _runThroughText
+            ..clear()
+            ..write(character ?? digit);
+          _scanPhysicalKeysDown.add(event.physicalKey);
+          scanDiag('scan-key', {
+            'attemptId': _activeScanAttemptId,
+            'phase': 'start',
+            'origin': captureOrigin,
+            'accepted': true,
+            'bufferBefore': bufferBefore,
+            'bufferAfter': _buffer.length,
+          });
+          final shortcutHandler = _posQuantityShortcutFor(event);
+          if (shortcutHandler != null) {
+            _scannerOwnedShortcutEvents[event] = true;
+            _logSuppressedPosShortcut(
+              event,
+              _activeScanAttemptId!,
+              shortcutHandler,
+            );
           }
+          return false;
+        }
+        _scanPhysicalKeysDown.add(event.physicalKey);
+        scanDiag('scan-key', {
+          'attemptId': _activeScanAttemptId,
+          'phase': 'start',
+          'origin': captureOrigin,
+          'accepted': true,
+          'bufferBefore': bufferBefore,
+          'bufferAfter': _buffer.length,
+        });
+        final shortcutHandler = _posQuantityShortcutFor(event);
+        if (shortcutHandler != null) {
+          _logSuppressedPosShortcut(
+            event,
+            _activeScanAttemptId!,
+            shortcutHandler,
+          );
         }
         _consumed[event] = true;
         return true;
@@ -624,13 +883,46 @@ class BarcodeScannerGateway {
       // CONTINUE: the run's earlier digits were already claimed here;
       // only hard gates (dialog, chord, dead screen) may abandon it.
       if (_runOwner() == null) {
-        scanDiag('run-abandon', {'reason': 'gates', 'len': _buffer.length});
+        scanDiag('scan-key-rejected', {
+          'attemptId': _activeScanAttemptId,
+          'origin': captureOrigin,
+          'reason': 'run-owner-lost',
+          'bufferBefore': bufferBefore,
+          'bufferAfter': _buffer.length,
+        });
+        scanDiag('run-abandon', {
+          'attemptId': _activeScanAttemptId,
+          'reason': 'gates',
+          'len': _buffer.length,
+        });
         _resetBuffer();
         return false;
       }
       _buffer.write(digit);
       _lastDigitAt = event.timeStamp;
+      _scanPhysicalKeysDown.add(event.physicalKey);
       if (!characterDigit) _runThroughForeign = true;
+      if (_runThrough) _runThroughText.write(character ?? digit);
+      scanDiag('scan-key', {
+        'attemptId': _activeScanAttemptId,
+        'phase': 'continue',
+        'origin': captureOrigin,
+        'accepted': true,
+        'bufferBefore': bufferBefore,
+        'bufferAfter': _buffer.length,
+      });
+      final shortcutHandler = _posQuantityShortcutFor(event);
+      if (shortcutHandler != null) {
+        if (_runThrough) _scannerOwnedShortcutEvents[event] = true;
+        _logSuppressedPosShortcut(
+          event,
+          _activeScanAttemptId!,
+          shortcutHandler,
+        );
+        if (_runThrough) return false;
+        _consumed[event] = true;
+        return true;
+      }
       // A pass-through run keeps passing through: the field receives the
       // digit, the terminator above decides what the run was.
       if (_runThrough) return false;
@@ -640,11 +932,36 @@ class BarcodeScannerGateway {
 
     // Anything else means a human is driving: the partial run is junk.
     if (_buffer.isNotEmpty) {
-      scanDiag('run-abandon', {'reason': 'non-digit', 'len': _buffer.length});
+      final bufferBefore = _buffer.length;
+      scanDiag('scan-key-rejected', {
+        'attemptId': _activeScanAttemptId,
+        'origin': 'non-token-event',
+        'reason': 'run-abandoned',
+        'bufferBefore': bufferBefore,
+        'bufferAfter': 0,
+      });
+      scanDiag('run-abandon', {
+        'attemptId': _activeScanAttemptId,
+        'reason': 'non-digit',
+        'len': _buffer.length,
+      });
       _resetBuffer();
     }
     return false;
   }
+
+  static const Set<String> _azertyScannerCharacters = <String>{
+    '&',
+    'é',
+    '"',
+    "'",
+    '(',
+    '-',
+    'è',
+    '_',
+    'ç',
+    'à',
+  };
 
   /// The consumer — the [FocusManager] half. [FocusManager] consults
   /// early handlers before walking the focus tree (and skips the walk
@@ -653,6 +970,43 @@ class BarcodeScannerGateway {
   KeyEventResult _handleEarlyKeyEvent(KeyEvent event) {
     if (_consumed[event] == true) return KeyEventResult.handled;
     return KeyEventResult.ignored;
+  }
+
+  void _logSuppressedPosShortcut(
+    KeyEvent event,
+    int attemptId,
+    String handlerName,
+  ) {
+    final primaryFocus = FocusManager.instance.primaryFocus;
+    scanDiag('pos-shortcut-suppressed', {
+      'attemptId': attemptId,
+      'handlerName': handlerName,
+      'physicalKey': event.physicalKey.debugName ??
+          event.physicalKey.usbHidUsage.toRadixString(16),
+      'logicalKey': event.logicalKey.debugName ??
+          event.logicalKey.keyId.toRadixString(16),
+      'eventType': event.runtimeType.toString(),
+      'focusState': primaryFocus == null
+          ? 'none'
+          : '${primaryFocus.debugLabel ?? primaryFocus.runtimeType} '
+                'editable=${editableTextHasFocus()}',
+    });
+  }
+
+  /// Identify only the POS +/- shortcuts. Other keys retain their normal
+  /// handling during a scan attempt.
+  String? _posQuantityShortcutFor(KeyEvent event) {
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) return null;
+    if (event.character == '-') return 'PosQtyShortcutActivator.decrement';
+    if (event.character == '+') return 'PosQtyShortcutActivator.increment';
+    if (event.logicalKey == LogicalKeyboardKey.minus ||
+        event.logicalKey == LogicalKeyboardKey.numpadSubtract) {
+      return 'PosQtyShortcutActivator.decrement';
+    }
+    if (event.logicalKey == LogicalKeyboardKey.numpadAdd) {
+      return 'PosQtyShortcutActivator.increment';
+    }
+    return null;
   }
 
   /// The screen that currently owns STARTING a scan: the most recent
@@ -690,9 +1044,31 @@ class BarcodeScannerGateway {
   /// keeps typing normally, and Enter rolls it back before the scan lands
   /// in the barcode field).
   bool _armed(BarcodeScanHandler handler, BuildContext? focusContext) {
-    if (!handler.allowWhileEditing && editableTextHasFocus()) return false;
+    final editable = _focusedEditable();
+    if (editable != null && !_allowsWhileEditing(handler, editable)) {
+      return false;
+    }
     return _armedCore(handler, focusContext);
   }
+
+  bool _allowsWhileEditing(
+    BarcodeScanHandler handler,
+    EditableText editable,
+  ) =>
+      handler.allowWhileEditing ||
+      handler.allowWhileEditingFor?.call(editable) == true;
+
+  /// Whether [controller] currently owns a pass-through scanner run.
+  /// Quantity fields use this to defer live quantity parsing until Enter
+  /// decides whether the run is a scan or a manual numeric edit.
+  bool isPassThroughRunFor(TextEditingController controller) =>
+      _runThrough && identical(_runThroughController, controller);
+
+  /// True when this exact key event was accepted into a scanner run and
+  /// also resembles a POS quantity shortcut. Pass-through fields still
+  /// receive their text; POS shortcut activators must decline this event.
+  bool isScannerOwnedShortcutEvent(KeyEvent event) =>
+      _scannerOwnedShortcutEvents[event] == true;
 
   /// The hard gates every event evaluation needs: a live screen, no
   /// modifier chord, this screen's route current, and the focus scope
@@ -701,24 +1077,65 @@ class BarcodeScannerGateway {
   bool _armedCore(BarcodeScanHandler handler, BuildContext? focusContext) {
     final context = handler.context;
     // A dead screen (dispose pending) never owns a key.
-    if (context != null && !context.mounted) return false;
+    if (context != null && !context.mounted) {
+      _recordArmingDecision(handler, 'screen-unmounted');
+      return false;
+    }
     // Modifier chords belong to the shortcut layer, never to scanning.
-    if (_chordPressed()) return false;
+    if (_chordPressed()) {
+      _recordArmingDecision(handler, 'modifier-chord');
+      return false;
+    }
     // Our route must be the live one (a dialog stacked in the SAME
     // navigator makes it non-current).
     final ourRoute = context == null ? null : ModalRoute.of(context);
-    if (ourRoute != null && !ourRoute.isCurrent) return false;
-    if (context == null || focusContext == null) return true;
+    if (ourRoute != null && !ourRoute.isCurrent) {
+      _recordArmingDecision(handler, 'route-not-current');
+      return false;
+    }
+    if (context == null || focusContext == null) {
+      _recordArmingDecision(handler, 'missing-context');
+      return true;
+    }
     // Ordinary control of this screen focused (row, button, workspace
     // node): still the active scan target.
-    if (_isWithin(context, focusContext)) return true;
+    if (_isWithin(context, focusContext)) {
+      _recordArmingDecision(
+        handler,
+        'focus-in-screen',
+        focusContext: focusContext,
+      );
+      return true;
+    }
     // Focus elsewhere: allowed only when the focused node lives in a
     // route that ENCLOSES ours (nav-shell chrome above the screen
     // content). A dialog route — anywhere it was pushed — is not an
     // ancestor of this subtree, so the walk fails and the scan is
     // blocked: never scan behind a modal dialog.
     final focusRoute = ModalRoute.of(focusContext);
-    if (focusRoute == null || focusRoute == ourRoute) return true;
+    if (focusRoute == null || focusRoute == ourRoute) {
+      _recordArmingDecision(
+        handler,
+        'focus-route-same-or-null',
+        focusContext: focusContext,
+      );
+      return true;
+    }
+    // Dialogs and other popup routes are overlays. They cannot enclose the
+    // registered screen, so reject them directly. Besides being equivalent
+    // to the ancestry result below, this avoids calling ModalRoute.of on
+    // every ancestor Element from the global keyboard callback while a
+    // DialogRoute is focused; those transient inherited dependencies can
+    // outlive/reparent across nested root-Navigator dialog transitions.
+    if (focusRoute is PopupRoute<dynamic>) {
+      _recordArmingDecision(
+        handler,
+        'focus-popup-route',
+        focusContext: focusContext,
+        focusRoute: focusRoute,
+      );
+      return false;
+    }
     var enclosing = false;
     context.visitAncestorElements((element) {
       if (ModalRoute.of(element) == focusRoute) {
@@ -727,7 +1144,31 @@ class BarcodeScannerGateway {
       }
       return true;
     });
+    _recordArmingDecision(
+      handler,
+      enclosing ? 'focus-route-encloses-screen' : 'focus-outside-screen',
+      focusContext: focusContext,
+      focusRoute: focusRoute,
+    );
     return enclosing;
+  }
+
+  /// Detailed route/focus breadcrumbs are opt-in with
+  /// `--dart-define=KLICK_SCAN_DIAG=true`; they do not alter an arming
+  /// decision and contain no typed key or barcode content.
+  void _recordArmingDecision(
+    BarcodeScanHandler handler,
+    String reason, {
+    BuildContext? focusContext,
+    Route<dynamic>? focusRoute,
+  }) {
+    if (!kScanDiagnosticsEnabled) return;
+    scanDiag('scanner-arm', {
+      'target': handler.name,
+      'reason': reason,
+      'focusWidget': ?focusContext?.widget.runtimeType.toString(),
+      'focusRoute': ?focusRoute?.runtimeType.toString(),
+    });
   }
 
   /// Whether [descendant] is [ancestor] itself or sits below it in the
@@ -762,10 +1203,17 @@ class BarcodeScannerGateway {
     _buffer.clear();
     _runThrough = false;
     _runThroughForeign = false;
+    _runThroughText.clear();
     _runThroughHandler = null;
     _runThroughController = null;
     _runThroughValue = null;
     _lastDigitAt = null;
+    _activeScanAttemptId = null;
+    _dispatchingScanAttemptId = null;
+    _scanPhysicalKeysDown.clear();
+    _diagCharacterDigitKeyDowns = 0;
+    _diagPhysicalDigitKeyDowns = 0;
+    _diagOtherKeyDowns = 0;
   }
 
   /// The [EditableText] that owns primary focus, resolved exactly like
@@ -776,6 +1224,19 @@ class BarcodeScannerGateway {
     if (context == null) return null;
     if (context.widget is EditableText) return context.widget as EditableText;
     return context.findAncestorWidgetOfExactType<EditableText>();
+  }
+
+  bool _isSubsequence(String value, String candidate) {
+    var candidateIndex = 0;
+    for (final unit in value.codeUnits) {
+      while (candidateIndex < candidate.length &&
+          candidate.codeUnitAt(candidateIndex) != unit) {
+        candidateIndex++;
+      }
+      if (candidateIndex == candidate.length) return false;
+      candidateIndex++;
+    }
+    return true;
   }
 
   /// Registered screens (all of them, armed or not).
@@ -825,6 +1286,9 @@ class BarcodeScannerGateway {
   void resetForTest() {
     _handlers.clear();
     _resetBuffer();
+    _diagCharacterDigitKeyDowns = 0;
+    _diagPhysicalDigitKeyDowns = 0;
+    _diagOtherKeyDowns = 0;
     resetDispatchDedupForTest();
     experimentalPhysicalDigitCapture = false;
   }

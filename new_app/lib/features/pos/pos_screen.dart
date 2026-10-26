@@ -48,6 +48,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/amount_entry.dart';
 import '../../core/barcode_scanner.dart';
+import '../../core/barcode/barcode_normalizer.dart';
 import '../../core/colors.dart';
 import '../../core/keyboard.dart';
 import '../../core/number_format.dart';
@@ -215,6 +216,11 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       context: context,
       name: 'pos',
       onScan: _handleLineScan,
+      allowWhileEditingFor: (editable) =>
+          editable.controller == _searchController ||
+          editable.focusNode.debugLabel == 'cart-line-qty',
+      allowIncompletePassThrough: true,
+      allowReplacementPassThrough: true,
     );
     BarcodeScannerGateway.instance.register(_scanHandler);
     // The catalog query outlives this page State: restore the box so the
@@ -460,6 +466,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       // Exact +1 (scaled math) — 2.7 → 3.7, never 3.6999999999999996.
       rawInput: posQuantityAdd(line.quantity, 1),
       loc: loc,
+      reason: 'shortcut-increment',
       onError: _showQtyError,
     );
   }
@@ -493,6 +500,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       // Exact −1 (scaled math) — 3.7 → 2.7, never 2.6999999999999997.
       rawInput: text,
       loc: loc,
+      reason: 'shortcut-decrement',
       onError: _showQtyError,
     );
   }
@@ -533,6 +541,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       line: line,
       rawInput: next,
       loc: loc,
+      reason: 'quantity-dialog',
       onError: _showQtyError,
     );
   }
@@ -651,6 +660,8 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       line: line,
       rawInput: rawInput,
       loc: loc,
+      reason: 'quantity-field-or-step-button',
+      scanCorrelationId: lastScanCorr,
       onError: _showQtyError,
     );
   }
@@ -667,16 +678,35 @@ class _PosScreenState extends ConsumerState<PosScreen> {
 
   Future<void> _submitSearch() async {
     if (_submitSearchInFlight) return;
-    final query = _searchController.text.trim();
+    final rawQuery = _searchController.text.trim();
+    final query = normalizeBarcode(rawQuery);
     if (query.isEmpty) return;
+    if (rawQuery != query) {
+      _searchController.value = TextEditingValue(
+        text: query,
+        selection: TextSelection.collapsed(offset: query.length),
+      );
+    }
     // ORIGIN event for the focused-search path: the next resolve /
     // receive hop correlates to this submit. `len` > 13 after a scan
     // session would reveal a STALE prefix concatenated onto the next
     // code (a burst split across fields).
     lastScanCorr = scanDiag('search-submit', {
+      'target': 'pos',
       'len': query.length,
       'suffix3': scanDiagSuffix3(query),
     });
+    final scanCorrelationId = lastScanCorr;
+    if (rawQuery != query) {
+      scanDiag('scan-normalization', {
+        'target': 'pos',
+        'corr': lastScanCorr,
+        'rawLength': rawQuery.length,
+        'normalizedLength': query.length,
+        'normalized': true,
+        'origin': 'focused-search',
+      });
+    }
     if (query.toUpperCase().startsWith(kLoyaltyQrPrefix)) {
       await _submitLoyaltyLookup(query);
       return;
@@ -688,7 +718,10 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       // racing the resolve (and a panel churn right before the add). The
       // typed text stays: a lookup miss re-runs load() with exactly it.
       ref.read(posSearchProvider.notifier).cancelPendingSearch();
-      final resolve = await _resolveAndAddBarcode(query);
+      final resolve = await _resolveAndAddBarcode(
+        query,
+        scanCorrelationId: scanCorrelationId,
+      );
       if (resolve == _ScanResolve.hit) return;
       // Fresh results for THIS query (cancels the pending debounce), then
       // exact name/SKU/barcode match. The documented first-result fallback
@@ -712,7 +745,11 @@ class _PosScreenState extends ConsumerState<PosScreen> {
         // Search-input add (the focused search field consumed the input —
         // typed text or a wedge burst that landed there): the field keeps
         // focus for the next code; never auto-focus a qty field.
-        await _addProduct(exact, fromScan: true);
+        await _addProduct(
+          exact,
+          fromScan: true,
+          scanCorrelationId: scanCorrelationId,
+        );
         _clearSearchAfterAdd();
       } else {
         await _handleUnknownBarcode(
@@ -738,7 +775,10 @@ class _PosScreenState extends ConsumerState<PosScreen> {
   /// definitive lookup miss; [_ScanResolve.error] when the lookup or the
   /// follow-up fetch failed — callers fall back to text search, and only
   /// a true miss may raise the unknown-barcode scan action.
-  Future<_ScanResolve> _resolveAndAddBarcode(String code) async {
+  Future<_ScanResolve> _resolveAndAddBarcode(
+    String code, {
+    int? scanCorrelationId,
+  }) async {
     final lookup =
         await ref.read(barcodeLookupProvider.notifier).lookup(code);
     final productId = lookup?.found == true ? lookup?.productId : null;
@@ -783,6 +823,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       await _addProduct(
         product,
         fromScan: true,
+        scanCorrelationId: scanCorrelationId,
         variantsFuture: variantsFuture,
         unitsFuture: unitsFuture,
       );
@@ -860,6 +901,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
   /// clear not-found toast); recognized codes reuse every cart rule
   /// (merge-increment, stock guard, pickers).
   Future<void> _handleLineScan(String code) async {
+    final scanCorrelationId = lastScanCorr;
     // First statement, synchronously: every dispatch (gateway or field
     // path) leaves a receive trace here, correlated to its origin.
     scanDiag('scan-receive', {
@@ -871,7 +913,10 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     // digit-search debounce left over from an earlier focus change must
     // not fire mid-resolve as a wasted catalog request.
     ref.read(posSearchProvider.notifier).cancelPendingSearch();
-    final resolve = await _resolveAndAddBarcode(code);
+    final resolve = await _resolveAndAddBarcode(
+      code,
+      scanCorrelationId: scanCorrelationId,
+    );
     if (resolve == _ScanResolve.hit) return;
     await _handleUnknownBarcode(
       code,
@@ -1021,6 +1066,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
   Future<void> _addProduct(
     ProductModel product, {
     bool fromScan = false,
+    int? scanCorrelationId,
     Future<_ChoicesLookup<VariantModel>>? variantsFuture,
     Future<_ChoicesLookup<SellingUnitModel>>? unitsFuture,
   }) async {
@@ -1201,6 +1247,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
           wholesaleMinQty: product.wholesaleMinQty,
           promotionPrice: promoPrice,
           fromScan: fromScan,
+          scanCorrelationId: scanCorrelationId,
           onError: qtyErrorHandler,
         );
         return;
@@ -1226,6 +1273,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
         wholesaleMinQty: product.wholesaleMinQty,
         promotionPrice: promoPrice,
         fromScan: fromScan,
+        scanCorrelationId: scanCorrelationId,
         onError: qtyErrorHandler,
       );
       return;
@@ -1282,6 +1330,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       wholesaleMinQty: product.wholesaleMinQty,
       promotionPrice: pickPromoPrice,
       fromScan: fromScan,
+      scanCorrelationId: scanCorrelationId,
       onError: qtyErrorHandler,
     );
   }
@@ -1437,6 +1486,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     // NO cart-line quantity field is ever auto-focused after an add —
     // focus moves to a qty field only when the cashier clicks/taps it.
     bool fromScan = false,
+    int? scanCorrelationId,
     // Quantity-error funnel override — Behavior B intercepts a confirmed
     // scan-driven `out_of_stock` rejection here (see the handler built in
     // [_addProduct]); null keeps the single [_showQtyError] toast funnel.
@@ -1481,6 +1531,8 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       newLine: line,
       rawInput: quantity,
       loc: loc,
+      reason: fromScan ? 'scan-add' : 'manual-add',
+      scanCorrelationId: scanCorrelationId,
       onError: onError ?? _showQtyError,
     );
     final cartAfter = ref.read(posCartProvider);
@@ -1492,7 +1544,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       }
     }
     scanDiag('cart-add', {
-      'corr': lastScanCorr,
+      'corr': scanCorrelationId ?? lastScanCorr,
       'productId': productId ?? packId ?? '-',
       'variantId': variantId ?? '-',
       'sellingUnitId': sellingUnitId ?? '-',
@@ -5159,6 +5211,11 @@ class _CartLineTileState extends State<_CartLineTile> {
   void initState() {
     super.initState();
     _qty = TextEditingController(text: widget.line.quantity);
+    _logQtyFieldWrite(
+      reason: 'field-mount',
+      previous: null,
+      next: widget.line.quantity,
+    );
     _discount = TextEditingController(text: widget.line.lineDiscount);
     _commitQtyText(_qty.text);
     _qtyFocus = FocusNode(debugLabel: 'cart-line-qty');
@@ -5258,7 +5315,7 @@ class _CartLineTileState extends State<_CartLineTile> {
         // under this write, so it is committed too — a run typed AFTER a
         // merge still has to append to the now-committed quantity, never
         // to the barcode prefix this sync just discarded.
-        _qty.text = widget.line.quantity;
+        _writeQtyText(widget.line.quantity, reason: 'cart-state-sync');
         _commitQtyText(_qty.text);
       }
     }
@@ -5331,7 +5388,10 @@ class _CartLineTileState extends State<_CartLineTile> {
     final text = _qtyStepText(widget.line.quantity, delta);
     if (text == null || text == widget.line.quantity) return;
     final applied = widget.onQty(text);
-    _qty.text = applied ? text : widget.line.quantity;
+    _writeQtyText(
+      applied ? text : widget.line.quantity,
+      reason: applied ? 'quantity-step' : 'quantity-step-rejected',
+    );
     _commitQtyText(_qty.text);
   }
 
@@ -5363,6 +5423,19 @@ class _CartLineTileState extends State<_CartLineTile> {
     if (_pendingScanText != null && raw != _pendingScanText) {
       _pendingScanText = null;
     }
+    if (BarcodeScannerGateway.instance.isPassThroughRunFor(_qty)) {
+      scanDiag('qty-input-deferred', {
+        'reason': 'scanner-pass-through',
+        'productId': widget.line.productId ?? '-',
+        'variantId': widget.line.variantId ?? '-',
+        'sellingUnitId': widget.line.sellingUnitId ?? '-',
+        'previous': widget.line.quantity,
+        'next': widget.line.quantity,
+        'len': raw.length,
+        'corr': lastScanCorr ?? '-',
+      });
+      return;
+    }
     if (kPosBarcodeScanInput.hasMatch(raw.trim())) return;
     if (_isDigitAppend(previous, raw)) return;
     if (!parseQuantityExpression(raw).isValid) {
@@ -5380,12 +5453,35 @@ class _CartLineTileState extends State<_CartLineTile> {
       // received and put it on screen immediately: a programmatic write
       // fires no onChanged, and didUpdateWidget sees equal text (no-op).
       final applied = parseQuantityExpression(raw).text;
-      _qty.text = applied;
+      _writeQtyText(applied, reason: 'quantity-input-applied');
       _commitQtyText(applied);
       return;
     }
-    _qty.text = widget.line.quantity;
+    _writeQtyText(widget.line.quantity, reason: 'quantity-input-rejected');
     _commitQtyText(_qty.text);
+  }
+
+  void _writeQtyText(String next, {required String reason}) {
+    final previous = _qty.text;
+    _logQtyFieldWrite(reason: reason, previous: previous, next: next);
+    _qty.text = next;
+  }
+
+  void _logQtyFieldWrite({
+    required String reason,
+    required String? previous,
+    required String? next,
+  }) {
+    scanDiag('qty-field-write', {
+      'reason': reason,
+      'lineKey': widget.line.key,
+      'productId': widget.line.productId ?? '-',
+      'variantId': widget.line.variantId ?? '-',
+      'sellingUnitId': widget.line.sellingUnitId ?? '-',
+      'previous': previous ?? '-',
+      'next': next ?? '-',
+      'corr': lastScanCorr ?? '-',
+    });
   }
 
   /// A programmatic write to the qty field ends any digit run: the
@@ -5423,7 +5519,7 @@ class _CartLineTileState extends State<_CartLineTile> {
         'outcome': 'restored',
         'committedLen': widget.line.quantity.length,
       });
-      _qty.text = widget.line.quantity;
+      _writeQtyText(widget.line.quantity, reason: 'scan-post-frame-clear');
       _commitQtyText(_qty.text);
       _pendingScanText = null;
     });
@@ -5514,7 +5610,7 @@ class _CartLineTileState extends State<_CartLineTile> {
       // any next keystroke — an expression like `10*24` never leaves
       // `10*24` on screen or in the tracker while the rebuild is pending.
       final applied = parseQuantityExpression(raw).text;
-      _qty.text = applied;
+      _writeQtyText(applied, reason: 'quantity-submit-applied');
       _commitQtyText(applied);
       scanDiag('qty-submit', {
         'branch': 'quantity-applied',
@@ -5527,7 +5623,7 @@ class _CartLineTileState extends State<_CartLineTile> {
       'branch': 'quantity-rejected',
       'len': trimmed.length,
     });
-    _qty.text = widget.line.quantity;
+    _writeQtyText(widget.line.quantity, reason: 'quantity-submit-rejected');
     _commitQtyText(_qty.text);
   }
 

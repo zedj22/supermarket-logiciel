@@ -19,6 +19,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../core/barcode_scanner.dart';
 import '../../core/keyboard.dart';
 
 /// Which quantity shortcut a [PosQtyShortcutActivator] matches.
@@ -205,6 +206,9 @@ class PosQtyShortcutActivator extends ShortcutActivator {
   @override
   bool accepts(KeyEvent event, HardwareKeyboard state) {
     if (!matchesEvent(kind, event)) return false;
+    if (BarcodeScannerGateway.instance.isScannerOwnedShortcutEvent(event)) {
+      return false;
+    }
     switch (kind) {
       case PosQtyShortcutKind.increment:
       case PosQtyShortcutKind.decrement:

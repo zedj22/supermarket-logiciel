@@ -10,6 +10,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/barcode_scanner.dart';
+import '../../core/barcode/barcode_normalizer.dart';
 import '../../core/scan_diagnostics.dart';
 import '../../core/colors.dart';
 import '../../core/numeric_text.dart';
@@ -284,11 +285,41 @@ class _StockScreenState extends ConsumerState<StockScreen>
   /// item is the list, then opens the existing detail panel (selection
   /// only — a scan NEVER posts an adjustment). A miss leaves the
   /// debounced text filter in place — the filtered list is the result.
-  Future<void> _submitScan() async {
-    final query = _searchController.text.trim();
+  Future<void> _submitScan({bool fromGlobalScan = false}) async {
+    final rawQuery = _searchController.text.trim();
+    final query = normalizeBarcode(rawQuery);
     if (query.isEmpty) return;
+    if (!fromGlobalScan) {
+      lastScanCorr = scanDiag('search-submit', {
+        'target': 'stock',
+        'len': query.length,
+        'normalized': rawQuery != query,
+      });
+    } else if (rawQuery != query) {
+      scanDiag('scan-normalization', {
+        'target': 'stock',
+        'corr': lastScanCorr,
+        'rawLength': rawQuery.length,
+        'normalizedLength': query.length,
+        'normalized': true,
+        'origin': 'global-scan',
+      });
+    }
+    if (rawQuery != query) {
+      _searchController.value = TextEditingValue(
+        text: query,
+        selection: TextSelection.collapsed(offset: query.length),
+      );
+      ref.read(inventoryProvider.notifier).setSearch(query);
+    }
     final lookup =
         await ref.read(barcodeLookupProvider.notifier).lookup(query);
+    scanDiag('scan-lookup', {
+      'target': 'stock',
+      'corr': lastScanCorr,
+      'len': query.length,
+      'result': lookup == null ? 'error' : lookup.found ? 'hit' : 'miss',
+    });
     if (!mounted || lookup == null || !lookup.found) return;
     final productId = lookup.productId;
     if (productId == null) return;
@@ -302,7 +333,22 @@ class _StockScreenState extends ConsumerState<StockScreen>
         break;
       }
     }
-    if (match != null) await _openDetail(match);
+    if (match != null) {
+      await _openDetail(match);
+      scanDiag('scan-ui', {
+        'target': 'stock',
+        'corr': lastScanCorr,
+        'len': query.length,
+        'result': 'selected',
+      });
+    } else {
+      scanDiag('scan-ui', {
+        'target': 'stock',
+        'corr': lastScanCorr,
+        'len': query.length,
+        'result': 'product-not-in-list',
+      });
+    }
   }
 
   /// A burst captured by the app-level gateway (no field focused): the
@@ -328,7 +374,7 @@ class _StockScreenState extends ConsumerState<StockScreen>
       selection: TextSelection.collapsed(offset: code.length),
     );
     ref.read(inventoryProvider.notifier).setSearch(code);
-    await _submitScan();
+    await _submitScan(fromGlobalScan: true);
   }
 
   @override

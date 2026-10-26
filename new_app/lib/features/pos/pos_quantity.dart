@@ -248,6 +248,8 @@ bool applyLineQuantity({
   required CartLine line,
   required String rawInput,
   required String loc,
+  String reason = 'validated-quantity-edit',
+  int? scanCorrelationId,
   PosQuantityErrorHandler? onError,
 }) {
   final expression = parseQuantityExpression(rawInput);
@@ -267,7 +269,12 @@ bool applyLineQuantity({
     onError?.call(stockError, true);
     return false;
   }
-  notifier.updateLine(line.key, quantity: expression.text);
+  notifier.updateLine(
+    line.key,
+    quantity: expression.text,
+    reason: reason,
+    scanCorrelationId: scanCorrelationId,
+  );
   return true;
 }
 
@@ -282,6 +289,8 @@ bool applyAddingLine({
   required CartLine newLine,
   required String rawInput,
   required String loc,
+  String reason = 'add-line',
+  int? scanCorrelationId,
   PosQuantityErrorHandler? onError,
 }) {
   final expression = parseQuantityExpression(rawInput);
@@ -330,12 +339,21 @@ bool applyAddingLine({
     return false;
   }
   if (existing == null) {
-    notifier.addLine(newLine.copyWith(quantity: requestedText));
+    notifier.addLine(
+      newLine.copyWith(quantity: requestedText),
+      reason: reason,
+      scanCorrelationId: scanCorrelationId,
+    );
   } else {
     // The merged total was already computed exactly above (scaled integer
     // math). The notifier has to SET it — merging it a second time would
     // count the existing quantity twice (1 + 1 became 3.0).
-    notifier.updateLine(existing.key, quantity: requestedText);
+    notifier.updateLine(
+      existing.key,
+      quantity: requestedText,
+      reason: reason,
+      scanCorrelationId: scanCorrelationId,
+    );
   }
   return true;
 }

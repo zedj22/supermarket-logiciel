@@ -14,12 +14,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
+import 'package:supermarket_pos/core/barcode_scanner.dart';
 import 'package:supermarket_pos/core/strings.dart';
 import 'package:supermarket_pos/features/auth/auth_provider.dart';
 import 'package:supermarket_pos/features/returns/return_products_dialog.dart';
 import 'package:supermarket_pos/l10n/locale_provider.dart';
 import 'package:supermarket_pos/main.dart';
 import 'package:supermarket_pos/network/api_client.dart';
+
+import '../helpers/wedge_scanner.dart';
 
 class MockDio extends Mock implements Dio {}
 
@@ -72,6 +75,10 @@ Map<String, dynamic> _createResponseBody() => {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  final gateway = BarcodeScannerGateway.instance;
+
+  setUp(gateway.resetForTest);
+  tearDown(gateway.resetForTest);
 
   setUpAll(() {
     registerFallbackValue(<String, dynamic>{});
@@ -486,6 +493,72 @@ void main() {
       expect(lines[0]['product_id'], 'p9');
       expect(lines[0]['variant_id'], 'v1');
       expect(lines[0]['quantity'], '1');
+    });
+
+    testWidgets('AZERTY and Arabic scans in the return PopupRoute normalize '
+        'and merge once each', (tester) async {
+      const code = '8718114202402';
+      const azerty = <String, String>{
+        '1': '&',
+        '2': 'é',
+        '3': '"',
+        '4': "'",
+        '5': '(',
+        '6': '-',
+        '7': 'è',
+        '8': '_',
+        '9': 'ç',
+        '0': 'à',
+      };
+      const arabicIndic = <String, String>{
+        '1': '١',
+        '2': '٢',
+        '3': '٣',
+        '4': '٤',
+        '5': '٥',
+        '6': '٦',
+        '7': '٧',
+        '8': '٨',
+        '9': '٩',
+        '0': '٠',
+      };
+      final dio = MockDio();
+      final log = _HttpLog();
+      stubRequests(
+        dio,
+        log: log,
+        barcode: {
+          'found': true,
+          'kind': 'product',
+          'product_id': 'p7',
+          'product_name': 'Olive Oil',
+          'product_unit': 'piece',
+          'is_archived': false,
+        },
+      );
+      await pumpDialog(tester, dio);
+      BarcodeScannerGateway.experimentalPhysicalDigitCapture = true;
+      addTearDown(() {
+        BarcodeScannerGateway.experimentalPhysicalDigitCapture = false;
+      });
+
+      await sendForeignWedgeScan(tester, code, characters: azerty);
+      await tester.pumpAndSettle();
+      await sendForeignWedgeScan(tester, code, characters: arabicIndic);
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('return-line-0')), findsOneWidget);
+      expect(qtyText(tester, 0), '2');
+      expect(
+        log.gets.where((get) => get['path'] == _barcodePath),
+        hasLength(2),
+      );
+      final lookups = log.gets
+          .where((get) => get['path'] == _barcodePath)
+          .toList();
+      expect(lookups.map((lookup) => lookup['barcode']), [code, code]);
+      expect(BarcodeScannerGateway.instance.handlerCount, 1);
+      expect(tester.takeException(), isNull);
     });
 
     testWidgets('unknown barcode shows localized not-found (never silent)',

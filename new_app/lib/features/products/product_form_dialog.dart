@@ -26,6 +26,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/barcode_scanner.dart';
+import '../../core/scan_diagnostics.dart';
 import '../../core/markup_percent.dart';
 import '../../core/number_format.dart';
 import '../../core/numeric_text.dart';
@@ -255,6 +256,11 @@ class _ProductFormDialogState extends ConsumerState<ProductFormDialog> {
   /// form is never submitted — the user reviews and saves explicitly.
   void _handleScan(String code) {
     if (!mounted) return;
+    scanDiag('scan-receive', {
+      'target': 'add-product',
+      'corr': lastScanCorr,
+      'len': code.length,
+    });
     setState(() {
       _barcode.value = TextEditingValue(
         text: code,

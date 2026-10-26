@@ -22,6 +22,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supermarket_pos/core/barcode_scanner.dart';
 import 'package:supermarket_pos/core/colors.dart';
 import 'package:supermarket_pos/core/numeric_text.dart';
+import 'package:supermarket_pos/core/scan_diagnostics.dart';
 import 'package:supermarket_pos/core/strings.dart';
 import 'package:supermarket_pos/features/auth/auth_models.dart';
 import 'package:supermarket_pos/features/auth/auth_provider.dart';
@@ -12329,6 +12330,259 @@ void main() {
         .lines[index]
         .quantity;
 
+    testWidgets(
+        'focused POS search restores an incomplete AZERTY text run and adds '
+        'the complete barcode once', (tester) async {
+      const code = '6134881000614';
+      const azerty = <String, String>{
+        '1': '&',
+        '2': 'é',
+        '3': '"',
+        '4': "'",
+        '5': '(',
+        '6': '-',
+        '7': 'è',
+        '8': '_',
+        '9': 'ç',
+        '0': 'à',
+      };
+      await pumpPos(tester, barcodeLookups: {code: _lookupHit()});
+      await focusSearchField(tester);
+      BarcodeScannerGateway.experimentalPhysicalDigitCapture = true;
+      addTearDown(() {
+        BarcodeScannerGateway.experimentalPhysicalDigitCapture = false;
+      });
+
+      final gateway = BarcodeScannerGateway.instance;
+      for (final digit in code.split('')) {
+        expect(
+          gateway.handleKeyForTest(
+            physicalDigitKeyDown(digit, character: azerty[digit]),
+          ),
+          isFalse,
+        );
+      }
+      final translated = code.split('').map((digit) => azerty[digit]!).join();
+      final incomplete = translated.substring(1);
+      tester.testTextInput.updateEditingValue(TextEditingValue(
+        text: incomplete,
+        selection: TextSelection.collapsed(offset: incomplete.length),
+      ));
+      await tester.pump();
+
+      expect(gateway.handleKeyForTest(wedgeEnter()), isTrue);
+      await tester.pumpAndSettle();
+
+      final cart = containerOf(tester).read(posCartProvider);
+      expect(cart.lines, hasLength(1));
+      expect(cart.lines.single.quantity, '1');
+      expect(
+        controllerText(tester, const Key('pos-search-field')),
+        isEmpty,
+      );
+      verify(() => dio.get(
+            '/api/v1/products/barcode-lookup',
+            queryParameters: {'barcode': code},
+          )).called(1);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('five consecutive scans increment one rendered cart line',
+        (tester) async {
+      const code = '8718114202402';
+      await pumpPos(tester, barcodeLookups: {code: _lookupHit()});
+      await focusSearchField(tester);
+
+      String? lineKey;
+      for (var scan = 1; scan <= 5; scan++) {
+        await sendWedgeScan(tester, code);
+        await tester.pumpAndSettle();
+
+        final cart = containerOf(tester).read(posCartProvider);
+        expect(cart.lines, hasLength(1), reason: 'scan $scan');
+        final line = cart.lines.single;
+        lineKey ??= line.key;
+        expect(line.key, lineKey, reason: 'scan $scan keeps line identity');
+        expect(line.productId, _productId);
+        expect(line.variantId, isNull);
+        expect(line.sellingUnitId, isNull);
+        expect(line.quantity, '$scan', reason: 'provider after scan $scan');
+        expect(
+          controllerText(tester, Key('cart-line-qty-$lineKey')),
+          '$scan',
+          reason: 'rendered quantity after scan $scan',
+        );
+      }
+      verify(() => dio.get(
+            '/api/v1/products/barcode-lookup',
+            queryParameters: {'barcode': code},
+          )).called(5);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('five scans replacing the focused qty text never write a '
+        'barcode prefix as quantity', (tester) async {
+      const code = '2134881000614';
+      await pumpPos(tester, barcodeLookups: {
+        '111': _lookupHit(),
+        code: _lookupHit(),
+      });
+      await focusSearchField(tester);
+      await tester.enterText(find.byKey(const Key('pos-search-field')), '111');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+
+      final container = containerOf(tester);
+      final initialLine = container.read(posCartProvider).lines.single;
+      final qtyField = find.byKey(Key('cart-line-qty-${initialLine.key}'));
+      await tester.enterText(qtyField, '3');
+      await tester.pumpAndSettle();
+      expect(qtyAt(tester, 0), '3');
+
+      final observedQuantities = <String>[];
+      final cartSubscription = container.listen(
+        posCartProvider,
+        (previous, next) {
+          if (next.lines.isNotEmpty) {
+            observedQuantities.add(next.lines.single.quantity);
+          }
+        },
+      );
+      addTearDown(cartSubscription.close);
+
+      final gateway = BarcodeScannerGateway.instance;
+      for (var scan = 0; scan < 5; scan++) {
+        await tester.tap(qtyField);
+        await tester.pump();
+        var fieldText = '';
+        for (final digit in code.split('')) {
+          expect(
+            gateway.handleKeyForTest(wedgeKeyDown(digit)),
+            isFalse,
+            reason: 'the focused quantity field receives digits as typing',
+          );
+          // The device's first translated character replaces the selected
+          // quantity; later characters append at the caret.
+          fieldText += digit;
+          tester.testTextInput.updateEditingValue(TextEditingValue(
+            text: fieldText,
+            selection: TextSelection.collapsed(offset: fieldText.length),
+          ));
+          await tester.pump();
+          expect(
+            qtyAt(tester, 0),
+            '${scan + 3}',
+            reason: 'scan ${scan + 1} prefix $fieldText must not mutate cart',
+          );
+        }
+
+        expect(gateway.handleKeyForTest(wedgeEnter()), isTrue);
+        await tester.pumpAndSettle();
+        final expected = '${scan + 4}';
+        final cart = container.read(posCartProvider);
+        expect(cart.lines, hasLength(1));
+        expect(cart.lines.single.key, initialLine.key);
+        expect(cart.lines.single.quantity, expected);
+        expect(controllerText(tester, Key('cart-line-qty-${initialLine.key}')),
+            expected);
+      }
+
+      expect(observedQuantities, <String>['4', '5', '6', '7', '8']);
+      verify(() => dio.get(
+            '/api/v1/products/barcode-lookup',
+            queryParameters: {'barcode': code},
+          )).called(5);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('AZERTY digit-6 scan symbol cannot invoke decrement shortcut',
+        (tester) async {
+      const code = '6134881000614';
+      const azerty = <String, String>{
+        '1': '&',
+        '2': 'é',
+        '3': '"',
+        '4': "'",
+        '5': '(',
+        '6': '-',
+        '7': 'è',
+        '8': '_',
+        '9': 'ç',
+        '0': 'à',
+      };
+      await pumpPos(tester, barcodeLookups: {code: _lookupHit()});
+      await focusSearchField(tester);
+      await tester.enterText(
+        find.byKey(const Key('pos-search-field')),
+        '111',
+      );
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+      BarcodeScannerGateway.experimentalPhysicalDigitCapture = true;
+      addTearDown(() {
+        BarcodeScannerGateway.experimentalPhysicalDigitCapture = false;
+      });
+
+      final container = containerOf(tester);
+      final line = container.read(posCartProvider).lines.single;
+      container.read(posCartProvider.notifier).updateLine(
+            line.key,
+            quantity: '2',
+            reason: 'test-seed',
+          );
+      await tester.pump();
+      expect(qtyAt(tester, 0), '2');
+
+      final suppressed = <Map<String, Object?>>[];
+      void listener(String event, Map<String, Object?> fields) {
+        if (event == 'pos-shortcut-suppressed') suppressed.add(fields);
+      }
+
+      addScanDiagListener(listener);
+      addTearDown(() => removeScanDiagListener(listener));
+
+      for (var expected = 3; expected <= 5; expected++) {
+        for (final digit in code.split('')) {
+          await tester.sendKeyEvent(
+            digitKey(digit),
+            character: azerty[digit],
+          );
+          await tester.pump();
+          expect(
+            qtyAt(tester, 0),
+            '${expected - 1}',
+            reason: 'a scan key must not decrement before scan completion',
+          );
+        }
+        await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+        await tester.pumpAndSettle();
+        expect(qtyAt(tester, 0), '$expected');
+        expect(
+          controllerText(
+            tester,
+            Key('cart-line-qty-${line.key}'),
+          ),
+          '$expected',
+        );
+      }
+
+      expect(suppressed, hasLength(6));
+      expect(
+        suppressed.every((fields) =>
+            fields['handlerName'] == 'PosQtyShortcutActivator.decrement' &&
+            fields['physicalKey'] == 'Digit 6' &&
+            fields['eventType'] == 'KeyDownEvent' &&
+            fields['attemptId'] is int),
+        isTrue,
+        reason: 'suppressed shortcut events: $suppressed',
+      );
+      verify(() => dio.get(
+            '/api/v1/products/barcode-lookup',
+            queryParameters: {'barcode': code},
+          )).called(3);
+      expect(tester.takeException(), isNull);
+    });
+
     testWidgets('scan + Enter adds the product even when the Enter lands '
         'before the search debounce fires', (tester) async {
       await pumpPos(tester);
@@ -13726,24 +13980,20 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('two scans whose lookups overlap both land — no stale '
-        'cart write', (tester) async {
-      // Scenario 7: scan #1's lookup is slow, scan #2 resolves first. The
-      // slow writer finishes LAST — if it had captured the cart before
-      // its await, scan #2's unit would be silently overwritten.
+    testWidgets('five overlapping lookups increment cart state and UI in '
+        'completion order without stale writes', (tester) async {
       await pumpPos(
         tester,
         barcodeLookups: {'8718114202402': _lookupHit()},
       );
+      const completionDelays = <int>[500, 400, 300, 200, 100];
       var lookups = 0;
       when(() => dio.get(
             '/api/v1/products/barcode-lookup',
             queryParameters: any(named: 'queryParameters'),
           )).thenAnswer((invocation) async {
-        lookups++;
-        if (lookups == 1) {
-          await Future<void>.delayed(const Duration(milliseconds: 300));
-        }
+        final delay = completionDelays[lookups++];
+        await Future<void>.delayed(Duration(milliseconds: delay));
         return _ok(
           '/api/v1/products/barcode-lookup',
           _lookupHit(),
@@ -13751,32 +14001,45 @@ void main() {
       });
 
       await focusWorkspace(tester);
-      await sendWedgeScan(tester, '8718114202402'); // slow chain (#1)
-      await sendWedgeScan(tester, '8718114202402'); // fast chain (#2)
-
-      // Fast chain lands first (line qty 1), slow chain lands after.
-      await tester.pump(const Duration(milliseconds: 100));
-      expect(
-        containerOf(tester).read(posCartProvider).lines.single.quantity,
-        '1',
+      final observedQuantities = <String>[];
+      final cartSubscription = containerOf(tester).listen(
+        posCartProvider,
+        (previous, next) {
+          if (next.lines.isNotEmpty) {
+            observedQuantities.add(next.lines.single.quantity);
+          }
+        },
       );
-      await tester.pump(const Duration(milliseconds: 400));
-      await tester.pumpAndSettle();
+      addTearDown(cartSubscription.close);
+      for (var scan = 0; scan < completionDelays.length; scan++) {
+        await sendWedgeScan(tester, '8718114202402');
+      }
 
-      final cart = containerOf(tester).read(posCartProvider);
-      expect(cart.lines, hasLength(1));
-      expect(
-        cart.lines.single.quantity,
-        '2',
-        reason: 'overlapping lookups must both merge — the later resolve '
-            'may never overwrite the earlier unit',
-      );
+      // The fifth request returns first, then each slower request completes
+      // 100ms later. State and the rendered field must only advance.
+      String? lineKey;
+      for (var completed = 1; completed <= completionDelays.length; completed++) {
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump();
+        final cart = containerOf(tester).read(posCartProvider);
+        expect(cart.lines, hasLength(1), reason: '$completed completed lookups');
+        final line = cart.lines.single;
+        lineKey ??= line.key;
+        expect(line.key, lineKey);
+        expect(line.quantity, '$completed', reason: 'cart after completion $completed');
+        expect(
+          controllerText(tester, Key('cart-line-qty-$lineKey')),
+          '$completed',
+          reason: 'rendered cart after completion $completed',
+        );
+      }
+      expect(observedQuantities, <String>['1', '2', '3', '4', '5']);
       verify(
         () => dio.get(
           '/api/v1/products/barcode-lookup',
           queryParameters: {'barcode': '8718114202402'},
         ),
-      ).called(2);
+      ).called(5);
       expect(tester.takeException(), isNull);
     });
 
@@ -13849,13 +14112,13 @@ void main() {
       await focusWorkspace(tester);
       expect(BarcodeScannerGateway.instance.hasActiveHandler, isTrue);
 
-      // Focus a text field: the gateway stands down instantly, typing
-      // is untouched.
+      // Focus the dedicated scan field: the gateway remains armed for a
+      // pass-through scan while ordinary typing stays untouched.
       await tester.tap(find.byKey(const Key('pos-search-field')));
       await tester.pump(const Duration(milliseconds: 100));
       expect(
         BarcodeScannerGateway.instance.hasActiveHandler,
-        isFalse,
+        isTrue,
       );
       await tester.enterText(
         find.byKey(const Key('pos-search-field')),

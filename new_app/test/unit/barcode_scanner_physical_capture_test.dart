@@ -23,6 +23,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:supermarket_pos/core/barcode_scanner.dart';
+import 'package:supermarket_pos/core/scan_diagnostics.dart';
 
 import '../helpers/wedge_scanner.dart';
 
@@ -65,24 +66,232 @@ void main() {
     '9': '٩',
     '0': '٠',
   };
+  const easternArabicIndic = <String, String>{
+    '1': '۱',
+    '2': '۲',
+    '3': '۳',
+    '4': '۴',
+    '5': '۵',
+    '6': '۶',
+    '7': '۷',
+    '8': '۸',
+    '9': '۹',
+    '0': '۰',
+  };
 
-  group('flag OFF (default): exact pre-experiment behavior', () {
-    test('a foreign AZERTY burst is NOT captured (the old drop)', () {
+  group('default capture and diagnostics', () {
+    test('diagnostics summarize layout-translated keys without key content', () {
+      final seen = <(String, Map<String, Object?>)>[];
+      void listener(String event, Map<String, Object?> fields) {
+        seen.add((event, fields));
+      }
+
+      addScanDiagListener(listener);
+      addTearDown(() => removeScanDiagListener(listener));
+      gateway.register(BarcodeScanHandler(onScan: (_) {}));
+
+      for (final d in '444555666'.split('')) {
+        gateway.handleKeyForTest(
+          physicalDigitKeyDown(d, character: azerty[d]),
+        );
+      }
+      gateway.handleKeyForTest(wedgeEnter());
+
+      final observation = seen.singleWhere(
+        (event) => event.$1 == 'key-burst-observed',
+      );
+      expect(observation.$2, <String, Object?>{
+        'characterDigits': 0,
+        'physicalDigits': 9,
+        'otherKeys': 0,
+        'bufferedDigits': 9,
+        'editableFocus': false,
+      });
+    });
+
+    test('diagnostics trace normalization and dispatch without barcode text',
+        () {
+      final seen = <(String, Map<String, Object?>)>[];
+      void listener(String event, Map<String, Object?> fields) {
+        seen.add((event, fields));
+      }
+
+      addScanDiagListener(listener);
+      addTearDown(() => removeScanDiagListener(listener));
+      gateway.register(BarcodeScanHandler(onScan: (_) {}, name: 'pos'));
+
+      for (final digit in '6134881000614'.split('')) {
+        gateway.handleKeyForTest(
+          physicalDigitKeyDown(digit, character: azerty[digit]),
+        );
+      }
+      gateway.handleKeyForTest(wedgeEnter());
+
+      final terminator = seen.singleWhere((event) => event.$1 == 'scan-terminator');
+      expect(terminator.$2['validShape'], isTrue);
+      expect(terminator.$2['normalized'], isTrue);
+      expect(terminator.$2['rawLength'], 13);
+      expect(terminator.$2['normalizedLength'], 13);
+      final keyEvents = seen.where((event) => event.$1 == 'scan-key');
+      expect(keyEvents.length, 13);
+      final attemptId = keyEvents.first.$2['attemptId'];
+      expect(attemptId, isA<int>());
+      expect(keyEvents.every((event) => event.$2['attemptId'] == attemptId), isTrue);
+      expect(terminator.$2['attemptId'], attemptId);
+      expect(seen.where((event) => event.$1 == 'scan-dispatch').length, 2);
+      expect(
+        seen.every((event) => !event.$2.containsKey('code')),
+        isTrue,
+      );
+    });
+
+    test('a foreign AZERTY symbol burst dispatches normalized digits', () {
       final codes = <String>[];
       gateway.register(BarcodeScanHandler(onScan: codes.add));
 
       expect(BarcodeScannerGateway.experimentalPhysicalDigitCapture, isFalse);
-      for (final d in '444555666'.split('')) {
+      for (final d in '6132362600544'.split('')) {
         expect(
           gateway.handleKeyForTest(physicalDigitKeyDown(d, character: azerty[d])),
-          isFalse,
-          reason: 'symbol characters pass untouched while the experiment '
-              'is off',
+          isTrue,
+          reason: 'symbol characters are captured as a scanner token',
         );
       }
-      expect(gateway.handleKeyForTest(wedgeEnter()), isFalse);
-      expect(codes, isEmpty);
+      expect(gateway.handleKeyForTest(wedgeEnter()), isTrue);
+      expect(codes, <String>['6132362600544']);
       expect(gateway.bufferedDigitCount, 0);
+    });
+
+    test('ten consecutive scans of the same code stay independent in EN', () {
+      final codes = <String>[];
+      gateway.register(BarcodeScanHandler(onScan: codes.add));
+
+      for (var i = 0; i < 10; i++) {
+        for (final digit in '6134881000614'.split('')) {
+          expect(gateway.handleKeyForTest(wedgeKeyDown(digit)), isTrue);
+        }
+        expect(gateway.handleKeyForTest(wedgeEnter()), isTrue);
+        expect(gateway.bufferedDigitCount, 0);
+      }
+
+      expect(codes, List<String>.filled(10, '6134881000614'));
+    });
+
+    test('ten consecutive scans of the same code stay independent in FR', () {
+      final codes = <String>[];
+      gateway.register(BarcodeScanHandler(onScan: codes.add));
+
+      for (var i = 0; i < 10; i++) {
+        for (final digit in '6135390000072'.split('')) {
+          expect(
+            gateway.handleKeyForTest(
+              physicalDigitKeyDown(digit, character: azerty[digit]),
+            ),
+            isTrue,
+          );
+        }
+        expect(gateway.handleKeyForTest(wedgeEnter()), isTrue);
+        expect(gateway.bufferedDigitCount, 0);
+      }
+
+      expect(codes, List<String>.filled(10, '6135390000072'));
+    });
+
+    test('ten consecutive Arabic-Indic scans preserve the digit sequence', () {
+      final codes = <String>[];
+      gateway.register(BarcodeScanHandler(onScan: codes.add));
+
+      for (var i = 0; i < 10; i++) {
+        for (final digit in '6134881000614'.split('')) {
+          expect(
+            gateway.handleKeyForTest(
+              physicalDigitKeyDown(digit, character: arabicIndic[digit]),
+            ),
+            isTrue,
+          );
+        }
+        expect(gateway.handleKeyForTest(wedgeEnter()), isTrue);
+        expect(gateway.bufferedDigitCount, 0);
+      }
+
+      expect(codes, List<String>.filled(10, '6134881000614'));
+    });
+
+    test('Eastern Arabic-Indic digit events dispatch as ASCII', () {
+      final codes = <String>[];
+      gateway.register(BarcodeScanHandler(onScan: codes.add));
+
+      for (final digit in '6135390000072'.split('')) {
+        expect(
+          gateway.handleKeyForTest(
+            physicalDigitKeyDown(digit, character: easternArabicIndic[digit]),
+          ),
+          isTrue,
+        );
+      }
+      expect(gateway.handleKeyForTest(wedgeEnter()), isTrue);
+      expect(codes, <String>['6135390000072']);
+    });
+
+    test('alternating FR barcodes remain in their original order', () {
+      final codes = <String>[];
+      const expected = <String>[
+        '6134881000614',
+        '6135390000072',
+        '6134881000614',
+        '6135390000072',
+      ];
+      gateway.register(BarcodeScanHandler(onScan: codes.add));
+
+      for (final code in expected) {
+        for (final digit in code.split('')) {
+          gateway.handleKeyForTest(
+            physicalDigitKeyDown(digit, character: azerty[digit]),
+          );
+        }
+        expect(gateway.handleKeyForTest(wedgeEnter()), isTrue);
+      }
+
+      expect(codes, expected);
+    });
+
+    test('incomplete run and ordinary Enter do not poison the next scan', () {
+      final codes = <String>[];
+      gateway.register(BarcodeScanHandler(onScan: codes.add));
+
+      gateway.handleKeyForTest(wedgeKeyDown('1'));
+      gateway.handleKeyForTest(wedgeKeyDown('2'));
+      expect(gateway.handleKeyForTest(wedgeEnter()), isFalse);
+      expect(gateway.bufferedDigitCount, 0);
+      expect(gateway.handleKeyForTest(wedgeEnter()), isFalse);
+
+      for (final digit in '6134881000614'.split('')) {
+        gateway.handleKeyForTest(wedgeKeyDown(digit));
+      }
+      expect(gateway.handleKeyForTest(wedgeEnter()), isTrue);
+      expect(codes, <String>['6134881000614']);
+    });
+
+    test('cross-origin pairing does not suppress ten later same-code scans',
+        () {
+      const code = '6134881000614';
+      final codes = <String>[];
+      gateway.register(BarcodeScanHandler(onScan: codes.add));
+
+      for (var i = 0; i < 10; i++) {
+        expect(gateway.dispatchExternalScan(code), isTrue);
+        expect(codes.length, i + 1);
+
+        // Simulate the same burst's legacy observation. It is suppressed,
+        // but the following raw-origin scan of this barcode is legitimate.
+        for (final digit in code.split('')) {
+          gateway.handleKeyForTest(wedgeKeyDown(digit));
+        }
+        expect(gateway.handleKeyForTest(wedgeEnter()), isTrue);
+        expect(codes.length, i + 1);
+      }
+
+      expect(codes, List<String>.filled(10, code));
     });
 
     test('US scans keep working (character path)', () {
@@ -315,7 +524,7 @@ void main() {
       expect(gateway.bufferedDigitCount, 0);
     });
 
-    test('the experiment can be disabled again at runtime', () {
+    test('disabling physical capture keeps symbol normalization active', () {
       final codes = <String>[];
       gateway.register(BarcodeScanHandler(onScan: codes.add));
 
@@ -324,11 +533,11 @@ void main() {
       for (final d in '444555666'.split('')) {
         expect(
           gateway.handleKeyForTest(physicalDigitKeyDown(d, character: azerty[d])),
-          isFalse,
+          isTrue,
         );
       }
-      expect(gateway.handleKeyForTest(wedgeEnter()), isFalse);
-      expect(codes, isEmpty);
+      expect(gateway.handleKeyForTest(wedgeEnter()), isTrue);
+      expect(codes, <String>['444555666']);
     });
   });
 
@@ -425,6 +634,87 @@ void main() {
 
       expect(editable.controller.text, isEmpty);
       expect(codes, ['444555666']);
+    });
+
+    testWidgets(
+        'a focused scan field dispatches the complete physical run when '
+        'text input omits a translated character', (tester) async {
+      final codes = <String>[];
+      late EditableText editable;
+      final controller = TextEditingController();
+      addTearDown(controller.dispose);
+      gateway.register(BarcodeScanHandler(
+        onScan: codes.add,
+        allowWhileEditingFor: (editable) =>
+            editable.controller == controller,
+        allowIncompletePassThrough: true,
+      ));
+
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(body: TextField(controller: controller)),
+      ));
+      await tester.tap(find.byType(TextField));
+      await tester.pump();
+      editable = tester.widget<EditableText>(find.byType(EditableText));
+
+      const code = '6134881000614';
+      for (final digit in code.split('')) {
+        expect(
+          gateway.handleKeyForTest(
+            physicalDigitKeyDown(digit, character: azerty[digit]),
+          ),
+          isFalse,
+          reason: 'the dedicated search field remains pass-through',
+        );
+      }
+      final translated = code.split('').map((digit) => azerty[digit]!).join();
+      final incomplete = translated.substring(1);
+      tester.testTextInput.updateEditingValue(TextEditingValue(
+        text: incomplete,
+        selection: TextSelection.collapsed(offset: incomplete.length),
+      ));
+      await tester.pump();
+
+      expect(gateway.handleKeyForTest(wedgeEnter()), isTrue);
+      await tester.pump();
+
+      expect(editable.controller.text, isEmpty);
+      expect(codes, <String>[code]);
+    });
+
+    testWidgets('a focused EN scan also survives an omitted text character',
+        (tester) async {
+      final codes = <String>[];
+      final controller = TextEditingController();
+      addTearDown(controller.dispose);
+      gateway.register(BarcodeScanHandler(
+        onScan: codes.add,
+        allowWhileEditingFor: (editable) =>
+            editable.controller == controller,
+        allowIncompletePassThrough: true,
+      ));
+
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(body: TextField(controller: controller)),
+      ));
+      await tester.tap(find.byType(TextField));
+      await tester.pump();
+
+      const code = '6134881000614';
+      for (final digit in code.split('')) {
+        expect(gateway.handleKeyForTest(wedgeKeyDown(digit)), isFalse);
+      }
+      final incomplete = code.substring(1);
+      tester.testTextInput.updateEditingValue(TextEditingValue(
+        text: incomplete,
+        selection: TextSelection.collapsed(offset: incomplete.length),
+      ));
+      await tester.pump();
+
+      expect(gateway.handleKeyForTest(wedgeEnter()), isTrue);
+      await tester.pump();
+      expect(controller.text, isEmpty);
+      expect(codes, <String>[code]);
     });
 
     testWidgets('a short foreign run stays in the field as typing',

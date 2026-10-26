@@ -38,6 +38,25 @@ const String kLoyaltyQrPrefix = 'KLICK:C:';
 
 final posDeviceIdProvider = deviceIdProvider;
 
+void _logCartQuantityWrite({
+  required String reason,
+  required CartLine line,
+  required String? previous,
+  required String? next,
+  int? scanCorrelationId,
+}) {
+  scanDiag('cart-quantity-write', {
+    'reason': reason,
+    'lineKey': line.key,
+    'productId': line.productId ?? '-',
+    'variantId': line.variantId ?? '-',
+    'sellingUnitId': line.sellingUnitId ?? '-',
+    'previous': previous ?? '-',
+    'next': next ?? '-',
+    'corr': scanCorrelationId ?? '-',
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Cart state
 // ---------------------------------------------------------------------------
@@ -203,7 +222,11 @@ class PosCartNotifier extends StateNotifier<PosCartState> {
   // text (UX FIX #12 — FIX #5).
   String _message(DioException e) => posApiMessage(e, _localeCode());
 
-  void addLine(CartLine line) {
+  void addLine(
+    CartLine line, {
+    String reason = 'add-line',
+    int? scanCorrelationId,
+  }) {
     final existing = state.lines.indexWhere((l) => l.key == line.key);
     if (existing >= 0) {
       final current = state.lines[existing];
@@ -211,6 +234,13 @@ class PosCartNotifier extends StateNotifier<PosCartState> {
         quantity:
             '${(current.qty + line.qty)}',
         lineDiscount: '0',
+      );
+      _logCartQuantityWrite(
+        reason: reason,
+        line: merged,
+        previous: current.quantity,
+        next: merged.quantity,
+        scanCorrelationId: scanCorrelationId,
       );
       final lines = [...state.lines];
       lines[existing] = merged;
@@ -222,6 +252,13 @@ class PosCartNotifier extends StateNotifier<PosCartState> {
         lastActiveKey: line.key,
       );
     } else {
+      _logCartQuantityWrite(
+        reason: reason,
+        line: line,
+        previous: null,
+        next: line.quantity,
+        scanCorrelationId: scanCorrelationId,
+      );
       state = state.copyWith(
         lines: [...state.lines, line],
         clearStockErrors: true,
@@ -232,7 +269,27 @@ class PosCartNotifier extends StateNotifier<PosCartState> {
     }
   }
 
-  void updateLine(String key, {String? quantity, String? lineDiscount}) {
+  void updateLine(
+    String key, {
+    String? quantity,
+    String? lineDiscount,
+    String reason = 'update-line',
+    int? scanCorrelationId,
+  }) {
+    if (quantity != null) {
+      for (final line in state.lines) {
+        if (line.key == key) {
+          _logCartQuantityWrite(
+            reason: reason,
+            line: line,
+            previous: line.quantity,
+            next: quantity,
+            scanCorrelationId: scanCorrelationId,
+          );
+          break;
+        }
+      }
+    }
     final lines = state.lines
         .map((l) => l.key == key
             ? l.copyWith(quantity: quantity, lineDiscount: lineDiscount)
@@ -290,6 +347,17 @@ class PosCartNotifier extends StateNotifier<PosCartState> {
   }
 
   void removeLine(String key) {
+    for (final line in state.lines) {
+      if (line.key == key) {
+        _logCartQuantityWrite(
+          reason: 'remove-line',
+          line: line,
+          previous: line.quantity,
+          next: null,
+        );
+        break;
+      }
+    }
     final remaining = state.lines.where((l) => l.key != key).toList();
     // Deleting the active line hands the `+` / `*` shortcuts to the newest
     // remaining line (never a stale key); an emptied cart clears it.
@@ -338,6 +406,14 @@ class PosCartNotifier extends StateNotifier<PosCartState> {
       'reason': reason,
       'linesBefore': state.lines.length,
     });
+    for (final line in state.lines) {
+      _logCartQuantityWrite(
+        reason: reason,
+        line: line,
+        previous: line.quantity,
+        next: null,
+      );
+    }
     state = const PosCartState();
   }
 
@@ -471,6 +547,14 @@ class PosCartNotifier extends StateNotifier<PosCartState> {
         'reason': 'checkout',
         'linesBefore': state.lines.length,
       });
+      for (final line in state.lines) {
+        _logCartQuantityWrite(
+          reason: 'checkout',
+          line: line,
+          previous: line.quantity,
+          next: null,
+        );
+      }
       state = PosCartState(lastResult: result);
       return result;
     } on DioException catch (e) {
@@ -541,6 +625,22 @@ class PosCartNotifier extends StateNotifier<PosCartState> {
       'linesBefore': state.lines.length,
       'linesAfter': hold.items.length,
     });
+    for (final line in state.lines) {
+      _logCartQuantityWrite(
+        reason: 'hold-load-replace',
+        line: line,
+        previous: line.quantity,
+        next: null,
+      );
+    }
+    for (final line in hold.items) {
+      _logCartQuantityWrite(
+        reason: 'hold-load-restore',
+        line: line,
+        previous: null,
+        next: line.quantity,
+      );
+    }
     state = PosCartState(
       lines: hold.items,
       invoiceDiscount: hold.invoiceDiscount,

@@ -15,6 +15,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/barcode_scanner.dart';
+import '../../core/barcode/barcode_normalizer.dart';
 import '../../core/scan_diagnostics.dart';
 import '../../core/colors.dart';
 import '../../core/markup_percent.dart';
@@ -142,11 +143,41 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
   /// search so the matching row is the list, then highlights it; a miss
   /// simply leaves the (debounced) text filter in place — the filtered
   /// list IS the result on a catalog screen.
-  Future<void> _submitScan() async {
-    final query = _searchController.text.trim();
+  Future<void> _submitScan({bool fromGlobalScan = false}) async {
+    final rawQuery = _searchController.text.trim();
+    final query = normalizeBarcode(rawQuery);
     if (query.isEmpty) return;
+    if (!fromGlobalScan) {
+      lastScanCorr = scanDiag('search-submit', {
+        'target': 'products',
+        'len': query.length,
+        'normalized': rawQuery != query,
+      });
+    } else if (rawQuery != query) {
+      scanDiag('scan-normalization', {
+        'target': 'products',
+        'corr': lastScanCorr,
+        'rawLength': rawQuery.length,
+        'normalizedLength': query.length,
+        'normalized': true,
+        'origin': 'global-scan',
+      });
+    }
+    if (rawQuery != query) {
+      _searchController.value = TextEditingValue(
+        text: query,
+        selection: TextSelection.collapsed(offset: query.length),
+      );
+      ref.read(productsProvider.notifier).setSearch(query);
+    }
     final lookup =
         await ref.read(barcodeLookupProvider.notifier).lookup(query);
+    scanDiag('scan-lookup', {
+      'target': 'products',
+      'corr': lastScanCorr,
+      'len': query.length,
+      'result': lookup == null ? 'error' : lookup.found ? 'hit' : 'miss',
+    });
     if (!mounted) return;
     if (lookup == null || !lookup.found || lookup.productId == null) {
       setState(() => _scannedProductId = null);
@@ -155,6 +186,12 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
     await ref.read(productsProvider.notifier).searchNow(query);
     if (!mounted) return;
     setState(() => _scannedProductId = lookup.productId);
+    scanDiag('scan-ui', {
+      'target': 'products',
+      'corr': lastScanCorr,
+      'len': query.length,
+      'result': 'selected',
+    });
   }
 
   /// A burst captured by the app-level gateway (no field focused): the
@@ -179,7 +216,7 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
       selection: TextSelection.collapsed(offset: code.length),
     );
     ref.read(productsProvider.notifier).setSearch(code);
-    await _submitScan();
+    await _submitScan(fromGlobalScan: true);
   }
 
   /// Phase 17 §18 — page-level hooks for the shell's F4 / Ctrl+F / F5.

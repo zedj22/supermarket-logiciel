@@ -9,6 +9,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/barcode_scanner.dart';
 import '../../core/strings.dart';
 import '../auth/auth_provider.dart';
 import '../facturation/facturation_error.dart';
@@ -223,6 +224,7 @@ class FacturationProductPicker extends ConsumerStatefulWidget {
 class _FacturationProductPickerState
     extends ConsumerState<FacturationProductPicker> {
   final TextEditingController _search = TextEditingController();
+  late final BarcodeScanHandler _scanHandler;
   Timer? _debounce;
   int _requestId = 0;
 
@@ -234,11 +236,19 @@ class _FacturationProductPickerState
   @override
   void initState() {
     super.initState();
+    _scanHandler = BarcodeScanHandler.forTextController(
+      context: context,
+      name: 'facturation-product-picker',
+      controller: _search,
+      onScan: _handleBarcodeScan,
+    );
+    BarcodeScannerGateway.instance.register(_scanHandler);
     _load('');
   }
 
   @override
   void dispose() {
+    BarcodeScannerGateway.instance.unregister(_scanHandler);
     _debounce?.cancel();
     _search.dispose();
     super.dispose();
@@ -247,6 +257,15 @@ class _FacturationProductPickerState
   void _onChanged(String value) {
     _debounce?.cancel();
     _debounce = Timer(kFacturationPickerDebounce, () => _load(value));
+  }
+
+  void _handleBarcodeScan(String code) {
+    _debounce?.cancel();
+    _search.value = TextEditingValue(
+      text: code,
+      selection: TextSelection.collapsed(offset: code.length),
+    );
+    unawaited(_load(code));
   }
 
   Future<void> _load(String query) async {

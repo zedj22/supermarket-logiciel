@@ -21,6 +21,11 @@ import 'package:flutter/foundation.dart';
 const bool kScanDiagnosticsEnabled =
     bool.fromEnvironment('KLICK_SCAN_DIAG');
 
+/// Whether the capture path has any consumer for detailed burst summaries.
+/// This keeps their counters out of the normal keyboard hot path.
+bool get scanDiagObservationEnabled =>
+    kScanDiagnosticsEnabled || _scanDiagListeners.isNotEmpty;
+
 int _scanDiagSeq = 0;
 
 /// Listener signature for the runtime diagnostic fan-out ([scanDiag]).
@@ -44,7 +49,40 @@ final List<ScanDiagListener> _scanDiagListeners = <ScanDiagListener>[];
 /// chosen in this repo's own call sites) carry no barcode content.
 /// Everything else — notably `suffix3` (three digits of a code) and
 /// `text` (field content) — is stripped BEFORE any listener sees it.
-const Set<String> kScanDiagFieldAllowlist = <String>{'len', 'target', 'reason'};
+const Set<String> kScanDiagFieldAllowlist = <String>{
+  'len',
+  'target',
+  'reason',
+  'characterDigits',
+  'physicalDigits',
+  'otherKeys',
+  'bufferedDigits',
+  'editableFocus',
+  'phase',
+  'origin',
+  'accepted',
+  'bufferBefore',
+  'bufferAfter',
+  'rawLength',
+  'normalizedLength',
+  'normalized',
+  'validShape',
+  'runThrough',
+  'result',
+  'attemptId',
+  'corr',
+  'productId',
+  'variantId',
+  'sellingUnitId',
+  'lineKey',
+  'previous',
+  'next',
+  'handlerName',
+  'physicalKey',
+  'logicalKey',
+  'eventType',
+  'focusState',
+};
 
 /// Returns a copy of [fields] keeping only [kScanDiagFieldAllowlist] keys.
 /// Never mutates the caller's map.
