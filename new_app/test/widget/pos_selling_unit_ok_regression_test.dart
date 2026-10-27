@@ -464,11 +464,17 @@ void main() {
     await _openPos(tester, container);
 
     // Open the picker through the global wedge gateway, then use its
-    // keyboard shortcut while focus belongs to the DialogRoute. This runs
-    // the scanner's outside-screen route/focus gate before the quantity
-    // dialog is pushed and popped.
+    // number-key selection while focus belongs to the DialogRoute. This
+    // runs the scanner's outside-screen route/focus gate before the
+    // quantity dialog is pushed and popped.
+    //
+    // (Numpad `2`, not top-row `2`: while the scanner suspension is
+    // held, an unshifted main-row digit is event-identical to a
+    // scanner's first key and stays consumed — the provably-manual numpad
+    // digit (NumLock character travels with it) is the safe number-key
+    // path the picker keeps. See selling_unit_scanner_guard_test.dart.)
     await _scanToPicker(tester, wedge: true);
-    await tester.sendKeyEvent(LogicalKeyboardKey.digit2);
+    await tester.sendKeyEvent(LogicalKeyboardKey.numpad2, character: '2');
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('quantity-dialog')), findsOneWidget);
 

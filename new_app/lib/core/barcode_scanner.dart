@@ -47,6 +47,40 @@
 //    character) and auto-repeat never extends it (holding one key can
 //    never fake a burst).
 //
+// Scanner suspension — the dialog-side boundary (see
+// [BarcodeScannerGateway.withScannerSuspended]): the route/focus gates
+// above DISARM scanning behind a modal dialog, but disarming only means
+// "no dispatch" — the keys themselves still fell through to the dialog's
+// own focus tree, where a second burst could drive the digit shortcuts,
+// the Enter confirmation and the quantity text field. A scoped
+// suspension closes that hole for dialogs that declare it (the
+// selling-unit picker and the quantity dialog): while a suspension token
+// is held, NO burst may dispatch (the raw-PoC entry point is gated too),
+// every run is reset on suspend/resume so nothing is ever queued or
+// replayed, and tokens that START while suspended are captured instead of
+// rejected:
+//
+//  * no text field focused (the unit picker) → the digit keys are
+//    CONSUMED, so the dialog's 1–9 shortcut and its Enter confirmation
+//    never see a scanner key (arrow keys, Enter with an empty buffer,
+//    mouse and Escape are untouched — manual interaction is unaffected).
+//    The one exception: a provably MANUAL digit — a numpad key or an
+//    AZERTY Shift-digit (a scanner never sends numpad codes, never
+//    sends Shift; see [_isProvablyManualDigit]) — passes through so the
+//    picker's number-key selection keeps working. An unshifted main-row
+//    digit is event-identical to a scanner's first key and stays
+//    consumed: it can never select a unit;
+//  * a dialog text field focused (the quantity/amount field) → the run
+//    is PASS-THROUGH exactly like an `allowWhileEditing` run: human
+//    typing keeps reaching the field untouched, and the terminator
+//    restores the field's pre-run snapshot and CONSUMES the Enter
+//    instead of dispatching or submitting — the burst is dropped, never
+//    queued for after the dialog closes.
+//
+// A run whose shape or stage says "human" (a short digit run in a text
+// field, an Enter with an empty buffer) passes through unchanged, so
+// manual quantities, confirmations and cancels behave exactly as before.
+//
 // Distinction limit (documented, by design): the gateway can only tell
 // "digit burst + Enter in a scope where digits have no consumer" from
 // "nothing". A human typing the same shape with no field focused is
@@ -143,6 +177,55 @@ const List<PhysicalKeyboardKey> _physicalMainRowDigitKeys =
 /// when [key] is not one.
 int _physicalDigitIndexOf(PhysicalKeyboardKey key) =>
     _physicalMainRowDigitKeys.indexOf(key);
+
+/// The numpad's digit keys — the digits a CASHIER presses by hand on a
+/// POS keyboard, and the digits a keyboard-wedge scanner NEVER emits
+/// (wedge scanners type bare main-number-row scan codes + Enter; the
+/// capture tables above are main-row only by construction).
+const List<PhysicalKeyboardKey> _physicalNumpadDigitKeys =
+    <PhysicalKeyboardKey>[
+      PhysicalKeyboardKey.numpad0,
+      PhysicalKeyboardKey.numpad1,
+      PhysicalKeyboardKey.numpad2,
+      PhysicalKeyboardKey.numpad3,
+      PhysicalKeyboardKey.numpad4,
+      PhysicalKeyboardKey.numpad5,
+      PhysicalKeyboardKey.numpad6,
+      PhysicalKeyboardKey.numpad7,
+      PhysicalKeyboardKey.numpad8,
+      PhysicalKeyboardKey.numpad9,
+    ];
+
+/// Whether [key] is one of the numpad's digit keys.
+bool _isNumpadDigitPhysical(PhysicalKeyboardKey key) =>
+    _physicalNumpadDigitKeys.contains(key);
+
+/// Whether this digit key-down can ONLY be a human's manual press —
+/// never a keyboard-wedge scanner burst. Consulted ONLY while a scanner
+/// suspension is active (the selling-unit dialogs): their 1–9 number
+/// shortcut may see these keys while every scanner-shaped key stays
+/// consumed. The two shapes rest on the codebase's own scanner model
+/// ("a scanner never sends Shift"; wedge scanners type bare main-row
+/// digit scan codes + Enter):
+///
+///  * a NUMPAD digit key (any layout, NumLock on: the engine delivers
+///    the digit character) — no evidenced scanner sends numpad codes;
+///  * a MAIN-ROW digit with Shift HELD delivering an ASCII digit
+///    character — the AZERTY human digit (`Shift+2` → `2`; the ASCII
+///    digits live on AZERTY's Shift layer). A US-layout `Shift+2`
+///    produces `@`, not a digit character, so this shape cannot be a
+///    scanner on any evidenced layout.
+///
+/// Everything else — an unshifted main-row digit, an AZERTY symbol, an
+/// Arabic-Indic digit — stays claimed: at the FIRST digit of a burst it
+/// is event-identical to a cashier's top-row press, and handing it to
+/// the dialog would reopen the sold-by-accident bug.
+bool _isProvablyManualDigit(KeyEvent event, {required bool characterDigit}) {
+  if (_physicalDigitIndexOf(event.physicalKey) >= 0) {
+    return characterDigit && _shiftPressed();
+  }
+  return _isNumpadDigitPhysical(event.physicalKey);
+}
 
 /// The ASCII digit a main-row physical digit key stands for — the key's
 /// own scan-code ordinal (physical digit3 IS "the 3 key" on the US
@@ -341,6 +424,13 @@ class BarcodeScannerGateway {
   TextEditingController? _runThroughController;
   TextEditingValue? _runThroughValue;
 
+  /// The focus context a pass-through run started under — the liveness
+  /// gate for a run that has NO owning screen (a scanner-suspension
+  /// protection run inside a dialog): the terminator may only write the
+  /// snapshot back while that dialog element is still mounted, so an
+  /// asynchronous burst can never mutate a disposed dialog.
+  BuildContext? _runThroughContext;
+
   /// The timestamp of the last digit appended to the current run —
   /// staleness input for pass-through runs ([kBarcodeRunStaleGap]).
   Duration? _lastDigitAt;
@@ -360,6 +450,57 @@ class BarcodeScannerGateway {
   /// complete inside the window, and same-origin repeats are never
   /// matched anyway (see [_dropCrossOriginDuplicate]).
   static const int kCrossOriginDispatchDupMs = 250;
+
+  /// Active scoped suspensions — one opaque token per open dialog that
+  /// declared scanner suspension (the selling-unit picker and the
+  /// quantity dialog). The gateway is suspended while AT LEAST ONE token
+  /// is held, so nested dialogs (quantity stacked on the picker) keep
+  /// protection until each of them has closed.
+  final List<Object> _suspensions = <Object>[];
+
+  /// Whether a scoped scanner suspension is active — see the file header
+  /// "Scanner suspension" section for what it changes.
+  bool get isScannerSuspended => _suspensions.isNotEmpty;
+
+  /// Begins a scoped suspension owned by [token]. Idempotent per token;
+  /// any run in progress is abandoned immediately so a half-typed burst
+  /// can never bridge into the dialog.
+  void suspendScans(Object token) {
+    if (_suspensions.contains(token)) return;
+    _suspensions.add(token);
+    _resetBuffer();
+    scanDiag('scanner-suspend', {'phase': 'open'});
+  }
+
+  /// Ends the suspension owned by [token]. Unknown/already-released
+  /// tokens are ignored, so the dialog's widget guard and its route
+  /// future may both call this safely. The buffer reset guarantees a
+  /// burst swallowed inside the dialog can never leak out of it.
+  void resumeScans(Object token) {
+    if (!_suspensions.remove(token)) return;
+    _resetBuffer();
+    scanDiag('scanner-resume', {'phase': 'close'});
+  }
+
+  /// Runs [body] with a scanner suspension held for its whole duration —
+  /// suspended from the moment the dialog future is created (before the
+  /// route is even pushed) until the future completes (the pop). [body]
+  /// receives the suspension token so it can place a
+  /// [ScannerSuspensionGuard] inside the dialog: the guard releases the
+  /// SAME token when the dialog element unmounts, covering route
+  /// teardown where the future never completes. Whichever fires first
+  /// releases the token; the second call is a no-op.
+  Future<T> withScannerSuspended<T>(
+    Future<T> Function(Object token) body,
+  ) async {
+    final token = Object();
+    suspendScans(token);
+    try {
+      return await body(token);
+    } finally {
+      resumeScans(token);
+    }
+  }
 
   /// Installs (or re-arms) the listeners and claims [handler] as the
   /// current scan target.
@@ -405,6 +546,17 @@ class BarcodeScannerGateway {
   /// report the raw origin as its own event name (`raw-dispatch`) so a
   /// hardware session can tell the two paths apart.
   bool dispatchExternalScan(String code) {
+    // Suspended dialog: the raw path must be ignored exactly like the
+    // key path — no dispatch, no duplicate record, nothing queued for
+    // after the dialog closes.
+    if (isScannerSuspended) {
+      scanDiag('dispatch-drop', {
+        'reason': 'scanner-suspended',
+        'len': code.length,
+        'suffix3': scanDiagSuffix3(code),
+      });
+      return false;
+    }
     if (!kBarcodeScanShape.hasMatch(code)) {
       scanDiag('dispatch-drop', {'reason': 'shape', 'len': code.length});
       return false;
@@ -559,31 +711,47 @@ class BarcodeScannerGateway {
       final runThroughHandler = _runThroughHandler;
       final runThroughController = _runThroughController;
       final runThroughValue = _runThroughValue;
+      final runThroughContext = _runThroughContext;
+      // Suspension is sampled BEFORE the reset: the reset cannot end the
+      // suspension (it holds no token), but a run CAN be terminated in
+      // the same turn a dialog closes — whichever the terminator sees is
+      // the state that governs this event.
+      final suspended = isScannerSuspended;
       _resetBuffer();
       if (code.isNotEmpty && kBarcodeScanShape.hasMatch(code)) {
         // Pass-through terminator: the burst was never consumed, it
         // transited the focused field — the field must end exactly where
-        // it started before the dispatch may proceed. The handler
-        // registration is the liveness gate: its dialog unregisters
-        // BEFORE disposing the very controller held here, so a still-
-        // registered handler means the write below is always safe.
+        // it started before the dispatch may proceed. The liveness gate:
+        // a screen-owned run proves safety by still being registered (its
+        // dialog unregisters BEFORE disposing the very controller held
+        // here); a suspension run has no screen, so its dialog element
+        // must still be mounted.
+        final runAlive = runThroughHandler != null
+            ? _handlers.contains(runThroughHandler)
+            : runThroughContext?.mounted ?? false;
         if (runThrough &&
-            runThroughHandler != null &&
-            _handlers.contains(runThroughHandler) &&
+            runAlive &&
             runThroughController != null &&
             runThroughValue != null) {
+          // A suspension protection run has no handler flags: it may
+          // restore whatever landed (identical allowances to the POS
+          // handler — bounded append or replacement of the snapshot).
+          final allowIncompletePassThrough =
+              runThroughHandler?.allowIncompletePassThrough ?? true;
+          final allowReplacementPassThrough =
+              runThroughHandler?.allowReplacementPassThrough ?? true;
           final text = runThroughController.text;
           final snapshot = runThroughValue.text;
           final appendedText = text.startsWith(snapshot)
               ? text.substring(snapshot.length)
               : null;
           final partialRunMatches =
-              runThroughHandler.allowIncompletePassThrough &&
+              allowIncompletePassThrough &&
               appendedText != null &&
               appendedText.length <= runThroughText.length &&
               _isSubsequence(appendedText, runThroughText);
           final replacementRunMatches =
-              runThroughHandler.allowReplacementPassThrough &&
+              allowReplacementPassThrough &&
               text.length <= runThroughText.length &&
               _isSubsequence(text, runThroughText);
           // The field must show the snapshot followed by EXACTLY this
@@ -618,10 +786,29 @@ class BarcodeScannerGateway {
               'len': code.length,
               'suffix3': scanDiagSuffix3(code),
             });
-            return false;
+            // Outside a suspension the run simply ends here. Inside one
+            // the terminator still belongs to the scanner: keep the
+            // human's edit, but fall through to the suspension drop so
+            // this Enter can never submit the dialog either.
+            if (!suspended) return false;
           }
           // text == snapshot: nothing reached the field (a key-ignoring
           // widget or the test pipeline) — dispatch with no restore.
+        }
+        // Suspended dialog: a completed burst is NEVER an action. The
+        // field snapshot (if any) has already been restored above; now
+        // swallow the terminator so it cannot confirm the dialog, and
+        // drop the code without queueing it — the cashier must scan
+        // again once the dialog is gone.
+        if (suspended) {
+          scanDiag('dispatch-drop', {
+            'attemptId': attemptId,
+            'reason': 'scanner-suspended',
+            'len': code.length,
+            'suffix3': scanDiagSuffix3(code),
+          });
+          _consumed[event] = true;
+          return true;
         }
         // Not (or no longer) a restorable pass-through: a default
         // consumed run, or a dialog that closed mid-run — dispatch
@@ -693,6 +880,17 @@ class BarcodeScannerGateway {
           'reason': 'shape',
           'len': code.length,
         });
+        // Suspended with a CONSUMED run (the unit picker's stage): this
+        // Enter must never fall through to the dialog's confirmation —
+        // the digits it accompanies are not barcode-shaped, but nothing
+        // here can tell them from a scanner's truncated burst, and a
+        // false confirmation would silently sell the default unit. A
+        // pass-through run (the quantity field) keeps the Enter: it is
+        // manual typing submitting its own value.
+        if (suspended && !runThrough) {
+          _consumed[event] = true;
+          return true;
+        }
       }
       // Empty / too short / no live owner: an ordinary Enter — shortcuts,
       // submits and buttons keep it.
@@ -788,12 +986,33 @@ class BarcodeScannerGateway {
     }
     if (digit != null) {
       final bufferBefore = _buffer.length;
+      // Suspended dialog, provably manual digit: a numpad key or an
+      // AZERTY Shift-digit a scanner cannot emit (see
+      // [_isProvablyManualDigit]). The selling-unit picker's 1–9 number
+      // shortcut (and the quantity field's typing) receives it exactly
+      // as if no scanner layer existed — no buffer touch, nothing to
+      // restore later. The empty-buffer condition keeps a run already in
+      // progress intact: a digit arriving MID-burst belongs to the burst
+      // and may never double as a dialog shortcut.
+      if (isScannerSuspended &&
+          _buffer.isEmpty &&
+          _isProvablyManualDigit(event, characterDigit: characterDigit)) {
+        scanDiag('scan-key-rejected', {
+          'origin': captureOrigin,
+          'reason': 'manual-digit',
+          'bufferBefore': bufferBefore,
+          'bufferAfter': bufferBefore,
+        });
+        return false;
+      }
       // Pass-through staleness (its runs only): a pause longer than
       // [kBarcodeRunStaleGap] means the buffered residue and its snapshot
       // describe typing, not one burst — drop them and evaluate this
       // digit as a fresh START below. Bookkeeping only: this digit is
-      // never delayed or consumed by the check.
-      if (_runThrough) {
+      // never delayed or consumed by the check. A suspended dialog has
+      // the same property: a protection run never dispatches, so old
+      // residue must not survive into the next digit either.
+      if (_runThrough || isScannerSuspended) {
         final last = _lastDigitAt;
         if (last != null &&
             event.timeStamp > last &&
@@ -809,9 +1028,12 @@ class BarcodeScannerGateway {
       if (_buffer.isEmpty) {
         // START: full arming — a focused text field, a chord, a dialog or
         // a dead screen means this digit belongs to the field/shortcut,
-        // never to the gateway.
+        // never to the gateway. The one exception is a SUSPENDED dialog:
+        // with no armed screen the digit is captured as a protection run
+        // (see the file header "Scanner suspension") instead of being
+        // handed to the dialog's digit shortcut.
         final owner = _activeHandler();
-        if (owner == null) {
+        if (owner == null && !isScannerSuspended) {
           scanDiag('scan-key-rejected', {
             'origin': captureOrigin,
             'reason': 'no-active-handler',
@@ -828,7 +1050,13 @@ class BarcodeScannerGateway {
         // terminator must match by growth, not exact ASCII.
         if (!characterDigit) _runThroughForeign = true;
         final editable = _focusedEditable();
-        if (editable != null && _allowsWhileEditing(owner, editable)) {
+        // Screen-owned runs keep their own `allowWhileEditing` rule. A
+        // suspension run has no owner and no handler flags: an owned
+        // field means the run may pass through (the dialog's quantity /
+        // amount field keeps manual typing intact); no owned field means
+        // the digit is consumed so the picker's 1–9 shortcut never fires.
+        if (editable != null &&
+            (owner == null || _allowsWhileEditing(owner, editable))) {
           // Pass-through run: the digit reaches this field as ordinary
           // typing (NOT consumed — that is the whole point: typing in
           // the form must work), and the snapshot taken here is
@@ -837,6 +1065,12 @@ class BarcodeScannerGateway {
           _runThroughHandler = owner;
           _runThroughController = editable.controller;
           _runThroughValue = editable.controller.value;
+          // Suspension runs have no registered handler to prove their
+          // dialog is still alive at the terminator — the focus context
+          // they started under plays that role instead.
+          _runThroughContext = owner == null
+              ? FocusManager.instance.primaryFocus?.context
+              : null;
           _runThroughText
             ..clear()
             ..write(character ?? digit);
@@ -881,8 +1115,10 @@ class BarcodeScannerGateway {
         return true;
       }
       // CONTINUE: the run's earlier digits were already claimed here;
-      // only hard gates (dialog, chord, dead screen) may abandon it.
-      if (_runOwner() == null) {
+      // only hard gates (dialog, chord, dead screen) may abandon it. A
+      // suspension protection run has no registered owner by design —
+      // the suspension itself is its gate, so it never abandons here.
+      if (_runOwner() == null && !isScannerSuspended) {
         scanDiag('scan-key-rejected', {
           'attemptId': _activeScanAttemptId,
           'origin': captureOrigin,
@@ -1207,6 +1443,7 @@ class BarcodeScannerGateway {
     _runThroughHandler = null;
     _runThroughController = null;
     _runThroughValue = null;
+    _runThroughContext = null;
     _lastDigitAt = null;
     _activeScanAttemptId = null;
     _dispatchingScanAttemptId = null;
@@ -1242,6 +1479,12 @@ class BarcodeScannerGateway {
   /// Registered screens (all of them, armed or not).
   @visibleForTesting
   int get handlerCount => _handlers.length;
+
+  /// Open suspension tokens — a leak detector for tests: it must be 0
+  /// once every dialog that called [withScannerSuspended] has been torn
+  /// down.
+  @visibleForTesting
+  int get suspensionCount => _suspensions.length;
 
   /// Digits currently held in the run-in-progress buffer (0 when idle).
   /// Read-only observation for the scan-diagnostics panel; never mutates
@@ -1279,12 +1522,14 @@ class BarcodeScannerGateway {
   }
 
   /// Test hermeticity: forget every handler and any burst in progress,
-  /// and restore the experimental flag to its default (OFF).
+  /// drop every open suspension, and restore the experimental flag to
+  /// its default (OFF).
   /// The test binding already clears both listener lists between tests
   /// (and swaps the FocusManager), so this only owns the gateway state.
   @visibleForTesting
   void resetForTest() {
     _handlers.clear();
+    _suspensions.clear();
     _resetBuffer();
     _diagCharacterDigitKeyDowns = 0;
     _diagPhysicalDigitKeyDowns = 0;
@@ -1292,4 +1537,39 @@ class BarcodeScannerGateway {
     resetDispatchDedupForTest();
     experimentalPhysicalDigitCapture = false;
   }
+}
+
+/// The in-dialog half of a [BarcodeScannerGateway.withScannerSuspended]
+/// run: releases the suspension token when the dialog element unmounts,
+/// covering the route-teardown path where the dialog future never
+/// completes. The future's own `finally` releases the same token first in
+/// the normal pop path — releasing twice is a no-op, so the token can
+/// never leak and scanning is never suspended for one tick longer than
+/// the dialog exists.
+class ScannerSuspensionGuard extends StatefulWidget {
+  const ScannerSuspensionGuard({
+    required this.token,
+    required this.child,
+    super.key,
+  });
+
+  /// The suspension token handed to the dialog by
+  /// [BarcodeScannerGateway.withScannerSuspended].
+  final Object token;
+
+  final Widget child;
+
+  @override
+  State<ScannerSuspensionGuard> createState() => _ScannerSuspensionGuardState();
+}
+
+class _ScannerSuspensionGuardState extends State<ScannerSuspensionGuard> {
+  @override
+  void dispose() {
+    BarcodeScannerGateway.instance.resumeScans(widget.token);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
 }

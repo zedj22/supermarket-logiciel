@@ -20,6 +20,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/barcode_scanner.dart';
 import '../../core/strings.dart';
 import '../../l10n/locale_provider.dart';
 import '../pos/pos_option_picker.dart';
@@ -69,14 +70,25 @@ Future<SellingUnitPickResult?> showSellingUnitPicker(
   // promotion where the retail-branch gate can be evaluated).
   String? productPromoPrice,
 }) {
-  return showDialog<SellingUnitPickResult>(
-    context: context,
-    builder: (_) => SellingUnitPicker(
-      productId: productId,
-      productQuantity: productQuantity,
-      productUnit: productUnit,
-      productPrice: productPrice,
-      productPromoPrice: productPromoPrice,
+  // A scanner burst arriving while this dialog is open must have ZERO
+  // effect: no unit shortcut, no Enter confirmation, no quantity
+  // pollution, nothing queued for after the dialog closes (the scanner
+  // path can no longer see past the modal route, so the gateway would
+  // otherwise hand the keys to the dialog's own focus tree). Suspended
+  // from before the route is pushed until it is fully gone.
+  return BarcodeScannerGateway.instance.withScannerSuspended(
+    (token) => showDialog<SellingUnitPickResult>(
+      context: context,
+      builder: (_) => ScannerSuspensionGuard(
+        token: token,
+        child: SellingUnitPicker(
+          productId: productId,
+          productQuantity: productQuantity,
+          productUnit: productUnit,
+          productPrice: productPrice,
+          productPromoPrice: productPromoPrice,
+        ),
+      ),
     ),
   );
 }

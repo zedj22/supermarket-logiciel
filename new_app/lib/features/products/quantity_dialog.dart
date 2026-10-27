@@ -29,6 +29,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/amount_entry.dart';
+import '../../core/barcode_scanner.dart';
 import '../../core/quantity_expression.dart';
 import '../../core/number_format.dart';
 import '../../core/numeric_text.dart';
@@ -49,13 +50,25 @@ Future<String?> showQuantityDialog(
   String? productUnit,
   String? unitPrice,
 }) {
-  return showDialog<String>(
-    context: context,
-    builder: (_) => QuantityDialog(
-      unit: unit,
-      productQuantity: productQuantity,
-      productUnit: productUnit,
-      unitPrice: unitPrice,
+  // Same scanner suspension as the selling-unit picker: a burst arriving
+  // while this dialog is open is captured (never dispatched), and a burst
+  // that transits the focused quantity/amount field is restored to its
+  // pre-run text at the terminator — the field keeps exactly what the
+  // human typed, and the Enter never submits the dialog on a scanner's
+  // behalf. Manual typing, Enter-on-typing, arrows and Escape are
+  // untouched.
+  return BarcodeScannerGateway.instance.withScannerSuspended(
+    (token) => showDialog<String>(
+      context: context,
+      builder: (_) => ScannerSuspensionGuard(
+        token: token,
+        child: QuantityDialog(
+          unit: unit,
+          productQuantity: productQuantity,
+          productUnit: productUnit,
+          unitPrice: unitPrice,
+        ),
+      ),
     ),
   );
 }
