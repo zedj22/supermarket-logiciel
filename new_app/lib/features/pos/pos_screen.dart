@@ -330,7 +330,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       if (customer != null) {
         ref.read(posCartProvider.notifier).setCustomer(customer);
       }
-      if (mounted) _searchFocusNode.requestFocus();
+      _restoreSearchFocusAfterPicker();
       return;
     }
     if (key == LogicalKeyboardKey.f7) {
@@ -1037,6 +1037,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
         if (customer != null && mounted) {
           ref.read(posCartProvider.notifier).setCustomer(customer);
         }
+        _restoreSearchFocusAfterPicker();
         return;
       }
       showPosToast(
@@ -1576,12 +1577,29 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     }
   }
 
+  /// Restores focus to the product search field after the customer picker
+  /// (or its Quick Add form) closes. The popped DialogRoute still owns the
+  /// primary focus for the remainder of the current frame, so a synchronous
+  /// `requestFocus()` would land in the popped route's FocusScope and the
+  /// scanner gateway would then reject wedge scans (`focus-popup-route` /
+  /// `focus-outside-screen`). Scheduling the request on the NEXT frame runs
+  /// it after the route transition completes; the `mounted` guard covers a
+  /// widget disposed while the picker was open. Called on pick AND cancel —
+  /// the cashier returns to scanning either way.
+  void _restoreSearchFocusAfterPicker() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _searchFocusNode.requestFocus();
+    });
+  }
+
   Future<void> _pickCustomer() async {
     final customer = await showCustomerPickerDialog(context);
     if (!mounted) return;
     if (customer != null) {
       ref.read(posCartProvider.notifier).setCustomer(customer);
     }
+    _restoreSearchFocusAfterPicker();
   }
 
   Future<void> _openPayment() async {

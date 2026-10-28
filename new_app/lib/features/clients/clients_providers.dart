@@ -3,8 +3,10 @@
 //
 // Mirrors the inventory provider conventions: debounced search with
 // stale-response guarding, server-side pagination, and mutations that
-// return a localized error object (null = success). Money stays in
-// decimal strings end to end.
+// return a localized error object (null = success) — `createCustomer`
+// additionally returns the created record so a quick-add caller (the POS
+// customer picker) can select it in place. Money stays in decimal
+// strings end to end.
 import 'dart:async';
 
 import 'package:dio/dio.dart';
@@ -180,14 +182,27 @@ class CustomersNotifier extends StateNotifier<CustomersState> {
     load();
   }
 
-  /// POST /api/v1/customers — null on success, localized error otherwise.
-  Future<PosApiError?> createCustomer(Map<String, dynamic> payload) async {
+  /// POST /api/v1/customers — returns the created customer on success so
+  /// callers (e.g. the POS picker's quick-add) can select it immediately;
+  /// `(null, error)` on failure. The backend answers the full
+  /// CustomerResponse (201); a body without an id still counts as a
+  /// successful create but cannot be selected (`null` → the caller keeps
+  /// its current selection).
+  Future<(CustomerModel?, PosApiError?)> createCustomer(
+    Map<String, dynamic> payload,
+  ) async {
     try {
-      await _dio.post(kCustomersPath, data: payload);
+      final response = await _dio.post(kCustomersPath, data: payload);
       refresh();
-      return null;
+      final body = response.data is Map<String, dynamic>
+          ? response.data as Map<String, dynamic>
+          : const <String, dynamic>{};
+      final created = body['id'] is String
+          ? CustomerModel.fromJson(body)
+          : null;
+      return (created, null);
     } on DioException catch (e) {
-      return clientsApiError(e, _localeCode());
+      return (null, clientsApiError(e, _localeCode()));
     }
   }
 

@@ -38,6 +38,7 @@ void main() {
     'walk_in_customer',
     'search_customers',
     'no_customers_found',
+    'quick_add_customer',
     'select',
     'held_sales',
     'hold_sale',

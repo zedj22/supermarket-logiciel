@@ -204,11 +204,13 @@ void main() {
       // 2.5% stock-only estimate and its not-the-full-zakat note) —
       // 7 keys (1559). The product-form markup-on-cost pass added the
       // pricing-row percentage label (markup on cost, distinct from the
-      // products table's margin) — 1 key (1560).
+      // products table's margin) — 1 key (1560). The POS customer-picker
+      // quick-add pass added the picker's "Add new customer" button label
+      // (shared by the ar/fr/en maps) — 1 key (1561).
       // Update this deliberately when a subphase
       // adds strings — an unexplained drop means keys were deleted from
       // one map only.
-      expect(_map('en').keys.length, 1560);
+      expect(_map('en').keys.length, 1561);
       expect(_map('ar').keys.length, _map('en').keys.length);
       expect(_map('fr').keys.length, _map('en').keys.length);
     });

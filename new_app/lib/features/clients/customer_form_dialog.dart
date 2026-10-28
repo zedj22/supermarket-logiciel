@@ -2,8 +2,11 @@
 //
 // Same architecture as ProductFormDialog: the dialog owns its fields and
 // submit flow, delegates persistence to the customersProvider notifier
-// (which returns a localized PosApiError or null on success), then pops.
-// Money fields are validated with the exact milli parser — no float math.
+// (which returns the created record plus a localized PosApiError, or a
+// null error on success), then pops. `showCustomerFormDialog` returns the
+// freshly created customer so a quick-add caller (the POS customer
+// picker) can select it in place; edits pop null. Money fields are
+// validated with the exact milli parser — no float math.
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -11,14 +14,18 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/strings.dart';
 import '../../l10n/locale_provider.dart';
 import '../pos/pos_toast.dart';
+import 'clients_error.dart';
 import 'clients_providers.dart';
 import 'customer_models.dart';
 
-Future<void> showCustomerFormDialog(
+/// Opens the customer form. Returns the freshly created [CustomerModel]
+/// on a successful create (so the POS picker's quick-add can select it
+/// immediately), or null on cancel / edit / failure.
+Future<CustomerModel?> showCustomerFormDialog(
   BuildContext context, {
   CustomerModel? customer,
 }) {
-  return showDialog(
+  return showDialog<CustomerModel>(
     context: context,
     builder: (_) => CustomerFormDialog(customer: customer),
   );
@@ -110,13 +117,21 @@ class _CustomerFormDialogState extends ConsumerState<CustomerFormDialog> {
 
     final notifier = ref.read(customersProvider.notifier);
     final payload = _payload();
-    final result = _isEdit
-        ? await notifier.updateCustomer(widget.customer!.id, payload)
-        : await notifier.createCustomer(payload);
+    CustomerModel? created;
+    PosApiError? result;
+    if (_isEdit) {
+      result = await notifier.updateCustomer(widget.customer!.id, payload);
+    } else {
+      (created, result) = await notifier.createCustomer(payload);
+    }
 
     if (!mounted) return;
     if (result == null) {
-      Navigator.pop(context);
+      // Pop with the created customer so a quick-add caller (the POS
+      // customer picker) can select it without re-searching; edits pop
+      // null. On a create whose response carried no record the pop is
+      // also null — the caller must not select what it cannot identify.
+      Navigator.pop(context, created);
       showPosToast(
         context,
         message: AppStrings.t(
@@ -127,10 +142,11 @@ class _CustomerFormDialogState extends ConsumerState<CustomerFormDialog> {
         key: const Key('client-form-success-toast'),
       );
     } else {
+      final failure = result;
       setState(() {
         _saving = false;
-        _error = result.message;
-        _errorDetail = result.detail;
+        _error = failure.message;
+        _errorDetail = failure.detail;
       });
     }
   }
