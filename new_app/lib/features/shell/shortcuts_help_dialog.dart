@@ -53,7 +53,9 @@ const _shortcutRows = <_ShortcutRow>[
   // --- POS workspace: only while a sale is open ---
   _ShortcutRow('Enter', 'sc_a_add_search', _pos, 'sc_d_add_search'),
   _ShortcutRow('F6', 'sc_a_customer', _pos, 'sc_d_customer'),
+  _ShortcutRow('Shift+F6', 'add_client', _pos, 'sc_d_add_customer'),
   _ShortcutRow('F7', 'sc_a_invoice_discount', _pos, 'sc_d_invoice_discount'),
+  _ShortcutRow('Shift+F7', 'loyalty_redeem', _pos, 'sc_d_use_points'),
   _ShortcutRow('Space', 'sc_a_payment', _pos, 'sc_d_payment'),
   _ShortcutRow('F9', 'sc_a_hold', _pos, 'sc_d_hold'),
   _ShortcutRow('F10', 'sc_a_held_sales', _pos, 'sc_d_held_sales'),

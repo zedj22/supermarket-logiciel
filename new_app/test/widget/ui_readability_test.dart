@@ -157,7 +157,7 @@ void main() {
   });
 
   group('keyboard shortcuts map — three columns, every row present', () {
-    testWidgets('renders key / action+meaning / scope for all 19 rows',
+    testWidgets('renders key / action+meaning / scope for all 21 rows',
         (tester) async {
       await _openMap(tester, size: const Size(1280, 720));
 
@@ -179,7 +179,7 @@ void main() {
         findsNothing,
       );
 
-      // Every row is built, not lazily materialised: 8 shell rows and 11
+      // Every row is built, not lazily materialised: 8 shell rows and 13
       // POS rows, each carrying its own scope label.
       expect(
         find.text(AppStrings.t('shortcuts_scope_global', 'en')),
@@ -187,7 +187,7 @@ void main() {
       );
       expect(
         find.text(AppStrings.t('shortcuts_scope_pos', 'en')),
-        findsNWidgets(11),
+        findsNWidgets(13),
       );
 
       // Keys the tests and cashiers reach for specifically.
@@ -195,9 +195,27 @@ void main() {
       expect(find.text('F12'), findsOneWidget);
       expect(find.text('+'), findsWidgets);
 
+      // The Shift combos sit next to their base keys and carry the same
+      // action labels as the buttons they mirror.
+      expect(find.text('Shift+F6'), findsOneWidget);
+      expect(find.text('Shift+F7'), findsOneWidget);
+      expect(find.text(AppStrings.t('add_client', 'en')), findsOneWidget);
+      expect(
+        find.text(AppStrings.t('loyalty_redeem', 'en')),
+        findsOneWidget,
+      );
+
       // The meaning is kept — it is the whole point of the column.
       expect(find.text(AppStrings.t('sc_d_payment', 'en')), findsOneWidget);
       expect(find.text(AppStrings.t('sc_d_refresh', 'en')), findsOneWidget);
+      expect(
+        find.text(AppStrings.t('sc_d_add_customer', 'en')),
+        findsOneWidget,
+      );
+      expect(
+        find.text(AppStrings.t('sc_d_use_points', 'en')),
+        findsOneWidget,
+      );
 
       expect(tester.takeException(), isNull);
     });
@@ -299,9 +317,11 @@ void main() {
       // still renders every row without throwing.
       expect(find.text('Space'), findsOneWidget);
       expect(find.text('F12'), findsOneWidget);
+      expect(find.text('Shift+F6'), findsOneWidget);
+      expect(find.text('Shift+F7'), findsOneWidget);
       expect(
         find.text(AppStrings.t('shortcuts_scope_pos', 'ar')),
-        findsNWidgets(11),
+        findsNWidgets(13),
       );
       expect(tester.takeException(), isNull);
     });

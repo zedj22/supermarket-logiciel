@@ -595,7 +595,9 @@ class AppStrings {
     'sc_d_close': 'إغلاق النافذة العلوية أو مسح البحث',
     'sc_d_add_search': 'إضافة المنتج الممسوح أو المكتوب',
     'sc_d_customer': 'اختيار عميل هذه البيعة',
+    'sc_d_add_customer': 'إنشاء عميل جديد وتحديده لهذه البيعة',
     'sc_d_invoice_discount': 'خصم على الفاتورة كاملة',
+    'sc_d_use_points': 'تطبيق خصم مكافأة الولاء على هذه البيعة',
     'sc_d_payment': 'فتح الدفع من مساحة البيع أو من حقل كمية السلة',
     'sc_d_quick_sale':
         'إتمام البيع مباشرة كدفع نقدي كامل بالمبلغ المستحق (بدون نافذة الدفع)',
@@ -2255,7 +2257,9 @@ class AppStrings {
     'sc_d_close': 'Fermer la fenêtre, ou vider la recherche',
     'sc_d_add_search': 'Ajouter le produit scanné ou tapé',
     'sc_d_customer': 'Choisir le client de la vente',
+    'sc_d_add_customer': 'Créer un nouveau client et le sélectionner pour cette vente',
     'sc_d_invoice_discount': 'Remise sur toute la facture',
+    'sc_d_use_points': 'Appliquer une remise fidélité sur cette vente',
     'sc_d_payment': 'Ouvrir le paiement depuis l’espace de vente ou un champ quantité',
     'sc_d_quick_sale':
         'Encaisser directement le montant exact en espèces (sans dialogue de paiement)',
@@ -3956,7 +3960,9 @@ class AppStrings {
     'sc_d_close': 'Close the top dialog, or clear the search box',
     'sc_d_add_search': 'Add the scanned or typed product',
     'sc_d_customer': 'Pick the customer for this sale',
+    'sc_d_add_customer': 'Create a new customer and select them for this sale',
     'sc_d_invoice_discount': 'Discount on the whole invoice',
+    'sc_d_use_points': 'Apply a loyalty reward discount to this sale',
     'sc_d_payment': 'Open payment from the workspace or a cart quantity field',
     'sc_d_quick_sale':
         'Complete the sale directly as a full cash payment of the amount due (no payment dialog)',

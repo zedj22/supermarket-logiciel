@@ -206,11 +206,15 @@ void main() {
       // pricing-row percentage label (markup on cost, distinct from the
       // products table's margin) — 1 key (1560). The POS customer-picker
       // quick-add pass added the picker's "Add new customer" button label
-      // (shared by the ar/fr/en maps) — 1 key (1561).
+      // (shared by the ar/fr/en maps) — 1 key (1561). The POS keyboard
+      // shortcut pass added the two shortcuts-map descriptions for
+      // Shift+F6 (add customer) and Shift+F7 (use points) — the action
+      // labels reuse the existing `add_client` / `loyalty_redeem` keys —
+      // 2 keys (1563).
       // Update this deliberately when a subphase
       // adds strings — an unexplained drop means keys were deleted from
       // one map only.
-      expect(_map('en').keys.length, 1561);
+      expect(_map('en').keys.length, 1563);
       expect(_map('ar').keys.length, _map('en').keys.length);
       expect(_map('fr').keys.length, _map('en').keys.length);
     });

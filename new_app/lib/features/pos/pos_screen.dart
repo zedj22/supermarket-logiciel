@@ -19,13 +19,18 @@
 //
 // Keyboard: F1 POS / F2 Products / F3 (Ctrl+N) add product at the shell
 // level, F4 (Ctrl+F) search, F5 refresh, Enter add/scan, F6 customer,
-// F7 invoice discount, SPACE payment (legacy F8 removed), F9 hold,
+// Shift+F6 add customer, F7 invoice discount, Shift+F7 use loyalty
+// points, SPACE payment (legacy F8 removed), F9 hold,
 // F10 held sales, F11 history, F12 clear (confirm), + add one unit /
 // - remove one unit / * enter a new quantity for the last active cart
 // line, Escape clears search (or hands focus back to the workspace) —
 // never the cart. F1–F5/Ctrl+N live one level up in the nav shell so the
 // map is the same on every screen (lib/core/app_shortcuts.dart); the local
-// bindings below cover everything POS owns.
+// bindings below cover everything POS owns. The Shift combinations never
+// collide with the plain F-key row (SingleActivator matches modifiers
+// exactly), are declined while a query/field is actually being typed
+// (posFocusRouting) and go inert behind any modal dialog (their route
+// scopes sit outside this page's CallbackShortcuts).
 //
 // `+`, `-`, `*` (UX FIX #12 / Phase 8 FIX #1–#3): claimed while the POS
 // search field or a cart quantity field has focus (typing them there
@@ -62,6 +67,7 @@ import '../../l10n/locale_provider.dart';
 import '../auth/auth_provider.dart';
 import '../auth/permission_helpers.dart';
 import '../clients/clients_providers.dart';
+import '../clients/customer_form_dialog.dart';
 import '../clients/customer_models.dart';
 import '../loyalty/loyalty_models.dart';
 import '../loyalty/loyalty_providers.dart';
@@ -168,6 +174,15 @@ class _PosScreenState extends ConsumerState<PosScreen> {
   /// The gateway already blocks bursts behind a modal route — this also
   /// covers submits that reach the resolve path with a dialog on screen.
   bool _scanActionDialogOpen = false;
+
+  /// One dialog per shortcut action — [Shift+F6] (add customer) and
+  /// [Shift+F7] (use points) are key-down bound, so a double press inside
+  /// one frame (before the dialog route's focus scope takes over) must not
+  /// stack two dialogs or run two redemption writes. Mirrors
+  /// [_scanActionDialogOpen]; released in a finally so a thrown/successful
+  /// flow can never leave the shortcut dead.
+  bool _customerFormOpen = false;
+  bool _redemptionOpen = false;
 
   /// Standard cart list scroll position — [_moveActiveLine] jumps it to the
   /// matching end when a FIRST arrow press enters the list from the
@@ -330,7 +345,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       if (customer != null) {
         ref.read(posCartProvider.notifier).setCustomer(customer);
       }
-      _restoreSearchFocusAfterPicker();
+      _restoreSearchFocusAfterDialog();
       return;
     }
     if (key == LogicalKeyboardKey.f7) {
@@ -1037,7 +1052,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
         if (customer != null && mounted) {
           ref.read(posCartProvider.notifier).setCustomer(customer);
         }
-        _restoreSearchFocusAfterPicker();
+        _restoreSearchFocusAfterDialog();
         return;
       }
       showPosToast(
@@ -1577,20 +1592,108 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     }
   }
 
-  /// Restores focus to the product search field after the customer picker
-  /// (or its Quick Add form) closes. The popped DialogRoute still owns the
+  /// Restores focus to the product search field after a POS-owned dialog
+  /// closes (customer picker or its Quick-Add form, loyalty redemption).
+  /// The popped DialogRoute still owns the
   /// primary focus for the remainder of the current frame, so a synchronous
   /// `requestFocus()` would land in the popped route's FocusScope and the
   /// scanner gateway would then reject wedge scans (`focus-popup-route` /
   /// `focus-outside-screen`). Scheduling the request on the NEXT frame runs
   /// it after the route transition completes; the `mounted` guard covers a
-  /// widget disposed while the picker was open. Called on pick AND cancel —
+  /// widget disposed while the dialog was open. Called on pick AND cancel —
   /// the cashier returns to scanning either way.
-  void _restoreSearchFocusAfterPicker() {
+  void _restoreSearchFocusAfterDialog() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       _searchFocusNode.requestFocus();
     });
+  }
+
+  /// Shared focus gate for the Shift-combo dialog shortcuts (Shift+F6 /
+  /// Shift+F7): claim the key from the bare workspace and from the IDLE
+  /// barcode field — the autofocused home, i.e. exactly the states Delete
+  /// claims — and decline it while a query or any other text field is
+  /// ACTUALLY being typed in (one shared posFocusRouting() answer, same
+  /// rule as Space/Delete). Dialog inputs never consult this: their route
+  /// scopes sit outside this page's CallbackShortcuts, so a dialog's text
+  /// field already owns the key before this layer is reached.
+  bool _shortcutMayClaimFocus() => switch (posFocusRouting()) {
+        PosFocusRouting.noEditable || PosFocusRouting.searchIdle => true,
+        _ => false,
+      };
+
+  /// Shift+F6 — the customer picker's Quick Add, reachable WITHOUT opening
+  /// the picker: the same [showCustomerFormDialog], the same RBAC gate the
+  /// picker's own button uses (`customer_manage` — the backend POST needs
+  /// it), the same outcome. On a successful create the customer is
+  /// selected for THIS sale (the loyalty session follows through the same
+  /// `setCustomer` watcher the picker path uses), the customer-search data
+  /// is refreshed so F6 shows the new record, and focus returns to the
+  /// barcode field. Cancel / failed create changes nothing.
+  Future<void> _addCustomerShortcut() async {
+    if (_customerFormOpen) return;
+    final loc = ref.read(localeProvider).flutterLocale.languageCode;
+    if (!ref.read(hasPermissionProvider('customer_manage'))) {
+      showPosToast(
+        context,
+        message: AppStrings.t('permission_denied', loc),
+        kind: PosToastKind.warning,
+      );
+      return;
+    }
+    _customerFormOpen = true;
+    CustomerModel? created;
+    try {
+      created = await showCustomerFormDialog(context);
+    } finally {
+      _customerFormOpen = false;
+    }
+    if (!mounted) return;
+    if (created != null) {
+      ref.read(posCartProvider.notifier).setCustomer(PosCustomer(
+            id: created.id,
+            name: created.name,
+            phone: created.phone,
+            balance: double.tryParse(created.balance) ?? 0,
+            isArchived: created.isArchived,
+          ));
+      // Same refresh the picker's quick-add performs: reset the query so
+      // the reloaded list actually contains the fresh record.
+      final search = ref.read(customerSearchProvider.notifier);
+      search.setQuery('');
+      await search.load();
+      if (!mounted) return;
+    }
+    _restoreSearchFocusAfterDialog();
+  }
+
+  /// The ONE redemption entry — the `pos-loyalty-discount-button` action
+  /// and its Shift+F7 shortcut both run through here, so the eligibility
+  /// gate, the dialog and the post-close focus restore can never diverge:
+  /// the predicate is the button's disabled condition re-read from the
+  /// providers (server-owned `canSelectReward`, non-empty non-return cart,
+  /// session not loading/in error). A disabled button presses nothing, so
+  /// the shortcut declines the same way; [_redemptionOpen] keeps a key
+  /// auto-repeat or a double press in one frame from stacking a second
+  /// dialog (the dialog itself applies the discount only on Confirm).
+  Future<void> _openLoyaltyRedemption() async {
+    if (_redemptionOpen) return;
+    final cart = ref.read(posCartProvider);
+    final loyalty = ref.read(posLoyaltyProvider);
+    final enabled = !cart.returnMode &&
+        !cart.isEmpty &&
+        !loyalty.loading &&
+        loyalty.error == null &&
+        loyalty.canSelectReward;
+    if (!enabled) return;
+    _redemptionOpen = true;
+    try {
+      await showLoyaltyDiscountDialog(context);
+    } finally {
+      _redemptionOpen = false;
+    }
+    if (!mounted) return;
+    _restoreSearchFocusAfterDialog();
   }
 
   Future<void> _pickCustomer() async {
@@ -1599,7 +1702,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     if (customer != null) {
       ref.read(posCartProvider.notifier).setCustomer(customer);
     }
-    _restoreSearchFocusAfterPicker();
+    _restoreSearchFocusAfterDialog();
   }
 
   Future<void> _openPayment() async {
@@ -2216,6 +2319,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       },
       onHistory: () => showSaleHistoryDialog(context),
       onClear: _confirmClearCart,
+      onRedemption: _openLoyaltyRedemption,
       heldCount: heldCount,
       // POS return mode (cart → independent return).
       canReturn: ref.watch(hasPermissionProvider('pos_return')),
@@ -2542,8 +2646,32 @@ class _PosScreenState extends ConsumerState<PosScreen> {
         const SingleActivator(LogicalKeyboardKey.escape): _handleEscape,
         const SingleActivator(LogicalKeyboardKey.f6): () =>
             _handleShortcut(LogicalKeyboardKey.f6),
+        // Shift+F6 — add customer (the picker's Quick Add as a direct
+        // shortcut next to F6). Exact modifier match: plain F6 never fires
+        // it and vice versa (SingleActivator requires every modifier to be
+        // EXACTLY as declared). includeRepeats off: a held combo cannot
+        // stack forms; the focus gate declines while a query/field is
+        // being typed (dialogs are out of reach by scope — see above).
+        const SingleActivator(
+          LogicalKeyboardKey.f6,
+          shift: true,
+          includeRepeats: false,
+        ): () {
+          if (_shortcutMayClaimFocus()) _addCustomerShortcut();
+        },
         const SingleActivator(LogicalKeyboardKey.f7): () =>
             _handleShortcut(LogicalKeyboardKey.f7),
+        // Shift+F7 — use loyalty points: the redemption button's own flow
+        // ([_openLoyaltyRedemption]) behind the key adjacent to F7 (invoice
+        // discount). Same exact-modifier / no-repeat / focus-gate rules as
+        // Shift+F6; the disabled button's eligibility is re-checked inside.
+        const SingleActivator(
+          LogicalKeyboardKey.f7,
+          shift: true,
+          includeRepeats: false,
+        ): () {
+          if (_shortcutMayClaimFocus()) _openLoyaltyRedemption();
+        },
         // SPACE replaces F8 (Phase 17 §18 — "SPACE replaces F8 for payment").
         // While a POS-owned NON-TYPING field is focused the activator
         // claims the key anyway (allowWhileEditing) — the callback is
@@ -3648,6 +3776,11 @@ class _CartPanel extends StatelessWidget {
   final VoidCallback onHolds;
   final VoidCallback onHistory;
   final VoidCallback onClear;
+
+  /// Redemption entry shared by the Use Points button and Shift+F7 — the
+  /// state's ONE [_openLoyaltyRedemption] flow (eligibility gate + dialog
+  /// + focus restore), so keyboard and mouse can never diverge.
+  final VoidCallback onRedemption;
   final int heldCount;
 
   /// POS return mode — the footer Return button (permission-gated) enters
@@ -3696,6 +3829,7 @@ class _CartPanel extends StatelessWidget {
     required this.onHolds,
     required this.onHistory,
     required this.onClear,
+    required this.onRedemption,
     this.heldCount = 0,
     this.canReturn = false,
     required this.onReturn,
@@ -4134,9 +4268,11 @@ class _CartPanel extends StatelessWidget {
                     key: const Key('pos-loyalty-discount-button'),
                     icon: Icons.stars,
                     label: AppStrings.t('loyalty_redeem', loc),
-                    onPressed: enabled
-                        ? () => showLoyaltyDiscountDialog(context)
-                        : null,
+                    // ONE flow for mouse and keyboard: the Shift+F7 shortcut
+                    // calls this same method (via onRedemption), which
+                    // re-runs this exact predicate (the watched `enabled`
+                    // above only decides the painted disabled state).
+                    onPressed: enabled ? onRedemption : null,
                     short: short || compact,
                     dense: dense,
                     accent: AppColors.success,

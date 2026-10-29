@@ -18,6 +18,33 @@
 // so the provider revalidates the preview against the current cart before
 // the dialog closes; the footer's amount-due and the payment dialog then
 // read that authoritative state.
+//
+// Confirm lifecycle (the three dismissal races):
+//  1. While the write is in flight PopScope vetoes EVERY dismissal —
+//     Escape, the barrier and system back all route through
+//     ModalRoute.popDisposition — so the dialog can never close "as if
+//     it succeeded" before the validation actually answered.
+//  2. Success (error == null AND the preview answers THIS cart + the
+//     committed percent) is the ONLY path that pops — the close itself
+//     certifies the write landed.
+//  3. A FAILED validation never pops: the single slot rolls back to its
+//     pre-confirm value (a failed attempt applies nothing, so a later
+//     Cancel/Escape still applies nothing), the session preview is
+//     restored best-effort, and the dialog stays open showing the error
+//     for a retry or a clean Cancel.
+//
+// Write base: the rows above are priced by THIS dialog against the LIVE
+// cart (`cart.customer` + `cart.totals.total`), but the session write
+// path (`setRewardPercent` + `previewNow`) reads the loyalty session's
+// OWN mirror (`state.customerId` / `state.cartTotal`). That mirror is
+// maintained by the POS screen's cart listener and silently no-ops when
+// it is empty (`customerId == null` or `cartTotal <= 0`), so a desynced
+// session used to turn a correct, server-priced preview into a Confirm
+// that posted NOTHING — the success gate rolled the slot back and the
+// dialog stayed open forever with the total unchanged. The write
+// boundary now RECONCILES the mirror with the live cart first, so the
+// preview the cashier approved and the discount that gets applied can
+// never be priced from different bases.
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -71,6 +98,19 @@ class _LoyaltyDiscountDialogState extends ConsumerState<LoyaltyDiscountDialog> {
   LoyaltyPreview? _preview;
 
   bool _busy = false;
+
+  /// True while the CONFIRM write is in flight — the one window where a
+  /// dismissal must not slip through. [_busy] alone only disables the
+  /// buttons; PopScope holds the ROUTE (Escape / barrier / system back)
+  /// on this flag, so a mid-write dismissal can never present the close
+  /// as a success.
+  bool _confirming = false;
+
+  /// Last Confirm FAILED the server validation — shown under the preview
+  /// rows while the dialog stays OPEN (the slot was rolled back, so the
+  /// failed attempt applied nothing). Cleared by the next attempt or by
+  /// a changed selection.
+  String? _confirmError;
 
   /// Monotonic token for the LOCAL preview fetches: a fast typist can
   /// change the percent while a request is in flight, and only the
@@ -142,6 +182,11 @@ class _LoyaltyDiscountDialogState extends ConsumerState<LoyaltyDiscountDialog> {
       return stillCurrent ? preview : null;
     } on DioException {
       return null;
+    } catch (_) {
+      // A malformed answer (non-map 200) degrades to the failed-fetch
+      // placeholder like any network error — never to an escaped error
+      // that would strand [_busy] and freeze the dialog's controls.
+      return null;
     }
   }
 
@@ -162,6 +207,7 @@ class _LoyaltyDiscountDialogState extends ConsumerState<LoyaltyDiscountDialog> {
     setState(() {
       _chosen = percent;
       _fetchFailed = false;
+      _confirmError = null;
     });
     await _refresh();
   }
@@ -213,16 +259,100 @@ class _LoyaltyDiscountDialogState extends ConsumerState<LoyaltyDiscountDialog> {
   /// Confirm: the ONE write path — the existing single-slot session
   /// setter (replaces, never stacks → no duplicate redemption possible)
   /// and an awaited preview so the provider revalidates before closing.
+  ///
+  /// Exactly-once + success-only close:
+  ///  * the session mirror is RECONCILED with the live cart before the
+  ///    write (same customer, same total the rows above were priced
+  ///    against) — the session's setters silently no-op on an empty
+  ///    mirror, which used to make a correct preview fail to apply;
+  ///  * [_busy] blocks a second submit in the same frame (the flag flips
+  ///    synchronously, before the first await — a double-tap's second
+  ///    press finds it set and returns);
+  ///  * the dialog pops ONLY when the revalidation actually landed
+  ///    (no error AND the preview matches the committed percent AND
+  ///    answers the live cart total);
+  ///  * a failed revalidation rolls the slot back to its pre-confirm
+  ///    value, restores the session preview best-effort and keeps the
+  ///    dialog open with the error — nothing half-applied ever survives;
+  ///  * ANY throw during the write — the notifier handles DioException
+  ///    itself, but a malformed answer (non-map body → TypeError) or any
+  ///    other unexpected error would otherwise escape and strand
+  ///    [_busy]/[_confirming]: dead buttons plus a PopScope that vetoes
+  ///    every dismissal, i.e. a permanently frozen dialog. The catches
+  ///    degrade every such failure to the SAME visible rollback+error
+  ///    path instead of a crash.
   Future<void> _confirm() async {
     if (_busy) return;
+    final loc = Localizations.localeOf(context).languageCode;
     final percent = _chosen;
-    setState(() => _busy = true);
     final notifier = ref.read(posLoyaltyProvider.notifier);
-    notifier.setRewardPercent(percent);
-    await notifier.previewNow();
+    final previousPercent = ref.read(posLoyaltyProvider).rewardPercent;
+    setState(() {
+      _confirming = true;
+      _busy = true;
+      _confirmError = null;
+    });
+    var applied = false;
+    try {
+      // Same base as the visible rows: reconcile the session mirror with
+      // the LIVE cart before the write. Total first (it survives a
+      // customer swap — setCustomerById preserves cartTotal), then the
+      // customer (a mismatched id resets the session and reloads the
+      // balance + a preview for the already-live total).
+      final cartNow = ref.read(posCartProvider);
+      final loyaltyNow = ref.read(posLoyaltyProvider);
+      if (cartNow.totals.total != loyaltyNow.cartTotal) {
+        notifier.setCartTotal(cartNow.totals.total);
+      }
+      final liveCustomerId = cartNow.customer?.id;
+      if (loyaltyNow.customerId != liveCustomerId) {
+        await notifier.setCustomerById(liveCustomerId);
+      }
+      notifier.setRewardPercent(percent);
+      await notifier.previewNow();
+      final loyalty = ref.read(posLoyaltyProvider);
+      // The landed preview must answer THIS cart + the committed percent
+      // — never a stale mirror's total (previewMatches alone trusts the
+      // mirror, which the reconcile above keeps honest, but the belt and
+      // braces here is what the close is allowed to certify).
+      applied = loyalty.error == null &&
+          loyalty.previewMatches &&
+          (loyalty.preview!.grossTotal - cartNow.totals.total).abs() < 0.005;
+    } catch (_) {
+      applied = false;
+    }
     if (!mounted) return;
-    setState(() => _busy = false);
-    Navigator.of(context).pop();
+    if (applied) {
+      setState(() {
+        _confirming = false;
+        _busy = false;
+      });
+      if (mounted) Navigator.of(context).pop();
+      return;
+    }
+    // Validation failed: never close as if it succeeded. Roll the single
+    // slot back so the attempt leaves NO trace behind (a subsequent
+    // Cancel/Escape applies nothing), then re-fetch the session preview
+    // for the restored value so the eligibility gate reflects reality —
+    // if that restore succeeds the cashier can retry immediately; if the
+    // server is still down the error stays and only Cancel is offered.
+    try {
+      if (percent != previousPercent) {
+        notifier.setRewardPercent(previousPercent);
+      }
+      await notifier.previewNow();
+    } catch (_) {
+      // The restore failed too: the slot itself is already back to
+      // [previousPercent] (nothing applied) — the visible error below
+      // still explains the attempt, and the reset of [_busy]/[_confirming]
+      // keeps the dialog's buttons and dismissal alive.
+    }
+    if (!mounted) return;
+    setState(() {
+      _confirming = false;
+      _busy = false;
+      _confirmError = AppStrings.t('error', loc);
+    });
   }
 
   /// Display guard mirroring PosLoyaltyState.previewMatches for the
@@ -270,18 +400,26 @@ class _LoyaltyDiscountDialogState extends ConsumerState<LoyaltyDiscountDialog> {
         if (mounted && !_busy) _refresh();
       });
     }
-    // Revalidate at Confirm: while a percent > 0 is chosen the SERVER's
-    // eligibility answer must still hold (and the session must not be
-    // mid-load or in error). Clearing (None) needs no eligibility, but a
-    // percent beyond the owner's cap is never confirmable — the same
-    // boundary PosLoyaltyState.exceeds enforces. A locally invalid
-    // keystroke (unparseable / negative / over-cap) also blocks Confirm:
-    // it never became [_chosen], but the field must not look committable.
+    // Revalidate at Confirm: the SERVER's answer for THIS percent on THIS
+    // cart is the dialog's own usable preview rows — so Confirm is gated
+    // by THOSE rows (plus local input validity, a KNOWN owner cap, a
+    // non-empty cart and a customer), never by background SESSION flags
+    // (loading / error / canSelectReward). Those flags belong to balance
+    // and preview fetches running behind this modal: when one fails after
+    // the dialog opened, an error-gated Confirm became a SILENT dead
+    // button — healthy rows, a click that did NOTHING, no message — while
+    // the awaited previewNow() below is exactly where a session problem
+    // must resurface, VISIBLE: a landed revalidation closes and applies,
+    // a failed one rolls back and shows the error in the still-open
+    // dialog. Clearing (None) needs no eligibility. A locally invalid
+    // keystroke (unparseable / negative) also blocks Confirm: it never
+    // became [_chosen], but the field must not look committable. The cap
+    // clause only rejects against a KNOWN cap (maxPercent is 0 while the
+    // session preview is absent or points are parked — an unknown cap
+    // never blocks; the local field validation and the server both
+    // re-enforce the real boundary).
     final eligibleNow = _chosen > 0
-        ? !loyalty.loading &&
-            loyalty.error == null &&
-            loyalty.canSelectReward &&
-            (maxPercent <= 0 || _chosen <= maxPercent + 0.0001)
+        ? (maxPercent <= 0 || _chosen <= maxPercent + 0.0001)
         : true;
     final canConfirm = !_busy &&
         _inputError == null &&
@@ -290,7 +428,7 @@ class _LoyaltyDiscountDialogState extends ConsumerState<LoyaltyDiscountDialog> {
         !cart.isEmpty &&
         customer != null;
 
-    return AlertDialog(
+    final dialog = AlertDialog(
       key: const Key('pos-loyalty-dialog'),
       title: Row(
         children: [
@@ -518,6 +656,17 @@ class _LoyaltyDiscountDialogState extends ConsumerState<LoyaltyDiscountDialog> {
                         ),
                 ),
               ),
+            // A failed Confirm explains itself under the rows: the dialog
+            // stayed OPEN (the write was rolled back), so the error must be
+            // visible without hiding the numbers the retry will re-price.
+            if (_confirmError != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                _confirmError!,
+                key: const Key('pos-loyalty-dialog-confirm-error'),
+                style: theme.textTheme.bodySmall?.copyWith(color: cs.error),
+              ),
+            ],
           ],
         ),
       ),
@@ -534,6 +683,12 @@ class _LoyaltyDiscountDialogState extends ConsumerState<LoyaltyDiscountDialog> {
         ),
       ],
     );
+    // Route-level veto for the confirm window: while the write is in
+    // flight every dismissal (Escape, barrier tap, system back) reports
+    // doNotPop through ModalRoute.popDisposition; once it settles — either
+    // popped by the success path or back to _confirming false — dismissal
+    // behaves exactly as before.
+    return PopScope(canPop: !_confirming, child: dialog);
   }
 }
 

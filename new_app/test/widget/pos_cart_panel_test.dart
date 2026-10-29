@@ -14,6 +14,8 @@
 //
 // Harness distilled from the temporary pos_clip_diagnostic_test.dart
 // geometry probe (deleted once this suite passed).
+import 'dart:async';
+
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -177,27 +179,7 @@ void _mockPosDio(MockDio dio, {bool loyaltyEligible = true}) {
 
   Object? postBody(String path, Object? data) {
     if (path.endsWith('/loyalty/preview')) {
-      final map = Map<String, dynamic>.from(data! as Map);
-      final gross = double.parse('${map['gross_total']}');
-      final percent = ((map['reward_percent'] as num?) ?? 0).toDouble();
-      final discount = gross * percent / 100;
-      return <String, Object>{
-        'customer_id': map['customer_id'],
-        'gross_total': map['gross_total'],
-        'reward_percent': percent,
-        'reward_discount': discount.toStringAsFixed(3),
-        'amount_due': (gross - discount).toStringAsFixed(3),
-        'available_rewards': loyaltyEligible ? 1 : 0,
-        'remaining_points': '30.000',
-        'min_reward_points': 100,
-        'max_reward_discount_percent': '20.000',
-        'points_balance': '130.000',
-        'cashback_balance': '25.000',
-        'points_earned': '0.960',
-        'cashback_earned': '0.500',
-        'points_after_sale': '130.960',
-        'reward_eligible': loyaltyEligible,
-      };
+      return _previewJson(data, loyaltyEligible: loyaltyEligible);
     }
     return <String, dynamic>{};
   }
@@ -245,11 +227,71 @@ void _mockPosDio(MockDio dio, {bool loyaltyEligible = true}) {
         ));
 }
 
+/// Server-shaped /api/v1/loyalty/preview answer: gross × percent, the
+/// owner cap (20) and the eligibility flags — ONE builder shared by the
+/// standard mock and the per-test preview scripts below (the dialog
+/// dismissal regressions re-stub this endpoint, never re-derive its math).
+Map<String, Object> _previewJson(
+  Object? data, {
+  required bool loyaltyEligible,
+}) {
+  final map = Map<String, dynamic>.from(data! as Map);
+  final gross = double.parse('${map['gross_total']}');
+  final percent = ((map['reward_percent'] as num?) ?? 0).toDouble();
+  final discount = gross * percent / 100;
+  return <String, Object>{
+    'customer_id': map['customer_id'],
+    'gross_total': map['gross_total'],
+    'reward_percent': percent,
+    'reward_discount': discount.toStringAsFixed(3),
+    'amount_due': (gross - discount).toStringAsFixed(3),
+    'available_rewards': loyaltyEligible ? 1 : 0,
+    'remaining_points': '30.000',
+    'min_reward_points': 100,
+    'max_reward_discount_percent': '20.000',
+    'points_balance': '130.000',
+    'cashback_balance': '25.000',
+    'points_earned': '0.960',
+    'cashback_earned': '0.500',
+    'points_after_sale': '130.960',
+    'reward_eligible': loyaltyEligible,
+  };
+}
+
+/// Re-registers the standard mock's `POST(any, data: …)` stub so
+/// `/loyalty/preview` answers through [preview] — 1-based index of the
+/// preview POSTs made AFTER this call; the callback may THROW a
+/// DioException (failed validation) or await a Future (hold the write open)
+/// — while every other POST keeps the mock's default empty answer.
+/// mocktail resolves the NEWEST matching stub, so the standard
+/// [_mockPosDio] answers stay in force for everything else.
+void _restubPreviewPost(
+  MockDio dio, {
+  required FutureOr<Object?> Function(int call, Map<String, dynamic> data)
+      preview,
+}) {
+  var calls = 0;
+  when(() => dio.post(any(), data: any(named: 'data')))
+      .thenAnswer((invocation) async {
+    final path = invocation.positionalArguments.first as String? ?? '';
+    if (path.endsWith('/loyalty/preview')) {
+      final data = Map<String, dynamic>.from(
+        invocation.namedArguments[#data]! as Map,
+      );
+      return _ok(path, await preview(++calls, data));
+    }
+    return _ok(path, <String, dynamic>{});
+  });
+}
+
 Future<ProviderContainer> _pumpPos(
   WidgetTester tester, {
   required MockDio dio,
   Size size = const Size(1366, 768),
   int lines = 12,
+  // Unit price of the seeded lines — the loyalty money regressions price
+  // exact DA figures (a 4,000 cart × 10% = 400 off).
+  String unitPrice = '10',
   // The permission-gated return action adds a THIRD actions row (~54px)
   // that shrinks the lines viewport — grant it only where its color is
   // asserted, so the geometry scenarios measure the default chrome.
@@ -279,7 +321,7 @@ Future<ProviderContainer> _pumpPos(
       productId: 'p$i',
       name: 'Product $i',
       quantity: '1',
-      unitPrice: '10',
+      unitPrice: unitPrice,
     ));
   }
 
@@ -400,6 +442,19 @@ Future<void> _sendArrow(
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 50));
   await tester.pump(const Duration(milliseconds: 300));
+}
+
+/// Value key of the focused text field, if the focus sits on one — the
+/// focus assertions of the dialog dismissal regressions (an Escape that
+/// leaked to the POS handler would move/clear the search field's state).
+String? focusedFieldKey(WidgetTester tester) {
+  final context = FocusManager.instance.primaryFocus?.context;
+  if (context == null) return null;
+  final field = context.widget is TextField
+      ? context.widget as TextField
+      : context.findAncestorWidgetOfExactType<TextField>();
+  final key = field?.key;
+  return key is ValueKey<String> ? key.value : null;
 }
 
 void main() {
@@ -1950,6 +2005,674 @@ void main() {
       expect(find.byKey(const Key('pos-loyalty-dialog')), findsOneWidget);
       expect(tester.takeException(), isNull,
           reason: 'the dialog must ellipsize, never overflow, at 1.3x');
+    });
+
+    testWidgets(
+        'Escape closes the dialog with ZERO writes and never leaks into the '
+        'POS Escape handler (search text survives)', (tester) async {
+      final container = await _pumpPos(tester, dio: dio, lines: 3);
+      await _attachCustomer(tester, container);
+
+      String snap() {
+        final l = container.read(posLoyaltyProvider);
+        final c = container.read(posCartProvider);
+        return 'l:${l.customerId}|${l.rewardPercent}|'
+            '${l.preview?.rewardPercent}|${l.preview?.grossTotal}|'
+            '${l.exceeds}|${l.loading}|${l.error}|'
+            'c:${c.lines.length}|${c.totals.total}|${c.customer?.id}';
+      }
+
+      // Text in the search box BEFORE the dialog opens: the POS Escape
+      // handler would clear it — so the surviving text proves the dialog
+      // route (not the page binding) owned the key.
+      await tester.enterText(
+        find.byKey(const Key('pos-search-field')),
+        'bread',
+      );
+      await tester.pump();
+      final before = snap();
+
+      await tester.tap(loyaltyButton());
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const Key('pos-loyalty-reward-input')),
+        '5',
+      );
+      await tester.pumpAndSettle();
+      expect(snap(), before, reason: 'browsing a percent mutates nothing');
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('pos-loyalty-dialog')), findsNothing,
+          reason: 'Escape is the normal dismiss while no confirm is running');
+      expect(snap(), before,
+          reason: 'Escape applies nothing — no percent, no preview, no cart');
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const Key('pos-search-field')))
+            .controller!
+            .text,
+        'bread',
+        reason: 'the POS Escape handler never ran — its CallbackShortcuts '
+            'scope is not in the dialog route key chain',
+      );
+      expect(focusedFieldKey(tester), 'pos-search-field',
+          reason: 'focus returns to the field the dialog was opened from');
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'a FAILED confirm never closes as success: the slot rolls back, the '
+        'error shows, and a retry still works', (tester) async {
+      final container = await _pumpPos(tester, dio: dio, lines: 3);
+      await _attachCustomer(tester, container);
+
+      // Local dialog previews succeed; the SESSION revalidation for the
+      // typed 5% (its 2nd percent-5 call) fails; the rollback restore
+      // (percent 0) and the later retry both succeed.
+      var fiveCalls = 0;
+      _restubPreviewPost(
+        dio,
+        preview: (call, data) {
+          final percent = ((data['reward_percent'] as num?) ?? 0).toDouble();
+          if (percent == 5 && ++fiveCalls == 2) {
+            throw DioException(
+              requestOptions: RequestOptions(
+                path: '/api/v1/loyalty/preview',
+              ),
+              message: 'validation unavailable',
+            );
+          }
+          return _previewJson(data, loyaltyEligible: true);
+        },
+      );
+
+      await tester.tap(loyaltyButton());
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const Key('pos-loyalty-reward-input')),
+        '5',
+      );
+      await tester.pumpAndSettle();
+      expect(fiveCalls, 1, reason: 'one LOCAL preview prices the typing');
+      expect(
+        tester
+            .widget<FilledButton>(
+                find.byKey(const Key('pos-loyalty-dialog-confirm')))
+            .onPressed,
+        isNotNull,
+      );
+
+      await tester.tap(find.byKey(const Key('pos-loyalty-dialog-confirm')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('pos-loyalty-dialog')), findsOneWidget,
+          reason: 'a failed validation must never present a close as success');
+      expect(
+        find.byKey(const Key('pos-loyalty-dialog-confirm-error')),
+        findsOneWidget,
+        reason: 'the failure is surfaced inside the still-open dialog',
+      );
+      final failed = container.read(posLoyaltyProvider);
+      expect(failed.rewardPercent, 0.0,
+          reason: 'the failed attempt was rolled back — nothing applied');
+      expect(failed.error, isNull,
+          reason: 'the rollback revalidated the session for the old value');
+      expect(
+        tester
+            .widget<FilledButton>(
+                find.byKey(const Key('pos-loyalty-dialog-confirm')))
+            .onPressed,
+        isNotNull,
+        reason: 'the restore succeeded → the cashier can retry immediately',
+      );
+
+      // Retry: the server answers again → the ONE write lands and closes.
+      await tester.tap(find.byKey(const Key('pos-loyalty-dialog-confirm')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('pos-loyalty-dialog')), findsNothing);
+      expect(container.read(posLoyaltyProvider).rewardPercent, 5.0);
+      expect(fiveCalls, 3, reason: 'local + failed session + retried session');
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'double-tapping Confirm in one frame applies the write EXACTLY once',
+        (tester) async {
+      final container = await _pumpPos(tester, dio: dio, lines: 3);
+      await _attachCustomer(tester, container);
+
+      // Hold the session write open so BOTH taps land while the first
+      // submit is still in flight — the realistic same-frame duplicate
+      // (without the gate the success path pops the dialog between the
+      // two taps and the second press would find no button at all).
+      final gate = Completer<void>();
+      var fiveCalls = 0;
+      _restubPreviewPost(
+        dio,
+        preview: (call, data) async {
+          final percent = ((data['reward_percent'] as num?) ?? 0).toDouble();
+          if (percent == 5 && ++fiveCalls == 2) {
+            await gate.future;
+          }
+          return _previewJson(data, loyaltyEligible: true);
+        },
+      );
+
+      await tester.tap(loyaltyButton());
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const Key('pos-loyalty-reward-input')),
+        '5',
+      );
+      await tester.pumpAndSettle();
+      expect(fiveCalls, 1, reason: 'the local pricing preview');
+
+      // Two taps with NO frame between them: the first enters _confirm
+      // (sets _busy synchronously, before its first await) and parks on
+      // the gated write; the second reaches the same still-built button
+      // and must find _busy set — a plain no-op, never a second write.
+      await tester.tap(find.byKey(const Key('pos-loyalty-dialog-confirm')));
+      await tester.tap(find.byKey(const Key('pos-loyalty-dialog-confirm')));
+      expect(fiveCalls, 2,
+          reason: 'the duplicate press was rejected by the synchronous '
+              '_busy guard — still one local + one session write');
+
+      gate.complete();
+      await tester.pumpAndSettle();
+
+      expect(fiveCalls, 2,
+          reason: 'after the write lands there is still no second submit');
+      expect(container.read(posLoyaltyProvider).rewardPercent, 5.0,
+          reason: 'the discount applied once, never doubled');
+      expect(find.byKey(const Key('pos-loyalty-dialog')), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'Escape and the barrier cannot dismiss the dialog while the confirm '
+        'write is in flight — it closes only when the write lands', (
+      tester,
+    ) async {
+      final container = await _pumpPos(tester, dio: dio, lines: 3);
+      await _attachCustomer(tester, container);
+
+      final gate = Completer<void>();
+      var fiveCalls = 0;
+      _restubPreviewPost(
+        dio,
+        preview: (call, data) async {
+          final percent = ((data['reward_percent'] as num?) ?? 0).toDouble();
+          if (percent == 5 && ++fiveCalls == 2) {
+            await gate.future; // hold the SESSION write open
+          }
+          return _previewJson(data, loyaltyEligible: true);
+        },
+      );
+
+      await tester.tap(loyaltyButton());
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const Key('pos-loyalty-reward-input')),
+        '5',
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('pos-loyalty-dialog-confirm')));
+      await tester.pump(); // rebuilds PopScope with canPop: false
+      expect(find.byKey(const Key('pos-loyalty-dialog')), findsOneWidget);
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pump();
+      expect(find.byKey(const Key('pos-loyalty-dialog')), findsOneWidget,
+          reason: 'Escape is vetoed mid-write (a close must never precede '
+              'the success)');
+
+      await tester.tapAt(const Offset(4, 4));
+      await tester.pump();
+      expect(find.byKey(const Key('pos-loyalty-dialog')), findsOneWidget,
+          reason: 'the barrier is vetoed mid-write too');
+
+      // The write lands → the SUCCESS path is the one that closes it.
+      gate.complete();
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('pos-loyalty-dialog')), findsNothing);
+      expect(container.read(posLoyaltyProvider).rewardPercent, 5.0);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'exact money regression: a 4,000.00 DA cart + 10% — Confirm applies '
+        'the 400 DA discount ONCE, closes, and the panel shows 3,600.00 DA '
+        'due', (tester) async {
+      final container = await _pumpPos(
+        tester,
+        dio: dio,
+        lines: 1,
+        unitPrice: '4000',
+      );
+      await _attachCustomer(tester, container);
+      expect(container.read(posCartProvider).totals.total, 4000.0);
+
+      await tester.tap(loyaltyButton());
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const Key('pos-loyalty-reward-input')),
+        '10',
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        tester
+            .widget<Text>(find.byKey(const Key('pos-loyalty-dialog-discount')))
+            .data,
+        contains(PaymentMath.money(400)),
+        reason: 'the server prices 10% of 4,000 → 400 DA off',
+      );
+      expect(
+        tester
+            .widget<Text>(find.byKey(const Key('pos-loyalty-dialog-due')))
+            .data,
+        contains(PaymentMath.money(3600)),
+      );
+      expect(
+        tester
+            .widget<FilledButton>(
+                find.byKey(const Key('pos-loyalty-dialog-confirm')))
+            .onPressed,
+        isNotNull,
+        reason: 'a server-accepted percent on a healthy session is '
+            'confirmable — the click can never land on a dead button',
+      );
+
+      await tester.tap(find.byKey(const Key('pos-loyalty-dialog-confirm')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('pos-loyalty-dialog')), findsNothing,
+          reason: 'a successful confirm closes exactly once');
+      final loyalty = container.read(posLoyaltyProvider);
+      expect(loyalty.rewardPercent, 10.0);
+      expect(loyalty.previewMatches, isTrue);
+      expect(loyalty.preview!.rewardDiscount, closeTo(400, 0.001));
+      expect(
+        PaymentMath.amountDueOf(
+          total: 4000,
+          rewardDiscount: loyalty.preview!.rewardDiscount,
+        ),
+        closeTo(3600, 0.001),
+        reason: 'what PAY charges = total − the ONE server discount',
+      );
+      final footer = tester
+          .widget<Text>(find.byKey(const Key('pos-loyalty-amount-due')))
+          .data!;
+      expect(footer, PaymentMath.money(3600),
+          reason: 'the totals panel mirrors the same 3,600.00 due');
+      final cart = container.read(posCartProvider);
+      expect(cart.totals.total, 4000.0,
+          reason: 'the cart total is untouched — the discount rides the '
+              'loyalty preview, never a second discount field');
+      expect(cart.invoiceDiscount, '0',
+          reason: 'loyalty and invoice discounts never stack');
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'session mirror desynced from the live cart: the dialog prices its '
+        'rows from the LIVE cart, Confirm reconciles the session, applies '
+        'the 400 DA discount ONCE and closes — a correct preview can never '
+        'fail to apply', (tester) async {
+      final container = await _pumpPos(
+        tester,
+        dio: dio,
+        lines: 1,
+        unitPrice: '4000',
+      );
+      await _attachCustomer(tester, container);
+
+      // The reported production failure: the loyalty session's cart
+      // mirror (state.cartTotal — the ONLY base the confirm-time write
+      // reads) is empty while the live cart holds the 4,000 DA invoice.
+      // The dialog's OWN preview never depended on the mirror (it prices
+      // against cart.totals.total), so the rows show the right numbers —
+      // but pre-reconcile the session write silently no-ops on the empty
+      // mirror, the success gate rolls the slot back, and the dialog
+      // stays open with the total unchanged.
+      container.read(posLoyaltyProvider.notifier).setCartTotal(0);
+      await tester.pumpAndSettle();
+      final desynced = container.read(posLoyaltyProvider);
+      expect(desynced.cartTotal, 0,
+          reason: 'the session mirror no longer answers the live cart');
+      expect(desynced.previewMatches, isFalse);
+
+      await tester.tap(loyaltyButton());
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const Key('pos-loyalty-reward-input')),
+        '10',
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        tester
+            .widget<Text>(find.byKey(const Key('pos-loyalty-dialog-discount')))
+            .data,
+        contains(PaymentMath.money(400)),
+        reason: 'the dialog priced 10% of the LIVE 4,000 from its OWN '
+            'server answer — the mirror never fed these rows',
+      );
+      expect(
+        tester
+            .widget<Text>(find.byKey(const Key('pos-loyalty-dialog-due')))
+            .data,
+        contains(PaymentMath.money(3600)),
+      );
+
+      await tester.tap(find.byKey(const Key('pos-loyalty-dialog-confirm')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('pos-loyalty-dialog')), findsNothing,
+          reason: 'the reconciled write landed → success closes');
+      final loyalty = container.read(posLoyaltyProvider);
+      expect(loyalty.rewardPercent, 10.0);
+      expect(loyalty.previewMatches, isTrue);
+      expect(loyalty.cartTotal, 4000.0,
+          reason: 'Confirm healed the mirror from the live cart');
+      expect(loyalty.preview!.grossTotal, closeTo(4000, 0.001),
+          reason: 'the applied discount was priced on the SAME base the '
+              'preview rows displayed');
+      expect(loyalty.preview!.rewardDiscount, closeTo(400, 0.001),
+          reason: 'exactly ONE 400 DA discount — never doubled, never lost');
+      final footer = tester
+          .widget<Text>(find.byKey(const Key('pos-loyalty-amount-due')))
+          .data!;
+      expect(footer, PaymentMath.money(3600));
+      final cart = container.read(posCartProvider);
+      expect(cart.totals.total, 4000.0,
+          reason: 'the cart lines and invoice total stay untouched');
+      expect(cart.invoiceDiscount, '0');
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'session mirror stale at a DIFFERENT total: Confirm reconciles to '
+        'the live 4,000 cart so the applied discount and the footer answer '
+        '3,600 — never the stale base', (tester) async {
+      final container = await _pumpPos(
+        tester,
+        dio: dio,
+        lines: 1,
+        unitPrice: '4000',
+      );
+      await _attachCustomer(tester, container);
+
+      // The dual desync: a NON-EMPTY but stale mirror. Pre-reconcile the
+      // session posted gross 3,500 at Confirm, the self-consistent
+      // preview "matched" the stale mirror, the dialog closed — and the
+      // footer/PAY charged 4,000 − 350 = 3,650 for a preview that showed
+      // 400/3,600. Preview and application must share ONE base.
+      container.read(posLoyaltyProvider.notifier).setCartTotal(3500);
+      await tester.pumpAndSettle();
+      expect(container.read(posLoyaltyProvider).cartTotal, 3500);
+
+      await tester.tap(loyaltyButton());
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const Key('pos-loyalty-reward-input')),
+        '10',
+      );
+      await tester.pumpAndSettle();
+      expect(
+        tester
+            .widget<Text>(find.byKey(const Key('pos-loyalty-dialog-due')))
+            .data,
+        contains(PaymentMath.money(3600)),
+        reason: 'the rows price off the LIVE cart, as the cashier sees it',
+      );
+
+      await tester.tap(find.byKey(const Key('pos-loyalty-dialog-confirm')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('pos-loyalty-dialog')), findsNothing);
+      final loyalty = container.read(posLoyaltyProvider);
+      expect(loyalty.rewardPercent, 10.0);
+      expect(loyalty.previewMatches, isTrue);
+      expect(loyalty.cartTotal, 4000.0);
+      expect(loyalty.preview!.grossTotal, closeTo(4000, 0.001));
+      expect(loyalty.preview!.rewardDiscount, closeTo(400, 0.001),
+          reason: '10% of the LIVE 4,000 — the stale 3,500 base is gone');
+      final footer = tester
+          .widget<Text>(find.byKey(const Key('pos-loyalty-amount-due')))
+          .data!;
+      expect(footer, PaymentMath.money(3600),
+          reason: 'the totals panel mirrors the reconciled 3,600.00 due');
+      expect(container.read(posCartProvider).totals.total, 4000.0);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'a late session-preview FAILURE after the dialog opened must not '
+        'silently kill Confirm — the retry revalidates and the 10% lands',
+        (tester) async {
+      final container = await _pumpPos(
+        tester,
+        dio: dio,
+        lines: 1,
+        unitPrice: '4000',
+      );
+
+      // The attach-time session preview (call 1) lands LAST and FAILS —
+      // the realistic transient blip: the balance answered, the dialog is
+      // openable, and only the background preview poisons the session
+      // (error set, preview cleared) while the dialog's OWN local fetches
+      // (calls 2–3) still succeed and price the rows.
+      final sessionGate = Completer<void>();
+      _restubPreviewPost(
+        dio,
+        preview: (call, data) async {
+          if (call == 1) {
+            await sessionGate.future;
+            throw DioException(
+              requestOptions: RequestOptions(path: '/api/v1/loyalty/preview'),
+              message: 'transient backend blip',
+            );
+          }
+          return _previewJson(data, loyaltyEligible: true);
+        },
+      );
+      await _attachCustomer(tester, container);
+
+      await tester.tap(loyaltyButton());
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const Key('pos-loyalty-reward-input')),
+        '10',
+      );
+      await tester.pumpAndSettle();
+      expect(
+        tester
+            .widget<Text>(find.byKey(const Key('pos-loyalty-dialog-due')))
+            .data,
+        contains(PaymentMath.money(3600)),
+        reason: 'the dialog priced 400/3,600 from its OWN server answer',
+      );
+
+      // Now the held session preview fails: the session carries an error
+      // and no preview — while the open dialog still shows good rows.
+      sessionGate.complete();
+      await tester.pumpAndSettle();
+      final poisoned = container.read(posLoyaltyProvider);
+      expect(poisoned.error, isNotNull,
+          reason: 'the late failure poisoned the SESSION state');
+      expect(poisoned.previewMatches, isFalse);
+
+      // ROOT CONTRACT: that background state must never turn the click
+      // into a silent no-op. Confirm stays actionable; the awaited
+      // revalidation either lands (heals the session, closes, applies)
+      // or fails VISIBLE in the still-open dialog.
+      final confirm = find.byKey(const Key('pos-loyalty-dialog-confirm'));
+      expect(
+        tester.widget<FilledButton>(confirm).onPressed,
+        isNotNull,
+        reason: 'the dialog\'s server-validated preview — not an invisible '
+            'session flag — gates Confirm; a dead button with healthy rows '
+            'is the reported bug (click does NOTHING, dialog stays open)',
+      );
+
+      await tester.tap(confirm);
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('pos-loyalty-dialog')), findsNothing,
+          reason: 'the retried revalidation landed → success closes');
+      final loyalty = container.read(posLoyaltyProvider);
+      expect(loyalty.error, isNull, reason: 'a landed preview heals the session');
+      expect(loyalty.rewardPercent, 10.0);
+      expect(loyalty.previewMatches, isTrue);
+      expect(loyalty.preview!.rewardDiscount, closeTo(400, 0.001));
+      final footer = tester
+          .widget<Text>(find.byKey(const Key('pos-loyalty-amount-due')))
+          .data!;
+      expect(footer, PaymentMath.money(3600));
+      expect(container.read(posCartProvider).totals.total, 4000.0);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'poisoned session + a STILL-failing confirm: the dialog stays open '
+        'with the error, the slot rolls back to nothing, Cancel is clean',
+        (tester) async {
+      final container = await _pumpPos(
+        tester,
+        dio: dio,
+        lines: 1,
+        unitPrice: '4000',
+      );
+
+      final sessionGate = Completer<void>();
+      var percent10Fails = false;
+      _restubPreviewPost(
+        dio,
+        preview: (call, data) async {
+          final percent = ((data['reward_percent'] as num?) ?? 0).toDouble();
+          if (call == 1) {
+            await sessionGate.future;
+            throw DioException(
+              requestOptions: RequestOptions(path: '/api/v1/loyalty/preview'),
+              message: 'transient backend blip',
+            );
+          }
+          if (percent == 10 && percent10Fails) {
+            throw DioException(
+              requestOptions: RequestOptions(path: '/api/v1/loyalty/preview'),
+              message: 'still down',
+            );
+          }
+          return _previewJson(data, loyaltyEligible: true);
+        },
+      );
+      await _attachCustomer(tester, container);
+
+      await tester.tap(loyaltyButton());
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const Key('pos-loyalty-reward-input')),
+        '10',
+      );
+      await tester.pumpAndSettle();
+      sessionGate.complete();
+      await tester.pumpAndSettle();
+      expect(container.read(posLoyaltyProvider).error, isNotNull);
+      // The server refuses the confirm-time write too — from now on.
+      percent10Fails = true;
+
+      await tester.tap(find.byKey(const Key('pos-loyalty-dialog-confirm')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('pos-loyalty-dialog')), findsOneWidget,
+          reason: 'a failing confirm never presents a close as success');
+      expect(
+        find.byKey(const Key('pos-loyalty-dialog-confirm-error')),
+        findsOneWidget,
+        reason: 'the FAILURE is visible — never a silent dead click',
+      );
+      final loyalty = container.read(posLoyaltyProvider);
+      expect(loyalty.rewardPercent, 0.0,
+          reason: 'the failed attempt rolled back to nothing');
+      expect(loyalty.error, isNull,
+          reason: 'the rollback revalidated the restored (percent-0) slot');
+      expect(find.byKey(const Key('pos-loyalty-amount-due')), findsNothing,
+          reason: 'the panel never shows a discount that did not land');
+      expect(container.read(posCartProvider).totals.total, 4000.0);
+
+      // A clean Cancel still applies nothing and actually closes.
+      await tester.tap(find.byKey(const Key('pos-loyalty-dialog-cancel')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('pos-loyalty-dialog')), findsNothing);
+      expect(container.read(posLoyaltyProvider).rewardPercent, 0.0);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'a malformed confirm-time answer degrades to the visible error — '
+        'never a frozen dialog (buttons and dismissal stay alive)', (
+      tester,
+    ) async {
+      final container = await _pumpPos(
+        tester,
+        dio: dio,
+        lines: 1,
+        unitPrice: '4000',
+      );
+      await _attachCustomer(tester, container);
+
+      await tester.tap(loyaltyButton());
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const Key('pos-loyalty-reward-input')),
+        '10',
+      );
+      await tester.pumpAndSettle();
+      expect(
+        tester
+            .widget<Text>(find.byKey(const Key('pos-loyalty-dialog-due')))
+            .data,
+        contains(PaymentMath.money(3600)),
+      );
+
+      // From now on the SESSION's percent-10 write answers a non-map 200
+      // (proxy garbage) — a NON-Dio failure the old catch clauses let
+      // escape, stranding _busy/_confirming with PopScope holding the
+      // route shut.
+      _restubPreviewPost(
+        dio,
+        preview: (call, data) {
+          final percent = ((data['reward_percent'] as num?) ?? 0).toDouble();
+          if (percent == 10) return 'not-a-json-object';
+          return _previewJson(data, loyaltyEligible: true);
+        },
+      );
+
+      await tester.tap(find.byKey(const Key('pos-loyalty-dialog-confirm')));
+      await tester.pumpAndSettle();
+
+      expect(tester.takeException(), isNull,
+          reason: 'a malformed answer is a FAILURE, not a crash');
+      expect(find.byKey(const Key('pos-loyalty-dialog')), findsOneWidget);
+      expect(
+        find.byKey(const Key('pos-loyalty-dialog-confirm-error')),
+        findsOneWidget,
+        reason: 'the failure surfaces in the still-open dialog',
+      );
+      final loyalty = container.read(posLoyaltyProvider);
+      expect(loyalty.rewardPercent, 0.0,
+          reason: 'the malformed write applied nothing (rolled back)');
+
+      // The dialog must NOT be frozen: Cancel is alive and Escape-capable.
+      await tester.tap(find.byKey(const Key('pos-loyalty-dialog-cancel')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('pos-loyalty-dialog')), findsNothing);
+      expect(container.read(posCartProvider).totals.total, 4000.0);
+      expect(tester.takeException(), isNull);
     });
   });
 
