@@ -12,15 +12,15 @@ Endpoints:
 - GET    /api/v1/products/{id}/variants        — List variants (on demand)
 - POST   /api/v1/products/{id}/variants        — Create variant
 - PUT    /api/v1/products/{id}/variants/{vid}  — Update variant
-- DELETE /api/v1/products/{id}/variants/{vid}  — Archive variant
+- DELETE /api/v1/products/{id}/variants/{vid}  — Archive variant (?permanent=true hard-deletes)
 - GET    /api/v1/products/{id}/selling-units   — List selling units (on demand)
 - POST   /api/v1/products/{id}/selling-units   — Create selling unit
 - PUT    /api/v1/products/{id}/selling-units/{uid}  — Update selling unit
-- DELETE /api/v1/products/{id}/selling-units/{uid}  — Archive selling unit
+- DELETE /api/v1/products/{id}/selling-units/{uid}  — Archive selling unit (?permanent=true hard-deletes)
 - GET    /api/v1/products/{id}/purchase-units  — List purchase units (on demand)
 - POST   /api/v1/products/{id}/purchase-units  — Create purchase unit
 - PUT    /api/v1/products/{id}/purchase-units/{uid} — Update purchase unit
-- DELETE /api/v1/products/{id}/purchase-units/{uid} — Archive purchase unit
+- DELETE /api/v1/products/{id}/purchase-units/{uid} — Archive purchase unit (?permanent=true hard-deletes)
 - GET    /api/v1/products/{id}/packaging-state — Full packages + loose base
 - POST   /api/v1/products/{id}/packaging-state/receive — Receive sealed packages
 - POST   /api/v1/products/{id}/packaging-state/sell     — Consume base (may break)
@@ -430,16 +430,29 @@ def update_variant(
 @router.delete(
     "/{product_id}/variants/{variant_id}",
     response_model=ProductVariantResponse,
-    summary="Archive product variant",
+    summary="Archive or permanently delete a product variant",
     tags=["products", "variants"],
 )
 def archive_variant(
     product_id: uuid.UUID,
     variant_id: uuid.UUID,
+    permanent: bool = Query(
+        False,
+        description=(
+            "Physically delete the variant (204 No Content) instead of "
+            "archiving. Rejected with 409 when any sale, purchase, "
+            "return, inventory, pack, or invoice record references it."
+        ),
+    ),
     user: User = Depends(require_permission(PermissionScope.PRODUCT_ARCHIVE)),
     service: ProductVariantService = Depends(_get_variant_service),
 ) -> ProductVariantResponse:
-    """Archive (soft-delete) a variant."""
+    """Archive (soft-delete) a variant, or permanently delete it.
+
+    Default (``permanent=false``): archive — 200, history untouched.
+    ``permanent=true``: hard delete — 204 when no record references the
+    variant; 409 with structured ``details.references`` when blocked.
+    """
     variant = service.get(variant_id)
     if str(variant.product_id) != str(product_id):
         from app.core.exceptions import NotFoundError
@@ -448,6 +461,9 @@ def archive_variant(
             message="Variant not found for this product",
             details={"variant_id": str(variant_id)},
         )
+    if permanent:
+        service.delete_permanently(variant_id)
+        return Response(status_code=204)
     variant = service.archive(variant_id)
     return _variant_response(variant)
 
@@ -521,16 +537,29 @@ def update_selling_unit(
 @router.delete(
     "/{product_id}/selling-units/{unit_id}",
     response_model=SellingUnitResponse,
-    summary="Archive selling unit",
+    summary="Archive or permanently delete a selling unit",
     tags=["products", "selling-units"],
 )
 def archive_selling_unit(
     product_id: uuid.UUID,
     unit_id: uuid.UUID,
+    permanent: bool = Query(
+        False,
+        description=(
+            "Physically delete the selling unit (204 No Content) instead "
+            "of archiving. Rejected with 409 when any pack item or "
+            "invoice document line references it."
+        ),
+    ),
     user: User = Depends(require_permission(PermissionScope.PRODUCT_ARCHIVE)),
     service: SellingUnitService = Depends(_get_selling_unit_service),
 ) -> SellingUnitResponse:
-    """Archive (soft-delete) a selling unit. Cannot archive sole base unit."""
+    """Archive (soft-delete) a selling unit, or permanently delete it.
+
+    Default (``permanent=false``): archive — 200 (cannot archive the sole
+    base unit). ``permanent=true``: hard delete — 204 when unreferenced
+    (409 with structured ``details.references`` when blocked).
+    """
     unit = service.get(unit_id)
     if str(unit.product_id) != str(product_id):
         from app.core.exceptions import NotFoundError
@@ -539,6 +568,9 @@ def archive_selling_unit(
             message="Selling unit not found for this product",
             details={"unit_id": str(unit_id)},
         )
+    if permanent:
+        service.delete_permanently(unit_id)
+        return Response(status_code=204)
     return service.archive(unit_id)
 
 
@@ -620,17 +652,34 @@ def update_purchase_unit(
     "/{product_id}/purchase-units/{unit_id}",
     status_code=204,
     response_class=Response,
-    summary="Archive purchase unit",
+    summary="Archive or permanently delete a purchase unit",
     tags=["products", "purchase-units"],
 )
 def archive_purchase_unit(
     product_id: uuid.UUID,
     unit_id: uuid.UUID,
+    permanent: bool = Query(
+        False,
+        description=(
+            "Physically delete the purchase unit (204 No Content) instead "
+            "of archiving. Rejected with 409 when purchase lines, "
+            "inventory movements, or sealed stock packages reference it."
+        ),
+    ),
     user: User = Depends(require_permission(PermissionScope.PRODUCT_ARCHIVE)),
     service: PurchaseUnitService = Depends(_get_purchase_unit_service),
 ) -> Response:
-    """Archive (soft-delete) a purchase unit. Blocked while full packages remain."""
-    service.archive_unit(product_id, unit_id)
+    """Archive (soft-delete) a purchase unit, or permanently delete it.
+
+    Default (``permanent=false``): archive — 204 (blocked while full
+    packages remain). ``permanent=true``: hard delete — 204 when
+    unreferenced (409 with structured ``details.references`` when
+    blocked).
+    """
+    if permanent:
+        service.delete_unit_permanently(product_id, unit_id)
+    else:
+        service.archive_unit(product_id, unit_id)
     return Response(status_code=204)
 
 

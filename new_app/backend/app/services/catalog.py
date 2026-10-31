@@ -1,8 +1,11 @@
 """Catalog services: products and categories (Phase 5).
 
 Business orchestration, validation beyond schema constraints, and
-transaction boundaries. Archive (soft-delete) is the only removal
-path — master data with historical references is never hard-deleted.
+transaction boundaries. Archive (soft-delete) is the default removal
+path. An explicit permanent (hard) delete exists for variants and
+selling/purchase units, but ONLY when no historical or operational
+record references the row — see each service's ``_blocking_references``
+for the exhaustive foreign-key inventory.
 """
 
 from __future__ import annotations
@@ -13,6 +16,7 @@ from decimal import Decimal
 from typing import Any, Sequence
 
 import structlog
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import (
@@ -36,6 +40,7 @@ from app.domain.unit_conversions import (
 )
 from app.models.catalog import (
     Category,
+    PackItem,
     Product,
     ProductPurchaseUnit,
     ProductSellingUnit,
@@ -43,7 +48,11 @@ from app.models.catalog import (
     ProductVariant,
 )
 from app.models.enums import StockMovementType
+from app.models.facturation import InvoiceDocumentLine
 from app.models.inventory import InventoryMovement
+from app.models.purchase import PurchaseLine
+from app.models.return_doc import ReturnLine
+from app.models.sale import SaleLine
 from app.repositories.catalog import (
     DEFAULT_SEARCH_LIMIT,
     CategoryRepository,
@@ -84,6 +93,16 @@ def _normalize_status(status: str) -> str:
             details={"status": status},
         )
     return normalized
+
+
+def _reference_count(db: Session, model: Any, column: Any, entity_id: uuid.UUID) -> int:
+    """Count rows in ``model`` whose ``column`` points at ``entity_id``."""
+    return (
+        db.scalar(
+            select(func.count()).select_from(model).where(column == entity_id)
+        )
+        or 0
+    )
 
 
 class CategoryService(BaseService):
@@ -587,6 +606,84 @@ class ProductVariantService(BaseService):
             logger.info("variant_archived", variant_id=str(variant.id))
         return variant
 
+    def _blocking_references(self, variant_id: uuid.UUID) -> dict[str, int]:
+        """Every table whose FK targets ``product_variants.id``.
+
+        Six foreign keys exist (verified against models + migrations):
+        - sale_lines.variant_id, purchase_lines.variant_id,
+          return_lines.variant_id, inventory_movements.variant_id,
+          pack_items.variant_id → ON DELETE RESTRICT (the database
+          itself rejects a physical delete once history exists),
+        - invoice_document_lines.variant_id → ON DELETE SET NULL (would
+          silently detach a historical invoice line — application-level
+          check REQUIRED so deletion is refused instead).
+        """
+        refs: dict[str, int] = {}
+        for label, model, column in (
+            ("sale_lines", SaleLine, SaleLine.variant_id),
+            ("purchase_lines", PurchaseLine, PurchaseLine.variant_id),
+            ("return_lines", ReturnLine, ReturnLine.variant_id),
+            ("inventory_movements", InventoryMovement, InventoryMovement.variant_id),
+            ("pack_items", PackItem, PackItem.variant_id),
+            ("invoice_document_lines", InvoiceDocumentLine, InvoiceDocumentLine.variant_id),
+        ):
+            count = _reference_count(self.db, model, column, variant_id)
+            if count:
+                refs[label] = count
+        return refs
+
+    def delete_permanently(self, variant_id: uuid.UUID) -> None:
+        """Physically delete a variant that no record references (HTTP 204).
+
+        Refused with 409 when any sale, purchase, return, inventory
+        movement, pack item, or invoice line references the variant —
+        historical data is never touched to make a delete succeed.
+
+        Concurrency: the row is loaded FOR UPDATE inside the transaction,
+        so a concurrent insert referencing it blocks on the FK parent-row
+        lock and fails its own FK validation once this delete commits.
+        The RESTRICT foreign keys are a second line of defense: a race
+        that still slips through surfaces as a translated 409, never as
+        damaged history.
+        """
+        variant = self.get(variant_id)
+        with self.transaction():
+            locked = (
+                self.db.execute(
+                    select(ProductVariant)
+                    .where(ProductVariant.id == variant_id)
+                    .with_for_update()
+                )
+                .scalar_one_or_none()
+            )
+            if locked is None:
+                raise NotFoundError(
+                    message="ProductVariant not found",
+                    details={"id": str(variant_id)},
+                )
+            references = self._blocking_references(variant_id)
+            if references:
+                raise ConflictError(
+                    message=(
+                        "Cannot permanently delete this variant: it is used "
+                        "by existing business records (sales, purchases, "
+                        "returns, inventory, packs, or invoices). Archive "
+                        "it instead."
+                    ),
+                    details={
+                        "variant_id": str(variant_id),
+                        "references": references,
+                        "archive_recommended": True,
+                    },
+                )
+            self.db.delete(locked)
+            self.db.flush()
+        logger.info(
+            "variant_deleted_permanently",
+            variant_id=str(variant_id),
+            product_id=str(variant.product_id),
+        )
+
 
 class SellingUnitService(BaseService):
     """Application service for commercial selling units (Phase 6).
@@ -764,6 +861,76 @@ class SellingUnitService(BaseService):
                 unit.archived_at = datetime.now(timezone.utc)
             logger.info("selling_unit_archived", unit_id=str(unit.id))
         return self._to_response(unit, product)
+
+    def _blocking_references(self, unit_id: uuid.UUID) -> dict[str, int]:
+        """Every table whose FK targets ``product_selling_units.id``.
+
+        Two foreign keys exist (verified against models + migrations),
+        both ON DELETE SET NULL — the database would silently detach the
+        referencing rows instead of refusing the delete, so the
+        application MUST check them explicitly:
+        - pack_items.selling_unit_id (snapshot columns keep the pack
+          readable, but the operational link would be lost),
+        - invoice_document_lines.selling_unit_id (historical invoice
+          traceability).
+        Sale/return history never FK-links selling units — it stores
+        name/multiplier snapshots only — so it cannot block deletion.
+        """
+        refs: dict[str, int] = {}
+        for label, model, column in (
+            ("pack_items", PackItem, PackItem.selling_unit_id),
+            ("invoice_document_lines", InvoiceDocumentLine, InvoiceDocumentLine.selling_unit_id),
+        ):
+            count = _reference_count(self.db, model, column, unit_id)
+            if count:
+                refs[label] = count
+        return refs
+
+    def delete_permanently(self, unit_id: uuid.UUID) -> None:
+        """Physically delete a selling unit that no record references (204).
+
+        Refused with 409 when any pack item or invoice document line
+        references the unit. Unlike archive, an unreferenced base unit
+        (even the product's only selling unit) may be deleted — the
+        product itself stays fully saleable in base pieces, and the
+        action is explicit and confirmed by the operator.
+        """
+        unit = self.get(unit_id)
+        with self.transaction():
+            locked = (
+                self.db.execute(
+                    select(ProductSellingUnit)
+                    .where(ProductSellingUnit.id == unit_id)
+                    .with_for_update()
+                )
+                .scalar_one_or_none()
+            )
+            if locked is None:
+                raise NotFoundError(
+                    message="ProductSellingUnit not found",
+                    details={"id": str(unit_id)},
+                )
+            references = self._blocking_references(unit_id)
+            if references:
+                raise ConflictError(
+                    message=(
+                        "Cannot permanently delete this selling unit: it is "
+                        "used by existing business records (packs or "
+                        "invoices). Archive it instead."
+                    ),
+                    details={
+                        "unit_id": str(unit_id),
+                        "references": references,
+                        "archive_recommended": True,
+                    },
+                )
+            self.db.delete(locked)
+            self.db.flush()
+        logger.info(
+            "selling_unit_deleted_permanently",
+            unit_id=str(unit_id),
+            product_id=str(unit.product_id),
+        )
 
 
 class BarcodeLookupService(BaseService):
@@ -1136,6 +1303,97 @@ class PurchaseUnitService(BaseService):
             self.db.flush()
         self._log.info(
             "purchase_unit_archived",
+            product_id=str(product_id),
+            unit_id=str(unit_id),
+        )
+
+    def _blocking_references(self, unit_id: uuid.UUID) -> dict[str, int]:
+        """Every operational/historical reference to a purchase unit.
+
+        Three foreign keys target ``product_purchase_units.id``
+        (verified against models + migrations):
+        - purchase_lines.purchase_unit_id → ON DELETE RESTRICT,
+        - inventory_movements.purchase_unit_id → ON DELETE RESTRICT,
+        - product_stock_packages.purchase_unit_id → ON DELETE CASCADE.
+          A CASCADE would silently destroy stock state, so sealed stock
+          (full_packages != 0) blocks deletion in application code. An
+          inert bookkeeping row (full_packages = 0) is not business
+          data: it disappears with the unit without losing anything.
+        """
+        refs: dict[str, int] = {}
+        packages_in_use = (
+            self.db.scalar(
+                select(func.count())
+                .select_from(ProductStockPackage)
+                .where(
+                    ProductStockPackage.purchase_unit_id == unit_id,
+                    ProductStockPackage.full_packages != 0,
+                )
+            )
+            or 0
+        )
+        if packages_in_use:
+            refs["product_stock_packages"] = packages_in_use
+        for label, model, column in (
+            ("purchase_lines", PurchaseLine, PurchaseLine.purchase_unit_id),
+            ("inventory_movements", InventoryMovement, InventoryMovement.purchase_unit_id),
+        ):
+            count = _reference_count(self.db, model, column, unit_id)
+            if count:
+                refs[label] = count
+        return refs
+
+    def delete_unit_permanently(
+        self, product_id: uuid.UUID, unit_id: uuid.UUID
+    ) -> None:
+        """Physically delete a purchase unit that nothing references (204).
+
+        Refused with 409 when purchase lines, inventory movements, or
+        sealed stock packages reference the unit. Works on archived
+        units too (purge workflow). Concurrency safety mirrors
+        ProductVariantService.delete_permanently: FOR UPDATE row lock +
+        RESTRICT foreign keys as a database-level backstop.
+        """
+        unit = self.units.get_by_id(unit_id)
+        if unit is None or unit.product_id != product_id:
+            raise NotFoundError(
+                message="Purchase unit not found",
+                details={"unit_id": str(unit_id)},
+            )
+        with self.transaction():
+            locked = (
+                self.db.execute(
+                    select(ProductPurchaseUnit)
+                    .where(ProductPurchaseUnit.id == unit_id)
+                    .with_for_update()
+                )
+                .scalar_one_or_none()
+            )
+            if locked is None or locked.product_id != product_id:
+                raise NotFoundError(
+                    message="Purchase unit not found",
+                    details={"unit_id": str(unit_id)},
+                )
+            references = self._blocking_references(unit_id)
+            if references:
+                raise ConflictError(
+                    message=(
+                        "Cannot permanently delete this purchase unit: it is "
+                        "used by existing business records (purchases, "
+                        "inventory, or sealed stock). Archive it instead."
+                    ),
+                    details={
+                        "unit_id": str(unit_id),
+                        "references": references,
+                        "archive_recommended": True,
+                    },
+                )
+            # Inert zero-count stock package rows (if any) go away via
+            # ON DELETE CASCADE — no sealed stock is ever destroyed here.
+            self.db.delete(locked)
+            self.db.flush()
+        self._log.info(
+            "purchase_unit_deleted_permanently",
             product_id=str(product_id),
             unit_id=str(unit_id),
         )

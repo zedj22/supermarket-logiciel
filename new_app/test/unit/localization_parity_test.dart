@@ -210,11 +210,16 @@ void main() {
       // shortcut pass added the two shortcuts-map descriptions for
       // Shift+F6 (add customer) and Shift+F7 (use points) — the action
       // labels reuse the existing `add_client` / `loyalty_redeem` keys —
-      // 2 keys (1563).
+      // 2 keys (1563). The safe permanent-deletion pass for variants /
+      // selling units / purchase units added the three per-entity delete
+      // action labels, the shared "Delete permanently" button, the
+      // confirmation dialog title + message, the three per-entity
+      // deletion-success notifications and the localized "record in use —
+      // archive instead" blocked-deletion message — 10 keys (1573).
       // Update this deliberately when a subphase
       // adds strings — an unexplained drop means keys were deleted from
       // one map only.
-      expect(_map('en').keys.length, 1563);
+      expect(_map('en').keys.length, 1573);
       expect(_map('ar').keys.length, _map('en').keys.length);
       expect(_map('fr').keys.length, _map('en').keys.length);
     });

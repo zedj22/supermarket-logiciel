@@ -1081,6 +1081,31 @@ class _ProductFormDialogState extends ConsumerState<ProductFormDialog> {
                         }
                       },
                     ),
+                  if (canArchive && _isEdit)
+                    IconButton(
+                      key: Key('delete-variant-${v.id}'),
+                      tooltip: AppStrings.t('delete_variant', loc),
+                      icon: Icon(
+                        Icons.delete_outline,
+                        size: 18,
+                        color: theme.colorScheme.error,
+                      ),
+                      onPressed: () => _confirmPermanentDelete(
+                        loc,
+                        confirmKey: 'confirm-delete-variant',
+                        onConfirm: () async {
+                          final err = await ref
+                              .read(variantsProvider.notifier)
+                              .deletePermanently(pid!, v.id);
+                          if (!mounted) return;
+                          if (err != null) {
+                            setState(() => _error = err);
+                          } else {
+                            _showArchiveSnack(loc, 'variant_deleted');
+                          }
+                        },
+                      ),
+                    ),
                   if (!_isEdit && canUpdate)
                     IconButton(
                       key: Key('remove-staged-variant-${v.id}'),
@@ -1230,6 +1255,31 @@ class _ProductFormDialogState extends ConsumerState<ProductFormDialog> {
                         }
                       },
                     ),
+                  if (canArchive && _isEdit)
+                    IconButton(
+                      key: Key('delete-selling-unit-${u.id}'),
+                      tooltip: AppStrings.t('delete_selling_unit', loc),
+                      icon: Icon(
+                        Icons.delete_outline,
+                        size: 18,
+                        color: theme.colorScheme.error,
+                      ),
+                      onPressed: () => _confirmPermanentDelete(
+                        loc,
+                        confirmKey: 'confirm-delete-selling-unit',
+                        onConfirm: () async {
+                          final err = await ref
+                              .read(sellingUnitsProvider.notifier)
+                              .deletePermanently(pid!, u.id);
+                          if (!mounted) return;
+                          if (err != null) {
+                            setState(() => _error = err);
+                          } else {
+                            _showArchiveSnack(loc, 'selling_unit_deleted');
+                          }
+                        },
+                      ),
+                    ),
                   if (!_isEdit && canUpdate)
                     IconButton(
                       key: Key('remove-staged-selling-unit-${u.id}'),
@@ -1375,6 +1425,31 @@ class _ProductFormDialogState extends ConsumerState<ProductFormDialog> {
                         }
                       },
                     ),
+                  if (canArchive && _isEdit)
+                    IconButton(
+                      key: Key('delete-purchase-unit-${u.id}'),
+                      tooltip: AppStrings.t('delete_purchase_unit', loc),
+                      icon: Icon(
+                        Icons.delete_outline,
+                        size: 18,
+                        color: theme.colorScheme.error,
+                      ),
+                      onPressed: () => _confirmPermanentDelete(
+                        loc,
+                        confirmKey: 'confirm-delete-purchase-unit',
+                        onConfirm: () async {
+                          final err = await ref
+                              .read(purchaseUnitsProvider.notifier)
+                              .deletePermanently(pid!, u.id);
+                          if (!mounted) return;
+                          if (err != null) {
+                            setState(() => _error = err);
+                          } else {
+                            _showArchiveSnack(loc, 'purchase_unit_deleted');
+                          }
+                        },
+                      ),
+                    ),
                   if (!_isEdit && canUpdate)
                     IconButton(
                       key: Key('remove-staged-purchase-unit-${u.id}'),
@@ -1398,6 +1473,45 @@ class _ProductFormDialogState extends ConsumerState<ProductFormDialog> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(AppStrings.t(messageKey, loc))),
     );
+  }
+
+  /// Confirmation gate for permanent (hard) deletion — the record is
+  /// physically removed only when the backend confirms nothing from
+  /// sales/purchases/invoices/inventory references it (otherwise the
+  /// provider returns a localized "in use — archive instead" message).
+  Future<void> _confirmPermanentDelete(
+    String loc, {
+    required String confirmKey,
+    required Future<void> Function() onConfirm,
+  }) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(AppStrings.t('delete_permanently_confirm_title', loc)),
+        content: Text(
+          AppStrings.t('delete_permanently_confirm_message', loc),
+          key: const Key('permanent-delete-confirm-message'),
+        ),
+        actions: [
+          TextButton(
+            key: const Key('permanent-delete-cancel'),
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(AppStrings.t('cancel', loc)),
+          ),
+          TextButton(
+            key: Key(confirmKey),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(
+              AppStrings.t('delete_permanently', loc),
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await onConfirm();
+    }
   }
 
   /// Two-column field row on wide dialogs; stacks vertically when narrow.

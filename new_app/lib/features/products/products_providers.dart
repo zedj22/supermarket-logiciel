@@ -582,6 +582,15 @@ class VariantsNotifier extends StateNotifier<VariantsState> {
     return AppStrings.t('api_error_retry', loc);
   }
 
+  /// 409 on a permanent delete always means "referenced by business
+  /// records" — mapped to the localized archive-instead guidance.
+  String _deleteMessage(DioException e) {
+    if (e.response?.statusCode == 409) {
+      return AppStrings.t('delete_blocked_in_use', _localeCode());
+    }
+    return _message(e);
+  }
+
   Future<void> load(String productId, {bool includeArchived = false}) async {
     final requestId = ++_requestId;
     state = state.copyWith(
@@ -647,6 +656,21 @@ class VariantsNotifier extends StateNotifier<VariantsState> {
       return null;
     } on DioException catch (e) {
       return _message(e);
+    }
+  }
+
+  /// Physically deletes the variant (backend refuses with a localized
+  /// message when sales/purchases/invoices/inventory reference it).
+  Future<String?> deletePermanently(String productId, String variantId) async {
+    try {
+      await _dio.delete(
+        '/api/v1/products/$productId/variants/$variantId',
+        queryParameters: const {'permanent': 'true'},
+      );
+      await load(productId, includeArchived: true);
+      return null;
+    } on DioException catch (e) {
+      return _deleteMessage(e);
     }
   }
 }
@@ -722,6 +746,15 @@ class SellingUnitsNotifier extends StateNotifier<SellingUnitsState> {
     return AppStrings.t('api_error_retry', loc);
   }
 
+  /// 409 on a permanent delete always means "referenced by business
+  /// records" — mapped to the localized archive-instead guidance.
+  String _deleteMessage(DioException e) {
+    if (e.response?.statusCode == 409) {
+      return AppStrings.t('delete_blocked_in_use', _localeCode());
+    }
+    return _message(e);
+  }
+
   Future<void> load(String productId, {bool includeArchived = false}) async {
     final requestId = ++_requestId;
     state = state.copyWith(
@@ -790,6 +823,21 @@ class SellingUnitsNotifier extends StateNotifier<SellingUnitsState> {
       return null;
     } on DioException catch (e) {
       return _message(e);
+    }
+  }
+
+  /// Physically deletes the selling unit (backend refuses with a
+  /// localized message when packs or invoices reference it).
+  Future<String?> deletePermanently(String productId, String unitId) async {
+    try {
+      await _dio.delete(
+        '/api/v1/products/$productId/selling-units/$unitId',
+        queryParameters: const {'permanent': 'true'},
+      );
+      await load(productId, includeArchived: true);
+      return null;
+    } on DioException catch (e) {
+      return _deleteMessage(e);
     }
   }
 }
@@ -865,6 +913,15 @@ class PurchaseUnitsNotifier extends StateNotifier<PurchaseUnitsState> {
     return AppStrings.t('api_error_retry', loc);
   }
 
+  /// 409 on a permanent delete always means "referenced by business
+  /// records" — mapped to the localized archive-instead guidance.
+  String _deleteMessage(DioException e) {
+    if (e.response?.statusCode == 409) {
+      return AppStrings.t('delete_blocked_in_use', _localeCode());
+    }
+    return _message(e);
+  }
+
   Future<void> load(String productId, {bool includeArchived = false}) async {
     final requestId = ++_requestId;
     state = state.copyWith(
@@ -933,6 +990,22 @@ class PurchaseUnitsNotifier extends StateNotifier<PurchaseUnitsState> {
       return null;
     } on DioException catch (e) {
       return _message(e);
+    }
+  }
+
+  /// Physically deletes the purchase unit (backend refuses with a
+  /// localized message when purchases, inventory, or sealed stock
+  /// reference it).
+  Future<String?> deletePermanently(String productId, String unitId) async {
+    try {
+      await _dio.delete(
+        '/api/v1/products/$productId/purchase-units/$unitId',
+        queryParameters: const {'permanent': 'true'},
+      );
+      await load(productId, includeArchived: true);
+      return null;
+    } on DioException catch (e) {
+      return _deleteMessage(e);
     }
   }
 }
