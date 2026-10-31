@@ -19,6 +19,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/shortcuts.dart';
 import '../../core/strings.dart';
 import '../settings/pos_settings_provider.dart';
 
@@ -51,16 +52,19 @@ const _shortcutRows = <_ShortcutRow>[
   _ShortcutRow('F5', 'sc_a_refresh', _global, 'sc_d_refresh'),
   _ShortcutRow('Esc', 'sc_a_close', _global, 'sc_d_close'),
   // --- POS workspace: only while a sale is open ---
+  // The key symbols come from PosShortcutKeys — the SAME table the
+  // on-button badges render — so the map, the badges and the registered
+  // CallbackShortcuts bindings can never drift apart.
   _ShortcutRow('Enter', 'sc_a_add_search', _pos, 'sc_d_add_search'),
-  _ShortcutRow('F6', 'sc_a_customer', _pos, 'sc_d_customer'),
-  _ShortcutRow('Shift+F6', 'add_client', _pos, 'sc_d_add_customer'),
-  _ShortcutRow('F7', 'sc_a_invoice_discount', _pos, 'sc_d_invoice_discount'),
-  _ShortcutRow('Shift+F7', 'loyalty_redeem', _pos, 'sc_d_use_points'),
-  _ShortcutRow('Space', 'sc_a_payment', _pos, 'sc_d_payment'),
-  _ShortcutRow('F9', 'sc_a_hold', _pos, 'sc_d_hold'),
-  _ShortcutRow('F10', 'sc_a_held_sales', _pos, 'sc_d_held_sales'),
-  _ShortcutRow('F11', 'sc_a_sales_history', _pos, 'sc_d_sales_history'),
-  _ShortcutRow('F12', 'sc_a_clear_cart', _pos, 'sc_d_clear_cart'),
+  _ShortcutRow(PosShortcutKeys.chooseCustomer, 'sc_a_customer', _pos, 'sc_d_customer'),
+  _ShortcutRow(PosShortcutKeys.addCustomer, 'add_client', _pos, 'sc_d_add_customer'),
+  _ShortcutRow(PosShortcutKeys.invoiceDiscount, 'sc_a_invoice_discount', _pos, 'sc_d_invoice_discount'),
+  _ShortcutRow(PosShortcutKeys.useLoyaltyPoints, 'loyalty_redeem', _pos, 'sc_d_use_points'),
+  _ShortcutRow(PosShortcutKeys.payment, 'sc_a_payment', _pos, 'sc_d_payment'),
+  _ShortcutRow(PosShortcutKeys.hold, 'sc_a_hold', _pos, 'sc_d_hold'),
+  _ShortcutRow(PosShortcutKeys.holds, 'sc_a_held_sales', _pos, 'sc_d_held_sales'),
+  _ShortcutRow(PosShortcutKeys.history, 'sc_a_sales_history', _pos, 'sc_d_sales_history'),
+  _ShortcutRow(PosShortcutKeys.clearCart, 'sc_a_clear_cart', _pos, 'sc_d_clear_cart'),
   _ShortcutRow('+', 'sc_a_qty_inc', _pos, 'sc_d_qty_inc'),
   _ShortcutRow('-', 'sc_a_qty_dec', _pos, 'sc_d_qty_dec'),
   _ShortcutRow('*', 'sc_a_qty_entry', _pos, 'sc_d_qty_entry'),
@@ -91,7 +95,7 @@ class ShortcutsHelpDialog extends ConsumerWidget {
   /// direct quick sale (full cash payment of the amount due, no dialog).
   /// The map is documentation only, so it simply mirrors the setting.
   static _ShortcutRow _effectiveRow(_ShortcutRow row, bool quickSale) {
-    if (!quickSale || row.keys != 'Space') return row;
+    if (!quickSale || row.keys != PosShortcutKeys.payment) return row;
     return _ShortcutRow(row.keys, 'sc_a_quick_sale', row.scopeKey, 'sc_d_quick_sale');
   }
 

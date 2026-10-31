@@ -32,3 +32,46 @@ class PageShortcuts {
 class PageShortcutsRegistry {
   static PageShortcuts? current;
 }
+
+/// Canonical key LABELS for the POS bindings registered in pos_screen's
+/// `CallbackShortcuts` (Phase 17 §18).
+///
+/// This is a label table, NOT a second shortcut system: the keys stay
+/// registered exactly where they always were (pos_screen.dart), and the
+/// action they trigger lives there too. The shortcuts help dialog and the
+/// on-button `ShortcutBadge`s render these same strings, so a badge can
+/// never document a key the page does not answer — change a binding and
+/// this table is the one place the displayed text is updated.
+///
+/// The symbols are literal and never localized: `F6` reads the same in
+/// ar/fr/en (and must keep its LTR run inside an RTL layout).
+abstract final class PosShortcutKeys {
+  /// F6 — choose customer (the picker).
+  static const chooseCustomer = 'F6';
+
+  /// Shift+F6 — add customer (the shared client form, no picker first).
+  static const addCustomer = 'Shift+F6';
+
+  /// F7 — invoice discount.
+  static const invoiceDiscount = 'F7';
+
+  /// Shift+F7 — use loyalty points (the redemption dialog).
+  static const useLoyaltyPoints = 'Shift+F7';
+
+  /// Space — open payment. While Quick sale (Space) is ON the SAME key
+  /// completes the sale directly instead; the help map swaps the row's
+  /// meaning for that setting and the PAY badge follows it the same way.
+  static const payment = 'Space';
+
+  /// F9 — hold the current sale.
+  static const hold = 'F9';
+
+  /// F10 — held sales list.
+  static const holds = 'F10';
+
+  /// F11 — sales history.
+  static const history = 'F11';
+
+  /// F12 — clear cart (confirm dialog).
+  static const clearCart = 'F12';
+}

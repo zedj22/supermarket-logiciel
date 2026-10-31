@@ -669,9 +669,18 @@ void main() {
         find.text(AppStrings.t('shortcuts_title', 'ar')),
         findsOneWidget,
       );
-      // Both scopes and every row of the map are rendered.
-      expect(find.text('Space'), findsOneWidget);
-      expect(find.text('F12'), findsOneWidget);
+      // Both scopes and every row of the map are rendered. Scoped to the
+      // dialog: the POS screen underneath carries its own Space key chip
+      // on the PAY button, so a bare find.text would count both.
+      final map = find.byKey(const Key('shortcuts-dialog'));
+      expect(
+        find.descendant(of: map, matching: find.text('Space')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: map, matching: find.text('F12')),
+        findsOneWidget,
+      );
       expect(
         find.text(AppStrings.t('shortcuts_scope_pos', 'ar')),
         findsWidgets,

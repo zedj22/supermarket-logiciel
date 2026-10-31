@@ -60,6 +60,7 @@ import '../../core/number_format.dart';
 import '../../core/numeric_text.dart';
 import '../../core/scan_diagnostics.dart';
 import '../../core/search_field_state.dart';
+import '../../core/shortcut_badge.dart';
 import '../../core/shortcuts.dart';
 import '../../core/strings.dart';
 import '../../core/widgets/h_scroll_view.dart';
@@ -4007,8 +4008,13 @@ class _CartPanel extends StatelessWidget {
                               fontWeight: FontWeight.w600,
                             ),
                           ),
-                          child: Text(
+                          // Label + the F6 key chip: the badge carries the
+                          // REAL binding (PosShortcutKeys — the same table
+                          // the shortcuts map shows), so the key text no
+                          // longer has to live inside the localized string.
+                          child: ShortcutBadgeLabel(
                             AppStrings.t('customer_shortcut', loc),
+                            keys: PosShortcutKeys.chooseCustomer,
                           ),
                         ),
                       ),
@@ -4200,6 +4206,7 @@ class _CartPanel extends StatelessWidget {
                 short: short || compact,
                 dense: dense,
                 accent: AppColors.warning,
+                shortcut: PosShortcutKeys.invoiceDiscount,
               );
               final holdAction = _actionButton(
                 context: context,
@@ -4214,6 +4221,7 @@ class _CartPanel extends StatelessWidget {
                 short: short || compact,
                 dense: dense,
                 accent: AppColors.actionHold,
+                shortcut: PosShortcutKeys.hold,
               );
               final holdsAction = _actionButton(
                 context: context,
@@ -4224,6 +4232,7 @@ class _CartPanel extends StatelessWidget {
                 short: short || compact,
                 dense: dense,
                 badgeCount: heldCount,
+                shortcut: PosShortcutKeys.holds,
               );
               final historyAction = _actionButton(
                 context: context,
@@ -4234,6 +4243,7 @@ class _CartPanel extends StatelessWidget {
                 short: short || compact,
                 dense: dense,
                 accent: AppColors.actionHistory,
+                shortcut: PosShortcutKeys.history,
               );
               final returnAction = _actionButton(
                 context: context,
@@ -4276,6 +4286,7 @@ class _CartPanel extends StatelessWidget {
                     short: short || compact,
                     dense: dense,
                     accent: AppColors.success,
+                    shortcut: PosShortcutKeys.useLoyaltyPoints,
                   );
                 },
               );
@@ -4548,10 +4559,13 @@ class _CartPanel extends StatelessWidget {
     int badgeCount = 0,
     Color? accent,
     bool solid = false,
+    String? shortcut,
   }) {
     // Dense (reversed) rows: 40px (36 on short screens) instead of the
-    // standard 44–46 — labels and shortcuts stay identical, only the
-    // chrome is compacted so the cart lines get the height back.
+    // standard 44–46 — labels stay identical, only the chrome is
+    // compacted so the cart lines get the height back. [shortcut] is the
+    // key chip beside the label (PosShortcutKeys — the same table the
+    // shortcuts map documents); it never changes the button's height.
     final height = dense
         ? (short ? 36.0 : 40.0)
         : short
@@ -4625,14 +4639,14 @@ class _CartPanel extends StatelessWidget {
                 child: Icon(icon, size: dense || short ? 18 : 20),
               )
             : Icon(icon, size: dense || short ? 18 : 20),
-        label: Text(
+        label: ShortcutBadgeLabel(
           label,
-          style: theme.textTheme.labelLarge?.copyWith(
+          keys: shortcut,
+          compact: dense || short,
+          labelStyle: theme.textTheme.labelLarge?.copyWith(
             fontSize: 14,
             fontWeight: FontWeight.w600,
           ),
-          overflow: TextOverflow.ellipsis,
-          maxLines: 1,
         ),
       ),
     );
@@ -4687,6 +4701,11 @@ class _PosTotalsPanelState extends ConsumerState<_PosTotalsPanel> {
 
     // Loyalty session (server-owned numbers — see posLoyaltyProvider).
     final loyalty = ref.watch(posLoyaltyProvider);
+    // SPACE pays (default) but is a DIRECT quick sale while that operator
+    // setting is ON — the PAY badge must follow the key's real meaning,
+    // exactly like the shortcuts map's Space row does.
+    final quickSale = ref.watch(posSettingsProvider).quickSaleWithSpace;
+    final payShortcut = quickSale ? null : PosShortcutKeys.payment;
     final showLoyalty =
         !cart.returnMode && cart.customer != null && loyalty.hasCustomer;
     // Only a preview that matches the CURRENT total + selected percent
@@ -5025,24 +5044,42 @@ class _PosTotalsPanelState extends ConsumerState<_PosTotalsPanel> {
                                         // label and the amount+currency unit
                                         // are separate widgets — the label
                                         // stays RTL, the money renders as one
-                                        // LTR unit (`20 235.00 DA`).
+                                        // LTR unit (`20 235.00 DA`). The key
+                                        // chip and the dash ride the label
+                                        // group; the chip measures itself
+                                        // before it is laid out, so it can
+                                        // never squeeze the amount.
                                         child: Row(
                                           mainAxisSize: MainAxisSize.min,
                                           mainAxisAlignment:
                                               MainAxisAlignment.center,
                                           children: [
                                             Flexible(
-                                              child: Text(
-                                                '${AppStrings.t('payment_shortcut', loc)} —',
-                                                overflow:
-                                                    TextOverflow.ellipsis,
+                                              child: ShortcutBadgeLabel(
+                                                AppStrings.t(
+                                                  'payment_shortcut',
+                                                  loc,
+                                                ),
+                                                keys: payShortcut,
+                                                tone: ShortcutBadgeTone
+                                                    .onColor,
+                                                dash: true,
                                               ),
                                             ),
                                             const SizedBox(width: 6),
+                                            // Non-flex sibling: the money
+                                            // always takes its FULL
+                                            // intrinsic width — the bidi
+                                            // box assertion must see the
+                                            // whole `20 235.00 DA`, never an
+                                            // ellipsized slice of it.
                                             numericText(
                                               '${totals.totalDisplay} $currency',
-                                              key: const Key('pos-pay-amount'),
-                                              overflow: TextOverflow.ellipsis,
+                                              key: const Key(
+                                                'pos-pay-amount',
+                                              ),
+                                              overflow:
+                                                  TextOverflow.ellipsis,
                                             ),
                                           ],
                                         ),

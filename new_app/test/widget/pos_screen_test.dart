@@ -2248,10 +2248,14 @@ void main() {
     testWidgets('detail shows customer when present', (tester) async {
       await pumpWithHistory(tester);
       await openDetail(tester);
-      expect(find.byKey(const Key('sale-detail-customer')), findsOneWidget);
+      final customer = find.byKey(const Key('sale-detail-customer'));
+      expect(customer, findsOneWidget);
+      // Assert the DETAIL row's own label (keyed widget) — a bare
+      // find.text would also match the customer picker button label
+      // ("Customer"), which is a different widget on the screen behind.
       expect(
-        find.text(AppStrings.t('customer', 'en')),
-        findsOneWidget,
+        tester.widget<Text>(customer).data,
+        AppStrings.t('customer', 'en'),
       );
     });
 
@@ -3109,15 +3113,13 @@ void main() {
       addBigLine(containerOf(tester));
       await tester.pump();
 
-      final payTexts = tester.widgetList<Text>(
-        find.descendant(
-          of: find.byKey(const Key('pos-pay-button')),
-          matching: find.byType(Text),
-        ),
+      // The label is found by its CONTENT (the button also carries the
+      // Space key chip and the dash as sibling Texts now).
+      final labelFinder = find.descendant(
+        of: find.byKey(const Key('pos-pay-button')),
+        matching: find.textContaining(AppStrings.t('payment_shortcut', 'ar')),
       );
-      final label = payTexts.singleWhere(
-        (t) => t.key != const Key('pos-pay-amount'),
-      );
+      final label = tester.widget<Text>(labelFinder);
       expect(
         label.data,
         contains(AppStrings.t('payment_shortcut', 'ar')),
@@ -9696,9 +9698,21 @@ void main() {
         find.text(AppStrings.t('shortcuts_scope_pos', 'en')),
         findsWidgets,
       );
-      expect(find.text('Space'), findsOneWidget);
-      expect(find.text('F12'), findsOneWidget);
-      expect(find.text('+'), findsWidgets);
+      // Scoped to the map: the PAY button under the dialog carries its own
+      // Space key chip now, so a bare find.text would count both.
+      final map = find.byKey(const Key('shortcuts-dialog'));
+      expect(
+        find.descendant(of: map, matching: find.text('Space')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: map, matching: find.text('F12')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: map, matching: find.text('+')),
+        findsWidgets,
+      );
 
       await tester.tap(find.byKey(const Key('shortcuts-close')));
       await tester.pumpAndSettle();

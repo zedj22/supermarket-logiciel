@@ -10,6 +10,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/shortcut_badge.dart';
+import '../../core/shortcuts.dart';
 import '../../core/strings.dart';
 import '../../l10n/locale_provider.dart';
 import '../auth/permission_helpers.dart';
@@ -114,7 +116,14 @@ class _CustomerPickerDialogState extends ConsumerState<CustomerPickerDialog> {
                 key: const Key('customer-quick-add'),
                 onPressed: _quickAddCustomer,
                 icon: const Icon(Icons.person_add_alt, size: 18),
-                label: Text(AppStrings.t('quick_add_customer', loc)),
+                // Label + the Shift+F6 chip: the key opens this SAME
+                // form straight from the workspace (no picker first) —
+                // PosShortcutKeys is the table the shortcuts map shows,
+                // so the badge documents the real binding.
+                label: ShortcutBadgeLabel(
+                  AppStrings.t('quick_add_customer', loc),
+                  keys: PosShortcutKeys.addCustomer,
+                ),
               ),
             const SizedBox(height: 12),
             if (state.loading)
