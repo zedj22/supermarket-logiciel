@@ -4,6 +4,12 @@
 // for UX (customer required for partial/credit, paid >= total for cash).
 // Escape closes without touching the cart. Checkout retry reuses the same
 // client_request_id held by PosCartNotifier.
+//
+// The "Amount Paid" field ALWAYS starts empty — the cashier explicitly
+// enters the amount received from the customer; nothing (init, method
+// switch, rebuild, reopen) ever pre-fills the invoice total into it.
+// An empty field parses as 0, which the existing validation rules reject
+// for every method (cash: paid_too_low, card/partial: invalid_amount).
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -45,16 +51,10 @@ class _PaymentDialogState extends ConsumerState<PaymentDialog> {
   @override
   void initState() {
     super.initState();
-    // Pre-fill the AMOUNT DUE (total minus the accepted loyalty reward
-    // discount) — `_openPayment` settled the server preview first, so
-    // this matches exactly what checkout will be validated against.
-    final totals = ref.read(posCartProvider).totals;
-    _paid = TextEditingController(
-      text: PaymentMath.amountDueOf(
-        total: totals.total,
-        rewardDiscount: _rewardDiscount,
-      ).toStringAsFixed(2),
-    );
+    // Deliberately EMPTY: the cashier types the amount received. Nothing
+    // may pre-fill the invoice total here — an empty field is an explicit
+    // "no amount entered" state, never an implicit full payment.
+    _paid = TextEditingController();
   }
 
   @override
@@ -89,9 +89,10 @@ class _PaymentDialogState extends ConsumerState<PaymentDialog> {
     final key = PaymentMath.validate(
       method: method,
       total: cart.totals.total,
-      paid: method == PaymentMethod.cash || method == PaymentMethod.card
-          ? _due
-          : _paidAmount,
+      // The ENTERED amount is what gets validated (empty parses as 0 →
+      // rejected): the cashier must explicitly type what the customer
+      // handed over — no method ever falls back to the invoice total.
+      paid: _paidAmount,
       hasCustomer: cart.customer != null,
       canDiscount: canDiscount || !cart.hasAnyDiscount,
       canCredit: canCredit,
@@ -102,14 +103,12 @@ class _PaymentDialogState extends ConsumerState<PaymentDialog> {
   }
 
   void _selectMethod(PaymentMethod method) {
+    // Method switching NEVER touches the paid field: it keeps whatever
+    // the cashier typed (or stays empty) — the invoice total is never
+    // inserted here. Submission validates the entered amount per method.
     setState(() {
       _method = method;
       _error = null;
-      if (method == PaymentMethod.cash || method == PaymentMethod.card) {
-        _paid.text = _due.toStringAsFixed(2);
-      } else if (method == PaymentMethod.credit) {
-        _paid.text = '0.00';
-      }
     });
   }
 
@@ -124,6 +123,9 @@ class _PaymentDialogState extends ConsumerState<PaymentDialog> {
       _error = null;
     });
     final paid = switch (_method) {
+      // Cash/card settle the AMOUNT DUE (validation already proved the
+      // entered amount covers it); any overpayment is the change handed
+      // back, never a larger `paid` on the sale record.
       PaymentMethod.cash || PaymentMethod.card => _due,
       PaymentMethod.credit => 0.0,
       PaymentMethod.partial => _paidAmount,

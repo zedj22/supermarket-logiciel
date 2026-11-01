@@ -1723,9 +1723,10 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       );
       return;
     }
-    // Settle the server preview BEFORE the dialog reads it — closes the
+    // Settle the server preview BEFORE the dialog opens — closes the
     // debounce race between the cashier picking a percent and pressing
-    // PAY, so the pre-filled amount matches what checkout sends.
+    // PAY, so the amount-due row shown in the dialog (and every payment
+    // validation against it) matches exactly what checkout will use.
     final loyalty = ref.read(posLoyaltyProvider);
     if (loyalty.customerId != null && loyalty.rewardPercent > 0) {
       await ref.read(posLoyaltyProvider.notifier).previewNow();
@@ -1741,8 +1742,8 @@ class _PosScreenState extends ConsumerState<PosScreen> {
   /// NO payment dialog, as a full CASH payment of the amount due.
   ///
   /// Semantics (documented in the settings help text and the shortcuts
-  /// map): the sale is charged in full, exactly like accepting the payment
-  /// dialog's prefilled defaults (cash, paid = amount due). There is no
+  /// map): the sale is charged in full, exactly like confirming the
+  /// payment dialog as cash with the amount due entered. There is no
   /// way to tender less or choose another method from this path — a
   /// partial/credit sale would need the dialog — and nothing is ever
   /// invented: the same [PaymentMath.validate] rules the dialog runs gate

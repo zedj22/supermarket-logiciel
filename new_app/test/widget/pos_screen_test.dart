@@ -949,10 +949,23 @@ void main() {
   });
 
   group('price override confirmation', () {
-    Future<void> checkoutCash(WidgetTester tester) async {
+    Future<void> checkoutCash(WidgetTester tester, {required String paid}) async {
       await tester.tap(find.byKey(const Key('pos-pay-button')));
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('payment-dialog')), findsOneWidget);
+      // The paid field starts empty — the amount received is typed in.
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const Key('payment-paid-input')))
+            .controller!
+            .text,
+        isEmpty,
+      );
+      await tester.enterText(
+        find.byKey(const Key('payment-paid-input')),
+        paid,
+      );
+      await tester.pump();
       await tester.tap(find.byKey(const Key('payment-submit')));
       await tester.pumpAndSettle(const Duration(seconds: 1));
     }
@@ -986,6 +999,11 @@ void main() {
       expect(find.byKey(const Key('payment-dialog')), findsOneWidget);
       expect(container.read(posCartProvider).isEmpty, isFalse);
 
+      await tester.enterText(
+        find.byKey(const Key('payment-paid-input')),
+        '9.00',
+      );
+      await tester.pump();
       await tester.tap(find.byKey(const Key('payment-submit')));
       await tester.pumpAndSettle(const Duration(seconds: 1));
 
@@ -1074,7 +1092,7 @@ void main() {
           );
       await tester.pump();
 
-      await checkoutCash(tester);
+      await checkoutCash(tester, paid: '10.00');
 
       expect(find.byKey(const Key('price-override-dialog')), findsNothing);
       expect(
@@ -7984,6 +8002,13 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('payment-dialog')), findsOneWidget);
 
+      // The paid field starts empty; type the amount due to reach the
+      // server (the 422 under test happens at checkout, not validation).
+      await tester.enterText(
+        find.byKey(const Key('payment-paid-input')),
+        '9.00',
+      );
+      await tester.pump();
       await tester.tap(find.byKey(const Key('payment-submit')));
       await tester.pumpAndSettle(const Duration(seconds: 1));
       return container;
@@ -9146,6 +9171,11 @@ void main() {
       await tester.tap(find.byKey(const Key('pos-pay-button')));
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('payment-dialog')), findsOneWidget);
+      await tester.enterText(
+        find.byKey(const Key('payment-paid-input')),
+        '9.00',
+      );
+      await tester.pump();
       await tester.tap(find.byKey(const Key('payment-submit')));
       await tester.pumpAndSettle(const Duration(seconds: 1));
     }
@@ -11946,6 +11976,12 @@ void main() {
       expect(first, isTrue);
       expect(find.byKey(const Key('payment-dialog')), findsOneWidget);
       expect(focusedFieldKey(tester), 'payment-paid-input');
+      expect(
+        controllerText(tester, const Key('payment-paid-input')),
+        isEmpty,
+        reason: 'the paid field always opens empty — never pre-filled '
+            'with the cart total',
+      );
 
       // Real key auto-repeat while SPACE is held: never a second dialog,
       // never a stray character in the payment input.
@@ -11958,8 +11994,8 @@ void main() {
           reason: 'one dialog per SPACE gesture');
       expect(
         controllerText(tester, const Key('payment-paid-input')),
-        '10.00',
-        reason: 'the repeat must not alter the prefilled payment amount',
+        isEmpty,
+        reason: 'the repeat must not alter the payment input',
       );
       await tester.sendKeyUpEvent(LogicalKeyboardKey.space);
       await tester.pump();
@@ -11971,7 +12007,7 @@ void main() {
       expect(find.byKey(const Key('payment-dialog')), findsOneWidget);
       expect(
         controllerText(tester, const Key('payment-paid-input')),
-        '10.00',
+        isEmpty,
       );
       expect(tester.takeException(), isNull);
     });
@@ -12177,9 +12213,9 @@ void main() {
               'dialog');
       expect(
         controllerText(tester, const Key('payment-paid-input')),
-        '5.00',
-        reason: 'prefilled with the remaining cart total (milk only - bread '
-            'was deleted)',
+        isEmpty,
+        reason: 'the paid field opens empty regardless of the remaining '
+            'cart total (milk only - bread was deleted)',
       );
       await tester.tap(find.byKey(const Key('payment-cancel')));
       await tester.pumpAndSettle();

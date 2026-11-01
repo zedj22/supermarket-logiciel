@@ -3,12 +3,14 @@
 // Contract under test (client side only; the server owns all numbers):
 //  - when the POS loyalty session holds a preview that matches the CURRENT
 //    cart + selected reward percent, the dialog shows the reward discount
-//    (percent + money) and the amount due (= total − discount) and
-//    prefills the paid field with the amount due — never the raw total;
+//    (percent + money) and the amount due (= total − discount); the paid
+//    field always starts EMPTY — the cashier enters the amount received
+//    (the amount due is shown, never typed in for them);
 //  - submitting sends `loyalty_reward_percent` as the selected percent
-//    and `paid` as the amount due;
+//    and `paid` as the amount due (cash settles the amount due once the
+//    entered amount covers it);
 //  - with no matching preview the dialog is bit-for-bit the pre-loyalty
-//    one (no rows, total prefill, no loyalty key in the payload).
+//    one (no rows, empty paid field, no loyalty key in the payload).
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -222,8 +224,8 @@ void main() {
 
   group('PaymentDialog — loyalty reward', () {
     testWidgets(
-        'shows reward discount + amount-due rows and prefills the paid '
-        'field with the amount due', (tester) async {
+        'shows reward discount + amount-due rows and keeps the paid field '
+        'empty for the cashier to fill in', (tester) async {
       final adapter = _adapter();
       await pumpHarness(tester, _seededOverrides(adapter, withPreview: true));
 
@@ -236,7 +238,9 @@ void main() {
       final paidField = tester.widget<TextField>(
         find.byKey(const Key('payment-paid-input')),
       );
-      expect(paidField.controller!.text, '80.00');
+      expect(paidField.controller!.text, isEmpty,
+          reason: 'the amount received is typed in, never pre-filled — '
+              'not the total, not the amount due, not 0');
       expect(tester.takeException(), isNull);
     });
 
@@ -247,6 +251,11 @@ void main() {
       final adapter = _adapter(salePayloads: salePayloads);
       await pumpHarness(tester, _seededOverrides(adapter, withPreview: true));
 
+      await tester.enterText(
+        find.byKey(const Key('payment-paid-input')),
+        '80.00',
+      );
+      await tester.pump();
       await tester.tap(find.byKey(const Key('payment-submit')));
       await tester.pumpAndSettle();
 
@@ -275,8 +284,15 @@ void main() {
       final paidField = tester.widget<TextField>(
         find.byKey(const Key('payment-paid-input')),
       );
-      expect(paidField.controller!.text, '100.00');
+      expect(paidField.controller!.text, isEmpty,
+          reason: 'no reward means no amount-due row either — still no '
+              'pre-filled total');
 
+      await tester.enterText(
+        find.byKey(const Key('payment-paid-input')),
+        '100.00',
+      );
+      await tester.pump();
       await tester.tap(find.byKey(const Key('payment-submit')));
       await tester.pumpAndSettle();
 
