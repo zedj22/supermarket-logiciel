@@ -400,6 +400,10 @@ class AppStrings {
     'select_pack': 'اختر حزمة',
     'archived_unit': 'وحدة مؤرشفة',
     'archived_variant': 'نوع مؤرشف',
+    'variants_locked_by_units':
+        'أرشف وحدات البيع النشطة قبل إضافة نوع جديد',
+    'units_locked_by_variants':
+        'أرشف الأنواع النشطة قبل إضافة وحدة بيع جديدة',
     'archived_purchase_unit': 'وحدة شراء مؤرشفة',
     'variant_archived': 'تمت أرشفة النوع',
     'selling_unit_archived': 'تمت أرشفة وحدة البيع',
@@ -2072,6 +2076,10 @@ class AppStrings {
     'select_pack': "Sélectionner un pack",
     'archived_unit': 'Unité archivée',
     'archived_variant': 'Variant archivé',
+    'variants_locked_by_units':
+        "Archivez les unités de vente actives avant d'ajouter un variant",
+    'units_locked_by_variants':
+        "Archivez les variants actifs avant d'ajouter une unité de vente",
     'archived_purchase_unit': "Unité d'achat archivée",
     'variant_archived': 'Variant archivé',
     'selling_unit_archived': "Unité de vente archivée",
@@ -3788,6 +3796,10 @@ class AppStrings {
     'select_pack': 'Select a pack',
     'archived_unit': 'Archived unit',
     'archived_variant': 'Archived variant',
+    'variants_locked_by_units':
+        "Archive the product's active selling units before adding a variant",
+    'units_locked_by_variants':
+        "Archive the product's active variants before adding a selling unit",
     'archived_purchase_unit': 'Archived purchase unit',
     'variant_archived': 'Variant archived',
     'selling_unit_archived': 'Selling unit archived',

@@ -1553,13 +1553,20 @@ class TestSaleLineSnapshots:
 
     def test_4_variant_and_selling_unit_on_one_line(self, client, admin_headers, db):
         p, box = _box_product(client, admin_headers)
-        vresp = client.post(
-            f"/api/v1/products/{p['id']}/variants",
-            json={"name": "Cheddar", "price": "70.000", "quantity": "5.000"},
-            headers=admin_headers,
+        # TASK 5 XOR: the API refuses to create a mixed product
+        # (PRODUCT_VARIANTS_EXCLUSIVE). This test guards the SEPARATE
+        # sale-line contract — one cart line may never carry both ids —
+        # so the mixed state is seeded directly as legacy data.
+        variant_row = ProductVariant(
+            id=uuid.uuid4(),
+            product_id=uuid.UUID(p["id"]),
+            name="Cheddar",
+            price=Decimal("70.000"),
+            quantity=Decimal("5.000"),
         )
-        assert vresp.status_code == 201, vresp.text
-        variant = vresp.json()
+        db.add(variant_row)
+        db.commit()
+        variant = {"id": str(variant_row.id)}
 
         # Existing rule: a cart line is variant OR selling unit, never both —
         # checkout can therefore never write an inconsistent snapshot.
@@ -1654,13 +1661,19 @@ class TestSaleLineSnapshots:
         self, client, admin_headers, db
     ):
         p, box = _box_product(client, admin_headers)
-        vresp = client.post(
-            f"/api/v1/products/{p['id']}/variants",
-            json={"name": "Cheddar", "price": "70.000", "quantity": "5.000"},
-            headers=admin_headers,
+        # TASK 5 XOR: mixed products can no longer be created via the API;
+        # seed the variant directly so this test keeps proving that sale
+        # snapshots survive later catalog changes on a legacy mixed product.
+        variant_row = ProductVariant(
+            id=uuid.uuid4(),
+            product_id=uuid.UUID(p["id"]),
+            name="Cheddar",
+            price=Decimal("70.000"),
+            quantity=Decimal("5.000"),
         )
-        assert vresp.status_code == 201, vresp.text
-        variant = vresp.json()
+        db.add(variant_row)
+        db.commit()
+        variant = {"id": str(variant_row.id)}
 
         r_variant = _post_sale(
             client,

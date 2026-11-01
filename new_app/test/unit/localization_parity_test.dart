@@ -216,10 +216,13 @@ void main() {
       // confirmation dialog title + message, the three per-entity
       // deletion-success notifications and the localized "record in use —
       // archive instead" blocked-deletion message — 10 keys (1573).
+      // The TASK 5 variants/selling-units XOR pass added the two
+      // cross-kind lock explanations shown under the disabled add
+      // buttons — 2 keys (1575).
       // Update this deliberately when a subphase
       // adds strings — an unexplained drop means keys were deleted from
       // one map only.
-      expect(_map('en').keys.length, 1573);
+      expect(_map('en').keys.length, 1575);
       expect(_map('ar').keys.length, _map('en').keys.length);
       expect(_map('fr').keys.length, _map('en').keys.length);
     });

@@ -1202,8 +1202,8 @@ void main() {
     });
 
     testWidgets(
-        'after variant choice → selling-unit picker when units exist '
-        '(no second variant dialog)', (tester) async {
+        'after variant choice → selling-unit picker is skipped; direct '
+        'variant-only add (never variant + selling_unit_id)', (tester) async {
       final bothDio = MockDio();
       _mockDio(
         bothDio,
@@ -1224,8 +1224,76 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.byKey(const Key('variant-picker')), findsNothing);
-      expect(find.byKey(const Key('selling-unit-picker')), findsOneWidget);
-      expect(containerOf(tester).read(posCartProvider).lines, isEmpty);
+      expect(find.byKey(const Key('selling-unit-picker')), findsNothing);
+      final cart = containerOf(tester).read(posCartProvider);
+      expect(cart.lines, hasLength(1));
+      final line = cart.lines.first;
+      expect(line.variantId, 'var-b');
+      expect(line.variantName, 'Large');
+      expect(line.sellingUnitId, isNull);
+      expect(line.unitPrice, '12'); // variant price, not the unit's
+      expect(line.quantity, '1');
+      final saleJson = line.toSaleJson();
+      expect(saleJson['variant_id'], 'var-b');
+      expect(
+        saleJson.containsKey('selling_unit_id'),
+        isFalse,
+        reason: 'sale payload must never carry selling_unit_id with a '
+            'variant_id (backend 422 contract)',
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'weighted variant (kg) + selling units → amount dialog at the '
+        'variant price; result line is variant-only', (tester) async {
+      final kgDio = MockDio();
+      _mockDio(
+        kgDio,
+        productUnit: 'kg',
+        productPrice: '250',
+        variants: [
+          _variantJson(id: 'var-kg', name: 'Bulk', price: '300'),
+        ],
+        sellingUnits: [
+          _sellingUnitJson(
+            id: 'su-sack',
+            name: 'Sack',
+            unitType: 'sack',
+            multiplier: '25',
+            sellingPrice: '7000',
+            isBaseUnit: false,
+          ),
+        ],
+      );
+      await _pumpApp(tester, dio: kgDio);
+      await tester.pump(const Duration(milliseconds: 500));
+
+      // Single variant auto-selects; kg is a weight unit, so the amount
+      // dialog opens with the VARIANT price (never the product's 250 or
+      // the Sack unit's 7000) and no selling-unit picker appears.
+      await tester.tap(find.byKey(Key('pos-product-$_productId')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('selling-unit-picker')), findsNothing);
+      expect(find.byKey(const Key('quantity-dialog')), findsOneWidget);
+      expect(find.byKey(const Key('quantity-mode-amount')), findsOneWidget);
+      await tester.enterText(find.byKey(const Key('quantity-input')), '2');
+      await tester.tap(find.byKey(const Key('quantity-submit')));
+      await tester.pumpAndSettle();
+
+      final cart = containerOf(tester).read(posCartProvider);
+      expect(cart.lines, hasLength(1));
+      final line = cart.lines.first;
+      expect(line.variantId, 'var-kg');
+      expect(line.variantName, 'Bulk');
+      expect(line.sellingUnitId, isNull);
+      expect(line.quantity, '2');
+      expect(line.unitPrice, '300');
+      final saleJson = line.toSaleJson();
+      expect(saleJson['variant_id'], 'var-kg');
+      expect(saleJson.containsKey('selling_unit_id'), isFalse);
+      expect(tester.takeException(), isNull);
     });
 
     testWidgets(
@@ -1816,8 +1884,8 @@ void main() {
     });
 
     testWidgets(
-        'variant + selling unit → unit, price, base unit, base price visible '
-        '(base = variant price)',
+        'variant + selling units → variant-only direct add (no unit picker, '
+        'no qty dialog; sale payload carries variant_id only)',
         (tester) async {
       final varDio = MockDio();
       _mockDio(
@@ -1829,37 +1897,36 @@ void main() {
         sellingUnits: [boxUnit(availableBase: '10', availableSelling: '1')],
       );
       await _pumpApp(tester, dio: varDio);
-      // Single variant auto-selects → picker opens directly.
-      await pickSellingUnit(tester);
+      await tester.pump(const Duration(milliseconds: 500));
+      // Single variant auto-selects; the selling-unit picker is skipped for
+      // variant lines, so the add completes immediately (qty 1, variant
+      // price — the Box unit's 550 never enters the line).
+      await tester.tap(find.byKey(Key('pos-product-$_productId')));
+      await tester.pumpAndSettle();
 
+      expect(find.byKey(const Key('selling-unit-picker')), findsNothing);
+      expect(find.byKey(const Key('quantity-dialog')), findsNothing);
       final cart = containerOf(tester).read(posCartProvider);
       expect(cart.lines, hasLength(1));
       final line = cart.lines.first;
       expect(line.variantId, 'var-only');
-      expect(line.sellingUnitId, boxUnitId);
-      expect(line.unitName, 'Box');
-      expect(line.unitPrice, '550');
-      expect(line.baseUnitPrice, '12'); // variant price, not product price
-      expect(line.unitMultiplier, '10');
-
+      expect(line.variantName, 'Large');
+      expect(line.sellingUnitId, isNull);
+      expect(line.unitName, 'piece');
+      expect(line.quantity, '1');
+      expect(line.unitPrice, '12'); // variant price, not product/unit price
+      expect(line.baseUnitPrice, '12');
+      expect(line.unitMultiplier, isNull);
+      final saleJson = line.toSaleJson();
+      expect(saleJson['variant_id'], 'var-only');
+      expect(
+        saleJson.containsKey('selling_unit_id'),
+        isFalse,
+        reason: 'sale payload must never carry selling_unit_id with a '
+            'variant_id (backend 422 contract)',
+      );
       expect(find.textContaining('Large'), findsWidgets);
-      expect(find.text('1 Box × 550'), findsOneWidget);
-      expect(find.text('10 Piece'), findsOneWidget);
-      expect(
-        find.text('${AppStrings.t('base_price', 'en')}: ${_m('12')} / Piece'),
-        findsOneWidget,
-      );
-      final varLineKey = '$_productId|var-only|$boxUnitId';
-      expect(
-        find.byKey(Key('cart-line-total-$varLineKey')),
-        findsOneWidget,
-      );
-      expect(
-        tester
-            .widget<Text>(find.byKey(Key('cart-line-total-$varLineKey')))
-            .data,
-        '550.00',
-      );
+      expect(tester.takeException(), isNull);
     });
 
     testWidgets('Arabic RTL → localized base price label + base unit',
@@ -2049,8 +2116,9 @@ void main() {
       expect(line.unitName, 'Box');
     });
 
-    testWidgets('variant auto-select → base option price uses variant price',
-        (tester) async {
+    testWidgets(
+        'variant auto-select → no selling-unit picker; direct add prices '
+        'the line at the variant price', (tester) async {
       final mock = MockDio();
       _mockDio(
         mock,
@@ -2060,14 +2128,21 @@ void main() {
         ],
         sellingUnits: [boxOnly()],
       );
-      await openPicker(tester, mock);
+      await _pumpApp(tester, dio: mock);
+      await tester.pump(const Duration(milliseconds: 500));
+      await tester.tap(find.byKey(Key('pos-product-$_productId')));
+      await tester.pumpAndSettle();
 
-      final base = find.byKey(const Key('selling-unit-base'));
-      expect(base, findsOneWidget);
-      expect(
-        find.descendant(of: base, matching: find.textContaining('12')),
-        findsWidgets,
-      );
+      // The selling-unit picker belongs to base-product lines only; a
+      // variant line is added directly at its own price.
+      expect(find.byKey(const Key('selling-unit-picker')), findsNothing);
+      final cart = containerOf(tester).read(posCartProvider);
+      expect(cart.lines, hasLength(1));
+      final line = cart.lines.first;
+      expect(line.variantId, 'var-1');
+      expect(line.sellingUnitId, isNull);
+      expect(line.unitPrice, '12');
+      expect(line.baseUnitPrice, '12'); // variant price, not product 60
     });
 
     testWidgets('Arabic RTL → localized base unit label on base option',
@@ -4776,6 +4851,140 @@ void main() {
       );
       expect(badge, findsOneWidget);
       expect((tester.widget<Badge>(badge).label as Text?)?.data, '1');
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'F9 hold save posts the variant-only line (variant_id set, '
+        'selling_unit_id null)', (tester) async {
+      final holdsDio = MockDio();
+      Map<String, dynamic>? savedItem;
+      _mockDio(
+        holdsDio,
+        variants: [
+          _variantJson(id: 'var-hold', name: 'Solo', price: '15'),
+        ],
+        sellingUnits: [_sellingUnitJson(id: 'su-piece', name: 'Piece')],
+      );
+      when(() => holdsDio.post('/api/v1/pos/holds', data: any(named: 'data')))
+          .thenAnswer((invocation) async {
+        final data = invocation.namedArguments[#data] as Map<String, dynamic>;
+        savedItem = (data['items'] as List).first as Map<String, dynamic>;
+        return _ok('/api/v1/pos/holds', {'id': 'hold-v'});
+      });
+      when(() => holdsDio.post('/api/v1/pos/holds')).thenAnswer(
+        (_) async => _ok('/api/v1/pos/holds', {'id': 'hold-v'}),
+      );
+
+      await _pumpApp(tester, dio: holdsDio);
+      await tester.pump(const Duration(milliseconds: 500));
+
+      // Single auto-selected variant + selling units configured → direct
+      // variant-only add (the selling-unit picker never opens).
+      await tester.tap(find.byKey(Key('pos-product-$_productId')));
+      await tester.pumpAndSettle();
+      final cart = containerOf(tester).read(posCartProvider);
+      expect(cart.lines, hasLength(1));
+      expect(cart.lines.single.variantId, 'var-hold');
+      expect(cart.lines.single.sellingUnitId, isNull);
+
+      await tester.tap(find.byKey(const Key('pos-hold-button')));
+      await tester.pumpAndSettle(const Duration(milliseconds: 500));
+
+      expect(savedItem, isNotNull);
+      expect(savedItem!['variant_id'], 'var-hold');
+      expect(savedItem!['selling_unit_id'], isNull);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'restore a variant-only hold snapshot → cart line keeps variantId '
+        'and no sellingUnitId', (tester) async {
+      final holdsDio = MockDio();
+      final hold = <String, dynamic>{
+        'id': 'hold-vr',
+        'device_id': 'pos-test',
+        'customer_id': null,
+        'note': null,
+        'invoice_discount': '0',
+        'created_at': '2026-01-01T10:00:00',
+        'items': [
+          {
+            'product_id': _productId,
+            'variant_id': 'var-hold',
+            'selling_unit_id': null,
+            'product_name': 'Bread',
+            'variant_name': 'Solo',
+            'quantity': '3',
+            'unit_price': '15',
+            'line_discount': '0',
+            'product_unit': 'piece',
+          },
+        ],
+      };
+      _mockDio(
+        holdsDio,
+        variants: [
+          _variantJson(id: 'var-hold', name: 'Solo', price: '15'),
+        ],
+        sellingUnits: [_sellingUnitJson(id: 'su-piece', name: 'Piece')],
+        holdsBody: {
+          'items': [hold],
+          'total': 1,
+        },
+        restoreBody: {
+          'ok': true,
+          'errors': <dynamic>[],
+          'hold': hold,
+          'lines': [
+            {
+              'line_index': 0,
+              'product_id': _productId,
+              'variant_id': 'var-hold',
+              'ok': true,
+            },
+          ],
+        },
+      );
+      when(() => holdsDio.get(
+            '/api/v1/pos/holds',
+            queryParameters: any(named: 'queryParameters'),
+          )).thenAnswer((_) async => _ok('/api/v1/pos/holds', {
+                'items': [hold],
+                'total': 1,
+              }));
+      when(() => holdsDio.get('/api/v1/pos/holds')).thenAnswer(
+        (_) async => _ok('/api/v1/pos/holds', {
+          'items': <dynamic>[],
+          'total': 0,
+        }),
+      );
+
+      await _pumpApp(tester, dio: holdsDio);
+      await tester.pump(const Duration(milliseconds: 500));
+
+      await tester.tap(find.byKey(const Key('pos-holds-button')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('hold-row-hold-vr')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('hold-restore-hold-vr')));
+      await tester.pumpAndSettle(const Duration(milliseconds: 500));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      final cart = containerOf(tester).read(posCartProvider);
+      expect(cart.lines, hasLength(1));
+      final line = cart.lines.first;
+      expect(line.variantId, 'var-hold');
+      expect(line.variantName, 'Solo');
+      expect(line.sellingUnitId, isNull);
+      expect(line.quantity, '3');
+      expect(line.unitPrice, '15');
+      expect(
+        line.toSaleJson().containsKey('selling_unit_id'),
+        isFalse,
+        reason: 'a restored variant-only line must serialize the same way '
+            'the add flow does',
+      );
       expect(tester.takeException(), isNull);
     });
 
@@ -13907,6 +14116,45 @@ void main() {
           queryParameters: {'barcode': '8718114202402'},
         ),
       ).called(1);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'scanning a variant product with selling units configured adds a '
+        'variant-only line (no selling-unit picker)', (tester) async {
+      final scanDio = MockDio();
+      _mockDio(
+        scanDio,
+        barcodeLookups: {'6134881000614': _lookupHit()},
+        variants: [
+          _variantJson(id: 'var-scan', name: 'ScanVar', price: '14'),
+        ],
+        sellingUnits: [_sellingUnitJson(id: 'su-piece', name: 'Piece')],
+      );
+      await _pumpApp(tester, dio: scanDio);
+      await tester.pump(const Duration(milliseconds: 500));
+      await focusWorkspace(tester);
+
+      await sendWedgeScan(tester, '6134881000614');
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('selling-unit-picker')), findsNothing);
+      final cart = containerOf(tester).read(posCartProvider);
+      expect(cart.lines, hasLength(1));
+      final line = cart.lines.single;
+      expect(line.variantId, 'var-scan');
+      expect(line.variantName, 'ScanVar');
+      expect(line.sellingUnitId, isNull);
+      expect(line.quantity, '1');
+      expect(line.unitPrice, '14'); // variant price, never the unit's
+      final saleJson = line.toSaleJson();
+      expect(saleJson['variant_id'], 'var-scan');
+      expect(
+        saleJson.containsKey('selling_unit_id'),
+        isFalse,
+        reason: 'scan-added variant lines must satisfy the backend 422 '
+            'contract (selling_unit_id cannot be combined with variant_id)',
+      );
       expect(tester.takeException(), isNull);
     });
 

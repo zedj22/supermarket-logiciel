@@ -105,6 +105,60 @@ def _reference_count(db: Session, model: Any, column: Any, entity_id: uuid.UUID)
     )
 
 
+# ---------------------------------------------------------------------------
+# TASK 5 — Variants XOR selling units (approved business rule)
+#
+# A product is EITHER a variant product (S/M/L, 500g/1kg, …) OR a
+# selling-unit product (Piece/Box/Carton) — never both. Archived rows
+# (archived_at IS NOT NULL) are historical records the data model
+# explicitly distinguishes, so they never block the other category.
+# ---------------------------------------------------------------------------
+
+VARIANTS_EXCLUSIVE_CODE = "PRODUCT_VARIANTS_EXCLUSIVE"
+VARIANTS_EXCLUSIVE_MESSAGE_KEY = "errors.productVariantsExclusive"
+
+
+def _lock_product_row(db: Session, product_id: uuid.UUID) -> None:
+    """Take the product row lock (SELECT … FOR UPDATE).
+
+    Serializes concurrent child creation for ONE product: a variant
+    create and a selling-unit create racing on the same product both
+    lock this row, so the second request validates against the first
+    one's committed state and is rejected. No global locks.
+    """
+    db.execute(
+        select(Product.id).where(Product.id == product_id).with_for_update()
+    )
+
+
+def _active_variant_count(db: Session, product_id: uuid.UUID) -> int:
+    return int(
+        db.scalar(
+            select(func.count())
+            .select_from(ProductVariant)
+            .where(
+                ProductVariant.product_id == product_id,
+                ProductVariant.archived_at.is_(None),
+            )
+        )
+        or 0
+    )
+
+
+def _active_selling_unit_count(db: Session, product_id: uuid.UUID) -> int:
+    return int(
+        db.scalar(
+            select(func.count())
+            .select_from(ProductSellingUnit)
+            .where(
+                ProductSellingUnit.product_id == product_id,
+                ProductSellingUnit.archived_at.is_(None),
+            )
+        )
+        or 0
+    )
+
+
 class CategoryService(BaseService):
     """Application service for category master data."""
 
@@ -409,6 +463,22 @@ class ProductService(BaseService):
         purchase_units: list[Any],
     ) -> None:
         """Raise 4xx for duplicate names/barcodes among staged children."""
+        # TASK 5 XOR: a product is EITHER variant-based OR selling-unit
+        # based — staging both kinds in one create would build a product
+        # that violates the rule, so it is rejected before any DB write.
+        if variants and selling_units:
+            raise BusinessRuleError(
+                message=(
+                    "A product cannot have both variants and selling units. "
+                    "Create the product with children of only one kind."
+                ),
+                details={
+                    "variants": len(variants),
+                    "selling_units": len(selling_units),
+                },
+                code=VARIANTS_EXCLUSIVE_CODE,
+                message_key=VARIANTS_EXCLUSIVE_MESSAGE_KEY,
+            )
         v_names = [v.name for v in variants]
         if len(v_names) != len(set(v_names)):
             raise ConflictError(
@@ -555,6 +625,25 @@ class ProductVariantService(BaseService):
         self._ensure_barcode_available(request.barcode)
 
         with self.transaction():
+            # TASK 5 XOR — lock the product row so a concurrent selling-
+            # unit create cannot slip past this validation, then reject
+            # when the product already has active selling units.
+            _lock_product_row(self.db, product_id)
+            active_units = _active_selling_unit_count(self.db, product_id)
+            if active_units > 0:
+                raise BusinessRuleError(
+                    message=(
+                        "A product cannot have both variants and selling "
+                        "units. Archive the product's active selling units "
+                        "before adding a variant."
+                    ),
+                    details={
+                        "product_id": str(product_id),
+                        "active_selling_units": active_units,
+                    },
+                    code=VARIANTS_EXCLUSIVE_CODE,
+                    message_key=VARIANTS_EXCLUSIVE_MESSAGE_KEY,
+                )
             variant = ProductVariant(
                 product_id=product_id,
                 name=request.name,
@@ -787,6 +876,25 @@ class SellingUnitService(BaseService):
             request = request.model_copy(update={"is_base_unit": True})
 
         with self.transaction():
+            # TASK 5 XOR — lock the product row so a concurrent variant
+            # create cannot slip past this validation, then reject when
+            # the product already has active variants.
+            _lock_product_row(self.db, product_id)
+            active_variants = _active_variant_count(self.db, product_id)
+            if active_variants > 0:
+                raise BusinessRuleError(
+                    message=(
+                        "A product cannot have both variants and selling "
+                        "units. Archive the product's active variants "
+                        "before adding a selling unit."
+                    ),
+                    details={
+                        "product_id": str(product_id),
+                        "active_variants": active_variants,
+                    },
+                    code=VARIANTS_EXCLUSIVE_CODE,
+                    message_key=VARIANTS_EXCLUSIVE_MESSAGE_KEY,
+                )
             unit = ProductSellingUnit(
                 product_id=product_id,
                 name=request.name,

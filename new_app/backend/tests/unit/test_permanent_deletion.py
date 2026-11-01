@@ -902,9 +902,9 @@ class TestRegression:
                 "barcode": "STAGED1",
                 "price": "5.000",
                 "variants": [{"name": "Red"}],
-                "selling_units": [
-                    {"name": "Piece", "multiplier": "1", "is_base_unit": True}
-                ],
+                # TASK 5 XOR: variants + selling_units together are rejected
+                # (PRODUCT_VARIANTS_EXCLUSIVE); purchase_units are a
+                # different table and stay stageable alongside variants.
                 "purchase_units": [{"name": "Box", "multiplier": "12"}],
             },
             headers=admin_headers,

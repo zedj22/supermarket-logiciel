@@ -1061,4 +1061,291 @@ void main() {
       expect(u.effectivePrice, '10');
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // TASK 5 XOR — a product may have variants OR selling units, never both.
+  // The add button of the other kind is disabled while the first kind has
+  // any ACTIVE row (archived rows are history and never block).
+  // ---------------------------------------------------------------------------
+
+  group('TASK 5 XOR: add buttons disabled across kinds', () {
+    Map<String, dynamic> archivedVariantJson() => {
+          ..._variantJson(id: 'var-arch'),
+          'is_archived': true,
+          'archived_at': '2026-09-20T00:00:00Z',
+        };
+
+    Map<String, dynamic> archivedUnitJson() => {
+          ..._sellingUnitJson(id: 'su-arch'),
+          'is_archived': true,
+          'archived_at': '2026-09-20T00:00:00Z',
+        };
+
+    Future<void> openEdit(
+      WidgetTester tester,
+      MockDio dio, {
+      required List<Map<String, dynamic>> variants,
+      required List<Map<String, dynamic>> units,
+    }) async {
+      stubRequests(
+        dio,
+        getBodies: {
+          '/api/v1/products/prod-1/variants': {
+            'items': variants,
+            'total': variants.length,
+          },
+          '/api/v1/products/prod-1/selling-units': {
+            'items': units,
+            'total': units.length,
+          },
+          '/api/v1/categories': {
+            'items': <dynamic>[],
+            'total': 0,
+            'page': 1,
+            'page_size': 100,
+            'pages': 1,
+          },
+        },
+      );
+      await pumpApp(
+        tester,
+        MaterialApp(
+          home: Scaffold(
+            body:
+                ProductFormDialog(product: ProductModel.fromJson(_productJson())),
+          ),
+        ),
+        dio: dio,
+      );
+      await tester.pumpAndSettle();
+    }
+
+    Future<void> openCreate(WidgetTester tester, MockDio dio) async {
+      stubRequests(
+        dio,
+        getBodies: {
+          '/api/v1/categories': {
+            'items': <dynamic>[],
+            'total': 0,
+            'page': 1,
+            'page_size': 100,
+            'pages': 1,
+          },
+        },
+      );
+      await pumpApp(
+        tester,
+        const MaterialApp(home: Scaffold(body: ProductFormDialog())),
+        dio: dio,
+      );
+      await tester.pumpAndSettle();
+    }
+
+    bool buttonEnabled(WidgetTester tester, Key key) {
+      final button = tester.widget<TextButton>(find.byKey(key));
+      return button.onPressed != null;
+    }
+
+    testWidgets(
+        'active units disable add-variant with localized hint (edit mode)',
+        (tester) async {
+      final dio = MockDio();
+      await openEdit(
+        tester,
+        dio,
+        variants: [],
+        units: [
+          _sellingUnitJson(
+            id: 'su-base',
+            name: 'Piece',
+            multiplier: '1',
+            isBaseUnit: true,
+            sellingPrice: '10',
+          ),
+        ],
+      );
+
+      expect(buttonEnabled(tester, const Key('add-variant-button')), isFalse);
+      expect(
+        find.byKey(const Key('variants-locked-hint')),
+        findsOneWidget,
+      );
+      expect(
+        find.text(AppStrings.t('variants_locked_by_units', 'en')),
+        findsOneWidget,
+      );
+      // The units side is unaffected.
+      expect(
+        buttonEnabled(tester, const Key('add-selling-unit-button')),
+        isTrue,
+      );
+      expect(find.byKey(const Key('selling-units-locked-hint')), findsNothing);
+    });
+
+    testWidgets(
+        'active variants disable add-selling-unit with localized hint '
+        '(edit mode)', (tester) async {
+      final dio = MockDio();
+      await openEdit(
+        tester,
+        dio,
+        variants: [_variantJson()],
+        units: [],
+      );
+
+      expect(
+        buttonEnabled(tester, const Key('add-selling-unit-button')),
+        isFalse,
+      );
+      expect(
+        find.byKey(const Key('selling-units-locked-hint')),
+        findsOneWidget,
+      );
+      expect(
+        find.text(AppStrings.t('units_locked_by_variants', 'en')),
+        findsOneWidget,
+      );
+      expect(buttonEnabled(tester, const Key('add-variant-button')), isTrue);
+      expect(find.byKey(const Key('variants-locked-hint')), findsNothing);
+    });
+
+    testWidgets(
+        'archived-only rows never block the other kind (edit mode)',
+        (tester) async {
+      final dio = MockDio();
+      await openEdit(
+        tester,
+        dio,
+        variants: [archivedVariantJson()],
+        units: [archivedUnitJson()],
+      );
+
+      // Archived units → variants add enabled.
+      expect(buttonEnabled(tester, const Key('add-variant-button')), isTrue);
+      // Archived variants → units add enabled.
+      expect(
+        buttonEnabled(tester, const Key('add-selling-unit-button')),
+        isTrue,
+      );
+      expect(find.byKey(const Key('variants-locked-hint')), findsNothing);
+      expect(find.byKey(const Key('selling-units-locked-hint')), findsNothing);
+    });
+
+    testWidgets('plain product keeps both add buttons enabled (edit mode)',
+        (tester) async {
+      final dio = MockDio();
+      await openEdit(tester, dio, variants: [], units: []);
+
+      expect(buttonEnabled(tester, const Key('add-variant-button')), isTrue);
+      expect(
+        buttonEnabled(tester, const Key('add-selling-unit-button')),
+        isTrue,
+      );
+    });
+
+    testWidgets(
+        'CREATE mode: staged variant disables add-selling-unit, '
+        'remove re-enables', (tester) async {
+      final dio = MockDio();
+      await openCreate(tester, dio);
+
+      // Stage one variant.
+      final addVariant = find.byKey(const Key('add-variant-button'));
+      await tester.ensureVisible(addVariant);
+      await tester.pumpAndSettle();
+      await tester.tap(addVariant);
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const Key('variant-name-field')),
+        'Staged L',
+      );
+      await tester.tap(find.byKey(const Key('variant-form-submit')));
+      await tester.pumpAndSettle();
+
+      expect(
+        buttonEnabled(tester, const Key('add-selling-unit-button')),
+        isFalse,
+      );
+      expect(
+        find.byKey(const Key('selling-units-locked-hint')),
+        findsOneWidget,
+      );
+      expect(buttonEnabled(tester, const Key('add-variant-button')), isTrue);
+
+      // Remove the staged variant → both enabled again.
+      final removeVariant = find.byKey(
+        const Key('remove-staged-variant-staged-var-1'),
+      );
+      await tester.ensureVisible(removeVariant);
+      await tester.pumpAndSettle();
+      await tester.tap(removeVariant);
+      await tester.pumpAndSettle();
+      expect(
+        buttonEnabled(tester, const Key('add-selling-unit-button')),
+        isTrue,
+      );
+      expect(find.byKey(const Key('selling-units-locked-hint')), findsNothing);
+    });
+
+    testWidgets(
+        'CREATE mode: staged selling unit disables add-variant, '
+        'remove re-enables', (tester) async {
+      final dio = MockDio();
+      await openCreate(tester, dio);
+
+      // Stage one selling unit.
+      final addUnit = find.byKey(const Key('add-selling-unit-button'));
+      await tester.ensureVisible(addUnit);
+      await tester.pumpAndSettle();
+      await tester.tap(addUnit);
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const Key('selling-unit-name-field')),
+        'Staged Box',
+      );
+      await tester.enterText(
+        find.byKey(const Key('selling-unit-multiplier-field')),
+        '24',
+      );
+      await tester.tap(find.byKey(const Key('selling-unit-form-submit')));
+      await tester.pumpAndSettle();
+
+      expect(buttonEnabled(tester, const Key('add-variant-button')), isFalse);
+      expect(find.byKey(const Key('variants-locked-hint')), findsOneWidget);
+      expect(
+        buttonEnabled(tester, const Key('add-selling-unit-button')),
+        isTrue,
+      );
+
+      // Remove the staged unit → both enabled again.
+      final removeUnit = find.byKey(
+        const Key('remove-staged-selling-unit-staged-su-1'),
+      );
+      await tester.ensureVisible(removeUnit);
+      await tester.pumpAndSettle();
+      await tester.tap(removeUnit);
+      await tester.pumpAndSettle();
+      expect(buttonEnabled(tester, const Key('add-variant-button')), isTrue);
+      expect(find.byKey(const Key('variants-locked-hint')), findsNothing);
+    });
+
+    test('XOR lock strings exist in ar/fr/en', () {
+      for (final loc in ['ar', 'fr', 'en']) {
+        for (final k in ['variants_locked_by_units', 'units_locked_by_variants']) {
+          final value = AppStrings.t(k, loc);
+          expect(value, isNotEmpty, reason: 'missing key $k in $loc');
+          expect(value, isNot(k), reason: 'key $k not translated in $loc');
+        }
+      }
+      // Arabic must differ from English (RTL translation present).
+      expect(
+        AppStrings.t('variants_locked_by_units', 'ar'),
+        isNot(AppStrings.t('variants_locked_by_units', 'en')),
+      );
+      expect(
+        AppStrings.t('units_locked_by_variants', 'ar'),
+        isNot(AppStrings.t('units_locked_by_variants', 'en')),
+      );
+    });
+  });
 }

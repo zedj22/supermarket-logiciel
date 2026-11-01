@@ -537,6 +537,14 @@ class _ProductFormDialogState extends ConsumerState<ProductFormDialog> {
     final variantsState = ref.watch(variantsProvider);
     final sellingUnitsState = ref.watch(sellingUnitsProvider);
     final purchaseUnitsState = ref.watch(purchaseUnitsProvider);
+    // TASK 5 XOR — a product may have variants OR selling units, never
+    // both (archived rows are history and never block the other kind).
+    final hasActiveVariants = _isEdit
+        ? variantsState.items.any((v) => !v.isArchived)
+        : _stagedVariants.isNotEmpty;
+    final hasActiveUnits = _isEdit
+        ? sellingUnitsState.items.any((u) => !u.isArchived)
+        : _stagedSellingUnits.isNotEmpty;
     final theme = Theme.of(context);
 
     return AlertDialog(
@@ -795,6 +803,7 @@ class _ProductFormDialogState extends ConsumerState<ProductFormDialog> {
                       canCreate: canCreate,
                       canUpdate: canUpdate,
                       canArchive: canArchive,
+                      lockedByUnits: hasActiveUnits,
                     ),
                     // Phase 6 — selling units
                     const SizedBox(height: 16),
@@ -809,6 +818,7 @@ class _ProductFormDialogState extends ConsumerState<ProductFormDialog> {
                       canCreate: canCreate,
                       canUpdate: canUpdate,
                       canArchive: canArchive,
+                      lockedByVariants: hasActiveVariants,
                     ),
                     // Phase 6 correction — purchase units
                     const SizedBox(height: 16),
@@ -952,12 +962,17 @@ class _ProductFormDialogState extends ConsumerState<ProductFormDialog> {
   /// Phase 6 — variants list with add/edit/archive.
   /// Create mode: staged local rows (submitted with the product).
   /// Edit mode: loaded via variantsProvider (includeArchived).
+  ///
+  /// TASK 5 XOR: a product may have variants OR selling units, never
+  /// both — the add button is disabled while any selling unit is
+  /// active (backend enforces the same rule on create).
   Widget _variantsSection(
     String loc, {
     required VariantsState state,
     required bool canCreate,
     required bool canUpdate,
     required bool canArchive,
+    bool lockedByUnits = false,
   }) {
     final theme = Theme.of(context);
     final items = _isEdit ? state.items : _stagedVariants;
@@ -969,39 +984,53 @@ class _ProductFormDialogState extends ConsumerState<ProductFormDialog> {
         if (canCreate)
           Align(
             alignment: AlignmentDirectional.centerStart,
-            child: TextButton.icon(
-              key: const Key('add-variant-button'),
-              onPressed: () async {
-                final result = await showVariantFormDialog(
-                  context,
-                  productId: pid,
-                  staged: !_isEdit,
-                );
-                if (result is Map<String, dynamic>) {
-                  if (!mounted) return;
-                  setState(() {
-                    _stagedVariants.add(
-                      VariantModel(
-                        id: _stagedId('var'),
-                        productId: '',
-                        name: '${result['name']}',
-                        barcode: result['barcode'] as String?,
-                        sku: result['sku'] as String?,
-                        price: result['price']?.toString(),
-                        cost: result['cost']?.toString(),
-                        quantity: '${result['quantity'] ?? '0'}',
-                      ),
-                    );
-                  });
-                } else if (result == true && pid != null) {
-                  ref.read(variantsProvider.notifier).load(
-                        pid,
-                        includeArchived: true,
-                      );
-                }
-              },
-              icon: const Icon(Icons.add, size: 18),
-              label: Text(AppStrings.t('add_variant', loc)),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextButton.icon(
+                  key: const Key('add-variant-button'),
+                  onPressed: lockedByUnits
+                      ? null
+                      : () async {
+                          final result = await showVariantFormDialog(
+                            context,
+                            productId: pid,
+                            staged: !_isEdit,
+                          );
+                          if (result is Map<String, dynamic>) {
+                            if (!mounted) return;
+                            setState(() {
+                              _stagedVariants.add(
+                                VariantModel(
+                                  id: _stagedId('var'),
+                                  productId: '',
+                                  name: '${result['name']}',
+                                  barcode: result['barcode'] as String?,
+                                  sku: result['sku'] as String?,
+                                  price: result['price']?.toString(),
+                                  cost: result['cost']?.toString(),
+                                  quantity: '${result['quantity'] ?? '0'}',
+                                ),
+                              );
+                            });
+                          } else if (result == true && pid != null) {
+                            ref.read(variantsProvider.notifier).load(
+                                  pid,
+                                  includeArchived: true,
+                                );
+                          }
+                        },
+                  icon: const Icon(Icons.add, size: 18),
+                  label: Text(AppStrings.t('add_variant', loc)),
+                ),
+                if (lockedByUnits)
+                  Text(
+                    AppStrings.t('variants_locked_by_units', loc),
+                    key: const Key('variants-locked-hint'),
+                    style: theme.textTheme.bodySmall,
+                  ),
+              ],
             ),
           ),
         if (_isEdit && state.loading)
@@ -1125,12 +1154,16 @@ class _ProductFormDialogState extends ConsumerState<ProductFormDialog> {
   }
 
   /// Phase 6 — selling units list with add/edit/archive.
+  ///
+  /// TASK 5 XOR: the add button is disabled while any variant is
+  /// active (backend enforces the same rule on create).
   Widget _sellingUnitsSection(
     String loc, {
     required SellingUnitsState state,
     required bool canCreate,
     required bool canUpdate,
     required bool canArchive,
+    bool lockedByVariants = false,
   }) {
     final theme = Theme.of(context);
     final items = _isEdit ? state.items : _stagedSellingUnits;
@@ -1143,40 +1176,56 @@ class _ProductFormDialogState extends ConsumerState<ProductFormDialog> {
         if (canCreate)
           Align(
             alignment: AlignmentDirectional.centerStart,
-            child: TextButton.icon(
-              key: const Key('add-selling-unit-button'),
-              onPressed: () async {
-                final result = await showSellingUnitFormDialog(
-                  context,
-                  productId: pid,
-                  canCreateBaseUnit: !hasBase,
-                  staged: !_isEdit,
-                );
-                if (result is Map<String, dynamic>) {
-                  if (!mounted) return;
-                  setState(() {
-                    _stagedSellingUnits.add(
-                      SellingUnitModel(
-                        id: _stagedId('su'),
-                        productId: '',
-                        name: '${result['name']}',
-                        unitType: '${result['unit_type'] ?? 'piece'}',
-                        multiplier: '${result['multiplier'] ?? '1'}',
-                        barcode: result['barcode'] as String?,
-                        sellingPrice: result['selling_price']?.toString(),
-                        isBaseUnit: result['is_base_unit'] as bool? ?? false,
-                      ),
-                    );
-                  });
-                } else if (result == true && pid != null) {
-                  ref.read(sellingUnitsProvider.notifier).load(
-                        pid,
-                        includeArchived: true,
-                      );
-                }
-              },
-              icon: const Icon(Icons.add, size: 18),
-              label: Text(AppStrings.t('add_selling_unit', loc)),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextButton.icon(
+                  key: const Key('add-selling-unit-button'),
+                  onPressed: lockedByVariants
+                      ? null
+                      : () async {
+                          final result = await showSellingUnitFormDialog(
+                            context,
+                            productId: pid,
+                            canCreateBaseUnit: !hasBase,
+                            staged: !_isEdit,
+                          );
+                          if (result is Map<String, dynamic>) {
+                            if (!mounted) return;
+                            setState(() {
+                              _stagedSellingUnits.add(
+                                SellingUnitModel(
+                                  id: _stagedId('su'),
+                                  productId: '',
+                                  name: '${result['name']}',
+                                  unitType: '${result['unit_type'] ?? 'piece'}',
+                                  multiplier: '${result['multiplier'] ?? '1'}',
+                                  barcode: result['barcode'] as String?,
+                                  sellingPrice:
+                                      result['selling_price']?.toString(),
+                                  isBaseUnit:
+                                      result['is_base_unit'] as bool? ?? false,
+                                ),
+                              );
+                            });
+                          } else if (result == true && pid != null) {
+                            ref.read(sellingUnitsProvider.notifier).load(
+                                  pid,
+                                  includeArchived: true,
+                                );
+                          }
+                        },
+                  icon: const Icon(Icons.add, size: 18),
+                  label: Text(AppStrings.t('add_selling_unit', loc)),
+                ),
+                if (lockedByVariants)
+                  Text(
+                    AppStrings.t('units_locked_by_variants', loc),
+                    key: const Key('selling-units-locked-hint'),
+                    style: theme.textTheme.bodySmall,
+                  ),
+              ],
             ),
           ),
         if (_isEdit && state.loading)

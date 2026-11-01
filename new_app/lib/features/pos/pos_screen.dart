@@ -1216,11 +1216,18 @@ class _PosScreenState extends ConsumerState<PosScreen> {
             _showQtyError(message, isStockError);
           };
 
-    if (units.isEmpty) {
-      // Weight/length base product with no configured selling units — the
-      // cashier must say HOW MUCH (kg/g/m or DA): show the entry dialog
-      // instead of silently adding qty 1 (non-weight units keep the direct
-      // add below; cancelling the dialog adds nothing).
+    // Selling units configure the BASE product only; a variant line must
+    // never carry a selling_unit_id — the backend rejects that combination
+    // (422 `selling_unit_id cannot be combined with variant_id`). Variants
+    // have their own price and stock pool, so skip the selling-unit picker
+    // whenever a variant was chosen and flow down the variant-only path
+    // (weighted variant → amount dialog with variant price/stock; anything
+    // else → direct add qty 1 with variant price/stock).
+    if (units.isEmpty || variant != null) {
+      // Weight/length product with no selling-unit choice — the cashier
+      // must say HOW MUCH (kg/g/m or DA): show the entry dialog instead of
+      // silently adding qty 1 (non-weight units keep the direct add below;
+      // cancelling the dialog adds nothing).
       if (isAmountEntryUnit(product.unit)) {
         if (!mounted) return;
         final qty = await showQuantityDialog(

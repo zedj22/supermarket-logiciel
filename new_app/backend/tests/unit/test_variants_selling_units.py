@@ -569,8 +569,12 @@ class TestBarcodeLookup:
 
 
 class TestCreateWithChildren:
-    def test_create_with_staged_children(self, client, admin_headers):
-        """POST /products with nested children → 201, children persisted."""
+    def test_create_with_staged_selling_units(self, client, admin_headers):
+        """POST /products with staged selling units → 201, children persisted.
+
+        TASK 5 XOR: a product is EITHER variant-based OR selling-unit
+        based — this test stages only selling units (+ purchase units).
+        """
         resp = client.post(
             "/api/v1/products",
             json={
@@ -580,9 +584,6 @@ class TestCreateWithChildren:
                 "cost": "10.000",
                 "quantity": "0",
                 "unit": "piece",
-                "variants": [
-                    {"name": "L", "barcode": "STAGED01-L", "price": "18.000"},
-                ],
                 "selling_units": [
                     {
                         "name": "Piece",
@@ -608,8 +609,7 @@ class TestCreateWithChildren:
         variants = client.get(
             f"/api/v1/products/{pid}/variants", headers=admin_headers
         ).json()
-        assert variants["total"] == 1
-        assert variants["items"][0]["name"] == "L"
+        assert variants["total"] == 0
 
         sus = client.get(
             f"/api/v1/products/{pid}/selling-units", headers=admin_headers
@@ -627,6 +627,34 @@ class TestCreateWithChildren:
         ).json()
         assert pus["total"] == 1
         assert pus["items"][0]["is_default"] is True
+
+    def test_create_with_staged_variants(self, client, admin_headers):
+        """Staged variants only → 201 (TASK 5 XOR — no units staged)."""
+        resp = client.post(
+            "/api/v1/products",
+            json={
+                "name": "Staged Variant Product",
+                "barcode": "STAGED02",
+                "price": "15.000",
+                "variants": [
+                    {"name": "L", "barcode": "STAGED02-L", "price": "18.000"},
+                    {"name": "M", "price": "14.000"},
+                ],
+            },
+            headers=admin_headers,
+        )
+        assert resp.status_code == 201, resp.text
+        pid = resp.json()["id"]
+
+        variants = client.get(
+            f"/api/v1/products/{pid}/variants", headers=admin_headers
+        ).json()
+        assert variants["total"] == 2
+
+        sus = client.get(
+            f"/api/v1/products/{pid}/selling-units", headers=admin_headers
+        ).json()
+        assert sus["total"] == 0
 
     def test_create_rolls_back_on_child_validation_failure(
         self, client, admin_headers, db
