@@ -1323,3 +1323,123 @@ class TestHistoryAndPermissions:
     def test_authentication_is_required(self, client):
         resp = client.post("/api/v1/returns", json={})
         assert resp.status_code == 401
+
+
+# ── Method 2 (automatic sell-unit) money lifecycle ────────────────────────
+
+
+class TestAutomaticBundlePricing:
+    """The POS Method 2 payload priced 5 units at 500 with a 100 discount.
+
+    The cart, the persisted sale, the invoice and a return must all carry the
+    same 2 400 for that line: the discount is a stored line discount, never a
+    display-only adjustment.
+    """
+
+    def _bundle_sale(self, client, admin_headers, *, quantity="5.000"):
+        p = _create_product(
+            client, admin_headers, price="500.000", quantity="20.000"
+        )
+        payload = _sale_payload(
+            [
+                {
+                    "product_id": p["id"],
+                    "quantity": quantity,
+                    "unit_price": "500.000",
+                    # floor(5/4)=1 bundle → 5×500 − 1900 = 100 saved.
+                    "line_discount": "100.000",
+                }
+            ],
+            paid="2400.000",
+        )
+        resp = _post_sale(client, admin_headers, payload)
+        assert resp.status_code == 201, resp.text
+        return p, resp.json()
+
+    def test_sale_persists_the_cart_amount(self, client, admin_headers):
+        p, sale = self._bundle_sale(client, admin_headers)
+
+        assert Decimal(sale["subtotal"]) == Decimal("2500.000")
+        assert Decimal(sale["discount"]) == Decimal("0.000")
+        assert Decimal(sale["total"]) == Decimal("2400.000")
+
+        line = _product_line(sale)
+        assert Decimal(line["quantity"]) == Decimal("5.000")
+        assert Decimal(line["unit_price"]) == Decimal("500.000")
+        assert Decimal(line["line_discount"]) == Decimal("100.000")
+        assert Decimal(line["line_total"]) == Decimal("2400.000")
+        # Stock is decremented by the BASE quantity (no selling-unit link).
+        assert _stock(client, admin_headers, p["id"]) == Decimal("15.000")
+
+    def test_full_return_refunds_the_paid_amount(self, client, admin_headers):
+        p, sale = self._bundle_sale(client, admin_headers)
+        line = _product_line(sale)
+
+        resp = _post_return(
+            client,
+            admin_headers,
+            _return_payload(
+                [{"sale_line_id": line["id"], "quantity": "5.000"}],
+                sale_id=sale["id"],
+            ),
+        )
+        assert resp.status_code == 201, resp.text
+        body = resp.json()["return"]
+        # A linked return is valued from the CHARGED line (2 400), never from
+        # the undiscounted gross — the bundle saving is not refunded back to
+        # the shop.
+        assert Decimal(body["subtotal"]) == Decimal("2400.000")
+        assert Decimal(body["total"]) == Decimal("2400.000")
+        assert _stock(client, admin_headers, p["id"]) == Decimal("20.000")
+
+    def test_partial_returns_conserve_the_discount(self, client, admin_headers):
+        _p, sale = self._bundle_sale(client, admin_headers)
+        line = _product_line(sale)
+
+        first = _post_return(
+            client,
+            admin_headers,
+            _return_payload(
+                [{"sale_line_id": line["id"], "quantity": "2.000"}],
+                sale_id=sale["id"],
+            ),
+        )
+        assert first.status_code == 201, first.text
+        # 2/5 of 2 400 = 960 (the bundle rate is shared pro rata).
+        assert Decimal(first.json()["return"]["total"]) == Decimal("960.000")
+
+        second = _post_return(
+            client,
+            admin_headers,
+            _return_payload(
+                [{"sale_line_id": line["id"], "quantity": "3.000"}],
+                sale_id=sale["id"],
+            ),
+        )
+        assert second.status_code == 201, second.text
+        assert Decimal(second.json()["return"]["total"]) == Decimal("1440.000")
+
+        assert Decimal(first.json()["return"]["total"]) + Decimal(
+            second.json()["return"]["total"]
+        ) == Decimal(sale["total"])
+
+    def test_discount_above_the_line_gross_is_rejected(
+        self, client, admin_headers
+    ):
+        p = _create_product(
+            client, admin_headers, price="500.000", quantity="20.000"
+        )
+        payload = _sale_payload(
+            [
+                {
+                    "product_id": p["id"],
+                    "quantity": "5.000",
+                    "unit_price": "500.000",
+                    "line_discount": "2600.000",  # gross is 2 500
+                }
+            ]
+        )
+        resp = _post_sale(client, admin_headers, payload)
+        assert resp.status_code in (400, 422), resp.text
+        # Nothing was persisted and no stock moved.
+        assert _stock(client, admin_headers, p["id"]) == Decimal("20.000")

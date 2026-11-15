@@ -700,6 +700,120 @@ void main() {
     final toggle = find.byKey(const Key('settings-quick-sale-with-space'));
 
     testWidgets(
+        'sell unit pricing mode: Manual is the default, the choice renders '
+        'localized and persists to SharedPreferences', (tester) async {
+      SharedPreferences.setMockInitialValues(<String, Object>{});
+      final prefs = await SharedPreferences.getInstance();
+      final container = await pumpPosActions(
+        tester,
+        prefs: prefs,
+        user: _userWith(const ['pos_sale']),
+      );
+
+      expect(
+        find.byKey(const Key('settings-sell-unit-pricing-mode')),
+        findsOneWidget,
+      );
+      expect(
+        find.text(AppStrings.t('settings_sell_unit_pricing_mode', 'en')),
+        findsOneWidget,
+      );
+      expect(
+        find.text(AppStrings.t('sell_unit_pricing_manual', 'en')),
+        findsOneWidget,
+      );
+      expect(
+        find.text(AppStrings.t('sell_unit_pricing_automatic', 'en')),
+        findsOneWidget,
+      );
+      // Default preserves the existing manual picker behaviour.
+      expect(
+        container.read(posSettingsProvider).sellUnitPricingMode,
+        SellUnitPricingMode.manual,
+      );
+      expect(
+        prefs.getString(PosSettingsNotifier.sellUnitPricingModeKey),
+        isNull,
+        reason: 'nothing is written until the administrator chooses',
+      );
+
+      final automatic = find.byKey(
+        const Key('settings-sell-unit-pricing-automatic'),
+      );
+      await tester.ensureVisible(automatic);
+      await tester.pumpAndSettle();
+      await tester.tap(automatic);
+      await tester.pumpAndSettle();
+      expect(
+        container.read(posSettingsProvider).sellUnitPricingMode,
+        SellUnitPricingMode.automatic,
+      );
+      expect(
+        prefs.getString(PosSettingsNotifier.sellUnitPricingModeKey),
+        'automatic',
+      );
+
+      final manual = find.byKey(
+        const Key('settings-sell-unit-pricing-manual'),
+      );
+      await tester.ensureVisible(manual);
+      await tester.pumpAndSettle();
+      await tester.tap(manual);
+      await tester.pumpAndSettle();
+      expect(
+        prefs.getString(PosSettingsNotifier.sellUnitPricingModeKey),
+        'manual',
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('sell unit pricing mode: a stored automatic mode is restored',
+        (tester) async {
+      SharedPreferences.setMockInitialValues(<String, Object>{
+        PosSettingsNotifier.sellUnitPricingModeKey: 'automatic',
+      });
+      final prefs = await SharedPreferences.getInstance();
+      final container = await pumpPosActions(
+        tester,
+        prefs: prefs,
+        user: _userWith(const ['pos_sale']),
+      );
+
+      expect(
+        container.read(posSettingsProvider).sellUnitPricingMode,
+        SellUnitPricingMode.automatic,
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('sell unit pricing mode: Arabic labels render RTL',
+        (tester) async {
+      SharedPreferences.setMockInitialValues(<String, Object>{});
+      final prefs = await SharedPreferences.getInstance();
+      await pumpPosActions(
+        tester,
+        locale: AppLocale.ar,
+        prefs: prefs,
+        user: _userWith(const ['pos_sale']),
+      );
+
+      expect(
+        find.text(AppStrings.t('settings_sell_unit_pricing_mode', 'ar')),
+        findsOneWidget,
+      );
+      expect(
+        find.text(AppStrings.t('sell_unit_pricing_automatic', 'ar')),
+        findsOneWidget,
+      );
+      expect(
+        find.text(AppStrings.t('sell_unit_pricing_automatic_desc', 'ar')),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+
+    testWidgets(
         'renders the quick-sale toggle localized and OFF by default for '
         'a plain cashier (never permission-gated)', (tester) async {
       await pumpPosActions(

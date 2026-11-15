@@ -4,6 +4,7 @@
 // models only hold display state and the request payload shape.
 import '../../core/number_format.dart';
 import '../../core/quantity_expression.dart';
+import '../../core/sell_unit_pricing.dart';
 import '../../core/strings.dart';
 
 /// Payment methods accepted by POST /api/v1/sales.
@@ -78,6 +79,19 @@ class CartLine {
   final String? wholesaleMinQty;
   final String? promotionPrice;
 
+  /// Method 2 — automatic sell-unit pricing.
+  ///
+  /// Both set means this line prices itself as
+  /// `floor(q/qty)·bundlePrice + (q mod qty)·unitPrice`, expressed as the
+  /// line's discount (see core/sell_unit_pricing.dart). [unitPrice] stays
+  /// the REGULAR unit price, the quantity stays in BASE units and
+  /// [unitMultiplier] stays null — so stock math, VAT and every existing
+  /// backend rule read exactly what they read before. A quantity change
+  /// re-derives the discount in [copyWith]; the bundle price is never
+  /// stacked with a manual discount or with wholesale/promotion pricing.
+  final String? autoBundleQuantity;
+  final String? autoBundlePrice;
+
   /// Line identity (const-cached at construction): the cart's O(n)
   /// `indexWhere` in `PosCartNotifier.addLine` reads it once per existing
   /// line, so rebuilding the 3-part string on every access made building a
@@ -106,6 +120,8 @@ class CartLine {
     this.wholesalePrice,
     this.wholesaleMinQty,
     this.promotionPrice,
+    this.autoBundleQuantity,
+    this.autoBundlePrice,
   }) : key = packId != null
             ? 'pack:$packId'
             : '${productId ?? ''}|${variantId ?? ''}|${sellingUnitId ?? ''}';
@@ -113,6 +129,22 @@ class CartLine {
   /// Pack lines never share a key with product lines (Phase 10): a pack
   /// and its component product stay two independent cart lines.
   bool get isPack => packId != null;
+
+  /// True while this line is priced by the automatic sell-unit mode. The
+  /// line keeps ONE identity (product/variant/unit key): a scan that finds
+  /// it already in the cart increments it and re-derives the bundle
+  /// discount, never adds a second line.
+  bool get autoPriced => autoBundleQuantity != null && autoBundlePrice != null;
+
+  /// The bundle configuration priced against the CURRENT unit price, or
+  /// null for a normal line.
+  AutoSellUnitPricing? get autoPricing => autoPriced
+      ? AutoSellUnitPricing(
+          bundleQuantity: autoBundleQuantity!,
+          bundlePrice: autoBundlePrice!,
+          unitPrice: unitPrice,
+        )
+      : null;
 
   double get qty => double.tryParse(quantity) ?? 0;
   double get price => double.tryParse(unitPrice) ?? 0;
@@ -218,6 +250,27 @@ class CartLine {
     String? name,
   }) {
     final nextQuantity = quantity ?? this.quantity;
+    // Phase 17 — a quantity change can cross the wholesale threshold in
+    // either direction, so the line re-prices itself here (one place:
+    // add-merge, qty shortcuts and hold edits all go through copyWith).
+    // An explicit unitPrice argument always wins.
+    final nextUnitPrice = unitPrice ??
+        (quantity == null ? this.unitPrice : priceFor(nextQuantity));
+    // Method 2 — the bundle discount is DERIVED from the quantity, so a
+    // quantity change (up or down, typed or scanned) recomputes it here.
+    // An explicit lineDiscount still wins (a manual edit), and a line that
+    // is not auto-priced keeps whatever discount it carried.
+    final autoPlan = autoBundleQuantity != null && autoBundlePrice != null
+        ? AutoSellUnitPricing(
+            bundleQuantity: autoBundleQuantity!,
+            bundlePrice: autoBundlePrice!,
+            unitPrice: nextUnitPrice,
+          )
+        : null;
+    final nextDiscount = lineDiscount ??
+        (autoPlan == null || quantity == null
+            ? this.lineDiscount
+            : autoSellUnitDiscount(autoPlan, nextQuantity));
     return CartLine(
       productId: productId,
       variantId: variantId,
@@ -227,13 +280,8 @@ class CartLine {
       variantName: variantName,
       unitName: unitName,
       quantity: nextQuantity,
-      // Phase 17 — a quantity change can cross the wholesale threshold in
-      // either direction, so the line re-prices itself here (one place:
-      // add-merge, qty shortcuts and hold edits all go through copyWith).
-      // An explicit unitPrice argument always wins.
-      unitPrice: unitPrice ??
-          (quantity == null ? this.unitPrice : priceFor(nextQuantity)),
-      lineDiscount: lineDiscount ?? this.lineDiscount,
+      unitPrice: nextUnitPrice,
+      lineDiscount: nextDiscount,
       barcode: barcode,
       availableStock: availableStock ?? this.availableStock,
       productUnit: productUnit,
@@ -244,6 +292,8 @@ class CartLine {
       wholesalePrice: wholesalePrice,
       wholesaleMinQty: wholesaleMinQty,
       promotionPrice: promotionPrice,
+      autoBundleQuantity: autoBundleQuantity,
+      autoBundlePrice: autoBundlePrice,
     );
   }
 
@@ -276,6 +326,10 @@ class CartLine {
         // Phase 18 promotion — same contract (display snapshot only; the
         // sale payload never carries it — see toSaleJson).
         'promotion_price': promotionPrice,
+        // Method 2 — the plan must survive a hold round trip, otherwise a
+        // restored line would quietly stop re-deriving its bundle discount.
+        'auto_bundle_quantity': autoBundleQuantity,
+        'auto_bundle_price': autoBundlePrice,
       };
 
   /// Checkout payload for `POST /api/v1/sales` — fixed API contract.
@@ -317,6 +371,8 @@ class CartLine {
       wholesalePrice: json['wholesale_price']?.toString(),
       wholesaleMinQty: json['wholesale_min_qty']?.toString(),
       promotionPrice: json['promotion_price']?.toString(),
+      autoBundleQuantity: json['auto_bundle_quantity']?.toString(),
+      autoBundlePrice: json['auto_bundle_price']?.toString(),
     );
   }
 }

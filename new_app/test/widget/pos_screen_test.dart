@@ -15569,4 +15569,451 @@ void main() {
       expect(tester.takeException(), isNull);
     });
   });
+  // ── Sell unit pricing modes ─────────────────────────────────────────────
+  //
+  // Method 1 (the existing picker) stays the default; Method 2
+  // ("automatic quantity pricing") adds ONE regular unit per add and derives
+  // the bundle discount from the line's quantity. Reference product:
+  // 500 DA per piece, sell unit "Box" = 4 pieces at 1 900 DA, so the
+  // required totals are 1→500 2→1000 3→1500 4→1900 5→2400 6→2900 7→3400
+  // 8→3800 9→4300 10→4800 11→5300 12→5700.
+  //
+  // The line keeps the REGULAR unit price and carries the saving as
+  // `lineDiscount`, which is exactly the field the backend already
+  // validates and persists (see test/unit/sell_unit_pricing_test.dart and
+  // backend/tests/unit/test_automatic_sell_unit_pricing.py).
+  group('sell unit pricing modes', () {
+    const autoPrefs = <String, Object>{'sell_unit_pricing_mode': 'automatic'};
+
+    /// 500 DA/piece with a "Box" of 4 at 1 900 DA.
+    MockDio bundleDio({
+      String productPrice = '500',
+      String multiplier = '4',
+      String bundlePrice = '1900',
+      String productQuantity = '40',
+      List<Map<String, dynamic>>? units,
+    }) {
+      final d = MockDio();
+      _mockDio(
+        d,
+        productPrice: productPrice,
+        productQuantity: productQuantity,
+        sellingUnits: units ??
+            [
+              _sellingUnitJson(
+                id: 'su-box-4',
+                name: 'Box',
+                sellingPrice: bundlePrice,
+                isBaseUnit: false,
+                multiplier: multiplier,
+                unitType: 'box',
+                availableSelling: '20',
+                availableBase: productQuantity,
+              ),
+            ],
+      );
+      return d;
+    }
+
+    Future<void> tapCatalogProduct(WidgetTester tester) async {
+      await tester.pump(const Duration(milliseconds: 500));
+      await tester.tap(find.byKey(Key('pos-product-$_productId')));
+      await tester.pumpAndSettle();
+    }
+
+    ProviderContainer containerOf(WidgetTester tester) =>
+        ProviderScope.containerOf(tester.element(find.byType(PosScreen)));
+
+    /// The single cart line the app built (never a duplicate line).
+    CartLine onlyLine(WidgetTester tester) {
+      final cart = containerOf(tester).read(posCartProvider);
+      expect(cart.lines, hasLength(1), reason: 'exactly one cart line');
+      return cart.lines.first;
+    }
+
+    Future<void> pressInc(
+      WidgetTester tester,
+      String key, {
+      int times = 1,
+    }) async {
+      for (var i = 0; i < times; i++) {
+        await tester.tap(find.byKey(Key('cart-line-qty-inc-$key')));
+        await tester.pump();
+      }
+    }
+
+    testWidgets('Method 2: one regular unit, no picker, no discount yet',
+        (tester) async {
+      await _pumpApp(tester, dio: bundleDio(), initialPrefs: autoPrefs);
+      await tapCatalogProduct(tester);
+
+      expect(
+        find.byKey(const Key('selling-unit-picker')),
+        findsNothing,
+        reason: 'automatic mode must never open the picker',
+      );
+      final line = onlyLine(tester);
+      expect(line.quantity, '1');
+      expect(line.unitPrice, '500');
+      expect(line.lineDiscount, '0');
+      expect(line.lineTotal, 500);
+      expect(line.autoPriced, isTrue);
+      expect(line.autoBundleQuantity, '4');
+      expect(line.autoBundlePrice, '1900');
+      // Base-unit line: identity, unit and stock semantics unchanged.
+      expect(line.sellingUnitId, isNull);
+      expect(line.unitMultiplier, isNull);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('Method 2: totals for quantities 1→12 follow the table',
+        (tester) async {
+      await _pumpApp(tester, dio: bundleDio(), initialPrefs: autoPrefs);
+      await tapCatalogProduct(tester);
+      final key = onlyLine(tester).key;
+
+      const expected = <int, double>{
+        1: 500,
+        2: 1000,
+        3: 1500,
+        4: 1900,
+        5: 2400,
+        6: 2900,
+        7: 3400,
+        8: 3800,
+        9: 4300,
+        10: 4800,
+        11: 5300,
+        12: 5700,
+      };
+      for (var q = 1; q <= 12; q++) {
+        if (q > 1) await pressInc(tester, key);
+        final line = onlyLine(tester);
+        expect(line.quantity, '$q');
+        expect(line.lineTotal, expected[q], reason: 'quantity $q');
+        expect(
+          line.lineDiscount,
+          '${(q * 500) - expected[q]!.toInt()}',
+          reason: 'quantity $q discount',
+        );
+        expect(line.unitPrice, '500', reason: 'regular price always shown');
+      }
+      // The cart total the cashier pays is the same amount.
+      expect(containerOf(tester).read(posCartProvider).totals.total, 5700);
+      // …and the displayed line total agrees (grouped with spaces).
+      expect(find.textContaining('5 700'), findsWidgets);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('Method 2: decreasing 4 → 3 restores the regular total',
+        (tester) async {
+      await _pumpApp(tester, dio: bundleDio(), initialPrefs: autoPrefs);
+      await tapCatalogProduct(tester);
+      final key = onlyLine(tester).key;
+      await pressInc(tester, key, times: 3);
+      expect(onlyLine(tester).lineTotal, 1900);
+
+      await tester.tap(find.byKey(Key('cart-line-qty-dec-$key')));
+      await tester.pump();
+      final line = onlyLine(tester);
+      expect(line.quantity, '3');
+      expect(line.lineDiscount, '0', reason: 'no stale bundle discount');
+      expect(line.lineTotal, 1500);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('Method 2: increasing 7 → 8 applies the bundle price',
+        (tester) async {
+      await _pumpApp(tester, dio: bundleDio(), initialPrefs: autoPrefs);
+      await tapCatalogProduct(tester);
+      final key = onlyLine(tester).key;
+      await pressInc(tester, key, times: 6);
+      expect(onlyLine(tester).quantity, '7');
+      expect(onlyLine(tester).lineTotal, 3400);
+      expect(onlyLine(tester).lineDiscount, '100');
+
+      await pressInc(tester, key);
+      final line = onlyLine(tester);
+      expect(line.quantity, '8');
+      expect(line.lineDiscount, '200');
+      expect(line.lineTotal, 3800);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('Method 2: a typed quantity edit re-derives the bundle',
+        (tester) async {
+      await _pumpApp(tester, dio: bundleDio(), initialPrefs: autoPrefs);
+      await tapCatalogProduct(tester);
+      final key = onlyLine(tester).key;
+
+      // Direct quantity edit (the field's own commit path, not the +/- keys).
+      await tester.enterText(find.byKey(Key('cart-line-qty-$key')), '8');
+      await tester.pump();
+      final line = onlyLine(tester);
+      expect(line.quantity, '8');
+      expect(line.lineTotal, 3800);
+      expect(line.lineDiscount, '200');
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('Method 2: repeated scans merge into one line and re-price',
+        (tester) async {
+      await _pumpApp(tester, dio: bundleDio(), initialPrefs: autoPrefs);
+      for (var i = 0; i < 5; i++) {
+        await tapCatalogProduct(tester);
+      }
+      final line = onlyLine(tester);
+      expect(line.quantity, '5');
+      expect(line.lineTotal, 2400);
+      expect(line.lineDiscount, '100');
+      expect(line.autoPriced, isTrue);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('Method 2: a product without sell units keeps normal pricing',
+        (tester) async {
+      await _pumpApp(
+        tester,
+        dio: bundleDio(units: const []),
+        initialPrefs: autoPrefs,
+      );
+      await tapCatalogProduct(tester);
+      final key = onlyLine(tester).key;
+      expect(onlyLine(tester).autoPriced, isFalse);
+      expect(onlyLine(tester).unitPrice, '500');
+
+      await pressInc(tester, key, times: 3);
+      final line = onlyLine(tester);
+      expect(line.quantity, '4');
+      expect(line.lineTotal, 2000);
+      expect(line.lineDiscount, '0');
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('Method 2: a sell unit that saves nothing falls back safely',
+        (tester) async {
+      // 4 × 500 = 2000, so a "bundle" at 2000 is not a discount.
+      await _pumpApp(
+        tester,
+        dio: bundleDio(bundlePrice: '2000'),
+        initialPrefs: autoPrefs,
+      );
+      await tapCatalogProduct(tester);
+      expect(find.byKey(const Key('selling-unit-picker')), findsNothing);
+      final key = onlyLine(tester).key;
+      expect(onlyLine(tester).autoPriced, isFalse);
+
+      await pressInc(tester, key, times: 7);
+      final line = onlyLine(tester);
+      expect(line.quantity, '8');
+      expect(line.lineDiscount, '0');
+      expect(line.lineTotal, 4000);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('Method 2: switching the mode mid-sale leaves lines untouched',
+        (tester) async {
+      await _pumpApp(tester, dio: bundleDio(), initialPrefs: autoPrefs);
+      await tapCatalogProduct(tester);
+      final key = onlyLine(tester).key;
+      await pressInc(tester, key, times: 3);
+      expect(onlyLine(tester).lineTotal, 1900);
+
+      final container = containerOf(tester);
+      container
+          .read(posSettingsProvider.notifier)
+          .setSellUnitPricingMode(SellUnitPricingMode.manual);
+      await tester.pump();
+
+      final line = onlyLine(tester);
+      expect(line.quantity, '4');
+      expect(line.lineDiscount, '100');
+      expect(line.lineTotal, 1900);
+      // The line still re-derives its own plan after the mode change.
+      await pressInc(tester, key);
+      expect(onlyLine(tester).lineTotal, 2400);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('Method 2: mode is persisted for the next launch',
+        (tester) async {
+      await _pumpApp(tester, dio: bundleDio(), initialPrefs: autoPrefs);
+      await tapCatalogProduct(tester);
+      expect(onlyLine(tester).autoPriced, isTrue);
+
+      final prefs = await SharedPreferences.getInstance();
+      expect(
+        prefs.getString(PosSettingsNotifier.sellUnitPricingModeKey),
+        'automatic',
+        reason: 'the seeded setting was read',
+      );
+      containerOf(tester)
+          .read(posSettingsProvider.notifier)
+          .setSellUnitPricingMode(SellUnitPricingMode.manual);
+      await tester.pump();
+      expect(
+        prefs.getString(PosSettingsNotifier.sellUnitPricingModeKey),
+        'manual',
+      );
+      expect(
+        PosSettingsNotifier(prefs).state.sellUnitPricingMode,
+        SellUnitPricingMode.manual,
+        reason: 'survives a restart',
+      );
+      // An unknown/missing stored value is the safe manual default.
+      expect(
+        SellUnitPricingMode.fromStorage('garbage'),
+        SellUnitPricingMode.manual,
+      );
+      expect(
+        SellUnitPricingMode.fromStorage(null),
+        SellUnitPricingMode.manual,
+      );
+    });
+
+    testWidgets('Method 1 (default): the picker still prices the sell unit',
+        (tester) async {
+      await _pumpApp(tester, dio: bundleDio());
+      await tapCatalogProduct(tester);
+      expect(find.byKey(const Key('selling-unit-picker')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('selling-unit-su-box-4')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('quantity-dialog')), findsOneWidget);
+      await tester.enterText(find.byKey(const Key('quantity-input')), '1');
+      await tester.tap(find.byKey(const Key('quantity-submit')));
+      await tester.pumpAndSettle();
+
+      final line = onlyLine(tester);
+      expect(line.sellingUnitId, 'su-box-4');
+      expect(line.unitPrice, '1900');
+      expect(line.unitMultiplier, '4');
+      expect(line.quantity, '1');
+      expect(line.lineTotal, 1900);
+      expect(line.autoPriced, isFalse, reason: 'Method 1 stays Method 1');
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('Method 1 (default): base selection keeps the regular price',
+        (tester) async {
+      await _pumpApp(tester, dio: bundleDio());
+      await tapCatalogProduct(tester);
+      expect(find.byKey(const Key('selling-unit-picker')), findsOneWidget);
+      // The picker always offers the base unit first (sellingUnitId null).
+      await tester.tap(find.byKey(const Key('selling-unit-base')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('quantity-dialog')), findsOneWidget);
+      await tester.enterText(find.byKey(const Key('quantity-input')), '1');
+      await tester.tap(find.byKey(const Key('quantity-submit')));
+      await tester.pumpAndSettle();
+
+      final line = onlyLine(tester);
+      expect(line.sellingUnitId, isNull);
+      expect(line.unitMultiplier, isNull);
+      expect(line.unitPrice, '500');
+      expect(line.lineTotal, 500);
+      expect(line.autoPriced, isFalse);
+      expect(tester.takeException(), isNull);
+    });
+    testWidgets(
+        'Method 2: the derived bundle discount is display-only and the '
+        'bundle is shown on the line', (tester) async {
+      await _pumpApp(tester, dio: bundleDio(), initialPrefs: autoPrefs);
+      await tapCatalogProduct(tester);
+      final key = onlyLine(tester).key;
+      await pressInc(tester, key, times: 3);
+      expect(onlyLine(tester).lineDiscount, '100');
+
+      // The cashier sees the exact bundle the line is priced with.
+      expect(
+        find.byKey(Key('cart-line-auto-bundle-$key')),
+        findsOneWidget,
+      );
+      expect(
+        find.text(
+          '${AppStrings.t('auto_bundle', 'en')}: 4 × 1900',
+        ),
+        findsOneWidget,
+      );
+
+      // ...and cannot type over the calculated saving.
+      final field = find.byKey(Key('cart-line-discount-$key'));
+      expect(field, findsOneWidget);
+      expect(
+        tester.widget<TextField>(field).readOnly,
+        isTrue,
+        reason: 'an automatic line’s discount is not manually editable',
+      );
+
+      // The guard also holds below the widget: a discount-only cart write is
+      // refused, so no other funnel can overwrite it either.
+      containerOf(tester)
+          .read(posCartProvider.notifier)
+          .updateLine(key, lineDiscount: '999');
+      await tester.pump();
+      final line = onlyLine(tester);
+      expect(line.lineDiscount, '100', reason: 'bundle saving preserved');
+      expect(line.lineTotal, 1900);
+
+      // Quantity changes still recalculate it.
+      await pressInc(tester, key);
+      expect(onlyLine(tester).lineTotal, 2400);
+      expect(onlyLine(tester).lineDiscount, '100');
+      await pressInc(tester, key, times: 3);
+      expect(onlyLine(tester).quantity, '8');
+      expect(onlyLine(tester).lineDiscount, '200');
+      expect(onlyLine(tester).lineTotal, 3800);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('normal manual lines keep an editable discount',
+        (tester) async {
+      await _pumpApp(
+        tester,
+        dio: bundleDio(units: const []),
+        initialPrefs: autoPrefs,
+      );
+      await tapCatalogProduct(tester);
+      final key = onlyLine(tester).key;
+      expect(onlyLine(tester).autoPriced, isFalse);
+
+      final field = find.byKey(Key('cart-line-discount-$key'));
+      expect(tester.widget<TextField>(field).readOnly, isFalse);
+
+      await tester.enterText(field, '50');
+      await tester.pump();
+      expect(onlyLine(tester).lineDiscount, '50');
+      expect(onlyLine(tester).lineTotal, 450);
+
+      // The notifier keeps accepting manual discount writes on manual lines.
+      containerOf(tester)
+          .read(posCartProvider.notifier)
+          .updateLine(key, lineDiscount: '25');
+      await tester.pump();
+      expect(onlyLine(tester).lineDiscount, '25');
+      expect(onlyLine(tester).lineTotal, 475);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('Method 1 picker lines keep an editable discount',
+        (tester) async {
+      await _pumpApp(tester, dio: bundleDio());
+      await tapCatalogProduct(tester);
+      await tester.tap(find.byKey(const Key('selling-unit-su-box-4')));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(const Key('quantity-input')), '1');
+      await tester.tap(find.byKey(const Key('quantity-submit')));
+      await tester.pumpAndSettle();
+
+      final key = onlyLine(tester).key;
+      expect(onlyLine(tester).autoPriced, isFalse);
+      final field = find.byKey(Key('cart-line-discount-$key'));
+      expect(tester.widget<TextField>(field).readOnly, isFalse);
+
+      await tester.enterText(field, '100');
+      await tester.pump();
+      expect(onlyLine(tester).lineDiscount, '100');
+      expect(onlyLine(tester).lineTotal, 1800);
+      expect(tester.takeException(), isNull);
+    });
+  });
 }

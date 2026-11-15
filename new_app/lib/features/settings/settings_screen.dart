@@ -8,7 +8,9 @@ import '../../core/strings.dart';
 import '../../l10n/locale_provider.dart';
 import '../../theme/app_theme_mode.dart';
 import '../../theme/theme_provider.dart';
+import '../about/about_providers.dart';
 import '../auth/permission_helpers.dart';
+import '../licensing/backup_license_policy.dart';
 import '../loyalty/loyalty_models.dart';
 import '../loyalty/loyalty_providers.dart';
 import 'backup_models.dart';
@@ -135,6 +137,8 @@ class SettingsScreen extends ConsumerWidget {
             const _ScanActionsSection(),
             const SizedBox(height: 16),
             const _PosActionsSection(),
+            const SizedBox(height: 16),
+            const _SellUnitPricingSection(),
             // Scanner diagnostics (ScanDiagnosticsSection) is intentionally
             // NOT rendered here for now — the implementation, its panel
             // widget and its tests remain in scan_diagnostics_panel.dart
@@ -873,11 +877,27 @@ class _BackupSection extends ConsumerStatefulWidget {
 }
 
 class _BackupSectionState extends ConsumerState<_BackupSection> {
+  /// Set once so the licence refresh below runs on the first frame only.
+  bool _licenseRefreshed = false;
+
   @override
   void initState() {
     super.initState();
     // Deferred: the provider must not be read during build.
     Future.microtask(_loadIfNeeded);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Refresh the licence snapshot through the existing system-info flow
+    // (Phase L1-C) so the restrictions below show the server's current
+    // state — one cached request, no polling. `didChangeDependencies`
+    // (not initState) because reaching the container needs an inherited
+    // lookup.
+    if (_licenseRefreshed) return;
+    _licenseRefreshed = true;
+    ref.invalidate(systemInfoProvider);
   }
 
   void _loadIfNeeded() {
@@ -889,12 +909,20 @@ class _BackupSectionState extends ConsumerState<_BackupSection> {
   }
 
   Future<void> _create() async {
+    // Licence backstop (L1-D): the button is already disabled by the
+    // gate; the server owns the decision either way.
+    if (!backupPermissionsFor(ref.read(backupLicenseGateProvider)).canCreate) {
+      return;
+    }
     final ok = await ref.read(backupProvider.notifier).create();
     if (!mounted) return;
     _snack(ok ? 'backup_created' : 'backup_create_failed');
   }
 
   Future<void> _restore(BackupInfo backup) async {
+    if (!backupPermissionsFor(ref.read(backupLicenseGateProvider)).canRestore) {
+      return;
+    }
     final loc = ref.read(localeProvider).flutterLocale.languageCode;
     final confirmed = await showDialog<bool>(
       context: context,
@@ -902,6 +930,7 @@ class _BackupSectionState extends ConsumerState<_BackupSection> {
         title: Text(AppStrings.t('backup_restore_confirm', loc)),
         content: Text(
           '${AppStrings.t('backup_restore_warning', loc)}\n\n'
+          '${AppStrings.t('backup_restore_side_effects', loc)}\n\n'
           '${backup.filename}',
         ),
         actions: [
@@ -936,6 +965,10 @@ class _BackupSectionState extends ConsumerState<_BackupSection> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final loc = ref.watch(localeProvider).flutterLocale.languageCode;
+    // Licence snapshot rides the existing system-info flow (L1-D).
+    ref.watch(systemInfoProvider);
+    final gate = ref.watch(backupLicenseGateProvider);
+    final perms = backupPermissionsFor(gate);
     final state = ref.watch(backupProvider);
     // A failed *create* is not a failed *load*: the headline has to name
     // what actually went wrong or the operator chases the wrong fix.
@@ -949,6 +982,23 @@ class _BackupSectionState extends ConsumerState<_BackupSection> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            if (gate != BackupLicenseGate.unknown)
+              Padding(
+                key: const Key('settings-backup-license-notice'),
+                padding: const EdgeInsets.only(bottom: 16),
+                child: Row(
+                  children: [
+                    const Icon(Icons.lock_outline, size: 18),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        AppStrings.t(perms.noticeKeyFor(gate)!, loc),
+                        style: theme.textTheme.bodySmall,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             if (state.hasError)
               Padding(
                 padding: const EdgeInsets.only(bottom: 16),
@@ -981,7 +1031,8 @@ class _BackupSectionState extends ConsumerState<_BackupSection> {
             const SizedBox(height: 12),
             FilledButton.icon(
               key: const Key('settings-backup-create'),
-              onPressed: state.busy ? null : _create,
+              onPressed:
+                  (state.busy || !perms.canCreate) ? null : _create,
               icon: state.busy
                   ? const SizedBox(
                       width: 16,
@@ -1010,7 +1061,8 @@ class _BackupSectionState extends ConsumerState<_BackupSection> {
               Column(
                 key: const Key('settings-backup-list'),
                 children: [
-                  for (final backup in state.items) _tile(backup, state, loc),
+                  for (final backup in state.items)
+                    _tile(backup, state, loc, perms),
                 ],
               ),
           ],
@@ -1019,7 +1071,12 @@ class _BackupSectionState extends ConsumerState<_BackupSection> {
     );
   }
 
-  Widget _tile(BackupInfo backup, BackupState state, String loc) {
+  Widget _tile(
+    BackupInfo backup,
+    BackupState state,
+    String loc,
+    BackupPermissions perms,
+  ) {
     final restoring = state.pendingRestoreId == backup.id;
     return ListTile(
       key: ValueKey<String>('settings-backup-item-${backup.id}'),
@@ -1031,7 +1088,8 @@ class _BackupSectionState extends ConsumerState<_BackupSection> {
       ),
       trailing: OutlinedButton(
         key: ValueKey<String>('settings-backup-restore-${backup.id}'),
-        onPressed: state.busy ? null : () => _restore(backup),
+        onPressed:
+            (state.busy || !perms.canRestore) ? null : () => _restore(backup),
         child: restoring
             ? const SizedBox(
                 width: 16,
@@ -1454,4 +1512,79 @@ class _StorageSection extends ConsumerWidget {
   }
 }
 
+/// Selling-unit pricing mode (Method 1 / Method 2).
+///
+/// Client-local like the POS actions above: one per device, no backend,
+/// no schema, no migration. The POS reads the mode on every add
+/// (`posSettingsProvider.sellUnitPricingMode`), so the choice is effective
+/// immediately and survives a restart through SharedPreferences.
+class _SellUnitPricingSection extends ConsumerWidget {
+  const _SellUnitPricingSection();
 
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    final loc = ref.watch(localeProvider).flutterLocale.languageCode;
+    final mode = ref.watch(posSettingsProvider).sellUnitPricingMode;
+    final notifier = ref.read(posSettingsProvider.notifier);
+
+    Widget option({
+      required SellUnitPricingMode value,
+      required Key key,
+      required String title,
+      required String subtitle,
+    }) {
+      return RadioListTile<SellUnitPricingMode>(
+        key: key,
+        contentPadding: EdgeInsets.zero,
+        value: value,
+        title: Text(AppStrings.t(title, loc)),
+        subtitle: Text(AppStrings.t(subtitle, loc)),
+      );
+    }
+
+    return Card(
+      key: const Key('settings-sell-unit-pricing-mode'),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              AppStrings.t('settings_sell_unit_pricing_mode', loc),
+              style: theme.textTheme.titleMedium,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              AppStrings.t('settings_sell_unit_pricing_mode_desc', loc),
+              style: theme.textTheme.bodySmall,
+            ),
+            const SizedBox(height: 4),
+            RadioGroup<SellUnitPricingMode>(
+              groupValue: mode,
+              onChanged: (value) {
+                if (value != null) notifier.setSellUnitPricingMode(value);
+              },
+              child: Column(
+                children: [
+                  option(
+                    value: SellUnitPricingMode.manual,
+                    key: const Key('settings-sell-unit-pricing-manual'),
+                    title: 'sell_unit_pricing_manual',
+                    subtitle: 'sell_unit_pricing_manual_desc',
+                  ),
+                  option(
+                    value: SellUnitPricingMode.automatic,
+                    key: const Key('settings-sell-unit-pricing-automatic'),
+                    title: 'sell_unit_pricing_automatic',
+                    subtitle: 'sell_unit_pricing_automatic_desc',
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}

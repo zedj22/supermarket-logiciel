@@ -104,6 +104,20 @@ void main() {
     testWidgets('selecting a sidebar article opens it', (tester) async {
       await _pumpDocs(tester);
 
+      // The sidebar is a scrolling list of every article; the readability
+      // pass makes its rows a little taller, so the target may sit below
+      // the fold on the test viewport. Scroll it in, then select it.
+      await tester.scrollUntilVisible(
+        find.byKey(const Key('documentation-article-pos_payment')),
+        120,
+        scrollable: find
+            .descendant(
+              of: find.byKey(const Key('documentation-sidebar')),
+              matching: find.byType(Scrollable),
+            )
+            .first,
+      );
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('documentation-article-pos_payment')));
       await tester.pumpAndSettle();
 

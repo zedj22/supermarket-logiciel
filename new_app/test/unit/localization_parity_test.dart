@@ -219,10 +219,34 @@ void main() {
       // The TASK 5 variants/selling-units XOR pass added the two
       // cross-kind lock explanations shown under the disabled add
       // buttons — 2 keys (1575).
+      // The Phase L1-C licensing pass added the trial banner/card/screen
+      // surface (title, active/expired/unavailable labels, remaining time,
+      // expiry date, trial length, notices, back/view actions) and the
+      // eight backend licensing error-code messages — 21 keys (1596).
+      // The Phase L1-D backup-surface pass added the three per-gate backup
+      // restriction notices (trial export-only, trial expired, Lifetime
+      // required) — 3 keys (1599).
+      // The Phase L2-C activation pass added the Lifetime activation
+      // surface — panel title/intro, request + fingerprint row labels and
+      // copy/tooltip, the signed-code input label/hint, submit, the
+      // success / already-activated / activated-on sentences, the
+      // network / server / rate-limit / validation / empty failure
+      // sentences and the lifetime card labels (active, notice, license
+      // id) — 21 keys (1620).
+      // The Phase L3 restore-side-effects pass added the confirm-dialog
+      // notice spelling out the full blast radius of a restore (users,
+      // roles, sessions, paired devices reset; server id and licence
+      // kept) — 1 key (1621).
+      // Sell unit pricing mode (Settings → Method 1 / Method 2): title +
+      // description + two option labels + two option descriptions added
+      // together in ar/fr/en — 6 keys.
+      // The cart's bundle caption added one more key (auto_bundle) — 1629.
+      // NOTE: the count also carries one key that arrived outside this
+      // pass (1622 before the setting), which is why the delta is 8.
       // Update this deliberately when a subphase
       // adds strings — an unexplained drop means keys were deleted from
       // one map only.
-      expect(_map('en').keys.length, 1575);
+      expect(_map('en').keys.length, 1629);
       expect(_map('ar').keys.length, _map('en').keys.length);
       expect(_map('fr').keys.length, _map('en').keys.length);
     });

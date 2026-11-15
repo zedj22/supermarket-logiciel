@@ -97,6 +97,7 @@ import 'pos_layout.dart';
 import 'pos_models.dart';
 import 'pos_providers.dart';
 import 'pos_quantity.dart';
+import 'pos_sell_unit_pricing.dart';
 import 'pos_qty_shortcuts.dart';
 import 'pos_return_lines.dart';
 import 'pos_toast.dart';
@@ -1421,6 +1422,53 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       return;
     }
 
+    // Method 2 — automatic quantity pricing (Settings → Sell Unit Pricing
+    // Mode). No picker: exactly ONE regular base unit goes into the cart,
+    // and the line re-derives its bundle discount from its quantity on
+    // every later change (CartLine.copyWith → core/sell_unit_pricing).
+    //
+    // The line stays a BASE-unit line: no sellingUnitId, no multiplier, so
+    // stock still decrements one unit per scan and the backend's
+    // selling-unit validation is untouched. retailPrice is null so the
+    // wholesale/promotion re-pricer can never fight the bundle for the
+    // price — the bundle IS this line's price rule.
+    //
+    // A product whose sell units hold no real discount resolves to null
+    // and simply adds one regular unit (safe fallback). Weight/length
+    // products are excluded: their add needs a measured quantity, so they
+    // keep the established amount dialog below.
+    if (!isAmountEntryUnit(product.unit) &&
+        ref.read(posSettingsProvider).sellUnitPricingMode ==
+            SellUnitPricingMode.automatic) {
+      final autoPlan = resolveAutoSellUnit(
+        units,
+        unitPrice: promoPrice ?? price,
+      );
+      _addCartLine(
+        productId: product.id,
+        variantId: variant?.id,
+        name: name,
+        variantName: variant?.name,
+        unitName: product.unit,
+        quantity: '1',
+        unitPrice: promoPrice ?? price,
+        barcode: product.barcode,
+        productUnit: product.unit,
+        availableStock: stock,
+        baseUnitPrice: price,
+        // Wholesale/promotion must never re-price an auto line; the bundle
+        // discount is derived from the base unit price above.
+        retailPrice: null,
+        promotionPrice: promoPrice,
+        autoBundleQuantity: autoPlan?.bundleQuantity,
+        autoBundlePrice: autoPlan?.bundlePrice,
+        fromScan: fromScan,
+        scanCorrelationId: scanCorrelationId,
+        onError: qtyErrorHandler,
+      );
+      return;
+    }
+
     // Selling-unit choices exist → picker (user decides unit + qty).
     // UX FIX #4: base unit is always an option inside the picker
     // (sellingUnitId = null on base selection).
@@ -1620,6 +1668,12 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     // the line is not promoted). Set together with retailPrice, which then
     // keeps the ORIGINAL retail price.
     String? promotionPrice,
+    // Method 2 — automatic sell-unit pricing plan (see
+    // core/sell_unit_pricing.dart). Both set on a line created by the
+    // automatic mode; the line then re-derives its bundle discount from
+    // its quantity on every change. Never set for picker/pack lines.
+    String? autoBundleQuantity,
+    String? autoBundlePrice,
     // Scanner/search-driven add (gateway dispatch or the focused search
     // field): after the add the scan input keeps focus — the line's qty
     // field must NEVER be auto-focused, or the next wedge burst lands in
@@ -1659,6 +1713,8 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       wholesalePrice: wholesalePrice,
       wholesaleMinQty: wholesaleMinQty,
       promotionPrice: promotionPrice,
+      autoBundleQuantity: autoBundleQuantity,
+      autoBundlePrice: autoBundlePrice,
     );
     String? qtyBefore;
     for (final existing in ref.read(posCartProvider).lines) {
@@ -3740,10 +3796,18 @@ class _FavoriteChip extends StatelessWidget {
     return ActionChip(
       key: Key('pos-favorite-${favorite.productId}'),
       avatar: const Icon(Icons.star, size: 16),
-      label: Text(
-        favorite.productName ?? favorite.productId,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
+      // Readability pass: with the 15px label style a long product name
+      // must not size the chip freely — an uncapped chip grows past the
+      // strip's viewport, so its last pixels stay unreachable even at full
+      // scroll. 240px keeps a readable, ellipsized name and guarantees the
+      // whole chip fits the strip.
+      label: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 240),
+        child: Text(
+          favorite.productName ?? favorite.productId,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
       ),
       onPressed: () => onTap(favorite),
     );
@@ -6087,6 +6151,26 @@ class _CartLineTileState extends State<_CartLineTile> {
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                         ),
+                        // Method 2 — the exact bundle the line is priced
+                        // with (the sell-unit price is never stamped on the
+                        // line, so this caption is the only place the
+                        // cashier sees "4 × 1900"). Display only: totals,
+                        // payload and invoice keep using quantity × unit
+                        // price − derived discount.
+                        if (line.autoPriced)
+                          Text(
+                            '${AppStrings.t('auto_bundle', loc)}: '
+                            '${line.autoBundleQuantity} × '
+                            '${line.autoBundlePrice}',
+                            key: Key('cart-line-auto-bundle-${line.key}'),
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: theme.colorScheme.primary,
+                              fontWeight: FontWeight.w600,
+                              fontSize: short ? 12.0 : 13.0,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         if (line.promotionApplied)
                           // Phase 18 — the line is charging the promotion
                           // price; the original retail is struck through
@@ -6282,6 +6366,12 @@ class _CartLineTileState extends State<_CartLineTile> {
       child: TextField(
         key: Key('cart-line-discount-${line.key}'),
         controller: _discount,
+        // Method 2 — the bundle discount is calculated from the quantity,
+        // so it is DISPLAY ONLY on an auto line: readOnly blocks typing and
+        // pasting (onChanged never fires) while the amount stays visible,
+        // selectable and in the warning colour. Manual lines keep the exact
+        // editor they always had, with no extra permission gate.
+        readOnly: line.autoPriced,
         keyboardType: const TextInputType.numberWithOptions(decimal: true),
         style: TextStyle(
           fontSize: 13.5,

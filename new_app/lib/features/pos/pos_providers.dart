@@ -12,6 +12,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/scan_diagnostics.dart';
+import '../../core/sell_unit_pricing.dart';
 import '../../core/strings.dart';
 import '../../l10n/locale_provider.dart';
 import '../auth/auth_provider.dart';
@@ -230,10 +231,16 @@ class PosCartNotifier extends StateNotifier<PosCartState> {
     final existing = state.lines.indexWhere((l) => l.key == line.key);
     if (existing >= 0) {
       final current = state.lines[existing];
+      final mergedQuantity = '${(current.qty + line.qty)}';
+      // Method 2 — merging one more unit into an auto-priced line must
+      // re-derive its bundle discount for the NEW quantity; a normal line
+      // keeps the established "merge resets the manual discount" rule.
+      final autoPlan = current.autoPricing;
       final merged = current.copyWith(
-        quantity:
-            '${(current.qty + line.qty)}',
-        lineDiscount: '0',
+        quantity: mergedQuantity,
+        lineDiscount: autoPlan == null
+            ? '0'
+            : autoSellUnitDiscount(autoPlan, mergedQuantity),
       );
       _logCartQuantityWrite(
         reason: reason,
@@ -292,7 +299,17 @@ class PosCartNotifier extends StateNotifier<PosCartState> {
     }
     final lines = state.lines
         .map((l) => l.key == key
-            ? l.copyWith(quantity: quantity, lineDiscount: lineDiscount)
+            ? l.copyWith(
+                quantity: quantity,
+                // Method 2 — an automatic bundle discount is DERIVED, never
+                // typed: a discount-only edit (the cart's discount field /
+                // any other discount funnel) is refused for an auto line.
+                // A quantity change still re-derives it in copyWith, and
+                // the internal merge path (addLine) passes both a quantity
+                // and the derived amount, so it is unaffected.
+                lineDiscount:
+                    l.autoPriced && quantity == null ? null : lineDiscount,
+              )
             : l)
         .toList();
     final exists = state.lines.any((l) => l.key == key);

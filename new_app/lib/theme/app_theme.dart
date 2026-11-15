@@ -44,10 +44,17 @@ class AppTheme {
   //   display       KPI hero number / dashboard headline   36
   //   pageTitle     the H1 at the top of a screen          24 bold
   //   sectionTitle  a labelled block inside a screen       18 bold
-  //   tableHeader   column labels, pinned above the rows   13 bold
-  //   body          primary reading text and table cells   14
+  //   tableHeader   column labels, pinned above the rows   14 bold
+  //   body          primary reading text and table cells   15
   //   secondary     supporting text (descriptions, meta)   13
   //   caption       the smallest legal text (badges, …)    12
+  //
+  // Readability pass (2026-11): every rung that carries words moved up one
+  // step — body 14→15, table headers 13→14, table cells 15→16, numeric
+  // 16→17 — and the lightest weights moved from w400 to w500/w600. The
+  // hierarchy itself is unchanged (headings keep their ~1.25 ratio to body
+  // and nothing below 12px), so screens reflow by a pixel or two, never by
+  // a redesign.
   //
   // Every rung derives from the active [TextTheme], so it stays
   // brightness/color correct in light, dark and grey for free.
@@ -76,11 +83,11 @@ class AppTheme {
       );
 
   /// Column labels. Small, semibold, slightly tracked so a header row reads
-  /// as structure instead of as one more data row. 13px is the floor that
+  /// as structure instead of as one more data row. 14px is the floor that
   /// still reads at 1366×768 in all three languages.
   static TextStyle tableHeader(ThemeData theme) =>
       (theme.textTheme.labelLarge ?? const TextStyle()).copyWith(
-        fontSize: 13,
+        fontSize: 14,
         fontWeight: FontWeight.w700,
         height: 1.3,
         letterSpacing: 0.3,
@@ -88,7 +95,10 @@ class AppTheme {
 
   /// Primary reading text / table cell.
   static TextStyle body(ThemeData theme) =>
-      (theme.textTheme.bodyMedium ?? const TextStyle()).copyWith(height: 1.4);
+      (theme.textTheme.bodyMedium ?? const TextStyle()).copyWith(
+        fontSize: 15,
+        height: 1.4,
+      );
 
   /// Supporting text. Must clear WCAG AA on the surface it sits on — the
   /// mode palettes already guarantee that (see core/colors.dart).
@@ -105,7 +115,7 @@ class AppTheme {
   /// headline figure asks for nothing and gets the 16px default.
   static TextStyle numeric(ThemeData theme, {double? size}) =>
       (theme.textTheme.bodyMedium ?? const TextStyle()).copyWith(
-        fontSize: size ?? 16,
+        fontSize: size ?? 17,
         fontWeight: FontWeight.w600,
         height: 1.3,
         fontFeatures: const [FontFeature.tabularFigures()],
@@ -371,10 +381,10 @@ class AppTheme {
               ? const Color(0xFFEDF1F6)
               : surface.withValues(alpha: 0.85),
         ),
-        headingRowHeight: 44,
+        headingRowHeight: 46,
         headingTextStyle: TextStyle(
           fontFamily: fontFamily,
-          fontSize: 13,
+          fontSize: 14,
           fontWeight: FontWeight.w700,
           height: 1.3,
           letterSpacing: 0.3,
@@ -382,13 +392,13 @@ class AppTheme {
         ),
         dataTextStyle: TextStyle(
           fontFamily: fontFamily,
-          fontSize: 15,
-          fontWeight: FontWeight.w400,
+          fontSize: 16,
+          fontWeight: FontWeight.w500,
           height: 1.4,
           color: textPrimary,
         ),
-        dataRowMinHeight: 44,
-        dataRowMaxHeight: 56,
+        dataRowMinHeight: 46,
+        dataRowMaxHeight: 58,
         dividerThickness: 1,
         columnSpacing: 16,
       ),
@@ -456,30 +466,43 @@ class AppTheme {
       ),
       titleLarge: base.titleLarge?.copyWith(
         color: primary,
+        fontSize: 23,
         fontWeight: FontWeight.w700,
         height: 1.3,
       ),
       titleMedium: base.titleMedium?.copyWith(
         color: primary,
         fontSize: 18,
-        fontWeight: FontWeight.w600,
+        fontWeight: FontWeight.w700,
         height: 1.35,
       ),
       titleSmall: base.titleSmall?.copyWith(
         color: primary,
-        fontSize: 15,
+        fontSize: 16,
         fontWeight: FontWeight.w600,
         height: 1.35,
       ),
-      bodyLarge: base.bodyLarge?.copyWith(color: primary, height: 1.5),
-      bodyMedium: base.bodyMedium?.copyWith(color: primary, height: 1.4),
+      bodyLarge: base.bodyLarge?.copyWith(
+        color: primary,
+        fontSize: 17,
+        fontWeight: FontWeight.w500,
+        height: 1.45,
+      ),
+      bodyMedium: base.bodyMedium?.copyWith(
+        color: primary,
+        fontSize: 15,
+        fontWeight: FontWeight.w500,
+        height: 1.4,
+      ),
       bodySmall: base.bodySmall?.copyWith(
         color: secondary,
         fontSize: 13,
+        fontWeight: FontWeight.w500,
         height: 1.35,
       ),
       labelLarge: base.labelLarge?.copyWith(
         color: primary,
+        fontSize: 15,
         fontWeight: FontWeight.w600,
         height: 1.3,
         letterSpacing: 0.2,

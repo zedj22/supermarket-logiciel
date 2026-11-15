@@ -446,7 +446,8 @@ void main() {
       );
       final rendered = rich.text.style;
       expect(rendered?.fontFamily, AppTheme.fontFamily);
-      expect(rendered?.fontSize, 13);
+      // Readability pass: the shared table-header rung is 14px w700.
+      expect(rendered?.fontSize, 14);
       expect(rendered?.fontWeight, FontWeight.w700);
       expect(rendered?.letterSpacing, 0.3);
     });
