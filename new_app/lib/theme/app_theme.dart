@@ -121,23 +121,32 @@ class AppTheme {
         fontFeatures: const [FontFeature.tabularFigures()],
       );
 
-  /// The section kicker above a nav group: small, bold, tracked out, and
-  /// never a sentence — it names a block, it does not talk. Sits on the
-  /// documented 12px floor like every other rung.
+  /// The section kicker above a nav group: one step larger than the old
+  /// 12px rung, still bold and tracked out.
+  ///
+  /// Sidebar-only: it derives from `labelSmall` but OVERRIDES size and
+  /// weight, so no other screen's small print changes.
   static TextStyle navGroupLabel(ThemeData theme) =>
       (theme.textTheme.labelSmall ?? const TextStyle()).copyWith(
-        fontSize: 12,
+        fontSize: 13,
         fontWeight: FontWeight.w700,
         height: 1.2,
-        letterSpacing: 0.8,
+        letterSpacing: 0.6,
       );
 
-  /// One nav destination label. w500 at rest so a rail of sixteen items
-  /// reads as one calm list; the selected tile promotes itself to w700 at
-  /// the call site instead of inventing another rung.
+  /// One nav destination label.
+  ///
+  /// 16 / w600: the rail is read at arm's length from the till, so the item
+  /// labels need more presence than body text — but not the w700 of the
+  /// selected tile, which stays the one emphasised row (see
+  /// `_DestinationTile`). Sizes are stated here rather than inherited from
+  /// `bodyMedium`, so a future global body change cannot silently shrink
+  /// the sidebar again. The 38 px row height and 216 px rail width are
+  /// untouched; `maxLines: 1` + ellipsis still absorb the longest label.
   static TextStyle navItemLabel(ThemeData theme) =>
       (theme.textTheme.bodyMedium ?? const TextStyle()).copyWith(
-        fontWeight: FontWeight.w500,
+        fontSize: 16,
+        fontWeight: FontWeight.w600,
         height: 1.2,
       );
 
