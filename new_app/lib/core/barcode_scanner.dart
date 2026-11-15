@@ -136,15 +136,27 @@ import 'scan_diagnostics.dart';
 /// never dispatch).
 final RegExp kBarcodeScanShape = RegExp(r'^\d{6,}$');
 
-/// The longest pause that still counts as ONE burst inside an
-/// `allowWhileEditing` pass-through run. A wedge types a character every
-/// few milliseconds; a human pausing longer than this between two digits
-/// is typing, not scanning — the buffered residue and its field snapshot
-/// are stale, so the next digit drops them and starts a fresh run (slow
-/// typing can therefore never accumulate into a scan-shaped buffer).
-/// Bookkeeping only: it never delays or consumes a keystroke, and events
-/// whose clock does not advance (the zero-timestamp test seam) never
-/// qualify.
+/// The longest pause that still counts as ONE burst — the framing rule
+/// for EVERY run, not only pass-through ones.
+///
+/// A wedge types a character every few milliseconds. A pause longer than
+/// this between two digits means the digits on either side of it belong
+/// to DIFFERENT bursts, and the buffered residue is stale:
+///
+///  * inside a pass-through run, a human pausing is typing, not scanning
+///    (slow typing can never accumulate into a scan-shaped buffer);
+///  * inside a CONSUMED run, the earlier burst's terminator never
+///    arrived (a lost Enter, a dialog that swallowed it, a scanner with
+///    its suffix disabled). Without this rule the next physical scan
+///    appends to that residue and ONE glued code is dispatched — the
+///    characteristically inconsistent "sometimes it reads the wrong
+///    barcode / says the product does not exist" symptom.
+///
+/// The next digit always drops the residue and starts a fresh, cleanly
+/// framed run; nothing is queued or replayed, and a dispatch can only
+/// ever carry digits of one burst. Bookkeeping only: it never delays or
+/// consumes a keystroke, and events whose clock does not advance (the
+/// zero-timestamp test seam) never qualify.
 const Duration kBarcodeRunStaleGap = Duration(milliseconds: 400);
 
 /// One buffered character: a single ASCII digit (the wedge types digits,
@@ -443,13 +455,17 @@ class BarcodeScannerGateway {
   int _dupLastAtMs = 0;
 
   /// Window in which the SAME code arriving from the OTHER dispatch
-  /// origin counts as the same physical burst. One wedge burst spans
-  /// well over this as a whole, but the two observations of ONE burst —
-  /// the raw-PoC decoder's terminator and the legacy Enter key-down —
-  /// land within milliseconds of each other; a second burst cannot
-  /// complete inside the window, and same-origin repeats are never
-  /// matched anyway (see [_dropCrossOriginDuplicate]).
-  static const int kCrossOriginDispatchDupMs = 250;
+  /// origin counts as the same physical burst.
+  ///
+  /// The two observations of ONE burst — the raw-PoC decoder's terminator
+  /// and the legacy Enter key-down — land within milliseconds of each
+  /// other. A deliberate re-scan of the same product is a new trigger
+  /// pull and decode: ~100 ms or more. The window must therefore stay
+  /// tight: at 250 ms it swallowed the NEXT scan of one product whenever
+  /// the previous one happened to be observed by the raw path (the
+  /// "re-scanning does not always increment" symptom). Same-origin
+  /// repeats are never matched anyway (see [_dropCrossOriginDuplicate]).
+  static const int kCrossOriginDispatchDupMs = 80;
 
   /// Active scoped suspensions — one opaque token per open dialog that
   /// declared scanner suspension (the selling-unit picker and the
@@ -1005,25 +1021,28 @@ class BarcodeScannerGateway {
         });
         return false;
       }
-      // Pass-through staleness (its runs only): a pause longer than
-      // [kBarcodeRunStaleGap] means the buffered residue and its snapshot
-      // describe typing, not one burst — drop them and evaluate this
-      // digit as a fresh START below. Bookkeeping only: this digit is
-      // never delayed or consumed by the check. A suspended dialog has
-      // the same property: a protection run never dispatches, so old
-      // residue must not survive into the next digit either.
-      if (_runThrough || isScannerSuspended) {
-        final last = _lastDigitAt;
-        if (last != null &&
-            event.timeStamp > last &&
-            event.timeStamp - last > kBarcodeRunStaleGap) {
-          scanDiag('run-abandon', {
-            'attemptId': _activeScanAttemptId,
-            'reason': 'stale-gap',
-            'len': _buffer.length,
-          });
-          _resetBuffer();
-        }
+      // Burst framing, applied to EVERY run: a pause longer than
+      // [kBarcodeRunStaleGap] between this digit and the previous one
+      // means they belong to different bursts — the buffered residue and
+      // (for pass-through runs) its field snapshot are stale, so they are
+      // dropped and this digit is evaluated as a fresh START below. This
+      // is what keeps a run whose terminator never arrived from gluing
+      // itself onto the NEXT scan and dispatching one impossible code; a
+      // run that did receive its terminator has no residue at all (the
+      // buffer is reset at dispatch), so fast consecutive scans and fast
+      // double-scans of one product are untouched. Bookkeeping only: this
+      // digit is never delayed or consumed by the check.
+      final lastDigitAt = _lastDigitAt;
+      if (lastDigitAt != null &&
+          event.timeStamp > lastDigitAt &&
+          event.timeStamp - lastDigitAt > kBarcodeRunStaleGap) {
+        scanDiag('run-abandon', {
+          'attemptId': _activeScanAttemptId,
+          'reason': 'stale-gap',
+          'len': _buffer.length,
+          'runThrough': _runThrough,
+        });
+        _resetBuffer();
       }
       if (_buffer.isEmpty) {
         // START: full arming — a focused text field, a chord, a dialog or

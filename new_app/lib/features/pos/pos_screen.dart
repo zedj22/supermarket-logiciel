@@ -140,6 +140,16 @@ class PosScreen extends ConsumerStatefulWidget {
 /// scan action).
 enum _ScanResolve { hit, miss, error }
 
+/// One scan's resolve outcome plus, for [_ScanResolve.error], the failure
+/// that caused it. The error is carried (never discarded) so the caller
+/// can surface WHAT failed instead of claiming the product is missing.
+class _ScanResolution {
+  const _ScanResolution(this.outcome, [this.error]);
+
+  final _ScanResolve outcome;
+  final Object? error;
+}
+
 class _PosScreenState extends ConsumerState<PosScreen> {
   final FocusNode _focusNode = FocusNode();
   final FocusNode _searchFocusNode = FocusNode();
@@ -738,7 +748,14 @@ class _PosScreenState extends ConsumerState<PosScreen> {
         query,
         scanCorrelationId: scanCorrelationId,
       );
-      if (resolve == _ScanResolve.hit) return;
+      if (resolve.outcome == _ScanResolve.hit) return;
+      if (resolve.outcome == _ScanResolve.error) {
+        // The lookup (or the product fetch behind it) failed. Falling
+        // through to the text search and then announcing the product is
+        // missing would name the wrong cause: report the request failure.
+        _showScanLookupError(resolve.error);
+        return;
+      }
       // Fresh results for THIS query (cancels the pending debounce), then
       // exact name/SKU/barcode match. The documented first-result fallback
       // applies to TYPED text only — a pure-digit query is a scan shape,
@@ -770,7 +787,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       } else {
         await _handleUnknownBarcode(
           query,
-          definitiveMiss: resolve == _ScanResolve.miss,
+          definitiveMiss: resolve.outcome == _ScanResolve.miss,
         );
       }
     } finally {
@@ -791,23 +808,43 @@ class _PosScreenState extends ConsumerState<PosScreen> {
   /// definitive lookup miss; [_ScanResolve.error] when the lookup or the
   /// follow-up fetch failed — callers fall back to text search, and only
   /// a true miss may raise the unknown-barcode scan action.
-  Future<_ScanResolve> _resolveAndAddBarcode(
+  Future<_ScanResolution> _resolveAndAddBarcode(
     String code, {
     int? scanCorrelationId,
   }) async {
+    // Classified lookup: a failed request (timeout, refused connection,
+    // 5xx, rejected session, unreadable body) is NEVER read as "no such
+    // barcode" — only the server's own `found: false` / 404 is.
     final lookup =
-        await ref.read(barcodeLookupProvider.notifier).lookup(code);
-    final productId = lookup?.found == true ? lookup?.productId : null;
-    if (!mounted || productId == null) {
+        await ref.read(barcodeLookupProvider.notifier).lookupResult(code);
+    if (!mounted) {
       scanDiag('scan-resolve', {
-        'outcome':
-            !mounted ? 'stale' : (lookup == null ? 'error' : 'miss'),
+        'outcome': 'stale',
         'corr': lastScanCorr,
         'len': code.length,
         'suffix3': scanDiagSuffix3(code),
       });
-      if (!mounted) return _ScanResolve.miss;
-      return lookup == null ? _ScanResolve.error : _ScanResolve.miss;
+      return const _ScanResolution(_ScanResolve.miss);
+    }
+    if (lookup.isError) {
+      scanDiag('scan-resolve', {
+        'outcome': 'error',
+        'status': lookup.statusCode ?? '-',
+        'corr': lastScanCorr,
+        'len': code.length,
+        'suffix3': scanDiagSuffix3(code),
+      });
+      return _ScanResolution(_ScanResolve.error, lookup.error);
+    }
+    final productId = lookup.isFound ? lookup.model?.productId : null;
+    if (productId == null) {
+      scanDiag('scan-resolve', {
+        'outcome': lookup.isNotFound ? 'miss' : 'hit-without-product-id',
+        'corr': lastScanCorr,
+        'len': code.length,
+        'suffix3': scanDiagSuffix3(code),
+      });
+      return const _ScanResolution(_ScanResolve.miss);
     }
     scanDiag('scan-resolve', {
       'outcome': 'hit',
@@ -832,7 +869,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
           ProductModel.fromJson(response.data as Map<String, dynamic>);
       if (!mounted) {
         // recognized — never fall through
-        return _ScanResolve.hit;
+        return const _ScanResolution(_ScanResolve.hit);
       }
       // Gateway/qty-field scan add: the scan input keeps focus (see
       // [_clearSearchAfterAdd]); the qty field is never auto-focused.
@@ -844,15 +881,20 @@ class _PosScreenState extends ConsumerState<PosScreen> {
         unitsFuture: unitsFuture,
       );
       _clearSearchAfterAdd();
-      return _ScanResolve.hit;
-    } on DioException {
+      return const _ScanResolution(_ScanResolve.hit);
+    } catch (e) {
+      // Transport failure, or an unreadable product / variants / units
+      // payload. The barcode WAS resolved above — this is a fetch
+      // failure, and the caller must say so (with retry), not "the
+      // product does not exist".
       scanDiag('scan-resolve', {
         'outcome': 'error',
+        'stage': 'product-fetch',
         'corr': lastScanCorr,
         'len': code.length,
         'suffix3': scanDiagSuffix3(code),
       });
-      return _ScanResolve.error;
+      return _ScanResolution(_ScanResolve.error, e);
     }
   }
 
@@ -899,6 +941,24 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     _searchFocusNode.requestFocus();
   }
 
+  /// A scan could not be resolved because the REQUEST failed (timeout,
+  /// refused connection, server error, rejected session) — not because
+  /// the barcode is unknown. Separate surface, separate wording, and the
+  /// localized API message (never the catalog verdict).
+  void _showScanLookupError(Object? error) {
+    if (!mounted) return;
+    final loc = ref.read(localeProvider).flutterLocale.languageCode;
+    final failure = posApiError(error ?? StateError('scan lookup failed'), loc);
+    showPosToast(
+      context,
+      message: failure.message,
+      detail: failure.detail,
+      messageKey: const Key('pos-scan-lookup-error-message'),
+      kind: PosToastKind.error,
+      key: const Key('pos-scan-lookup-error'),
+    );
+  }
+
   void _showBarcodeNotFound() {
     if (!mounted) return;
     final loc = ref.read(localeProvider).flutterLocale.languageCode;
@@ -916,6 +976,19 @@ class _PosScreenState extends ConsumerState<PosScreen> {
   /// Unknown codes get the configured unknown-barcode action (or the
   /// clear not-found toast); recognized codes reuse every cart rule
   /// (merge-increment, stock guard, pickers).
+  /// Scans waiting for their resolve chain, in arrival order.
+  ///
+  /// A keyboard wedge can outrun the network easily: without this queue
+  /// every burst started its own resolve + product/variant/unit fetch
+  /// chain, so N rapid scans produced N INTERLEAVED chains whose
+  /// completions (and the dialog each may open) could land in any order.
+  /// Sequential processing makes the cart's outcome equal to the physical
+  /// scan order, and — because nothing is dropped, only deferred — one
+  /// scan can never disappear.
+  final List<({String code, int? corr})> _pendingScans =
+      <({String code, int? corr})>[];
+  bool _scanPipelineBusy = false;
+
   Future<void> _handleLineScan(String code) async {
     final scanCorrelationId = lastScanCorr;
     // First statement, synchronously: every dispatch (gateway or field
@@ -929,14 +1002,53 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     // digit-search debounce left over from an earlier focus change must
     // not fire mid-resolve as a wasted catalog request.
     ref.read(posSearchProvider.notifier).cancelPendingSearch();
-    final resolve = await _resolveAndAddBarcode(
+    _pendingScans.add((code: code, corr: scanCorrelationId));
+    scanDiag('scan-queue', {
+      'phase': 'enqueue',
+      'depth': _pendingScans.length,
+      'busy': _scanPipelineBusy,
+      'len': code.length,
+    });
+    if (_scanPipelineBusy) return;
+    _scanPipelineBusy = true;
+    try {
+      while (_pendingScans.isNotEmpty && mounted) {
+        final next = _pendingScans.removeAt(0);
+        scanDiag('scan-queue', {
+          'phase': 'dequeue',
+          'depth': _pendingScans.length,
+          'len': next.code.length,
+        });
+        await _processScan(next.code, scanCorrelationId: next.corr);
+      }
+    } finally {
+      _scanPipelineBusy = false;
+      if (_pendingScans.isNotEmpty) {
+        // Only reachable after disposal: the screen that would consume
+        // these codes no longer exists, so they are dropped explicitly
+        // instead of silently pending forever.
+        scanDiag('scan-queue', {
+          'phase': 'dropped',
+          'reason': mounted ? 'unexpected' : 'screen-disposed',
+          'depth': _pendingScans.length,
+        });
+        _pendingScans.clear();
+      }
+    }
+  }
+
+  /// Resolve and add ONE scan: the whole per-scan chain, run to completion
+  /// before the next queued scan starts (see [_pendingScans]).
+  Future<void> _processScan(String code, {int? scanCorrelationId}) async {
+    final resolution = await _resolveAndAddBarcode(
       code,
       scanCorrelationId: scanCorrelationId,
     );
-    if (resolve == _ScanResolve.hit) return;
+    if (!mounted || resolution.outcome == _ScanResolve.hit) return;
     await _handleUnknownBarcode(
       code,
-      definitiveMiss: resolve == _ScanResolve.miss,
+      definitiveMiss: resolution.outcome == _ScanResolve.miss,
+      error: resolution.error,
     );
   }
 
@@ -950,8 +1062,14 @@ class _PosScreenState extends ConsumerState<PosScreen> {
   Future<void> _handleUnknownBarcode(
     String code, {
     required bool definitiveMiss,
+    Object? error,
   }) async {
     if (!mounted) return;
+    // A failed request is never an unknown barcode: say what failed.
+    if (error != null) {
+      _showScanLookupError(error);
+      return;
+    }
     final openAddProduct = ref
             .read(scanSettingsProvider)
             .openAddProductOnUnknownBarcode &&
@@ -5712,6 +5830,12 @@ class _CartLineTileState extends State<_CartLineTile> {
           'textLen': _qty.text.length,
           'consumedLen': consumed.length,
         });
+        // The consumed text is gone, so the in-flight window is over.
+        // Keeping the key alive would make a LATER, genuine scan of the
+        // same code look like a duplicate delivery of this one and drop
+        // it — the "re-scanning the same product does not increment"
+        // failure.
+        _pendingScanText = null;
         return;
       }
       scanDiag('qty-clear', {

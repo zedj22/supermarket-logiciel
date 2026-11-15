@@ -1122,6 +1122,56 @@ final packagingStateProvider =
 // Barcode lookup (Phase 8 ready)
 // ---------------------------------------------------------------------------
 
+/// How one barcode lookup ENDED — the classification every scan consumer
+/// needs before it may claim anything about a product.
+///
+/// Only [notFound] is a verdict about the CATALOG. A timeout, a refused
+/// connection, a 5xx, an expired session or an unreadable body says
+/// nothing about whether the product exists, and must never be surfaced
+/// as "product does not exist" — that misdiagnosis sends the cashier
+/// hunting for a product that is in fact in the database.
+enum BarcodeLookupStatus {
+  /// The server answered with a resolved product / variant / selling unit.
+  found,
+
+  /// The server answered and no record carries the code (HTTP 200 with
+  /// `found: false`, or a genuine 404 for the lookup route). DEFINITIVE.
+  notFound,
+
+  /// No answer that can be read as a miss — transport failure, timeout,
+  /// authentication/permission rejection, server error, malformed body.
+  error,
+}
+
+/// Outcome of [BarcodeLookupNotifier.lookupResult]: the HTTP-level facts
+/// of one lookup, kept separate from the "does this product exist"
+/// question so a caller can never confuse the two.
+class BarcodeLookupResult {
+  const BarcodeLookupResult({
+    required this.status,
+    this.model,
+    this.error,
+    this.statusCode,
+  });
+
+  final BarcodeLookupStatus status;
+
+  /// The parsed payload — present for [BarcodeLookupStatus.found] and
+  /// [BarcodeLookupStatus.notFound] (a miss payload carries `found:false`).
+  final BarcodeLookupModel? model;
+
+  /// The driver error for [BarcodeLookupStatus.error] (kept for the
+  /// localized message / diagnostics — never for a "not found" claim).
+  final Object? error;
+
+  /// HTTP status when the server answered (null for transport failures).
+  final int? statusCode;
+
+  bool get isFound => status == BarcodeLookupStatus.found;
+  bool get isNotFound => status == BarcodeLookupStatus.notFound;
+  bool get isError => status == BarcodeLookupStatus.error;
+}
+
 class BarcodeLookupNotifier extends StateNotifier<BarcodeLookupModel?> {
   final Dio _dio;
   final String Function() _localeCode;
@@ -1138,21 +1188,60 @@ class BarcodeLookupNotifier extends StateNotifier<BarcodeLookupModel?> {
     return AppStrings.t('api_error_retry', loc);
   }
 
-  Future<BarcodeLookupModel?> lookup(String barcode) async {
+  /// Classified lookup: [BarcodeLookupStatus.notFound] only when the
+  /// server actually answered "no such barcode"; every failure to obtain
+  /// such an answer is [BarcodeLookupStatus.error].
+  ///
+  /// The barcode travels as the exact string it arrived as (query
+  /// parameter — no numeric conversion, no zero stripping), so leading
+  /// zeros and 8/12/13-digit codes reach the server byte-for-byte.
+  Future<BarcodeLookupResult> lookupResult(String barcode) async {
     state = null;
     try {
       final response = await _dio.get(
         '/api/v1/products/barcode-lookup',
         queryParameters: {'barcode': barcode},
       );
-      final model = BarcodeLookupModel.fromJson(
-        response.data as Map<String, dynamic>,
-      );
+      final data = response.data;
+      if (data is! Map<String, dynamic>) {
+        return const BarcodeLookupResult(status: BarcodeLookupStatus.error);
+      }
+      final model = BarcodeLookupModel.fromJson(data);
       state = model;
-      return model;
-    } on DioException {
-      return null;
+      return BarcodeLookupResult(
+        status:
+            model.found ? BarcodeLookupStatus.found : BarcodeLookupStatus.notFound,
+        model: model,
+        statusCode: response.statusCode,
+      );
+    } on DioException catch (e) {
+      final statusCode = e.response?.statusCode;
+      // A genuine 404 from the lookup route is a definitive miss; every
+      // other status/type (timeout, refused, 5xx, 401/403…) is an ERROR.
+      if (statusCode == 404) {
+        return BarcodeLookupResult(
+          status: BarcodeLookupStatus.notFound,
+          error: e,
+          statusCode: statusCode,
+        );
+      }
+      return BarcodeLookupResult(
+        status: BarcodeLookupStatus.error,
+        error: e,
+        statusCode: statusCode,
+      );
+    } catch (e) {
+      // Unreadable body (schema drift) is a failure, never a miss.
+      return BarcodeLookupResult(status: BarcodeLookupStatus.error, error: e);
     }
+  }
+
+  /// Legacy shape used by the catalog screens ("null = nothing to show").
+  /// Scan consumers must use [lookupResult] — this form cannot tell a
+  /// miss from a failed request.
+  Future<BarcodeLookupModel?> lookup(String barcode) async {
+    final result = await lookupResult(barcode);
+    return result.isFound ? result.model : null;
   }
 
   Future<String?> lookupWithError(String barcode) async {

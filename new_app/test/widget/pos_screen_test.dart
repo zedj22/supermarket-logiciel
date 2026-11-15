@@ -387,6 +387,8 @@ void _mockDio(
   Map<String, dynamic>? settingsBody,
   Map<String, Map<String, dynamic>>? barcodeLookups,
   bool barcodeLookupNetworkError = false,
+  int? barcodeLookupErrorStatus,
+  Map<String, Map<String, dynamic>>? productDetails,
   Duration latency = Duration.zero,
 }) {
   void record(String path) => recordPaths?.add(path);
@@ -493,6 +495,14 @@ void _mockDio(
       // §17.6 print settings; the default keeps the pre-§17.6 behaviour.
       return settingsBody ?? <String, dynamic>{'items': <dynamic>[]};
     }
+    // `productDetails` lets a test serve several distinct products
+    // (rapid scans of different items), keyed by product id.
+    if (path.startsWith('/api/v1/products/') &&
+        !path.endsWith('/search') &&
+        productDetails != null) {
+      final detail = productDetails[path.split('/').last];
+      if (detail != null) return detail;
+    }
     return _defaultBody(path, quantity: productQuantity);
   }
 
@@ -512,6 +522,9 @@ void _mockDio(
       // a definitive miss (the unknown-barcode scan action's guard).
       if (barcodeLookupNetworkError) {
         failPath(path, network: true);
+      }
+      if (barcodeLookupErrorStatus != null) {
+        failPath(path, network: false, status: barcodeLookupErrorStatus);
       }
       return _ok(path, bodyFor(path, barcode: params?['barcode'] as String?));
     }
@@ -744,6 +757,11 @@ void main() {
   setUp(() {
     dio = MockDio();
     _mockDio(dio);
+    // The gateway is a process-wide singleton: without this, a test
+    // that dispatched through the raw path leaves a cross-origin
+    // duplicate record behind that can suppress the NEXT test's first
+    // scan of the same code.
+    BarcodeScannerGateway.instance.resetForTest();
   });
 
   group('responsive layout', () {
@@ -14278,12 +14296,18 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('five overlapping lookups increment cart state and UI in '
-        'completion order without stale writes', (tester) async {
+    testWidgets('five rapid scans of one code resolve one at a time and '
+        'increment that single cart line exactly once each, never backwards',
+        (tester) async {
       await pumpPos(
         tester,
         barcodeLookups: {'8718114202402': _lookupHit()},
       );
+      // Decreasing response times: the LAST request answers first. With a
+      // concurrent pipeline the cart would be written in completion order
+      // and a slow early response could land on top of a newer result.
+      // Scans are processed sequentially instead, so the cart can only
+      // advance with the SCAN order, whatever the latency does.
       const completionDelays = <int>[500, 400, 300, 200, 100];
       var lookups = 0;
       when(() => dio.get(
@@ -14299,7 +14323,7 @@ void main() {
       });
 
       await focusWorkspace(tester);
-      final observedQuantities = <String>[];
+      final observedQuantities = <String>{};
       final cartSubscription = containerOf(tester).listen(
         posCartProvider,
         (previous, next) {
@@ -14313,25 +14337,46 @@ void main() {
         await sendWedgeScan(tester, '8718114202402');
       }
 
-      // The fifth request returns first, then each slower request completes
-      // 100ms later. State and the rendered field must only advance.
+      // The whole pipeline is 500+400+300+200+100 ms of fake time; walk it
+      // in 100 ms slices and assert the quantity only ever moves forward.
+      var lastSeen = 0.0;
       String? lineKey;
-      for (var completed = 1; completed <= completionDelays.length; completed++) {
+      for (var slice = 0; slice < 20; slice++) {
         await tester.pump(const Duration(milliseconds: 100));
         await tester.pump();
         final cart = containerOf(tester).read(posCartProvider);
-        expect(cart.lines, hasLength(1), reason: '$completed completed lookups');
+        if (cart.lines.isEmpty) {
+          // The very first lookup needs 500 ms — nothing is committed yet.
+          expect(lastSeen, 0, reason: 'the cart stays empty until it lands');
+          continue;
+        }
+        expect(cart.lines, hasLength(1), reason: 'one barcode, one cart line');
         final line = cart.lines.single;
         lineKey ??= line.key;
         expect(line.key, lineKey);
-        expect(line.quantity, '$completed', reason: 'cart after completion $completed');
+        final quantity = double.parse(line.quantity);
+        expect(
+          quantity,
+          greaterThanOrEqualTo(lastSeen),
+          reason: 'a newer resolution may never be overwritten by an older one',
+        );
+        lastSeen = quantity;
         expect(
           controllerText(tester, Key('cart-line-qty-$lineKey')),
-          '$completed',
-          reason: 'rendered cart after completion $completed',
+          line.quantity,
+          reason: 'the rendered field tracks the committed quantity',
         );
       }
-      expect(observedQuantities, <String>['1', '2', '3', '4', '5']);
+      expect(
+        containerOf(tester).read(posCartProvider).lines.single.quantity,
+        '5',
+        reason: 'five physical scans, five increments',
+      );
+      expect(
+        observedQuantities,
+        <String>{'1', '2', '3', '4', '5'},
+        reason: 'every scan added exactly one unit',
+      );
       verify(
         () => dio.get(
           '/api/v1/products/barcode-lookup',
@@ -14675,8 +14720,8 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('a lookup network failure with the action ON keeps the '
-        'not-found toast (a failed lookup is never a definitive miss)',
+    testWidgets('a lookup network failure with the action ON reports the '
+        'REQUEST failure and never claims the product is missing',
         (tester) async {
       await pumpPos(
         tester,
@@ -14689,10 +14734,19 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.byType(ProductFormDialog), findsNothing);
+      // The lookup never answered, so nothing is known about the code:
+      // surfacing "product does not exist" here would send the cashier
+      // hunting for a product that may well be in the catalog.
+      expect(
+        find.byKey(const Key('pos-scan-lookup-error')),
+        findsOneWidget,
+        reason: 'a transport failure is reported as a request failure',
+      );
       expect(
         find.byKey(const Key('pos-barcode-not-found-toast')),
-        findsOneWidget,
+        findsNothing,
       );
+      expect(containerOf(tester).read(posCartProvider).lines, isEmpty);
       expect(tester.takeException(), isNull);
     });
 
@@ -14715,11 +14769,15 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.byType(ProductFormDialog), findsNothing);
-      // The established error surface for a failed resolve stays the
-      // not-found toast — a transport error is not "no such product".
+      // The barcode WAS recognized; the product fetch failed. That is a
+      // request failure, not "no such product".
+      expect(
+        find.byKey(const Key('pos-scan-lookup-error')),
+        findsOneWidget,
+      );
       expect(
         find.byKey(const Key('pos-barcode-not-found-toast')),
-        findsOneWidget,
+        findsNothing,
       );
       expect(containerOf(tester).read(posCartProvider).lines, isEmpty);
       expect(tester.takeException(), isNull);
@@ -15170,6 +15228,344 @@ void main() {
         reason: 'the duplicate run is still consumed as a scan — only '
             'its second ACTION is dropped',
       );
+      expect(tester.takeException(), isNull);
+    });
+  });
+  // -----------------------------------------------------------------------
+  // Scan reliability (production). The reported symptoms are about what
+  // happens AROUND a correct read: burst framing, lookup classification,
+  // scan ordering and exactly-once cart writes. Each test pins one of them.
+  // -----------------------------------------------------------------------
+  group('scan reliability (production)', () {
+    const knownCode = '8718114202402';
+    const otherCode = '4006381333931';
+    const ean8Code = '96385074';
+    const leadingZeroCode = '0045600012345';
+    const otherProductId = '00000000-0000-0000-0000-0000000000p2';
+
+    late MockDio dio;
+
+    Future<void> pumpPos(
+      WidgetTester tester, {
+      Map<String, Map<String, dynamic>>? barcodeLookups,
+      Map<String, Map<String, dynamic>>? productDetails,
+      bool barcodeLookupNetworkError = false,
+      int? barcodeLookupErrorStatus,
+      String productQuantity = '100',
+      Duration latency = Duration.zero,
+      AppLocale locale = AppLocale.en,
+    }) async {
+      dio = MockDio();
+      _mockDio(
+        dio,
+        barcodeLookups: barcodeLookups,
+        productDetails: productDetails,
+        barcodeLookupNetworkError: barcodeLookupNetworkError,
+        barcodeLookupErrorStatus: barcodeLookupErrorStatus,
+        productQuantity: productQuantity,
+        latency: latency,
+      );
+      await _pumpApp(tester, dio: dio, locale: locale);
+      await tester.pump(const Duration(milliseconds: 500));
+    }
+
+    /// Escape with an empty search box hands the keyboard to the POS
+    /// workspace: the state a cashier scans from.
+    Future<void> focusWorkspace(WidgetTester tester) async {
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pump();
+    }
+
+    /// Drain the resolve pipeline (lookup → product → variants → units).
+    Future<void> settle(WidgetTester tester, {int pumps = 24}) async {
+      for (var i = 0; i < pumps; i++) {
+        await tester.pump(const Duration(milliseconds: 5));
+      }
+    }
+
+    ProviderContainer containerOf(WidgetTester tester) =>
+        ProviderScope.containerOf(
+          tester.element(find.byKey(const Key('pos-screen'))),
+        );
+
+    PosCartState cartOf(WidgetTester tester) =>
+        containerOf(tester).read(posCartProvider);
+
+    Map<String, dynamic> productDetail({
+      String id = _productId,
+      String name = 'Bread',
+    }) =>
+        _product(id: id, name: name);
+
+    testWidgets('ten consecutive scans of one product add exactly ten units',
+        (tester) async {
+      await pumpPos(tester, barcodeLookups: {knownCode: _lookupHit()});
+      await focusWorkspace(tester);
+
+      for (var i = 0; i < 10; i++) {
+        await sendWedgeScan(tester, knownCode);
+        await settle(tester);
+      }
+
+      final cart = cartOf(tester);
+      expect(cart.lines, hasLength(1), reason: 'one product, one cart line');
+      expect(
+        cart.lines.single.quantity,
+        '10',
+        reason: 'every physical scan increments exactly once',
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('re-scanning the same product increments by exactly one',
+        (tester) async {
+      await pumpPos(tester, barcodeLookups: {knownCode: _lookupHit()});
+      await focusWorkspace(tester);
+
+      await sendWedgeScan(tester, knownCode);
+      await settle(tester);
+      expect(cartOf(tester).lines.single.quantity, '1');
+
+      await sendWedgeScan(tester, knownCode);
+      await settle(tester);
+
+      expect(cartOf(tester).lines, hasLength(1));
+      expect(cartOf(tester).lines.single.quantity, '2');
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('rapid scans of different products create one line each, in '
+        'scan order', (tester) async {
+      await pumpPos(
+        tester,
+        barcodeLookups: {
+          knownCode: _lookupHit(),
+          otherCode: _lookupHit(productId: otherProductId, productName: 'Milk'),
+        },
+        productDetails: {
+          _productId: productDetail(),
+          otherProductId: productDetail(id: otherProductId, name: 'Milk'),
+        },
+      );
+      await focusWorkspace(tester);
+
+      // Two bursts back-to-back: no settling in between, exactly what a
+      // cashier produces when scanning a basket.
+      await sendWedgeScan(tester, knownCode);
+      await sendWedgeScan(tester, otherCode);
+      await settle(tester);
+
+      final lines = cartOf(tester).lines;
+      expect(lines, hasLength(2));
+      expect(
+        lines.map((l) => l.name).toList(),
+        ['Bread', 'Milk'],
+        reason: 'sequential processing preserves the physical scan order',
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('no scan disappears in a rapid mixed sequence', (tester) async {
+      await pumpPos(
+        tester,
+        barcodeLookups: {
+          knownCode: _lookupHit(),
+          otherCode: _lookupHit(productId: otherProductId, productName: 'Milk'),
+        },
+        productDetails: {
+          _productId: productDetail(),
+          otherProductId: productDetail(id: otherProductId, name: 'Milk'),
+        },
+      );
+      await focusWorkspace(tester);
+
+      // A B A B A — five physical scans with no pause between any two.
+      for (final code in <String>[
+        knownCode,
+        otherCode,
+        knownCode,
+        otherCode,
+        knownCode,
+      ]) {
+        await sendWedgeScan(tester, code);
+      }
+      await settle(tester, pumps: 60);
+
+      final lines = cartOf(tester).lines;
+      expect(lines, hasLength(2));
+      final byName = <String, String>{
+        for (final line in lines) line.name: line.quantity,
+      };
+      expect(byName['Bread'], '3');
+      expect(byName['Milk'], '2');
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a barcode with leading zeros reaches the server verbatim and '
+        'resolves', (tester) async {
+      await pumpPos(tester, barcodeLookups: {leadingZeroCode: _lookupHit()});
+      await focusWorkspace(tester);
+
+      await sendWedgeScan(tester, leadingZeroCode);
+      await settle(tester);
+
+      expect(
+        cartOf(tester).lines,
+        hasLength(1),
+        reason: 'a leading zero is part of the code — never trimmed, never '
+            'coerced to a number',
+      );
+      verify(() => dio.get(
+            '/api/v1/products/barcode-lookup',
+            queryParameters: {'barcode': leadingZeroCode},
+          )).called(1);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('EAN-8 and EAN-13 codes both resolve through the same path',
+        (tester) async {
+      await pumpPos(
+        tester,
+        barcodeLookups: {ean8Code: _lookupHit(), knownCode: _lookupHit()},
+      );
+      await focusWorkspace(tester);
+
+      await sendWedgeScan(tester, ean8Code);
+      await settle(tester);
+      await sendWedgeScan(tester, knownCode);
+      await settle(tester);
+
+      expect(cartOf(tester).lines, hasLength(1));
+      expect(cartOf(tester).lines.single.quantity, '2');
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a transport failure is reported as a request failure, never '
+        'as a missing product', (tester) async {
+      await pumpPos(tester, barcodeLookupNetworkError: true);
+      await focusWorkspace(tester);
+
+      await sendWedgeScan(tester, knownCode);
+      await settle(tester);
+
+      expect(find.byKey(const Key('pos-scan-lookup-error')), findsOneWidget);
+      expect(
+        find.byKey(const Key('pos-barcode-not-found-toast')),
+        findsNothing,
+      );
+      expect(cartOf(tester).lines, isEmpty);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a server error is reported as a request failure, never as a '
+        'missing product', (tester) async {
+      await pumpPos(tester, barcodeLookupErrorStatus: 500);
+      await focusWorkspace(tester);
+
+      await sendWedgeScan(tester, knownCode);
+      await settle(tester);
+
+      expect(find.byKey(const Key('pos-scan-lookup-error')), findsOneWidget);
+      expect(
+        find.byKey(const Key('pos-barcode-not-found-toast')),
+        findsNothing,
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a genuine 404 keeps the not-found verdict', (tester) async {
+      await pumpPos(tester, barcodeLookupErrorStatus: 404);
+      await focusWorkspace(tester);
+
+      await sendWedgeScan(tester, knownCode);
+      await settle(tester);
+
+      expect(
+        find.byKey(const Key('pos-barcode-not-found-toast')),
+        findsOneWidget,
+        reason: 'a 404 from the lookup route is a definitive miss',
+      );
+      expect(find.byKey(const Key('pos-scan-lookup-error')), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('the lookup pipeline does not depend on the product display '
+        'language', (tester) async {
+      const arabicName = 'خبز';
+      for (final locale in <AppLocale>[
+        AppLocale.en,
+        AppLocale.fr,
+        AppLocale.ar,
+      ]) {
+        await pumpPos(
+          tester,
+          locale: locale,
+          barcodeLookups: {knownCode: _lookupHit(productName: arabicName)},
+          productDetails: {_productId: productDetail(name: arabicName)},
+        );
+        await focusWorkspace(tester);
+
+        await sendWedgeScan(tester, knownCode);
+        await settle(tester);
+
+        expect(
+          cartOf(tester).lines.single.name,
+          arabicName,
+          reason: 'the cart line carries the catalog name unchanged',
+        );
+        expect(tester.takeException(), isNull);
+      }
+    });
+
+    testWidgets('one physical scan never increments the quantity twice, even '
+        'with a repeated terminator', (tester) async {
+      await pumpPos(tester, barcodeLookups: {knownCode: _lookupHit()});
+      await focusWorkspace(tester);
+
+      await sendWedgeScan(tester, knownCode);
+      await settle(tester);
+      // A CR+LF scanner suffix delivers a second Enter with an empty
+      // buffer: it must not repeat the previous scan's action.
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await settle(tester);
+
+      expect(cartOf(tester).lines.single.quantity, '1');
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('manual quantity entry still works after a scan',
+        (tester) async {
+      await pumpPos(tester, barcodeLookups: {knownCode: _lookupHit()});
+      await focusWorkspace(tester);
+      await sendWedgeScan(tester, knownCode);
+      await settle(tester);
+
+      final key = Key('cart-line-qty-${cartOf(tester).lines.single.key}');
+      await tester.tap(find.byKey(key));
+      await tester.pump();
+      await tester.enterText(find.byKey(key), '3');
+      await tester.pump();
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await settle(tester);
+
+      expect(cartOf(tester).lines.single.quantity, '3');
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a screen disposed while a scan is resolving adds nothing and '
+        'throws nothing', (tester) async {
+      await pumpPos(
+        tester,
+        barcodeLookups: {knownCode: _lookupHit()},
+        latency: const Duration(milliseconds: 40),
+      );
+      await focusWorkspace(tester);
+
+      await sendWedgeScan(tester, knownCode);
+      await tester.pump(); // resolve in flight
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump(const Duration(milliseconds: 200));
+
       expect(tester.takeException(), isNull);
     });
   });

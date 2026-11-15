@@ -1041,10 +1041,38 @@ class SellingUnitService(BaseService):
         )
 
 
+def upc_a_ean13_alias(code: str) -> str | None:
+    """The GS1-equivalent form of [code] for UPC-A / EAN-13, or ``None``.
+
+    A UPC-A (12 digits) and its EAN-13 form are the SAME article: EAN-13
+    simply carries a leading zero. A scanner emits whichever the printed
+    symbol encodes, while the product may have been registered with the
+    other form, so a lookup that compares bytes only reports an existing
+    product as missing.
+
+    Deliberately narrow — it never strips a MEANINGFUL leading zero, never
+    converts a code to an integer and never touches anything else:
+      * 12 digits        -> the 13-digit form with one leading zero;
+      * 13 digits, "0.." -> the 12-digit form.
+    EAN-8, EAN-13 (non-zero prefix), GTIN-14 and alphanumeric internal
+    codes return ``None`` and stay byte-exact.
+    """
+    if not code.isdigit():
+        return None
+    if len(code) == 12:
+        return "0" + code
+    if len(code) == 13 and code[0] == "0":
+        return code[1:]
+    return None
+
+
 class BarcodeLookupService(BaseService):
     """Unified barcode resolution for POS scan / Phase 8 checkout.
 
-    Lookup order: selling unit → variant → product. Exact match only.
+    Lookup order: selling unit → variant → product. Exact match only,
+    then — if that misses — the same three steps for the UPC-A/EAN-13
+    equivalent form (see :func:`upc_a_ean13_alias`). Any other code is
+    compared byte-for-byte, leading zeros included.
     """
 
     def __init__(self, db: Session):
@@ -1060,6 +1088,28 @@ class BarcodeLookupService(BaseService):
         if not code:
             return BarcodeLookupResponse(found=False)
 
+        resolved = self._resolve_exact(code, include_archived=include_archived)
+        if resolved is not None:
+            return resolved
+
+        alias = upc_a_ean13_alias(code)
+        if alias is not None:
+            resolved = self._resolve_exact(
+                alias, include_archived=include_archived
+            )
+            if resolved is not None:
+                return resolved
+        return BarcodeLookupResponse(found=False)
+
+    def _resolve_exact(
+        self, code: str, *, include_archived: bool
+    ) -> BarcodeLookupResponse | None:
+        """selling unit → variant → product for exactly [code].
+
+        ``None`` means "no record carries this exact string"; the caller
+        may then try the equivalent UPC-A/EAN-13 form. A child whose
+        parent product has disappeared is a definitive miss instead.
+        """
         unit = self.selling_units.find_by_barcode(
             code, include_archived=include_archived
         )
@@ -1123,7 +1173,7 @@ class BarcodeLookupService(BaseService):
                 product_unit=product.unit,
                 is_archived=product.archived_at is not None,
             )
-        return BarcodeLookupResponse(found=False)
+        return None
 
 
 class PurchaseUnitService(BaseService):
