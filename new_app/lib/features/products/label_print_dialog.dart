@@ -303,6 +303,8 @@ class _LabelPrintDialogState extends ConsumerState<LabelPrintDialog> {
             result.bytes,
             paper: result.paper,
             filename: result.filename,
+            pageWidthMm: isRoll ? (layout['roll_width_mm'] ?? layout['label_width_mm']) : null,
+            pageHeightMm: isRoll ? (layout['label_height_mm'] ?? 35.0) : null,
           );
       if (!mounted) return;
       // Printed — tell the screen to exit selection mode.
@@ -536,6 +538,8 @@ class _LabelPrintDialogState extends ConsumerState<LabelPrintDialog> {
                       'label-preset-medium', 'label_preset_medium', 58, 40, loc),
                   _presetButton(
                       'label-preset-large', 'label_preset_large', 60, 40, loc),
+                  _presetButton(
+                      'label-preset-stock', 'label_preset_stock', 45, 35, loc),
                 ],
               ),
             const SizedBox(height: 8),

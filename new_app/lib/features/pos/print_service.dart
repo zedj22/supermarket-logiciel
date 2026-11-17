@@ -27,6 +27,8 @@ abstract class PrintService {
     Uint8List bytes, {
     required String paper,
     String? filename,
+    double? pageWidthMm,
+    double? pageHeightMm,
   });
 
   /// Sends [text] to the default system printer (legacy text path).
@@ -55,6 +57,8 @@ class WindowsPrintService implements PrintService {
     Uint8List bytes, {
     required String paper,
     String? filename,
+    double? pageWidthMm,
+    double? pageHeightMm,
   }) async {
     if (bytes.isEmpty) {
       throw const PrintServiceException('empty pdf');
@@ -68,10 +72,37 @@ class WindowsPrintService implements PrintService {
           code: 'printer_unavailable',
         );
       }
+      // Determine print format: when exact page dimensions are provided
+      // (roll mode with pageWidthMm/pageHeightMm), use a custom format
+      // so the spooler receives the exact label page size. Otherwise use
+      // the paper-type–based format (A4 / roll80) to preserve existing behavior.
+      final exactPage = pageWidthMm != null &&
+          pageHeightMm != null &&
+          pageWidthMm > 0 &&
+          pageHeightMm > 0;
+      final format = exactPage
+          ? PdfPageFormat(
+              pageWidthMm * PdfPageFormat.mm,
+              pageHeightMm * PdfPageFormat.mm,
+              marginAll: 0,
+            )
+          : paper == 'A4'
+              ? PdfPageFormat.a4
+              : PdfPageFormat.roll80;
+
+      // When exact page dimensions are provided for roll labels,
+      // pass usePrinterSettings = false so the printing plugin creates a
+      // custom DEVMODE with the exact PDF page dimensions (e.g. 45×35 mm).
+      // The driver's default stock form (~47.5×35 mm for Xprinter) may not
+      // match the PDF page size, causing pages to be clipped/merged.
+      // Set to false when exact dimensions are given; otherwise use default.
+      final usePrinterSettings = !exactPage;
+
       await Printing.layoutPdf(
         onLayout: (_) async => bytes,
         name: filename ?? 'document',
-        format: paper == 'A4' ? PdfPageFormat.a4 : PdfPageFormat.roll80,
+        format: format,
+        usePrinterSettings: usePrinterSettings,
       );
     } on PrintServiceException {
       rethrow;
