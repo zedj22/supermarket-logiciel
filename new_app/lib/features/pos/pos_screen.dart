@@ -96,6 +96,7 @@ import 'pos_error_message.dart';
 import 'pos_layout.dart';
 import 'pos_models.dart';
 import 'pos_providers.dart';
+import 'product_picker_dialog.dart';
 import 'pos_quantity.dart';
 import 'pos_sell_unit_pricing.dart';
 import 'pos_qty_shortcuts.dart';
@@ -328,6 +329,20 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       kind: PosToastKind.warning,
       key: const Key('pos-cart-stock-changed-toast'),
     );
+  }
+
+  /// Ctrl+N — open the quick product picker (compact badge). The key is
+  /// free at the POS layer: F1–F5 + Shift+F6/F7 + Space + + / - / * + Escape
+  /// are all claimed by the POS or the shell (F3/Ctrl+N belongs to the shell
+  /// add-product form); Ctrl+N keeps its shell meaning while focus is not
+  /// inside the POS page, and no page key is reachable from a modal route.
+  Future<void> _openProductPicker() async {
+    final product = await showProductPickerDialog(context);
+    if (product == null || !mounted) return;
+    // Reuse the canonical add path: it runs the full decision tree
+    // (variant / selling-unit pickers, stock guard, wholesale / promo,
+    // merge-increment) exactly like the catalog tile opens it.
+    await _addProduct(product, fromScan: false);
   }
 
   /// Escape — the context-safe clear. With text in the search box it only
@@ -2555,6 +2570,27 @@ class _PosScreenState extends ConsumerState<PosScreen> {
                   minHeight: 38,
                 ),
               );
+              final productPickerButton = OutlinedButton.icon(
+                key: const Key('pos-product-picker-button'),
+                onPressed: _openProductPicker,
+                icon: const Icon(Icons.search_off, size: 18),
+                label: ShortcutBadgeLabel(
+                  AppStrings.t('select_product', loc),
+                  keys: PosShortcutKeys.productPicker,
+                  labelStyle: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  minimumSize: const Size(0, 38),
+                  visualDensity: VisualDensity.compact,
+                  side: BorderSide(
+                    color: theme.colorScheme.outline.withValues(alpha: 0.5),
+                  ),
+                ),
+              );
               final compactToggle = _ViewModeToggle(
                 mode: viewMode,
                 compact: true,
@@ -2628,6 +2664,8 @@ class _PosScreenState extends ConsumerState<PosScreen> {
                   ),
                   const SizedBox(width: 8),
                   packsButton,
+                  const SizedBox(width: 8),
+                  productPickerButton,
                   const SizedBox(width: 8),
                   shortcutsButton,
                   const SizedBox(width: 8),
@@ -2879,6 +2917,11 @@ class _PosScreenState extends ConsumerState<PosScreen> {
             _handleShortcut(LogicalKeyboardKey.f11),
         const SingleActivator(LogicalKeyboardKey.f12): () =>
             _handleShortcut(LogicalKeyboardKey.f12),
+        // Ctrl+N — quick product picker (page-scoped). The shell owns F3/Ctrl+N
+        // (add-product form) and F1–F5, so Ctrl+N is free at the POS layer;
+        // it keeps the shell's meaning only when the workspace is unfocused.
+        const SingleActivator(LogicalKeyboardKey.keyN, control: true): () =>
+            _openProductPicker(),
         const PosQtyShortcutActivator(PosQtyShortcutKind.increment): () =>
             _incrementActiveLine(),
         const PosQtyShortcutActivator(PosQtyShortcutKind.decrement): () =>

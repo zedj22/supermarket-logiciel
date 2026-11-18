@@ -74,4 +74,10 @@ abstract final class PosShortcutKeys {
 
   /// F12 — clear cart (confirm dialog).
   static const clearCart = 'F12';
+
+  /// Ctrl+N — quick product picker (searchable, keyboard-first window).
+  /// Free at the POS layer: the shell owns F1–F5 and F3 / Ctrl+N (the
+  /// add-product form), and while a modal route is open its focus scope
+  /// keeps the keys, so the page binding never fires behind a dialog.
+  static const productPicker = 'Ctrl+N';
 }
