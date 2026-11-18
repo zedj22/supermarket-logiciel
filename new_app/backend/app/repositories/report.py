@@ -82,9 +82,30 @@ def _return_base_qty():
     )
 
 
+def _is_custom_sale_line():
+    """Price-only custom line: neither a catalog product nor a pack."""
+    return and_(SaleLine.product_id.is_(None), SaleLine.pack_id.is_(None))
+
+
+def _is_custom_return_line():
+    return and_(ReturnLine.product_id.is_(None), ReturnLine.pack_id.is_(None))
+
+
+def _custom_line_key():
+    """Grouping key that keeps distinct custom names apart (NULL otherwise).
+
+    Every other line is identified by its product/pack id, so the key stays
+    NULL for them and never splits a catalog row. A custom line has no id at
+    all: its name snapshot IS its identity, so two different custom names in
+    one window must not collapse into a single "pack" row.
+    """
+    return case((_is_custom_sale_line(), SaleLine.product_name), else_=None)
+
+
 def _line_kind():
-    """``product`` / ``pack`` / ``component`` discriminator for §5.8 rows."""
+    """``product`` / ``pack`` / ``component`` / ``custom`` for §5.8 rows."""
     return case(
+        (_is_custom_sale_line(), "custom"),
         (SaleLine.product_id.is_(None), "pack"),
         (SaleLine.product_id.isnot(None) & SaleLine.pack_id.isnot(None), "component"),
         else_="product",
@@ -93,6 +114,7 @@ def _line_kind():
 
 def _return_line_kind():
     return case(
+        (_is_custom_return_line(), "custom"),
         (ReturnLine.product_id.is_(None), "pack"),
         (ReturnLine.product_id.isnot(None) & ReturnLine.pack_id.isnot(None), "component"),
         else_="product",
@@ -533,6 +555,7 @@ class ReportRepository:
             select(
                 func.coalesce(SaleLine.product_id, SaleLine.pack_id).label("item_id"),
                 _line_kind().label("kind"),
+                _custom_line_key().label("custom_name"),
                 func.max(SaleLine.product_name).label("line_name"),
                 func.coalesce(func.sum(_sale_base_qty()), 0).label("qty_sold"),
                 func.coalesce(func.sum(SaleLine.line_total + SaleLine.line_discount), 0).label(
@@ -562,6 +585,7 @@ class ReportRepository:
             .group_by(
                 func.coalesce(SaleLine.product_id, SaleLine.pack_id),
                 _line_kind(),
+                _custom_line_key(),
             )
             .subquery("sales_item_group")
         )
@@ -570,7 +594,9 @@ class ReportRepository:
             select(
                 sales_grouped.c.item_id,
                 sales_grouped.c.kind,
-                func.coalesce(Product.name, sales_grouped.c.line_name).label("name"),
+                func.coalesce(
+                    Product.name, sales_grouped.c.custom_name, sales_grouped.c.line_name, ""
+                ).label("name"),
                 Product.sku.label("sku"),
                 Product.category_id.label("category_id"),
                 Category.name.label("category"),
@@ -589,17 +615,24 @@ class ReportRepository:
                 Product,
                 and_(
                     Product.id == sales_grouped.c.item_id,
-                    sales_grouped.c.kind != "pack",
+                    sales_grouped.c.kind.notin_(("pack", "custom")),
                 ),
             )
             .outerjoin(Category, Category.id == Product.category_id)
         )
 
+        # One expression object feeds both the SELECT list and the GROUP BY:
+        # PostgreSQL matches grouped expressions structurally, so a 3-arg
+        # COALESCE in the target list over a 2-arg COALESCE in GROUP BY raises
+        # GroupingError ("column products.name must appear in the GROUP BY
+        # clause") even though SQLite happily accepts it.
+        returns_name = func.coalesce(Product.name, ReturnLine.product_name, "")
+
         returns_part = (
             select(
                 func.coalesce(ReturnLine.product_id, ReturnLine.pack_id).label("item_id"),
                 _return_line_kind().label("kind"),
-                func.coalesce(Product.name, ReturnLine.product_name).label("name"),
+                returns_name.label("name"),
                 Product.sku.label("sku"),
                 Product.category_id.label("category_id"),
                 Category.name.label("category"),
@@ -632,7 +665,7 @@ class ReportRepository:
             .group_by(
                 func.coalesce(ReturnLine.product_id, ReturnLine.pack_id),
                 _return_line_kind(),
-                func.coalesce(Product.name, ReturnLine.product_name),
+                returns_name,
                 Product.sku,
                 Product.category_id,
                 Category.name,

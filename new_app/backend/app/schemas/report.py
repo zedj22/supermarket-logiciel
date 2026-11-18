@@ -102,7 +102,9 @@ class ReportTotals(StrictBaseModel):
 
 
 class ProductReportRow(StrictBaseModel):
-    """§5.8 columns. ``kind`` is ``product`` | ``pack`` | ``component``."""
+    """§5.8 columns. ``kind`` is ``product`` | ``pack`` | ``component`` |
+    ``custom`` (a price-only sale line: no catalog row exists, so
+    ``item_id`` is derived from its name snapshot)."""
 
     item_id: UUID
     kind: str

@@ -344,8 +344,18 @@ class ReportService:
         # `return_cost`, so table, client CSV and export always agree.
         gross_profit_q = _money(gross_profit)
         cogs_net_q = _money(raw["cogs"]) - _money(raw["return_cost"])
+        item_id = raw["item_id"]
+        if item_id is None:
+            # Price-only custom line (§5.8): no catalog product and no pack,
+            # so the row has no natural id. Its name snapshot IS its
+            # identity here — a stable UUID derived from it keeps the
+            # response schema typed and lets repeats of the same name
+            # aggregate into one row. No products row is invented.
+            item_id = uuid.uuid5(
+                uuid.NAMESPACE_URL, f"supermarketpro/custom-line/{raw['name']}"
+            )
         return ProductReportRow(
-            item_id=raw["item_id"],
+            item_id=item_id,
             kind=raw["kind"],
             name=raw["name"],
             sku=raw["sku"],

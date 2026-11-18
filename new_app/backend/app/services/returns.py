@@ -1080,10 +1080,20 @@ class ReturnService(BaseService):
                 )
 
         is_pack = source.pack_id is not None and source.product_id is None
+        # Price-only custom line: no product and no pack, so there is no
+        # stock to restore and no base quantity to store. The refund still
+        # uses the persisted line_total pro rata, exactly like any other
+        # line, so partial returns of a custom item conserve the amount.
+        is_custom = source.product_id is None and source.pack_id is None
         qty = to_decimal(line.quantity)
         self._validate_quantity(qty, source=source, is_pack=is_pack)
 
-        if is_pack:
+        if is_custom:
+            quantity_base: Decimal | None = None
+            restores: list[dict[str, Any]] = []
+            document_quantity = qty
+            document_unit = source.product_unit
+        elif is_pack:
             # Whole packs only (§11/§14). The charged summary owns no
             # stock, so no base quantity is stored on the return line.
             quantity_base: Decimal | None = None
