@@ -192,6 +192,15 @@ void main() {
           data: <String, dynamic>{'setup_needed': false},
         );
       }
+      if (path == '/api/v1/license/status') {
+        // Phase L2-C: the startup best-effort licensing fetch also hits
+        // the stale address and is swallowed by the client — it must not
+        // consume the first-failure this test is built around.
+        throw DioException.connectionError(
+          requestOptions: RequestOptions(path: path),
+          reason: 'no route to host',
+        );
+      }
       requestedUrls.add(dio.options.baseUrl);
       if (requestedUrls.length == 1) {
         // First attempt: the remembered address is gone.

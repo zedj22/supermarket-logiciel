@@ -103,7 +103,8 @@ class _SetupWizardScreenState extends ConsumerState<SetupWizardScreen> {
   Future<void> _manualConnect() async {
     final host = _hostController.text.trim();
     if (host.isEmpty) return;
-    final port = 8000;
+    // P8: use the same port discovery uses instead of a fixed 8000.
+    final port = ref.read(lanDiscoveryPortProvider);
     final url = host.startsWith('http') ? host : 'http://$host:$port';
     final ok = await ref.read(lanConnectionProvider.notifier).probe(url);
     if (!mounted) return;

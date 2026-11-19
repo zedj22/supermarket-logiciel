@@ -11,6 +11,8 @@
 //
 // The server address + server_id are ordinary SharedPreferences: leaking
 // "the shop is at 192.168.1.10" is not a secret, whereas the token is.
+import 'dart:convert';
+import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -155,11 +157,88 @@ final networkConfiguredProvider = FutureProvider<bool>((ref) async {
 /// launch, so production behaviour is unchanged and harnesses stay inert.
 final installBootstrappedProvider = Provider<bool>((ref) => false);
 
+/// Descriptor file name the production launcher publishes
+/// (`{"base_url": "http://…"}`); shared with `run_production.py`.
+const String endpointFileName = 'supermarket_endpoint.json';
+
+/// Endpoint descriptor next to this executable — the rehearsal/dev
+/// sibling layout (`<root>/app/supermarket_endpoint.json`) and any
+/// install whose app folder is writable.
+///
+/// The launcher knows the port actually configured in the install's
+/// `.env`; the app must not guess it (production, rehearsal and dev
+/// installs all use different ports).
+File localBackendEndpointFile() {
+  final exeDir = File(Platform.resolvedExecutable).parent;
+  return File('${exeDir.path}${Platform.pathSeparator}$endpointFileName');
+}
+
+/// R1 production descriptor: `<ProgramData>\SupermarketPro\config\…`.
+///
+/// The backend service owns `<DATA_DIR>\config\` (docs/R1_DATA_PATHS.md)
+/// and publishes the descriptor there, granting local users read on that
+/// single file only. `ProgramData` comes from the environment — never a
+/// hardcoded drive — and the folder name matches the R1 default used by
+/// `winsw/grant_data_dir_acl.ps1`, the WinSW definition and the
+/// installer. Returns null when `ProgramData` is unavailable.
+File? localBackendEndpointDataFile() {
+  final programData = Platform.environment['ProgramData'];
+  if (programData == null || programData.isEmpty) return null;
+  return File(
+    <String>[
+      programData,
+      'SupermarketPro',
+      'config',
+      endpointFileName,
+    ].join(Platform.pathSeparator),
+  );
+}
+
+/// First readable, valid descriptor among [candidates], in order.
+///
+/// Missing, invalid, stale-shaped or inaccessible files are skipped
+/// (never thrown): discovery must never break startup.
+Future<String?> readEndpointBaseUrlFrom(Iterable<File> candidates) async {
+  for (final file in candidates) {
+    try {
+      if (!await file.exists()) continue;
+      final decoded = jsonDecode(await file.readAsString());
+      if (decoded is! Map<String, dynamic>) continue;
+      final baseUrl = decoded['base_url'];
+      if (baseUrl is! String || !baseUrl.startsWith('http')) continue;
+      return baseUrl;
+    } catch (_) {
+      continue; // unreadable/mid-rotation — try the next candidate
+    }
+  }
+  return null;
+}
+
+/// Launcher-published local endpoint, in probe order:
+///
+/// 1. next to the executable (rehearsal/dev/writable layouts — probed
+///    first so a stale ProgramData file can never shadow the copy this
+///    launcher just rewrote);
+/// 2. `<ProgramData>\SupermarketPro\config\` (R1 production layout,
+///    where Program Files is not writable by the service);
+/// 3. null → `AppConstants.defaultServerBaseUrl`.
+///
+/// Paired LAN clients never reach this: `initialBaseUrl` returns their
+/// remembered server URL first.
+Future<String?> readLocalBackendBaseUrl() async {
+  final candidates = <File>[localBackendEndpointFile()];
+  final dataFile = localBackendEndpointDataFile();
+  if (dataFile != null) candidates.add(dataFile);
+  return readEndpointBaseUrlFrom(candidates);
+}
+
 /// Base URL the client should boot with: the remembered server when paired,
-/// otherwise the single-PC default.
+/// otherwise the single-PC default (the launcher-published local endpoint
+/// when present, else `AppConstants.defaultServerBaseUrl`).
 Future<String> initialBaseUrl() async {
   final link = await readServerLink();
   final url = link.url;
   if (url != null && url.isNotEmpty) return url;
-  return AppConstants.defaultServerBaseUrl;
+  return await readLocalBackendBaseUrl() ??
+      AppConstants.defaultServerBaseUrl;
 }

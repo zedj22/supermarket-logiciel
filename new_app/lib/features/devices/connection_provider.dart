@@ -270,9 +270,15 @@ class LanConnectionNotifier extends StateNotifier<LanConnectionState> {
   final Duration pairingPollInterval;
   final Duration pairingTimeout;
 
+  /// P8: the UDP discovery port is no longer hard-coded in the sweep.
+  /// It defaults to the historical 8000 and is overridden with the port
+  /// the launcher actually published in `supermarket_endpoint.json`.
+  final int discoveryPort;
+
   LanConnectionNotifier(
     this._api, {
     DiscoveryService Function(int port)? discoveryFactory,
+    this.discoveryPort = 8000,
     Future<ServerProbe> Function(String url)? probe,
     Random? random,
     this.heartbeatInterval = AppConstants.heartbeatInterval,
@@ -348,7 +354,7 @@ class LanConnectionNotifier extends StateNotifier<LanConnectionState> {
   Future<List<ServerOffer>> _sweepOffers({
     Duration budget = const Duration(seconds: 3),
   }) async {
-    final service = _discoveryFactory(8000);
+    final service = _discoveryFactory(discoveryPort);
     try {
       return await service.discover(budget: budget).toList();
     } finally {
@@ -443,7 +449,7 @@ class LanConnectionNotifier extends StateNotifier<LanConnectionState> {
   void startDiscovery({Duration budget = const Duration(seconds: 3)}) {
     _discoverySub?.cancel();
     _discovery?.dispose();
-    final service = _discoveryFactory(8000);
+    final service = _discoveryFactory(discoveryPort);
     _discovery = service;
     state = state.copyWith(
       phase: LanPhase.discovering,
@@ -831,6 +837,10 @@ class LanConnectionNotifier extends StateNotifier<LanConnectionState> {
 // ---------------------------------------------------------------------------
 
 /// Discovery port is the same number as HTTP (§11.1 / Q13).
+///
+/// P8: `main()` overrides this with the port published by the launcher
+/// (single-PC installs may be configured on another port); 8000 stays the
+/// fallback for a dev run and for every install that publishes nothing.
 final lanDiscoveryPortProvider = Provider<int>((ref) => 8000);
 
 final lanConnectionProvider =
@@ -838,6 +848,7 @@ final lanConnectionProvider =
   final api = ref.watch(apiClientProvider);
   final notifier = LanConnectionNotifier(
     api,
+    discoveryPort: ref.watch(lanDiscoveryPortProvider),
     discoveryFactory: (port) => UdpDiscoveryService(port: port),
   );
 
