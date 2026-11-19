@@ -191,7 +191,7 @@ void main() {
       );
 
       // Keys the tests and cashiers reach for specifically.
-      expect(find.text('Space'), findsOneWidget);
+      expect(find.text('Space / F8'), findsOneWidget);
       expect(find.text('F12'), findsOneWidget);
       expect(find.text('+'), findsWidgets);
 
@@ -315,7 +315,7 @@ void main() {
 
       // … but the key symbols are still the exact labels, and the map
       // still renders every row without throwing.
-      expect(find.text('Space'), findsOneWidget);
+      expect(find.text('Space / F8'), findsOneWidget);
       expect(find.text('F12'), findsOneWidget);
       expect(find.text('Shift+F6'), findsOneWidget);
       expect(find.text('Shift+F7'), findsOneWidget);
@@ -350,7 +350,7 @@ void main() {
           mode: mode,
         );
         expect(find.byKey(const Key('shortcuts-dialog')), findsOneWidget);
-        expect(find.text('Space'), findsOneWidget);
+        expect(find.text('Space / F8'), findsOneWidget);
         expect(tester.takeException(), isNull);
 
         await tester.tap(find.byKey(const Key('shortcuts-close')));

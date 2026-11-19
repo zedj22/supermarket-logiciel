@@ -61,7 +61,7 @@ class ShellCredentialStorage extends SecureCredentialStorage {
 }
 
 const _loginPath = '/api/v1/auth/login';
-const _logoutPath = '/api/v1/auth/logout-token';
+const _logoutPath = '/api/v1/auth/logout';
 const _usersPath = '/api/v1/users';
 
 void main() {
@@ -69,6 +69,7 @@ void main() {
 
   setUpAll(() {
     registerFallbackValue(<String, dynamic>{});
+    registerFallbackValue(Options());
   });
 
   void stubBootRequests(MockDio dio) {
@@ -319,7 +320,16 @@ void main() {
       await tester.tap(find.byKey(const Key('logout-button')));
       await tester.pumpAndSettle();
 
-      verify(() => dio.post(_logoutPath, data: any(named: 'data'))).called(1);
+      // Logout authenticates with the bearer header: the JWT must never
+      // travel in a body/query any more.
+      final options = verify(
+        () => dio.post(
+          _logoutPath,
+          data: any(named: 'data'),
+          options: captureAny(named: 'options'),
+        ),
+      ).captured.single as Options;
+      expect(options.headers?['Authorization'], startsWith('Bearer '));
     });
 
     testWidgets('logout navigates back to the login screen', (tester) async {
@@ -674,7 +684,7 @@ void main() {
       // on the PAY button, so a bare find.text would count both.
       final map = find.byKey(const Key('shortcuts-dialog'));
       expect(
-        find.descendant(of: map, matching: find.text('Space')),
+        find.descendant(of: map, matching: find.text('Space / F8')),
         findsOneWidget,
       );
       expect(
