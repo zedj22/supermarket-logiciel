@@ -6,6 +6,17 @@
 !.env.example
 
 # =========================
+# Licensing key custody (audit v2 §6): private key material never enters
+# the repository.  The generator already refuses a git work tree; this is
+# the second layer (verification: no such file exists in the tree today).
+# =========================
+*.key
+*.pem
+*.p12
+signing_keystore.json
+issuance_log.jsonl
+
+# =========================
 # Python
 # =========================
 __pycache__/
@@ -79,5 +90,17 @@ python_app.zip
 # Backups (Phase 17: pg_dump output, never committed)
 # =========================
 new_app/backend/backups/
+
+# =========================
+# Local QA / release staging artifacts (never committed)
+# =========================
+# Manual-QA run tree: built Windows app, runtime data, license keys, logs
+# and screenshots captured from the packaged exe.
+new_app/.qa/
+# Ad-hoc upload/packaging copies of the project (new_app_upload/backend/.env
+# holds real deployment secrets, so the whole tree and its archive stay out).
+new_app_upload/
+new_app_upload.zip
+
 
 
