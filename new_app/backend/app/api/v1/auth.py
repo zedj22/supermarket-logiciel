@@ -15,7 +15,7 @@ Endpoints:
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Body, Depends, Query, Request
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import CurrentUser, get_bearer_token, get_current_user, require_permission
@@ -37,6 +37,7 @@ from app.schemas.auth import (
     SetupResponse,
     UserResponse,
     VerifyResponse,
+    VerifyTokenRequest,
     CurrentUserResponse,
     RoleResponse,
     PermissionResponse,
@@ -157,12 +158,26 @@ def verify_current_token(
 
 @router.post("/verify-token", response_model=VerifyResponse, tags=["auth"])
 def verify_token_explicit(
-    token: str,
+    token: str | None = Query(None),
+    body: VerifyTokenRequest | None = Body(None),
     service: AuthService = Depends(_get_auth_service),
 ) -> VerifyResponse:
-    """Verify a specific JWT token string."""
+    """Verify a specific JWT token string.
+
+    Two equivalent request shapes are accepted for backward
+    compatibility: the query form ``?token=…`` (the documented contract
+    the existing tests and script clients use) and the JSON body form
+    ``{"token": "…"}`` the Flutter app sends — FastAPI previously read
+    only the query, so the app's body request was rejected with a 422
+    during session restore. When both are present the query wins. A
+    request carrying neither is a missing credential: 401, exactly like
+    the sibling ``/auth/verify``.
+    """
+    raw = token if token is not None else (body.token if body is not None else None)
+    if raw is None:
+        raise UnauthorizedError(message="Missing authentication token")
     try:
-        user, session = service.verify_token(token)
+        user, session = service.verify_token(raw)
         return VerifyResponse(
             valid=True,
             user=UserResponse.model_validate(user),

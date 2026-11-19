@@ -215,6 +215,35 @@ def test_verify_token_does_not_swallow_unexpected_faults(client, monkeypatch):
     assert resp.json()["error"]["code"] == "INTERNAL_ERROR"
 
 
+def test_verify_token_accepts_the_flutter_json_body(client):
+    """The Flutter client posts {"token": …}; it must not be a 422.
+
+    Session restore (auth_provider._initialize) uses the body form, so a
+    422 here silently dropped every saved session on app boot.
+    """
+    headers = _login(client, "Admin", "1234")
+    token = headers["Authorization"].split(" ", 1)[1]
+    resp = client.post("/api/v1/auth/verify-token", json={"token": token})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["valid"] is True
+    assert body["user"]["full_name"] == "Admin"
+    assert body["session_id"]
+
+
+def test_verify_token_body_with_a_bad_token_is_valid_false(client):
+    resp = client.post("/api/v1/auth/verify-token", json={"token": "nope"})
+    assert resp.status_code == 200
+    assert resp.json() == {"valid": False, "user": None, "session_id": None}
+
+
+def test_verify_token_without_any_token_is_401(client):
+    """Neither query nor body = missing credential, like /auth/verify."""
+    resp = client.post("/api/v1/auth/verify-token")
+    assert resp.status_code == 401
+    assert resp.json()["error"]["code"] == "UNAUTHORIZED"
+
+
 # ---------------------------------------------------------------------------
 # 4. is_setup_needed() agrees with setup_first_admin
 # ---------------------------------------------------------------------------

@@ -183,6 +183,16 @@ class VerifyResponse(StrictBaseModel):
     session_id: UUID | None = None
 
 
+class VerifyTokenRequest(StrictBaseModel):
+    """``POST /auth/verify-token`` body form.
+
+    The Flutter client posts the token as JSON; the documented query
+    form (``?token=…``) stays supported. The endpoint accepts either.
+    """
+
+    token: str = Field(..., description="JWT to verify")
+
+
 # ---------------------------------------------------------------------------
 # Reauthentication
 # ---------------------------------------------------------------------------

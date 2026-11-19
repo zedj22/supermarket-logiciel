@@ -231,9 +231,12 @@ class AuthNotifier extends StateNotifier<AuthState> {
     try {
       final token = await _credentials.readToken();
       if (token != null) {
+        // Q5: never put a JWT in a query string. `/auth/logout` authenticates
+        // with the bearer header; the header is set explicitly because the
+        // token may already have been dropped from the shared client.
         await _apiClient.dio.post(
-          '/api/v1/auth/logout-token',
-          data: {'token': token},
+          '/api/v1/auth/logout',
+          options: Options(headers: {'Authorization': 'Bearer $token'}),
         );
       }
     } catch (e) {
@@ -305,6 +308,13 @@ class AuthNotifier extends StateNotifier<AuthState> {
   String _extractError(DioException e) {
     final loc = _localeCode();
     if (isConnectionError(e)) {
+      // First-run UX: on a single-PC install the only reason the local
+      // service is unreachable is that the Windows service is stopped or
+      // still starting. Say that, instead of a bare "connection error".
+      final host = e.requestOptions.uri.host;
+      if (host == 'localhost' || host == '127.0.0.1' || host == '::1') {
+        return AppStrings.t('service_unreachable', loc);
+      }
       return AppStrings.t('network_error_retry', loc);
     }
     final backendMessage = backendErrorMessage(e);
