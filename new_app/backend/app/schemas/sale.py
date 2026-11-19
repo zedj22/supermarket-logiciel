@@ -38,6 +38,12 @@ class SaleLineRequest(StrictBaseModel):
     pack_id: UUID | None = None
     variant_id: UUID | None = None
     selling_unit_id: UUID | None = None
+    # POS "quick custom item" (price-only line). Set WITHOUT product_id and
+    # pack_id: the line has no catalog product, no stock and no cost, and its
+    # own name is snapshotted into sale_lines.product_name (an existing
+    # column — no schema change). ``unit_price`` is the authoritative price
+    # of such a line, because there is no catalog price to resolve.
+    custom_name: str | None = Field(default=None, max_length=200)
     quantity: Decimal = Field(..., gt=0, le=Decimal("999999"))
     unit_price: Decimal = Field(default=Decimal("0"), ge=0)
     line_discount: Decimal = Field(default=Decimal("0"), ge=0)
@@ -52,8 +58,28 @@ class SaleLineRequest(StrictBaseModel):
 
     @model_validator(mode="after")
     def _exactly_one_target(self) -> SaleLineRequest:
+        custom = (self.custom_name or "").strip()
         if self.product_id is None and self.pack_id is None:
-            raise ValueError("product_id or pack_id is required")
+            # Third shape: a price-only custom line. It must carry its own
+            # name and a positive price, and it can never reference a
+            # variant or a selling unit (nothing to attach them to).
+            if not custom:
+                raise ValueError("product_id or pack_id is required")
+            if self.variant_id is not None or self.selling_unit_id is not None:
+                raise ValueError(
+                    "variant_id/selling_unit_id are not supported on a "
+                    "custom line"
+                )
+            if self.unit_price <= 0:
+                raise ValueError(
+                    "unit_price must be greater than zero on a custom line"
+                )
+            return self
+        if custom:
+            raise ValueError(
+                "custom_name is only accepted on a line without product_id "
+                "and pack_id"
+            )
         if self.product_id is not None and self.pack_id is not None:
             raise ValueError("product_id and pack_id are mutually exclusive")
         if self.pack_id is not None:
@@ -315,13 +341,37 @@ class HoldCartItem(StrictBaseModel):
     retail_price: str | None = None
     wholesale_price: str | None = None
     wholesale_min_qty: str | None = None
+    # Method 2 — the automatic bundle plan must come back with the cart, or a
+    # resumed line silently stops re-deriving its bundle discount.
+    auto_bundle_quantity: str | None = None
+    auto_bundle_price: str | None = None
+    # Cart-only line state the POS sends in its own snapshot (see
+    # CartLine.toJson): the cashier's MANUAL total and a price-only CUSTOM
+    # line's identity. The hold is the cart's own snapshot — dropping these
+    # would re-price a hand-fixed line on resume and could not represent a
+    # custom item at all.
+    manual_total: str | None = None
+    custom_line: bool | None = None
+    custom_ref: str | None = None
+    # Mirrors the sale-line shape: a custom line carries its own name and
+    # has neither a product nor a pack.
+    custom_name: str | None = Field(default=None, max_length=200)
 
     @model_validator(mode="after")
     def _exactly_one_target(self) -> HoldCartItem:
         if self.product_id is None and self.pack_id is None:
-            raise ValueError("product_id or pack_id is required")
+            # Price-only custom line — the same third shape the sale schema
+            # accepts, so a cart holding one can be suspended and resumed.
+            if not (self.custom_name or "").strip():
+                raise ValueError("product_id or pack_id is required")
+            return self
         if self.product_id is not None and self.pack_id is not None:
             raise ValueError("product_id and pack_id are mutually exclusive")
+        if (self.custom_name or "").strip():
+            raise ValueError(
+                "custom_name is only accepted on a line without product_id "
+                "and pack_id"
+            )
         return self
 
 

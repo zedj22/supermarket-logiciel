@@ -24,12 +24,16 @@ void main() {
       expect(isAmountEntryUnit('METER'), isTrue);
     });
 
-    test('count and volume units are false', () {
+    test('count units are false', () {
       expect(isAmountEntryUnit('piece'), isFalse);
       expect(isAmountEntryUnit('box'), isFalse);
       expect(isAmountEntryUnit('pack'), isFalse);
-      expect(isAmountEntryUnit('liter'), isFalse);
-      expect(isAmountEntryUnit('milliliter'), isFalse);
+    });
+
+    test('volume units use the amount dialog too', () {
+      expect(isAmountEntryUnit('liter'), isTrue);
+      expect(isAmountEntryUnit('LITER'), isTrue);
+      expect(isAmountEntryUnit('milliliter'), isTrue);
     });
 
     test('unknown / empty / null are false', () {

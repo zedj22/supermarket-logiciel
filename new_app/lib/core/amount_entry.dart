@@ -15,11 +15,18 @@
 // charged (requirement: never silently charge a different amount).
 import 'quantity_expression.dart';
 
-/// Unit-type codes that offer the amount-entry mode: weight (kg, gram)
-/// and length (meter) only — the existing ProductUnit vocabulary, never
-/// translated labels. Volume (liter/milliliter) and count-based units
-/// (piece, pack, box, …) are deliberately excluded.
-const Set<String> kAmountEntryUnitTypes = {'kg', 'gram', 'meter'};
+/// Unit-type codes that offer the amount-entry mode: weight (kg, gram),
+/// length (meter) and volume (liter, milliliter) — the existing
+/// ProductUnit vocabulary, never translated labels. Count-based units
+/// (piece, pack, box, …) are deliberately excluded: "pay 100 for N pieces"
+/// has no exact-quantity meaning.
+const Set<String> kAmountEntryUnitTypes = {
+  'kg',
+  'gram',
+  'meter',
+  'liter',
+  'milliliter',
+};
 
 /// True when [unitType] is a weight or length unit that may offer
 /// amount entry. Case-insensitive; unknown / empty → false.

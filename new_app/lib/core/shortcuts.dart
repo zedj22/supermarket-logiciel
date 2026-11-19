@@ -58,10 +58,13 @@ abstract final class PosShortcutKeys {
   /// Shift+F7 — use loyalty points (the redemption dialog).
   static const useLoyaltyPoints = 'Shift+F7';
 
-  /// Space — open payment. While Quick sale (Space) is ON the SAME key
-  /// completes the sale directly instead; the help map swaps the row's
-  /// meaning for that setting and the PAY badge follows it the same way.
-  static const payment = 'Space';
+  /// Space / F8 — open payment. Both keys run the ONE payment action
+  /// (the F8 binding is the legacy key restored beside Space). While
+  /// Quick sale (Space) is ON they BOTH complete the sale directly
+  /// instead; the help map swaps the row's meaning for that setting and
+  /// the PAY badge follows it the same way. The label is literal like
+  /// every other key in this table (never localized).
+  static const payment = 'Space / F8';
 
   /// F9 — hold the current sale.
   static const hold = 'F9';

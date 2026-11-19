@@ -59,6 +59,13 @@ PosApiError posApiError(
   if (errorCode == 'DATABASE_CONSTRAINT') {
     return PosApiError(AppStrings.t('database_constraint', loc), detail);
   }
+  // Phase L1-C: licensing rejections keep their identity before the HTTP
+  // status — a 403 trial_expired is not a permission problem, and a 503
+  // license_status_unavailable is not a stock conflict or retryable 5xx.
+  final licenseKey = licenseErrorKey(errorCode);
+  if (licenseKey != null) {
+    return PosApiError(AppStrings.t(licenseKey, loc), detail);
+  }
 
   final code = error.response?.statusCode;
   final String key;

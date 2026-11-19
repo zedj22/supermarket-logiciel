@@ -15,6 +15,47 @@ import '../../l10n/locale_provider.dart';
 import '../packs/pack_models.dart';
 import '../packs/packs_providers.dart';
 
+/// "Components: Sugar (2 Box) · Milk (3 L) +2" — built from the LIVE
+/// availability payload so the pinned selling unit (and its conversion) is
+/// the one the backend will actually use at checkout.
+///
+/// Top-level (not dialog-private) so the POS catalog's pack tile, which adds
+/// a pack without opening the picker, shows the SAME component snapshot.
+String packComponentsSummary(
+  PackAvailabilityModel availability,
+  String loc,
+) {
+  final entries = <String>[];
+  for (final component in availability.components) {
+    final label = packComponentLabel(
+      productName: component.productName,
+      unitName: component.sellingUnitName,
+      unitQuantity: component.unitQuantity,
+      sellingUnitId: component.sellingUnitId,
+      multiplierText: component.sellingUnitMultiplier,
+    );
+    if (!entries.contains(label)) entries.add(label);
+  }
+  if (entries.isEmpty) return '';
+  return '${AppStrings.t('components', loc)}: '
+      '${entries.take(3).join(' · ')}'
+      '${entries.length > 3 ? ' +${entries.length - 3}' : ''}';
+}
+
+/// `Bread` / `Sugar (2 Box)` for one pack component row.
+String packComponentLabel({
+  required String productName,
+  required String? unitName,
+  required String unitQuantity,
+  required String? sellingUnitId,
+  required String? multiplierText,
+}) {
+  if (sellingUnitId == null) return productName;
+  final multiplier = double.tryParse(multiplierText ?? '1') ?? 1;
+  if ((multiplier - 1).abs() <= 0.0000001) return productName;
+  return '$productName ($unitQuantity $unitName)';
+}
+
 Future<PackPickResult?> showPackPickerDialog(BuildContext context) {
   return showDialog<PackPickResult>(
     context: context,
@@ -111,43 +152,9 @@ class _PackPickerDialogState extends ConsumerState<PackPickerDialog> {
         price: pack.price,
         quantity: quantity,
         maxPackQuantity: availability.maxPackQuantity,
-        componentsSummary: _componentsSummary(availability, loc),
+        componentsSummary: packComponentsSummary(availability, loc),
       ),
     );
-  }
-
-  /// "Components: Sugar (2 Box) · Milk (3 L) +2" — built from the LIVE
-  /// availability payload so the pinned selling unit (and its conversion)
-  /// is the one the backend will actually use at checkout.
-  String _componentsSummary(PackAvailabilityModel availability, String loc) {
-    final entries = <String>[];
-    for (final component in availability.components) {
-      final label = _componentLabel(
-        productName: component.productName,
-        unitName: component.sellingUnitName,
-        unitQuantity: component.unitQuantity,
-        sellingUnitId: component.sellingUnitId,
-        multiplierText: component.sellingUnitMultiplier,
-      );
-      if (!entries.contains(label)) entries.add(label);
-    }
-    if (entries.isEmpty) return '';
-    return '${AppStrings.t('components', loc)}: '
-        '${entries.take(3).join(' · ')}'
-        '${entries.length > 3 ? ' +${entries.length - 3}' : ''}';
-  }
-
-  String _componentLabel({
-    required String productName,
-    required String? unitName,
-    required String unitQuantity,
-    required String? sellingUnitId,
-    required String? multiplierText,
-  }) {
-    if (sellingUnitId == null) return productName;
-    final multiplier = double.tryParse(multiplierText ?? '1') ?? 1;
-    if ((multiplier - 1).abs() <= 0.0000001) return productName;
-    return '$productName ($unitQuantity $unitName)';
   }
 
   @override
@@ -218,7 +225,7 @@ class _PackPickerDialogState extends ConsumerState<PackPickerDialog> {
                                         ? Text(
                                             pack.components
                                                 .map(
-                                                  (c) => _componentLabel(
+                                                  (c) => packComponentLabel(
                                                     productName: c.productName,
                                                     unitName:
                                                         c.sellingUnitName,

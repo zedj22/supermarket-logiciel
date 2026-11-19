@@ -124,6 +124,12 @@ class _QuantityDialogState extends ConsumerState<QuantityDialog> {
     _qty = TextEditingController(text: '');
     _amount = TextEditingController(text: '');
     _amountFocus = FocusNode();
+    // AMOUNT is the default mode on EVERY open (a fresh State per dialog,
+    // so nothing is inherited from the previous product/dialog session).
+    // Only an unusable price (zero/missing) or a count-based unit falls
+    // back to quantity mode — amount mode is disabled in exactly those
+    // cases, so defaulting to it would show a dead, greyed chip.
+    _byAmount = _amountModeAvailable;
   }
 
   @override

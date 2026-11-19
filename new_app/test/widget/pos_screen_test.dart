@@ -62,6 +62,8 @@ class _FakePrintService implements PrintService {
     Uint8List bytes, {
     required String paper,
     String? filename,
+    double? pageWidthMm,
+    double? pageHeightMm,
   }) async {
     if (fail) {
       throw const PrintServiceException('no printer');
@@ -1296,6 +1298,10 @@ void main() {
       expect(find.byKey(const Key('selling-unit-picker')), findsNothing);
       expect(find.byKey(const Key('quantity-dialog')), findsOneWidget);
       expect(find.byKey(const Key('quantity-mode-amount')), findsOneWidget);
+      // By amount is the opening default: switch to quantity to type a
+      // fractional weight.
+      await tester.tap(find.byKey(const Key('quantity-mode-quantity')));
+      await tester.pump();
       await tester.enterText(find.byKey(const Key('quantity-input')), '2');
       await tester.tap(find.byKey(const Key('quantity-submit')));
       await tester.pumpAndSettle();
@@ -9649,7 +9655,8 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('F8 no longer opens payment', (tester) async {
+    testWidgets('F8 opens payment — the second key for the SAME action',
+        (tester) async {
       await _pumpApp(tester, dio: dio);
       addLine(tester, line24);
       await tester.pump();
@@ -9658,8 +9665,10 @@ void main() {
       final handled = await press(tester, LogicalKeyboardKey.f8);
       await tester.pumpAndSettle();
 
-      expect(handled, isFalse, reason: 'F8 must not be bound any more');
-      expect(find.byKey(const Key('payment-dialog')), findsNothing);
+      expect(handled, isTrue);
+      expect(find.byKey(const Key('payment-dialog')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('payment-cancel')));
+      await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
     });
 
@@ -9958,8 +9967,9 @@ void main() {
       // Scoped to the map: the PAY button under the dialog carries its own
       // Space key chip now, so a bare find.text would count both.
       final map = find.byKey(const Key('shortcuts-dialog'));
+      // Both payment keys are documented: Space / F8.
       expect(
-        find.descendant(of: map, matching: find.text('Space')),
+        find.descendant(of: map, matching: find.text('Space / F8')),
         findsOneWidget,
       );
       expect(
@@ -10430,6 +10440,9 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('quantity-dialog')), findsOneWidget);
 
+      // Amount is the default mode; quantity mode stores the typed weight.
+      await tester.tap(find.byKey(const Key('quantity-mode-quantity')));
+      await tester.pump();
       await tester.enterText(
         find.byKey(const Key('quantity-input')),
         '2.5',
@@ -16013,6 +16026,290 @@ void main() {
       await tester.pump();
       expect(onlyLine(tester).lineDiscount, '100');
       expect(onlyLine(tester).lineTotal, 1800);
+      expect(tester.takeException(), isNull);
+    });
+  });
+
+  group('manual line total + quick custom item', () {
+    ProviderContainer containerOf(WidgetTester tester) =>
+        ProviderScope.containerOf(
+          tester.element(find.byKey(const Key('pos-screen'))),
+          listen: false,
+        );
+
+    Future<void> doubleTap(WidgetTester tester, Finder finder) async {
+      // Raw pointer events at the widget's centre: two quick press/release
+      // pairs are exactly what a Windows mouse double-click delivers.
+      final center = tester.getCenter(finder);
+      final first = await tester.startGesture(center);
+      await first.up();
+      await tester.pump(const Duration(milliseconds: 60));
+      final second = await tester.startGesture(center);
+      await second.up();
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('single tap does nothing, double-click edits THAT line total',
+        (tester) async {
+      await _pumpApp(tester, dio: dio);
+      final container = containerOf(tester);
+      final notifier = container.read(posCartProvider.notifier);
+      const first = CartLine(
+        productId: 'p1',
+        name: 'Coca Cola',
+        quantity: '5',
+        unitPrice: '100',
+        availableStock: '100',
+      );
+      const second = CartLine(
+        productId: 'p2',
+        name: 'Milk',
+        quantity: '1',
+        unitPrice: '20',
+        availableStock: '100',
+      );
+      notifier.addLine(first);
+      notifier.addLine(second);
+      await tester.pumpAndSettle();
+
+      final totalTap = find.byKey(Key('cart-line-total-tap-${first.key}'));
+
+      // A normal single click never opens the editor.
+      await tester.tap(totalTap);
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(find.byKey(const Key('line-total-dialog')), findsNothing);
+
+      await doubleTap(tester, totalTap);
+      expect(find.byKey(const Key('line-total-dialog')), findsOneWidget);
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const Key('line-total-input')))
+            .controller!
+            .text,
+        '500',
+        reason: 'the dialog is prefilled with the current line total',
+      );
+
+      await tester.enterText(
+          find.byKey(const Key('line-total-input')), '450');
+      await tester.tap(find.byKey(const Key('line-total-confirm')));
+      await tester.pumpAndSettle();
+
+      final cart = container.read(posCartProvider);
+      expect(cart.lines.first.quantity, '5');
+      expect(cart.lines.first.unitPrice, '100');
+      expect(cart.lines.first.lineTotal, closeTo(450, 0.001));
+      expect(cart.lines.first.discountAmount, closeTo(50, 0.001));
+      expect(cart.lines.last.lineTotal, closeTo(20, 0.001));
+      expect(cart.totals.total, closeTo(470, 0.001));
+      expect(
+        tester.widget<Text>(find.byKey(Key('cart-line-total-${first.key}'))).data,
+        '450.00',
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('cancel leaves the cart exactly as it was', (tester) async {
+      await _pumpApp(tester, dio: dio);
+      final container = containerOf(tester);
+      const line = CartLine(
+        productId: 'p1',
+        name: 'Coca Cola',
+        quantity: '5',
+        unitPrice: '100',
+        availableStock: '100',
+      );
+      container.read(posCartProvider.notifier).addLine(line);
+      await tester.pump();
+
+      await doubleTap(
+          tester, find.byKey(Key('cart-line-total-tap-${line.key}')));
+      await tester.enterText(find.byKey(const Key('line-total-input')), '999');
+      await tester.tap(find.byKey(const Key('line-total-cancel')));
+      await tester.pumpAndSettle();
+
+      final cart = container.read(posCartProvider);
+      expect(cart.lines.single.lineTotal, closeTo(500, 0.001));
+      expect(cart.lines.single.lineDiscount, '0');
+      expect(cart.lines.single.manualTotal, isNull);
+    });
+
+    testWidgets('invalid and over-gross amounts are refused', (tester) async {
+      await _pumpApp(tester, dio: dio);
+      final container = containerOf(tester);
+      const line = CartLine(
+        productId: 'p1',
+        name: 'Coca Cola',
+        quantity: '5',
+        unitPrice: '100',
+        availableStock: '100',
+      );
+      container.read(posCartProvider.notifier).addLine(line);
+      await tester.pump();
+
+      await doubleTap(
+          tester, find.byKey(Key('cart-line-total-tap-${line.key}')));
+
+      await tester.enterText(find.byKey(const Key('line-total-input')), 'abc');
+      await tester.tap(find.byKey(const Key('line-total-confirm')));
+      await tester.pump();
+      expect(find.byKey(const Key('line-total-dialog')), findsOneWidget);
+      expect(
+        find.text(AppStrings.t('line_total_must_be_positive', 'en')),
+        findsOneWidget,
+      );
+
+      await tester.enterText(find.byKey(const Key('line-total-input')), '0');
+      await tester.tap(find.byKey(const Key('line-total-confirm')));
+      await tester.pump();
+      expect(find.byKey(const Key('line-total-dialog')), findsOneWidget);
+
+      await tester.enterText(find.byKey(const Key('line-total-input')), '600');
+      await tester.tap(find.byKey(const Key('line-total-confirm')));
+      await tester.pump();
+      expect(find.byKey(const Key('line-total-dialog')), findsOneWidget);
+      expect(
+        find.text(AppStrings.t('line_total_above_gross', 'en')),
+        findsOneWidget,
+      );
+      expect(container.read(posCartProvider).lines.single.lineDiscount, '0');
+    });
+
+    testWidgets('quick custom item: default name, qty locked at 1, removable',
+        (tester) async {
+      await _pumpApp(tester, dio: dio);
+      final container = containerOf(tester);
+
+      await tester.tap(find.byKey(const Key('pos-custom-item-button')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('custom-item-dialog')), findsOneWidget);
+
+      await tester.enterText(find.byKey(const Key('custom-item-price')), '350');
+      await tester.tap(find.byKey(const Key('custom-item-confirm')));
+      await tester.pumpAndSettle();
+
+      final line = container.read(posCartProvider).lines.single;
+      expect(line.customLine, isTrue);
+      expect(line.name, AppStrings.t('unregistered_item', 'en'));
+      expect(line.quantity, '1');
+      expect(line.lineTotal, closeTo(350, 0.001));
+      expect(line.toSaleJson()['custom_name'], line.name);
+      expect(line.toSaleJson().containsKey('product_id'), isFalse);
+
+      expect(
+        find.byKey(Key('cart-line-custom-badge-${line.key}')),
+        findsOneWidget,
+      );
+      final inc = tester.widget<IconButton>(
+        find.byKey(Key('cart-line-qty-inc-${line.key}')),
+      );
+      expect(inc.onPressed, isNull);
+      expect(
+        tester
+            .widget<TextField>(find.byKey(Key('cart-line-qty-${line.key}')))
+            .readOnly,
+        isTrue,
+      );
+
+      await tester.tap(find.byKey(Key('cart-line-remove-${line.key}')));
+      await tester.pumpAndSettle();
+      expect(container.read(posCartProvider).isEmpty, isTrue);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('quick custom item keeps the typed name and rejects 0',
+        (tester) async {
+      await _pumpApp(tester, dio: dio);
+      final container = containerOf(tester);
+
+      await tester.tap(find.byKey(const Key('pos-custom-item-button')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('custom-item-confirm')));
+      await tester.pump();
+      expect(find.byKey(const Key('custom-item-dialog')), findsOneWidget);
+      expect(
+        find.text(AppStrings.t('custom_item_price_required', 'en')),
+        findsOneWidget,
+      );
+
+      await tester.enterText(find.byKey(const Key('custom-item-name')), 'Gift');
+      await tester.enterText(find.byKey(const Key('custom-item-price')), '75');
+      await tester.tap(find.byKey(const Key('custom-item-confirm')));
+      await tester.pumpAndSettle();
+
+      final line = container.read(posCartProvider).lines.single;
+      expect(line.name, 'Gift');
+      expect(line.lineTotal, closeTo(75, 0.001));
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('Arabic RTL: dialog, default name and cart badge',
+        (tester) async {
+      await _pumpApp(
+        tester,
+        dio: dio,
+        locale: AppLocale.ar,
+        direction: TextDirection.rtl,
+      );
+      final container = containerOf(tester);
+
+      await tester.tap(find.byKey(const Key('pos-custom-item-button')));
+      await tester.pumpAndSettle();
+      expect(
+        find.text(AppStrings.t('add_custom_item', 'ar')),
+        findsOneWidget,
+      );
+
+      await tester.enterText(find.byKey(const Key('custom-item-price')), '90');
+      await tester.tap(find.byKey(const Key('custom-item-confirm')));
+      await tester.pumpAndSettle();
+
+      final line = container.read(posCartProvider).lines.single;
+      expect(line.name, AppStrings.t('unregistered_item', 'ar'));
+      expect(
+        find.descendant(
+          of: find.byKey(Key('cart-line-custom-badge-${line.key}')),
+          matching: find.text(AppStrings.t('custom_item', 'ar')),
+        ),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('French: dialog title and the manual-total cart badge',
+        (tester) async {
+      await _pumpApp(tester, dio: dio, locale: AppLocale.fr);
+      final container = containerOf(tester);
+      const line = CartLine(
+        productId: 'p1',
+        name: 'Coca Cola',
+        quantity: '5',
+        unitPrice: '100',
+        availableStock: '100',
+      );
+      container.read(posCartProvider.notifier).addLine(line);
+      await tester.pumpAndSettle();
+
+      await doubleTap(
+          tester, find.byKey(Key('cart-line-total-tap-${line.key}')));
+      expect(find.text(AppStrings.t('edit_line_total', 'fr')), findsOneWidget);
+
+      await tester.enterText(
+          find.byKey(const Key('line-total-input')), '450');
+      await tester.tap(find.byKey(const Key('line-total-confirm')));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.descendant(
+          of: find.byKey(Key('cart-line-manual-badge-${line.key}')),
+          matching: find.text(AppStrings.t('manual_total_badge', 'fr')),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        container.read(posCartProvider).lines.single.lineTotal,
+        closeTo(450, 0.001),
+      );
       expect(tester.takeException(), isNull);
     });
   });

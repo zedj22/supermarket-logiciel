@@ -86,6 +86,12 @@ PosReturnLinesResult buildPosReturnLines(List<CartLine> cartLines) {
         'pos_return_pack_not_supported',
       );
     }
+    // A price-only custom line has no product to restock in this flow.
+    if (line.customLine) {
+      return const PosReturnLinesResult.failed(
+        'pos_return_custom_not_supported',
+      );
+    }
   }
 
   final totalByBucket = <String, int>{};

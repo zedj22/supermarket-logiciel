@@ -17,6 +17,7 @@ import '../../core/strings.dart';
 import '../../l10n/locale_provider.dart';
 import '../auth/auth_provider.dart';
 import '../devices/device_identity.dart';
+import '../packs/pack_models.dart';
 import '../products/models.dart';
 import 'pos_error_message.dart';
 import 'pos_models.dart';
@@ -276,6 +277,69 @@ class PosCartNotifier extends StateNotifier<PosCartState> {
     }
   }
 
+  /// Applies the cashier's manual line TOTAL (double-click on a line's
+  /// total, see [showLineTotalDialog]).
+  ///
+  /// The money itself is never a new field: [CartLine.withManualTotal]
+  /// expresses it as the line DISCOUNT (gross − total) — the single value
+  /// the payload, the backend validation, the invoice and the returns
+  /// already read — and keeps [CartLine.manualTotal] as the pin that makes
+  /// a later quantity change re-derive from the cashier's number.
+  ///
+  /// Refused, with the state untouched, when [total] is not a positive
+  /// finite amount or exceeds the line's gross: a total ABOVE the gross
+  /// would need a negative discount, which the backend rejects
+  /// (`line_discount must be >= 0`). A custom line is the exception — its
+  /// price IS its total, so raising it is legitimate.
+  void setLineTotal(String key, String total) {
+    final value = double.tryParse(total);
+    if (value == null || !value.isFinite || value <= 0) return;
+    var applied = false;
+    final lines = state.lines.map((line) {
+      if (line.key != key) return line;
+      if (!line.customLine && value > line.lineGross + 0.0001) return line;
+      applied = true;
+      return line.withManualTotal(posPlainAmount(value));
+    }).toList();
+    if (!applied) return;
+    state = state.copyWith(
+      lines: lines,
+      lastActiveKey: key,
+      clearError: true,
+      // A manual total is a cashier decision, not a stock problem: the
+      // existing stock snapshots stay untouched.
+      clearStockErrors: true,
+    );
+  }
+
+  /// Adds a POS "quick custom item": a price-only line with no catalog
+  /// product, no stock and quantity 1 (see [CartLine.customLine]).
+  ///
+  /// Nothing is created in the catalog and no stock moves — the sale
+  /// payload carries `custom_name` instead of a product id and the server
+  /// snapshots it on the sale line. Every line gets its own [customRef], so
+  /// several custom items can sit in one cart without merging through
+  /// [CartLine.key].
+  void addCustomLine({required String name, required String total}) {
+    final value = double.tryParse(total);
+    if (value == null || !value.isFinite || value <= 0) return;
+    final line = CartLine(
+      name: name,
+      quantity: '1',
+      unitPrice: posPlainAmount(value),
+      customLine: true,
+      customRef: _nextCustomRef(),
+    );
+    addLine(line, reason: 'custom-item');
+  }
+
+  /// Monotonic suffix so two custom items added in the same microsecond
+  /// still get distinct references.
+  int _customSeq = 0;
+
+  String _nextCustomRef() =>
+      '${DateTime.now().microsecondsSinceEpoch}-${_customSeq++}';
+
   void updateLine(
     String key, {
     String? quantity,
@@ -299,17 +363,24 @@ class PosCartNotifier extends StateNotifier<PosCartState> {
     }
     final lines = state.lines
         .map((l) => l.key == key
-            ? l.copyWith(
-                quantity: quantity,
-                // Method 2 — an automatic bundle discount is DERIVED, never
-                // typed: a discount-only edit (the cart's discount field /
-                // any other discount funnel) is refused for an auto line.
-                // A quantity change still re-derives it in copyWith, and
-                // the internal merge path (addLine) passes both a quantity
-                // and the derived amount, so it is unaffected.
-                lineDiscount:
-                    l.autoPriced && quantity == null ? null : lineDiscount,
-              )
+            ? (l.customLine
+                // A custom line is quantity-1 by definition (no catalog
+                // product, no stock to decrement), and its amount is the
+                // manual-total path (setLineTotal) — never a discount. A
+                // qty or discount edit is therefore a no-op on it.
+                ? l
+                : l.copyWith(
+                    quantity: quantity,
+                    // Method 2 — an automatic bundle discount is DERIVED,
+                    // never typed: a discount-only edit (the cart's
+                    // discount field / any other discount funnel) is
+                    // refused for an auto line. A quantity change still
+                    // re-derives it in copyWith, and the internal merge
+                    // path (addLine) passes both a quantity and the
+                    // derived amount, so it is unaffected.
+                    lineDiscount:
+                        l.autoPriced && quantity == null ? null : lineDiscount,
+                  ))
             : l)
         .toList();
     final exists = state.lines.any((l) => l.key == key);
@@ -1375,4 +1446,105 @@ final saleHistoryProvider =
     dio,
     () => ref.read(localeProvider).flutterLocale.languageCode,
   );
+});
+
+// ---------------------------------------------------------------------------
+// Packs in the POS catalog list
+// ---------------------------------------------------------------------------
+
+/// Active packs shown ALONGSIDE products in the POS catalog — same search
+/// field, same list/grid, same add-to-cart flow.
+///
+/// The query is NOT entered twice: the provider mirrors the SETTLED query of
+/// [posSearchProvider] (which owns the debounce), so the two lists always
+/// describe the same term and a keystroke still triggers exactly one
+/// debounced catalog refresh. `GET /api/v1/packs` already matches pack name
+/// or barcode server-side, so pack search is the catalog search.
+class PosCatalogPacksState {
+  final String query;
+  final List<PackModel> items;
+  final bool loading;
+  final String? error;
+
+  const PosCatalogPacksState({
+    this.query = '',
+    this.items = const [],
+    this.loading = false,
+    this.error,
+  });
+
+  PosCatalogPacksState copyWith({
+    String? query,
+    List<PackModel>? items,
+    bool? loading,
+    String? error,
+    bool clearError = false,
+  }) {
+    return PosCatalogPacksState(
+      query: query ?? this.query,
+      items: items ?? this.items,
+      loading: loading ?? this.loading,
+      error: clearError ? null : (error ?? this.error),
+    );
+  }
+}
+
+class PosCatalogPacksNotifier extends StateNotifier<PosCatalogPacksState> {
+  final Dio _dio;
+
+  /// Bumped on every refresh; a slower earlier response never overwrites a
+  /// newer result set (same rule as [PosSearchNotifier]).
+  int _generation = 0;
+
+  PosCatalogPacksNotifier(this._dio) : super(const PosCatalogPacksState());
+
+  /// Mirror the settled catalog query. Identical query → no request, so a
+  /// product reload (F5, post-add refresh) never re-fetches the packs.
+  void syncQuery(String query) {
+    if (query == state.query) return;
+    state = state.copyWith(query: query);
+    load();
+  }
+
+  Future<void> load() async {
+    final query = state.query.trim();
+    final generation = ++_generation;
+    state = state.copyWith(loading: true, clearError: true);
+    try {
+      final response = await _dio.get(
+        '/api/v1/packs',
+        queryParameters: {
+          'page': 1,
+          'page_size': 50,
+          'status': 'active',
+          if (query.isNotEmpty) 'search': query,
+        },
+      );
+      if (generation != _generation) return;
+      final data = response.data as Map<String, dynamic>? ?? const {};
+      final items = (data['items'] as List<dynamic>? ?? const [])
+          .map((e) => PackModel.fromJson(e as Map<String, dynamic>))
+          // Only packs the cashier may actually sell; archived / inactive
+          // rows stay out of the catalog exactly like archived products.
+          .where((p) => p.isSaleable)
+          .toList();
+      state = state.copyWith(items: items, loading: false, clearError: true);
+    } on DioException catch (e) {
+      if (generation != _generation) return;
+      // A failed pack fetch NEVER breaks the product panel: products keep
+      // working and the last pack rows stay untouched.
+      state = state.copyWith(loading: false, error: '$e');
+    }
+  }
+}
+
+final posCatalogPacksProvider = StateNotifierProvider<
+    PosCatalogPacksNotifier, PosCatalogPacksState>((ref) {
+  final notifier = PosCatalogPacksNotifier(ref.watch(apiClientProvider).dio);
+  // ONE source of truth for the query: the debounced product search.
+  ref.listen<String>(posSearchProvider.select((s) => s.query), (_, next) {
+    notifier.syncQuery(next);
+  });
+  Future<void>.microtask(notifier.load);
+  return notifier;
 });

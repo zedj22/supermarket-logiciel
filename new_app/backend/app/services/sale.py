@@ -182,6 +182,7 @@ class _ResolvedLine:
         "decrement_variant",
         "pack",
         "pack_summary",
+        "custom_name",
         "charged",
     )
 
@@ -204,6 +205,8 @@ class _ResolvedLine:
         self.decrement_variant: bool = False
         self.pack: Pack | None = None
         self.pack_summary: bool = False
+        # Price-only custom line: no product, no pack, no stock, no cost.
+        self.custom_name: str | None = None
         self.charged: bool = True
 
 
@@ -395,13 +398,39 @@ class SaleService(BaseService):
         line = _ResolvedLine()
         line.index = index
 
-        if item.product_id is None:  # pragma: no cover — schema guarantees
-            # SaleLineRequest requires exactly one of product_id/pack_id, so
-            # a None here can only come from a caller bypassing the schema.
-            raise ValidationError(
-                message="product_id is required for a product line",
-                details={"line_index": index},
-            )
+        if item.product_id is None and item.pack_id is None:
+            # POS "quick custom item": a price-only line. There is nothing to
+            # resolve, nothing to decrement and no COGS — the cashier's name
+            # and price ARE the line's authority (the schema already
+            # validated both). Everything below (discount validation, totals,
+            # invoice, returns) reads the ordinary sale-line fields, so the
+            # rest of the lifecycle needs no special case.
+            name = (getattr(item, "custom_name", None) or "").strip()
+            if not name:  # pragma: no cover — schema guarantees
+                raise ValidationError(
+                    message="custom_name is required for a custom line",
+                    details={"line_index": index},
+                )
+            qty = to_decimal(item.quantity)
+            if qty <= 0:  # pragma: no cover — schema guarantees
+                raise ValidationError(
+                    message="quantity must be > 0",
+                    details={"line_index": index, "quantity": str(qty)},
+                )
+            price = _money(to_decimal(item.unit_price))
+            if price <= 0:  # pragma: no cover — schema guarantees
+                raise ValidationError(
+                    message="custom line requires a positive unit_price",
+                    details={"line_index": index},
+                )
+            line.quantity_line = qty
+            line.quantity_base = qty.quantize(QTY_QUANTUM)
+            line.unit_price = price
+            line.unit_cost = _money(0)
+            line.custom_name = name
+            line.line_gross = _money(price * qty)
+            self._apply_line_discount(line, item, index)
+            return line
 
         product = self._get_product(item.product_id)
         line.product = product
@@ -1367,6 +1396,27 @@ class SaleService(BaseService):
                           ``product_unit`` snapshotted as ``pack``
         * pack component— product_id set, pack_id set, line_total 0
         """
+        if line.custom_name is not None:
+            # Price-only line: the name is the snapshot, product_unit stays
+            # the neutral base unit, and nothing points at the catalog.
+            return SaleLine(
+                sale_id=sale_id,
+                product_id=None,
+                pack_id=None,
+                product_name=line.custom_name,
+                product_sku=None,
+                product_barcode=None,
+                product_unit="piece",
+                variant_name=None,
+                selling_unit_name=None,
+                selling_unit_multiplier=None,
+                unit_price=float(line.unit_price),
+                unit_cost=float(line.unit_cost),
+                quantity=float(line.quantity_line),
+                line_discount=float(line.line_discount),
+                line_total=float(line.line_total),
+            )
+
         if line.pack_summary:
             pack = line.pack
             assert pack is not None

@@ -268,7 +268,8 @@ class ReportTotals {
   );
 }
 
-/// §5.8 row — `kind` is `product` | `pack` | `component`.
+/// §5.8 row — `kind` is `product` | `pack` | `component` | `custom`
+/// (a price-only sale line: no catalog row, `itemId` is derived from its name).
 class ProductReportRow {
   final String itemId;
   final String kind;

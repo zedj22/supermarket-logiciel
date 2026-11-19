@@ -74,15 +74,20 @@ Future<void> _pump(
 
 void main() {
   group('mode toggle gating (weight/length only)', () {
-    testWidgets('kg unit shows the quantity/amount toggle', (tester) async {
+    testWidgets('kg unit shows the quantity/amount toggle (amount default)',
+        (tester) async {
       await _pump(
         tester,
         const QuantityDialog(unit: kgUnit, unitPrice: '250'),
       );
       expect(find.byKey(const Key('quantity-mode-quantity')), findsOneWidget);
       expect(find.byKey(const Key('quantity-mode-amount')), findsOneWidget);
+      // Amount entry is the opening default now; quantity stays one tap away.
+      expect(find.byKey(const Key('amount-input')), findsOneWidget);
+      expect(find.byKey(const Key('quantity-input')), findsNothing);
+      await tester.tap(find.byKey(const Key('quantity-mode-quantity')));
+      await tester.pump();
       expect(find.byKey(const Key('quantity-input')), findsOneWidget);
-      expect(find.byKey(const Key('amount-input')), findsNothing);
     });
 
     testWidgets('gram unit shows the toggle too', (tester) async {
@@ -101,6 +106,7 @@ void main() {
         ),
       );
       expect(find.byKey(const Key('quantity-mode-amount')), findsOneWidget);
+      expect(find.byKey(const Key('amount-input')), findsOneWidget);
     });
 
     testWidgets('piece and box units never see the toggle (regression)',
@@ -126,7 +132,8 @@ void main() {
       expect(find.byKey(const Key('quantity-mode-amount')), findsNothing);
     });
 
-    testWidgets('liter (volume) never sees the toggle', (tester) async {
+    testWidgets('liter (volume) shows the toggle and defaults to amount',
+        (tester) async {
       await _pump(
         tester,
         QuantityDialog(
@@ -134,12 +141,19 @@ void main() {
           unitPrice: '50',
         ),
       );
-      expect(find.byKey(const Key('quantity-mode-amount')), findsNothing);
+      expect(find.byKey(const Key('quantity-mode-amount')), findsOneWidget);
+      expect(
+        tester
+            .widget<ChoiceChip>(find.byKey(const Key('quantity-mode-amount')))
+            .selected,
+        isTrue,
+      );
+      expect(find.byKey(const Key('amount-input')), findsOneWidget);
     });
   });
 
   group('Mode A — by quantity', () {
-    testWidgets('is the default mode; fraction accepted; line total shown',
+    testWidgets('reachable by switching; fraction accepted; line total shown',
         (tester) async {
       String? result;
       await _pump(
@@ -165,6 +179,15 @@ void main() {
       await tester.tap(find.byKey(const Key('open-btn')));
       await tester.pumpAndSettle();
 
+      // Amount is the opening default; quantity mode is one tap away.
+      expect(
+        tester
+            .widget<ChoiceChip>(find.byKey(const Key('quantity-mode-amount')))
+            .selected,
+        isTrue,
+      );
+      await tester.tap(find.byKey(const Key('quantity-mode-quantity')));
+      await tester.pump();
       final chip = tester.widget<ChoiceChip>(
         find.byKey(const Key('quantity-mode-quantity')),
       );
@@ -202,6 +225,120 @@ void main() {
       await tester.pump();
       expect(find.byKey(const Key('quantity-input')), findsOneWidget);
       expect(find.byKey(const Key('amount-input')), findsNothing);
+    });
+  });
+
+  group('default mode — By amount on every opening', () {
+    bool amountSelected(WidgetTester tester) => tester
+        .widget<ChoiceChip>(find.byKey(const Key('quantity-mode-amount')))
+        .selected;
+
+    Future<void> openDialog(WidgetTester tester) async {
+      await tester.tap(find.byKey(const Key('open-btn')));
+      await tester.pumpAndSettle();
+    }
+
+    Widget opener(SellingUnitModel unit, String price) => Builder(
+          builder: (context) => Center(
+            child: ElevatedButton(
+              key: const Key('open-btn'),
+              onPressed: () => showQuantityDialog(
+                context,
+                unit: unit,
+                productQuantity: '20',
+                productUnit: unit.unitType,
+                unitPrice: price,
+              ),
+              child: const Text('open'),
+            ),
+          ),
+        );
+
+    testWidgets('kg opens in amount mode with the amount field focused',
+        (tester) async {
+      await _pump(tester, opener(kgUnit, '250'));
+      await openDialog(tester);
+
+      expect(amountSelected(tester), isTrue);
+      expect(find.byKey(const Key('amount-input')), findsOneWidget);
+      expect(find.byKey(const Key('quantity-input')), findsNothing);
+    });
+
+    testWidgets('liter opens in amount mode', (tester) async {
+      await _pump(
+        tester,
+        opener(_unit(unitType: 'liter', name: 'Liter', sellingPrice: '50'),
+            '50'),
+      );
+      await openDialog(tester);
+
+      expect(amountSelected(tester), isTrue);
+      expect(find.byKey(const Key('amount-input')), findsOneWidget);
+    });
+
+    testWidgets('meter opens in amount mode', (tester) async {
+      await _pump(
+        tester,
+        opener(_unit(unitType: 'meter', name: 'Meter', sellingPrice: '20'),
+            '20'),
+      );
+      await openDialog(tester);
+
+      expect(amountSelected(tester), isTrue);
+    });
+
+    testWidgets(
+        'reopening after a quantity-mode session starts in amount mode again '
+        '(nothing is inherited)', (tester) async {
+      await _pump(tester, opener(kgUnit, '250'));
+
+      await openDialog(tester);
+      await tester.tap(find.byKey(const Key('quantity-mode-quantity')));
+      await tester.pump();
+      expect(amountSelected(tester), isFalse);
+      await tester.tap(find.byKey(const Key('quantity-cancel')));
+      await tester.pumpAndSettle();
+
+      await openDialog(tester);
+      expect(amountSelected(tester), isTrue);
+      expect(find.byKey(const Key('amount-input')), findsOneWidget);
+    });
+
+    testWidgets('amount → quantity conversion uses the existing unit price',
+        (tester) async {
+      String? result;
+      await _pump(
+        tester,
+        Builder(
+          builder: (context) => Center(
+            child: ElevatedButton(
+              key: const Key('open-btn'),
+              onPressed: () async {
+                result = await showQuantityDialog(
+                  context,
+                  unit: kgUnit,
+                  productQuantity: '8',
+                  productUnit: 'kg',
+                  unitPrice: '250',
+                );
+              },
+              child: const Text('open'),
+            ),
+          ),
+        ),
+      );
+      await openDialog(tester);
+
+      // No mode switch needed any more: the dialog IS in amount mode.
+      await tester.enterText(find.byKey(const Key('amount-input')), '100');
+      await tester.pump();
+      expect(
+        find.text('Computed quantity: ${_m('0.4')} Kg'),
+        findsOneWidget,
+      );
+      await tester.tap(find.byKey(const Key('quantity-submit')));
+      await tester.pumpAndSettle();
+      expect(result, '0.4');
     });
   });
 

@@ -92,6 +92,25 @@ class CartLine {
   final String? autoBundleQuantity;
   final String? autoBundlePrice;
 
+  /// Manual line total set by the cashier (double-click on the line total).
+  ///
+  /// Cart-only state: the money itself always travels in [lineDiscount]
+  /// (`discount = quantity × unit price − manualTotal`), so the payload, the
+  /// backend validation, the invoice and the returns never depend on this
+  /// field. It exists to pin the TOTAL: a later quantity change recomputes
+  /// the discount from it instead of silently re-deriving a bundle price.
+  final String? manualTotal;
+
+  /// POS "quick custom item": a price-only line with no catalog product.
+  /// [name] is the cashier's text (or the localized default), quantity is
+  /// always 1, nothing is decremented, and the sale request carries
+  /// `custom_name` instead of a product id.
+  final bool customLine;
+
+  /// Identity of a custom line — several custom items may share the cart, so
+  /// they can never collapse into one another through [key].
+  final String? customRef;
+
   /// Line identity (const-cached at construction): the cart's O(n)
   /// `indexWhere` in `PosCartNotifier.addLine` reads it once per existing
   /// line, so rebuilding the 3-part string on every access made building a
@@ -122,9 +141,14 @@ class CartLine {
     this.promotionPrice,
     this.autoBundleQuantity,
     this.autoBundlePrice,
+    this.manualTotal,
+    this.customLine = false,
+    this.customRef,
   }) : key = packId != null
             ? 'pack:$packId'
-            : '${productId ?? ''}|${variantId ?? ''}|${sellingUnitId ?? ''}';
+            : (customRef != null
+                ? 'custom:$customRef'
+                : '${productId ?? ''}|${variantId ?? ''}|${sellingUnitId ?? ''}');
 
   /// Pack lines never share a key with product lines (Phase 10): a pack
   /// and its component product stay two independent cart lines.
@@ -150,8 +174,22 @@ class CartLine {
   double get price => double.tryParse(unitPrice) ?? 0;
   double get discountAmount => double.tryParse(lineDiscount) ?? 0;
 
-  /// Gross line amount before line discount (display only).
-  double get lineTotal => (qty * price) - discountAmount;
+  /// What the line actually charges: a manual override wins, otherwise the
+  /// gross minus the line discount (which also carries the automatic
+  /// sell-unit saving).
+  double get lineTotal {
+    final manual = manualTotal;
+    if (manual != null) {
+      final parsed = double.tryParse(manual);
+      if (parsed != null) return parsed;
+    }
+    return (qty * price) - discountAmount;
+  }
+
+  /// Gross value of the line before any discount — the ceiling of a manual
+  /// total override (a line can be discounted, never surcharged, because
+  /// the backend rejects `line_discount < 0`).
+  double get lineGross => qty * price;
 
   /// True when the line sits on the retail branch AND the product carries
   /// a usable wholesale rule (price present, minimum > 0). A line with an
@@ -267,10 +305,37 @@ class CartLine {
             unitPrice: nextUnitPrice,
           )
         : null;
+    // A manual total override PINS the amount: a quantity change re-derives
+    // the DISCOUNT from it (never the other way round), so the cashier's
+    // number survives and the payload keeps gross − discount == the pinned
+    // total. It also wins over the bundle plan, so the automatic discount is
+    // never stacked on top of a manual one.
+    final manual = manualTotal;
     final nextDiscount = lineDiscount ??
-        (autoPlan == null || quantity == null
-            ? this.lineDiscount
-            : autoSellUnitDiscount(autoPlan, nextQuantity));
+        (manual != null && quantity != null
+            ? _discountForManualTotal(
+                quantity: nextQuantity,
+                unitPrice: nextUnitPrice,
+                total: manual,
+              )
+            : autoPlan == null || quantity == null
+                ? this.lineDiscount
+                : autoSellUnitDiscount(autoPlan, nextQuantity));
+    // A quantity DROP can make the pinned total unattainable: the new gross
+    // falls below the cashier's number, and the payload cannot express that
+    // as a non-negative discount (`line_discount >= 0`). The override is
+    // RELEASED instead of letting the line display a total the sale would
+    // never charge — cart display, payload, invoice and backend must always
+    // agree. A custom line is exempt: its price IS its total, so any
+    // quantity keeps gross >= total.
+    final pinned = manual == null ? null : double.tryParse(manual);
+    final releaseManual = pinned != null &&
+        quantity != null &&
+        !customLine &&
+        (double.tryParse(nextQuantity) ?? 0) *
+                    (double.tryParse(nextUnitPrice) ?? 0) +
+                0.0001 <
+            pinned;
     return CartLine(
       productId: productId,
       variantId: variantId,
@@ -281,7 +346,7 @@ class CartLine {
       unitName: unitName,
       quantity: nextQuantity,
       unitPrice: nextUnitPrice,
-      lineDiscount: nextDiscount,
+      lineDiscount: releaseManual ? '0' : nextDiscount,
       barcode: barcode,
       availableStock: availableStock ?? this.availableStock,
       productUnit: productUnit,
@@ -294,8 +359,66 @@ class CartLine {
       promotionPrice: promotionPrice,
       autoBundleQuantity: autoBundleQuantity,
       autoBundlePrice: autoBundlePrice,
+      manualTotal: releaseManual ? null : manualTotal,
+      customLine: customLine,
+      customRef: customRef,
     );
   }
+
+  /// The line with its total fixed to [total] (cashier's manual override).
+  ///
+  /// A custom line has no catalog price to discount: with quantity 1 its
+  /// price IS the total, so the amount is written to [unitPrice] and no
+  /// discount is created. Every other line keeps its unit price and
+  /// expresses the difference as the line discount — exactly the field the
+  /// backend re-validates (`line_discount <= line_gross`).
+  CartLine withManualTotal(String total) => _rebuild(
+        manualTotal: total,
+        unitPrice: customLine ? total : null,
+        lineDiscount: customLine
+            ? '0'
+            : _discountForManualTotal(
+                quantity: quantity,
+                unitPrice: unitPrice,
+                total: total,
+              ),
+      );
+
+  /// Clears a manual override, returning the line to its normal pricing.
+  CartLine clearManualTotal() => _rebuild(lineDiscount: '0', manualTotal: null);
+
+  /// Copy that can also write/clear the cart-only fields.
+  CartLine _rebuild({
+    String? unitPrice,
+    String? lineDiscount,
+    String? manualTotal,
+  }) => CartLine(
+        productId: productId,
+        variantId: variantId,
+        sellingUnitId: sellingUnitId,
+        packId: packId,
+        name: name,
+        variantName: variantName,
+        unitName: unitName,
+        quantity: quantity,
+        unitPrice: unitPrice ?? this.unitPrice,
+        lineDiscount: lineDiscount ?? this.lineDiscount,
+        barcode: barcode,
+        availableStock: availableStock,
+        productUnit: productUnit,
+        componentsSummary: componentsSummary,
+        baseUnitPrice: baseUnitPrice,
+        unitMultiplier: unitMultiplier,
+        retailPrice: retailPrice,
+        wholesalePrice: wholesalePrice,
+        wholesaleMinQty: wholesaleMinQty,
+        promotionPrice: promotionPrice,
+        autoBundleQuantity: autoBundleQuantity,
+        autoBundlePrice: autoBundlePrice,
+        manualTotal: manualTotal,
+        customLine: customLine,
+        customRef: customRef,
+      );
 
   /// Full UI snapshot for holds — `POST /api/v1/pos/holds` items and
   /// `pos_holds.cart_snapshot` (FIX #10B). Reconstructs the visual cart
@@ -330,6 +453,10 @@ class CartLine {
         // restored line would quietly stop re-deriving its bundle discount.
         'auto_bundle_quantity': autoBundleQuantity,
         'auto_bundle_price': autoBundlePrice,
+        // Cart-only state that must survive a hold/resume.
+        'manual_total': manualTotal,
+        'custom_line': customLine ? true : null,
+        'custom_ref': customRef,
       };
 
   /// Checkout payload for `POST /api/v1/sales` — fixed API contract.
@@ -338,6 +465,9 @@ class CartLine {
   /// the sale payload; they only live in the hold snapshot [toJson].
   Map<String, dynamic> toSaleJson() => {
         if (productId != null) 'product_id': productId,
+        // Price-only line: the server snapshots this as the line's
+        // product_name and touches no catalog row and no stock.
+        if (customLine) 'custom_name': name,
         if (packId != null) 'pack_id': packId,
         if (variantId != null) 'variant_id': variantId,
         if (sellingUnitId != null) 'selling_unit_id': sellingUnitId,
@@ -373,6 +503,9 @@ class CartLine {
       promotionPrice: json['promotion_price']?.toString(),
       autoBundleQuantity: json['auto_bundle_quantity']?.toString(),
       autoBundlePrice: json['auto_bundle_price']?.toString(),
+      manualTotal: json['manual_total']?.toString(),
+      customLine: json['custom_line'] == true,
+      customRef: json['custom_ref']?.toString(),
     );
   }
 }
@@ -1016,4 +1149,37 @@ class PaymentMath {
         return null;
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Manual line total (double-click on a cart line's total)
+// ---------------------------------------------------------------------------
+
+/// Plain (ungrouped) decimal text for a monetary value, trimmed of trailing
+/// zeros — the shape every cart field stores and the backend parses.
+String posPlainAmount(double value) {
+  final text = value.toStringAsFixed(3);
+  var trimmed = text.replaceFirst(RegExp(r'0+$'), '');
+  if (trimmed.endsWith('.')) {
+    trimmed = trimmed.substring(0, trimmed.length - 1);
+  }
+  return trimmed.isEmpty ? '0' : trimmed;
+}
+
+/// The line discount that makes `quantity × unitPrice − discount == total`.
+///
+/// Clamped at zero: a total ABOVE the gross would need a negative discount,
+/// which the backend rejects (`line_discount must be >= 0`). The dialog
+/// refuses such a total before it ever reaches here.
+String _discountForManualTotal({
+  required String quantity,
+  required String unitPrice,
+  required String total,
+}) {
+  final qty = double.tryParse(quantity) ?? 0;
+  final price = double.tryParse(unitPrice) ?? 0;
+  final value = double.tryParse(total) ?? 0;
+  final discount = (qty * price) - value;
+  if (!discount.isFinite || discount <= 0) return '0';
+  return posPlainAmount(discount);
 }

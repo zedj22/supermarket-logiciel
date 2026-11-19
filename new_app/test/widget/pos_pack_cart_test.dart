@@ -276,8 +276,22 @@ void main() {
 
       expect(find.byKey(const Key('pack-picker')), findsOneWidget);
       expect(find.byKey(const Key('pack-option-$_packId')), findsOneWidget);
-      expect(find.text('Family Pack'), findsOneWidget);
-      expect(find.text('250.0'), findsOneWidget);
+      // The catalog now lists the same pack behind the dialog, so scope the
+      // name to the picker itself.
+      expect(
+        find.descendant(
+          of: find.byKey(const Key('pack-picker')),
+          matching: find.text('Family Pack'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: find.byKey(const Key('pack-picker')),
+          matching: find.text('250.0'),
+        ),
+        findsOneWidget,
+      );
       expect(tester.takeException(), isNull);
     });
 
