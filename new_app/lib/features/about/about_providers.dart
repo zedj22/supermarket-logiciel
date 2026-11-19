@@ -11,6 +11,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../auth/auth_provider.dart';
+import '../licensing/license_info.dart';
 
 /// Server-owned system metadata (`GET /api/v1/system/info`).
 @immutable
@@ -18,6 +19,7 @@ class SystemInfo {
   const SystemInfo({
     required this.name,
     required this.version,
+    this.license,
   });
 
   /// Relative path of the endpoint (no leading slash, the same join rule
@@ -30,10 +32,15 @@ class SystemInfo {
   /// Server application version (`APP_VERSION`).
   final String version;
 
+  /// Phase L1-C `license` block; null on servers that predate the contract
+  /// (the field is additive and older payloads must keep parsing).
+  final LicenseInfo? license;
+
   factory SystemInfo.fromJson(Map<String, dynamic> json) {
     return SystemInfo(
       name: json['name'] as String? ?? '',
       version: json['version'] as String? ?? '',
+      license: LicenseInfo.tryParse(json['license']),
     );
   }
 }

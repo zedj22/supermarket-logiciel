@@ -47,6 +47,10 @@ import '../features/devices/devices_screen.dart';
 import '../features/devices/reconnect_dialog.dart';
 import '../features/devices/setup_wizard_screen.dart';
 import '../features/devices/widgets/status_chip.dart';
+import '../features/licensing/license_info.dart';
+import '../features/licensing/license_providers.dart';
+import '../features/licensing/license_widgets.dart';
+import '../features/licensing/licensing_screen.dart';
 
 final routerProvider = Provider<GoRouter>((ref) {
   // Keep ONE GoRouter instance for the app's lifetime. Recreating the
@@ -68,6 +72,18 @@ final routerProvider = Provider<GoRouter>((ref) {
   // gate opens the redirect must re-run to reveal the real destination.
   ref.listen(splashGateProvider, (previous, next) {
     if (next) authRefresh.value++;
+  });
+  // Phase L1-C: a new license snapshot (or its local-clock expiry flip)
+  // re-runs the redirect so an expired trial parks on /licensing.
+  ref.listen(licenseStatusProvider, (previous, next) {
+    authRefresh.value++;
+  });
+  // Phase L2-C: a verified Lifetime snapshot (startup fetch or a
+  // successful activation) re-runs the redirect so an install parked on
+  // /licensing by an expired trial un-parks as soon as the license is
+  // proven, without waiting for the next auth/status event.
+  ref.listen(licenseSnapshotProvider, (previous, next) {
+    authRefresh.value++;
   });
 
   final router = GoRouter(
@@ -106,12 +122,36 @@ final routerProvider = Provider<GoRouter>((ref) {
         return '/setup';
       }
 
+      // Phase L1-C: an expired trial parks every other destination on the
+      // licensing screen. Presentation only — the backend license_guard
+      // remains the enforcement authority, and a server that has not yet
+      // produced a license snapshot (null) changes nothing here, so the
+      // Main PC and LAN-client startup flows are untouched.
+      // Phase L2-C: a verified Lifetime snapshot un-parks the app — an
+      // activated install must never be held on the licensing screen by
+      // an expired trial block (the guard allows everything server-side).
+      final license = ref.read(licenseStatusProvider);
+      final lifetime = ref.read(licenseSnapshotProvider)?.isLifetime ?? false;
+      final licenseExpired = !lifetime &&
+          license != null &&
+          license.effectiveStatusAt(DateTime.now()) ==
+              LicenseStatus.expired;
+      if (licenseExpired &&
+          path != '/licensing' &&
+          path != '/splash' &&
+          path != '/setup' &&
+          path != '/setup-network') {
+        return '/licensing';
+      }
+
       // Unauthenticated (including login failure / session expiry)
       // → force login. Staying on /login returns null (no remount loop).
+      // /licensing is exempt so license status stays reachable pre-login.
       if (!isAuthenticated &&
           path != '/login' &&
           path != '/setup' &&
-          path != '/setup-network') {
+          path != '/setup-network' &&
+          path != '/licensing') {
         return '/login';
       }
 
@@ -152,6 +192,11 @@ final routerProvider = Provider<GoRouter>((ref) {
         path: '/login',
         name: 'login',
         builder: (context, state) => const LoginScreen(),
+      ),
+      GoRoute(
+        path: '/licensing',
+        name: 'licensing',
+        builder: (context, state) => const LicensingScreen(),
       ),
       ShellRoute(
         builder: (context, state, child) =>
@@ -531,17 +576,27 @@ class ScaffoldWithNav extends ConsumerWidget {
             ],
           ],
         ),
-        body: Row(
+        body: Column(
           children: [
-            if (groups.isNotEmpty) ...[
-              AppNavRail(
-                location: location,
-                groups: groups,
-                onNavigate: context.go,
+            // Phase L1-C: trial countdown / expired strip. Renders nothing
+            // until a system-info snapshot exists; connectivity keeps its
+            // own chip in the app bar and is never inferred from this.
+            const TrialStatusBanner(),
+            Expanded(
+              child: Row(
+                children: [
+                  if (groups.isNotEmpty) ...[
+                    AppNavRail(
+                      location: location,
+                      groups: groups,
+                      onNavigate: context.go,
+                    ),
+                    const VerticalDivider(width: 1),
+                  ],
+                  Expanded(child: child),
+                ],
               ),
-              const VerticalDivider(width: 1),
-            ],
-            Expanded(child: child),
+            ),
           ],
         ),
       ),

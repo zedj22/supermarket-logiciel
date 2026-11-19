@@ -28,6 +28,10 @@ PosApiError promotionsApiError(
   }
   final detail = backendErrorMessage(error);
   final code = _envelopeCode(error);
+  final licenseKey = licenseErrorKey(code);
+  if (licenseKey != null) {
+    return PosApiError(AppStrings.t(licenseKey, loc), detail);
+  }
   final String key;
   switch (code) {
     case 'PROMOTION_NOT_FOUND':

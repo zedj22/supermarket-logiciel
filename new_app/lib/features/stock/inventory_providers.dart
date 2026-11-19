@@ -122,6 +122,8 @@ class InventoryNotifier extends StateNotifier<InventoryState> {
     if (isConnectionError(e)) {
       return AppStrings.t('network_error_retry', loc);
     }
+    final licenseKey = licenseErrorKeyFrom(e);
+    if (licenseKey != null) return AppStrings.t(licenseKey, loc);
     // Prefer the real backend message (structured envelope or FastAPI detail).
     final backend = backendErrorMessage(e);
     if (backend != null && backend.isNotEmpty) return backend;
@@ -425,6 +427,8 @@ class MovementsNotifier extends StateNotifier<MovementsState> {
     if (isConnectionError(e)) {
       return AppStrings.t('network_error_retry', loc);
     }
+    final licenseKey = licenseErrorKeyFrom(e);
+    if (licenseKey != null) return AppStrings.t(licenseKey, loc);
     final backend = backendErrorMessage(e);
     if (backend != null) return backend;
     final code = e.response?.statusCode;
@@ -524,6 +528,8 @@ class ProductDetailNotifier
     if (isConnectionError(e)) {
       return AppStrings.t('network_error_retry', loc);
     }
+    final licenseKey = licenseErrorKeyFrom(e);
+    if (licenseKey != null) return AppStrings.t(licenseKey, loc);
     final backend = backendErrorMessage(e);
     if (backend != null) return backend;
     return AppStrings.t('api_error_retry', loc);

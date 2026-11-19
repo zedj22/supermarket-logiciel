@@ -9,6 +9,12 @@ typedef OnUnauthorized = void Function();
 /// independent layers (§9.3).
 typedef OnDeviceError = void Function(String code);
 
+/// Delivers the decoded body of every `GET /system/info` response to the
+/// licensing layer (Phase L1-C). Fired from the shared Dio interceptor so
+/// the heartbeat identity check, the About page and reconnect verification
+/// all feed one state without an extra request.
+typedef OnSystemInfo = void Function(Map<String, dynamic> data);
+
 /// Public authentication endpoints that never require a JWT.
 ///
 /// A 401 on any of these paths is an ordinary API error (e.g. bad PIN) and
@@ -48,6 +54,38 @@ const Set<String> deviceGuardErrorCodes = <String>{
 /// True for [code] when it is one of the device-guard codes.
 bool isDeviceGuardErrorCode(String? code) =>
     code != null && deviceGuardErrorCodes.contains(code);
+
+/// Backend licensing codes (Phase L1 guard / future License Manager) mapped
+/// to their user-facing localization keys.
+///
+/// A licensing rejection is NOT a connection failure and NOT a permission
+/// problem: the HTTP response arrived (so `isConnectionError` is false) and
+/// the operator must see a licensing message rather than `permission_denied`
+/// or a raw backend sentence. The keys live in `core/strings.dart` and are
+/// translated in every locale.
+const Map<String, String> licenseErrorLocalizationKeys =
+    <String, String>{
+  'license_required': 'license_error_required',
+  'trial_expired': 'license_error_expired',
+  'trial_upload_forbidden': 'license_error_upload_forbidden',
+  'trial_restore_forbidden': 'license_error_restore_forbidden',
+  'license_invalid': 'license_error_invalid',
+  'license_invalid_key': 'license_error_invalid_key',
+  'license_bound_elsewhere': 'license_error_bound_elsewhere',
+  'license_status_unavailable': 'license_error_status_unavailable',
+};
+
+/// True for [code] when it is one of the licensing codes.
+bool isLicenseErrorCode(String? code) =>
+    code != null && licenseErrorLocalizationKeys.containsKey(code);
+
+/// Localization key for a licensing [code], or null when it is not one.
+String? licenseErrorKey(String? code) => licenseErrorLocalizationKeys[code];
+
+/// Localization key carried by [e]'s error envelope, or null when the
+/// failure is not a licensing error.
+String? licenseErrorKeyFrom(DioException e) =>
+    licenseErrorKey(backendErrorCode(e));
 
 /// Decides whether a 401 should be treated as session expiry.
 ///
@@ -146,6 +184,7 @@ class ApiClient {
   late final Dio _dio;
   OnUnauthorized? _onUnauthorized;
   OnDeviceError? _onDeviceError;
+  OnSystemInfo? _onSystemInfo;
 
   ApiClient({String? baseUrl, Dio? dio}) {
     _dio = dio ??
@@ -224,6 +263,12 @@ class ApiClient {
     _onDeviceError = callback;
   }
 
+  /// Registers (or, with null, clears) the system-info ingestion callback
+  /// used by the licensing layer (Phase L1-C).
+  void setOnSystemInfo(OnSystemInfo? callback) {
+    _onSystemInfo = callback;
+  }
+
   void _setHeader(String name, String? value) {
     if (value == null || value.isEmpty) {
       _dio.options.headers.remove(name);
@@ -240,12 +285,30 @@ class ApiClient {
   void _handleDeviceError(String code) {
     _onDeviceError?.call(code);
   }
+
+  void _handleSystemInfo(Map<String, dynamic> data) {
+    _onSystemInfo?.call(data);
+  }
 }
 
 class _AuthInterceptor extends Interceptor {
   final ApiClient _client;
 
   _AuthInterceptor(this._client);
+
+  @override
+  void onResponse(Response response, ResponseInterceptorHandler handler) {
+    // Phase L1-C: every /system/info body is handed to the licensing layer
+    // (heartbeat identity check, About page, reconnect verification) so the
+    // license state refreshes wherever the endpoint is already fetched.
+    if (response.requestOptions.path.endsWith('/system/info')) {
+      final data = response.data;
+      if (data is Map) {
+        _client._handleSystemInfo(Map<String, dynamic>.from(data));
+      }
+    }
+    handler.next(response);
+  }
 
   @override
   void onError(DioException err, ErrorInterceptorHandler handler) {

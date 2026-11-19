@@ -241,12 +241,16 @@ void main() {
       // description + two option labels + two option descriptions added
       // together in ar/fr/en — 6 keys.
       // The cart's bundle caption added one more key (auto_bundle) — 1629.
+      // Manual line totals + quick custom items added 13 keys (dialogs,
+      // validation, the custom badge, the POS return refusal and the
+      // 45x35 stock label preset) — 1643; the manual-total cart badge
+      // added 1 more — 1644.
       // NOTE: the count also carries one key that arrived outside this
       // pass (1622 before the setting), which is why the delta is 8.
       // Update this deliberately when a subphase
       // adds strings — an unexplained drop means keys were deleted from
       // one map only.
-      expect(_map('en').keys.length, 1629);
+      expect(_map('en').keys.length, 1644);
       expect(_map('ar').keys.length, _map('en').keys.length);
       expect(_map('fr').keys.length, _map('en').keys.length);
     });

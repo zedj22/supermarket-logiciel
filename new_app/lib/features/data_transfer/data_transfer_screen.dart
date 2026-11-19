@@ -68,6 +68,8 @@ class _DataTransferScreenState extends ConsumerState<DataTransferScreen> {
   Dio get _dio => ref.read(apiClientProvider).dio;
 
   String _messageOf(DioException e) {
+    final licenseKey = licenseErrorKeyFrom(e);
+    if (licenseKey != null) return AppStrings.t(licenseKey, _loc());
     final message = backendErrorMessage(e);
     if (message != null) return message;
     if (isConnectionError(e)) return AppStrings.t('network_error_retry', _loc());

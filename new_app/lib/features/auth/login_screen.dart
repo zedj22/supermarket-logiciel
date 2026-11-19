@@ -2,11 +2,13 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import '../../core/constants.dart';
 import '../../core/strings.dart';
 import '../../l10n/locale_provider.dart';
 import '../../network/api_client.dart';
 import '../devices/connection_provider.dart';
+import '../devices/device_identity.dart';
 import 'auth_provider.dart';
 import 'auth_models.dart';
 import 'pin_pad.dart';
@@ -77,6 +79,19 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       _usersError = null;
     });
     await ref.read(lanConnectionProvider.notifier).reacquireServer();
+    // An unpaired (Main PC) install re-resolves the launcher-published
+    // local endpoint before re-issuing: the backend may have been started
+    // after this app booted, in which case the boot-time base URL still
+    // points at a dead address. Paired installs keep their stored server.
+    try {
+      final link = await readServerLink();
+      if (!link.isPaired) {
+        ref.read(apiClientProvider).setBaseUrl(await initialBaseUrl());
+      }
+    } catch (_) {
+      // Best-effort re-resolution; _loadUsers below still reports the
+      // real connection state either way.
+    }
     await _loadUsers();
   }
 
@@ -368,6 +383,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       ),
                     ),
                   ],
+                  const SizedBox(height: 24),
+                  // Phase L1-C: license status is reachable before login.
+                  TextButton(
+                    key: const Key('license-view-button'),
+                    onPressed: () => context.go('/licensing'),
+                    child: Text(AppStrings.t('license_view', loc)),
+                  ),
                 ],
               ),
             ),

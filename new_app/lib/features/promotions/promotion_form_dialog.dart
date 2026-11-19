@@ -511,9 +511,12 @@ class _PromotionProductPickerState extends ConsumerState<PromotionProductPicker>
       if (requestId != _requestId || !mounted) return;
       setState(() {
         _loading = false;
-        _error = isConnectionError(e)
-            ? AppStrings.t('network_error_retry', _loc)
-            : (backendErrorMessage(e) ?? AppStrings.t('api_error_retry', _loc));
+        final licenseKey = licenseErrorKeyFrom(e);
+        _error = licenseKey != null
+            ? AppStrings.t(licenseKey, _loc)
+            : isConnectionError(e)
+                ? AppStrings.t('network_error_retry', _loc)
+                : (backendErrorMessage(e) ?? AppStrings.t('api_error_retry', _loc));
       });
     }
   }

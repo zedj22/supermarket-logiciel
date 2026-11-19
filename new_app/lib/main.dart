@@ -9,6 +9,7 @@ import 'features/devices/connection_provider.dart';
 import 'features/devices/device_identity.dart';
 import 'features/settings/pos_settings_provider.dart';
 import 'features/settings/scan_settings_provider.dart';
+import 'features/licensing/license_providers.dart';
 import 'network/api_client.dart';
 import 'theme/app_theme.dart';
 import 'theme/theme_provider.dart';
@@ -37,7 +38,25 @@ Future<void> main() async {
   // the persisted machine identity from the very first request. Pairing is
   // deliberately independent of the user session, so this survives logout.
   final credentials = SecureCredentialStorage();
-  final apiClient = ApiClient(baseUrl: await initialBaseUrl());
+  final baseUrl = await initialBaseUrl();
+  final apiClient = ApiClient(baseUrl: baseUrl);
+
+  // P8: discovery follows the port the backend actually published, so a
+  // non-default port does not silently break LAN pairing.
+  final parsedBaseUrl = Uri.tryParse(baseUrl);
+  final discoveryPort =
+      (parsedBaseUrl != null && parsedBaseUrl.hasPort) ? parsedBaseUrl.port : 8000;
+
+  // First-run UX (single PC): the backend launcher publishes
+  // `supermarket_endpoint.json` when it starts, so a desktop whose exe sits
+  // next to that descriptor (or whose ProgramData has one) IS the server.
+  // Preselect the role instead of forcing the operator through a network
+  // wizard on a machine that needs no network configuration at all.
+  if (await readAppRunMode() == null &&
+      await readLocalBackendBaseUrl() != null) {
+    await writeAppRunMode(appRunModeServer);
+  }
+
   final link = await readServerLink();
   if (link.isPaired) {
     apiClient.setDeviceIdentity(
@@ -55,6 +74,7 @@ Future<void> main() async {
         posSettingsProvider.overrideWith((ref) => PosSettingsNotifier(prefs)),
         apiClientProvider.overrideWithValue(apiClient),
         credentialStorageProvider.overrideWithValue(credentials),
+        lanDiscoveryPortProvider.overrideWithValue(discoveryPort),
         installBootstrappedProvider.overrideWithValue(true),
       ],
       child: const SupermarketPosApp(),
@@ -76,6 +96,11 @@ class SupermarketPosApp extends ConsumerWidget {
     // `read` (not `watch`) starts it without rebuilding the whole app on
     // every connection tick.
     ref.read(lanConnectionProvider);
+
+    // Phase L1-C: feed the licensing state from every existing
+    // /system/info response through the shared client's interceptor —
+    // no extra request, no polling.
+    ref.read(licenseIngestorProvider);
 
     final themeState = ref.watch(themeProvider);
     final localeState = ref.watch(localeProvider);
