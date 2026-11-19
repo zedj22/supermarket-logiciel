@@ -121,6 +121,8 @@ class _FakePrintService implements PrintService {
     Uint8List bytes, {
     required String paper,
     String? filename,
+    double? pageWidthMm,
+    double? pageHeightMm,
   }) async {
     printedPdfs.add(bytes);
     printedPapers.add(paper);

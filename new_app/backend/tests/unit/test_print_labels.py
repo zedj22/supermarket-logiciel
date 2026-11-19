@@ -24,21 +24,28 @@ Covers:
     identical copies draw identical text, the percent badge prints
     the DECLARED promotion value (percentage only, shaped in RTL)
     and a fixed-price promotion prints prices without a badge.
-9.  Roll labels (`paper="roll"`) — exact content geometry (media
-    width + labels + gaps, mathematically verified), single-column
-    stacking with the configured gap, ordered multi-copy runs,
-    margins honored, schema rejects impossible media geometry (422),
-    A4 ignores roll fields (back-compat), and the roll path touches
-    no inventory / no sales (same DB-free contract as A4).
+9.  Roll labels (`paper="roll"`) — ONE PAGE PER PHYSICAL LABEL
+    (a 4-label job is a 4-page document: the page is the label, so a
+    label printer can never print just the first one), quantities
+    expanded in selection order, media width / margins honoured,
+    schema rejects impossible media geometry (422), A4 ignores roll
+    fields (back-compat), and the roll path touches no inventory /
+    no sales (same DB-free contract as A4).
+10. Layout — store name + product name bold and larger, every block
+    centred horizontally, barcode centred with quiet zones, digits
+    centred under the bars, no block overlapping another.
 """
 
 from __future__ import annotations
 
 import json
 import re
+import base64
+import zlib
 import sys
 import time
 import uuid
+from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 
@@ -54,7 +61,7 @@ from app.main import app
 from app.models.audit import AuditLog
 from app.models.inventory import InventoryMovement
 from app.models.sale import Sale
-from app.printing.fonts import FONT_BOLD, register_fonts
+from app.printing.fonts import FONT_BOLD, FONT_REGULAR, register_fonts
 from app.printing.price_labels import (
     PriceLabel,
     _measure,
@@ -62,6 +69,7 @@ from app.printing.price_labels import (
     render_price_labels,
 )
 from app.printing.text import shape_text
+from reportlab.pdfbase.pdfmetrics import stringWidth
 from app.schemas.export import LabelLayout
 from app.services.auth import AuthService
 
@@ -752,39 +760,263 @@ def _price_row(name: str, barcode: str, *, promo: bool = False) -> PriceLabel:
     )
 
 
-def test_labels_roll_renders_exact_content_geometry(client, admin_headers):
+# ── Render introspection (raw, uncompressed content streams) ─────────────
+
+_TJ_RE = re.compile(r"\(((?:[^()\\]|\\.)*)\)\s*Tj")
+_RUN_RE = re.compile(r"1 0 0 1 ([\d.-]+) ([\d.-]+) Tm /(F\d+)\+\d+ ([\d.]+) Tf")
+_BAR_RE = re.compile(
+    r"1 0 0 1 ([\d.-]+) ([\d.-]+) cm|n ([\d.-]+) ([\d.-]+) ([\d.-]+) ([\d.-]+) re f\*"
+)
+
+
+@dataclass(frozen=True)
+class _Run:
+    """One drawn string: font resource, size, origin and text."""
+
+    font: str
+    size: float
+    x: float
+    y: float
+    text: str
+
+
+def _decode_candidates(body: bytes) -> list[bytes]:
+    """Every plausible decoding of a PDF stream (page streams are either
+    plain, FlateDecode, or ASCII85Decode + FlateDecode)."""
+    out: list[bytes] = []
+    try:
+        out.append(zlib.decompress(body))
+    except zlib.error:
+        pass
+    compact = b"".join(body.split())
+    for adobe in (False, True):
+        try:
+            a85 = base64.a85decode(compact, adobe=adobe)
+        except ValueError:
+            continue
+        out.append(a85)
+        try:
+            out.append(zlib.decompress(a85))
+        except zlib.error:
+            pass
+        break
+    out.append(body)
+    return out
+
+
+def _page_streams(pdf: bytes) -> list[str]:
+    """One decoded content stream per rendered page, in page order."""
+    streams: list[str] = []
+    for match in re.finditer(rb"stream\r?\n(.*?)endstream", pdf, re.S):
+        for candidate in _decode_candidates(match.group(1)):
+            if b"BT" in candidate and b"Tf" in candidate and b"begincmap" not in candidate:
+                streams.append(candidate.decode("latin-1"))
+                break
+    return streams
+
+
+def _runs(stream: str) -> list[_Run]:
+    """Every drawn string on a page, in draw order."""
+    runs: list[_Run] = []
+    for match in _RUN_RE.finditer(stream):
+        x, y, font, size = match.groups()
+        text = _TJ_RE.search(stream, match.end())
+        if text is None:
+            continue
+        runs.append(
+            _Run(
+                font=font,
+                size=float(size),
+                x=float(x),
+                y=float(y),
+                text=text.group(1).replace("\\(", "(").replace("\\)", ")"),
+            )
+        )
+    return runs
+
+
+def _page_boxes(pdf: bytes) -> list[tuple[float, float]]:
+    """(width, height) of every page, in points."""
+    boxes: list[tuple[float, float]] = []
+    for raw in re.findall(rb"/MediaBox\s*\[([^\]]*)\]", pdf):
+        parts = raw.split()
+        boxes.append((float(parts[2]), float(parts[3])))
+    return boxes
+
+
+def _bar_bounds(stream: str) -> tuple[float, float, float, float]:
+    """(x0, x1, y0, y1) of the drawn Code128 bars, in page points."""
+    xs: list[float] = []
+    ys: list[float] = []
+    tx = ty = 0.0
+    for token in _BAR_RE.finditer(stream):
+        if token.group(1) is not None:
+            tx, ty = float(token.group(1)), float(token.group(2))
+        elif tx or ty:
+            x, y, w, h = (float(token.group(i)) for i in (3, 4, 5, 6))
+            xs.extend([tx + x, tx + x + w])
+            ys.extend([ty + y, ty + y + h])
+    assert xs, "no barcode rects found"
+    return min(xs), max(xs), min(ys), max(ys)
+
+
+def _roll_45(**overrides) -> dict:
+    """XP-365B stock: 45 mm media, 45x35 mm label, no liner offsets."""
+    layout = {
+        "roll_width_mm": 45.0,
+        "label_width_mm": 45.0,
+        "label_height_mm": 35.0,
+        "gap_y_mm": 0.0,
+    }
+    layout.update(overrides)
+    return layout
+
+
+def _page_names(pdf: bytes) -> list[list[str]]:
+    """The product-name run of every page (the run after the store line)."""
+    names: list[list[str]] = []
+    for stream in _page_streams(pdf):
+        runs = _runs(stream)
+        names.append([r.text for r in runs[1:2]])
+    return names
+
+
+# ── One page per label (the multi-label defect) ──────────────────────────
+
+
+def test_labels_roll_renders_one_page_per_label(client, admin_headers):
     product = _product(client, admin_headers, name="Roll Product", barcode="ROLL001")
     resp = _labels(
         client,
         admin_headers,
         [{"product_id": product["id"], "quantity": 3}],
         paper="roll",
+        layout=_roll_45(),
         locale="en",
     )
     assert resp.status_code == 200, resp.text
     assert resp.content[:5] == b"%PDF-"
     assert b"/FontFile2" in resp.content
-    width, height = _media_box(resp.content)
-    assert width == pytest.approx(58 * _MM, abs=0.01)  # media width
-    # 3*30 label + 2*2 gap + 0 top margin = 94 mm (spec example)
-    assert height == pytest.approx(94 * _MM, abs=0.01)
-    assert _page_count(resp.content) == 1  # one continuous strip
+    # Three labels -> three pages, each exactly one 45x35 mm label.
+    assert _page_count(resp.content) == 3
+    for width, height in _page_boxes(resp.content):
+        assert width == pytest.approx(45 * _MM, abs=0.01)
+        assert height == pytest.approx(35 * _MM, abs=0.01)
 
 
-def test_labels_roll_stacks_labels_with_exact_vertical_gap():
+def test_labels_roll_single_label_is_one_page(client, admin_headers):
+    product = _product(client, admin_headers, name="Solo Label", barcode="SOLO1")
+    resp = _labels(
+        client,
+        admin_headers,
+        [{"product_id": product["id"], "quantity": 1}],
+        paper="roll",
+        layout=_roll_45(),
+        locale="en",
+    )
+    assert resp.status_code == 200, resp.text
+    assert _page_count(resp.content) == 1
+    text = _text(resp.content)
+    assert "Solo Label" in text
+    assert "SOLO1" in text
+
+
+def test_labels_roll_quantity_five_is_five_pages(client, admin_headers):
+    product = _product(client, admin_headers, name="Five Copies", barcode="FIVE5")
+    resp = _labels(
+        client,
+        admin_headers,
+        [{"product_id": product["id"], "quantity": 5}],
+        paper="roll",
+        layout=_roll_45(),
+        locale="en",
+    )
+    assert resp.status_code == 200, resp.text
+    assert _page_count(resp.content) == 5
+    streams = _page_streams(resp.content)
+    assert len(streams) == 5
+    for stream in streams:  # every copy carries the product + its barcode
+        assert "Five Copies" in stream
+        assert "FIVE5" in stream
+
+
+def test_labels_roll_mixed_quantities_two_one_one_is_four_labels(
+    client, admin_headers
+):
+    """The reported case: 1001 x2, aroma2 x1, asa x1 -> exactly 4 labels."""
+    a = _product(client, admin_headers, name="1001", barcode="1001")
+    b = _product(client, admin_headers, name="aroma2", barcode="AROMA2")
+    c = _product(client, admin_headers, name="asa", barcode="ASA1")
+    resp = _labels(
+        client,
+        admin_headers,
+        [
+            {"product_id": a["id"], "quantity": 2},
+            {"product_id": b["id"], "quantity": 1},
+            {"product_id": c["id"], "quantity": 1},
+        ],
+        paper="roll",
+        layout=_roll_45(),
+        locale="en",
+    )
+    assert resp.status_code == 200, resp.text
+    assert _page_count(resp.content) == 4
+    assert _page_names(resp.content) == [["1001"], ["1001"], ["aroma2"], ["asa"]]
+
+
+def test_labels_roll_nothing_dropped_or_duplicated(client, admin_headers):
+    a = _product(client, admin_headers, name="Alpha", barcode="ALP1")
+    b = _product(client, admin_headers, name="Beta", barcode="BET1")
+    resp = _labels(
+        client,
+        admin_headers,
+        [
+            {"product_id": a["id"], "quantity": 3},
+            {"product_id": b["id"], "quantity": 2},
+        ],
+        paper="roll",
+        layout=_roll_45(),
+        locale="en",
+    )
+    assert resp.status_code == 200, resp.text
+    names = [page[0] for page in _page_names(resp.content)]
+    assert len(names) == 5  # 3 + 2, no more, no less
+    assert names.count("Alpha") == 3
+    assert names.count("Beta") == 2
+    assert names == ["Alpha", "Alpha", "Alpha", "Beta", "Beta"]  # order kept
+
+
+def test_labels_roll_zero_quantity_is_rejected(client, admin_headers):
+    product = _product(client, admin_headers)
+    resp = _labels(
+        client,
+        admin_headers,
+        [{"product_id": product["id"], "quantity": 0}],
+        paper="roll",
+        layout=_roll_45(),
+    )
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["error"]["code"] == "VALIDATION_ERROR"
+
+
+def test_labels_roll_each_page_holds_exactly_one_label():
     row = _price_row("Gap Probe", "GAP1", promo=True)
     layout = LabelLayout(**_roll_layout(margin_left_mm=4.0))
     pdf = render_price_labels([row] * 3, layout, "roll", "en", compress=False)
 
-    pairs = _tm_pairs(pdf)
-    assert len(pairs) >= 3 and len(pairs) % 3 == 0, pairs
-    group = len(pairs) // 3
-    step = (30.0 + 2.0) * _MM  # label height + gap, in pt
-    first, second, third = pairs[:group], pairs[group : 2 * group], pairs[2 * group :]
-    for (x1, y1), (x2, y2), (x3, y3) in zip(first, second, third):
-        assert x1 == pytest.approx(x2) == pytest.approx(x3)  # same column
-        assert y1 - y2 == pytest.approx(step, abs=0.01)  # label + gap
-        assert y1 - y3 == pytest.approx(2 * step, abs=0.01)
+    streams = _page_streams(pdf)
+    assert len(streams) == 3 and _page_count(pdf) == 3
+    # Identical copies -> identical page content (same runs, same spots).
+    pages = [
+        [
+            (r.font, round(r.size, 3), round(r.x, 3), round(r.y, 3), r.text)
+            for r in _runs(s)
+        ]
+        for s in streams
+    ]
+    assert pages[0] == pages[1] == pages[2]
+    for stream in streams:
+        assert "Gap Probe" in stream
 
 
 def test_labels_roll_margins_keep_text_inside_media():
@@ -795,16 +1027,18 @@ def test_labels_roll_margins_keep_text_inside_media():
     pdf = render_price_labels([row] * 2, layout, "roll", "en", compress=False)
     width, height = _media_box(pdf)
     assert width == pytest.approx(58 * _MM, abs=0.01)
-    assert height == pytest.approx(67 * _MM, abs=0.01)  # 5 top + 2*30 + 1*2
+    assert height == pytest.approx(30 * _MM, abs=0.01)  # one label per page
+    assert _page_count(pdf) == 2
 
     left_pt = 4.0 * _MM
     top_limit = height - 5.0 * _MM  # text never enters the top margin
-    for x, y in _tm_pairs(pdf):
-        assert left_pt <= x <= width  # never left of the left margin
-        assert 0.0 <= y <= top_limit  # inside the strip, below the top margin
+    for stream in _page_streams(pdf):
+        for run in _runs(stream):
+            assert left_pt - 0.01 <= run.x <= width
+            assert 0.0 <= run.y <= top_limit
 
 
-def test_labels_roll_multiple_copies_stack_in_order(client, admin_headers):
+def test_labels_roll_multiple_copies_print_in_order(client, admin_headers):
     a = _product(client, admin_headers, name="Roll Alpha", barcode="RAL001")
     b = _product(client, admin_headers, name="Roll Beta", barcode="RBE001")
     resp = _labels(
@@ -815,18 +1049,13 @@ def test_labels_roll_multiple_copies_stack_in_order(client, admin_headers):
             {"product_id": b["id"], "quantity": 5},
         ],
         paper="roll",
+        layout=_roll_45(),
         locale="en",
     )
     assert resp.status_code == 200, resp.text
-    width, height = _media_box(resp.content)
-    assert width == pytest.approx(58 * _MM, abs=0.01)
-    # 8 labels + 7 gaps = 8*30 + 7*2 = 254 mm
-    assert height == pytest.approx(254 * _MM, abs=0.01)
-    assert _page_count(resp.content) == 1
-    text = _text(resp.content)
-    assert text.count("Roll Alpha") == 3  # A A A B B B B B, in order
-    assert text.count("Roll Beta") == 5
-    assert text.index("Roll Alpha") < text.index("Roll Beta")  # first block
+    assert _page_count(resp.content) == 8
+    names = [page[0] for page in _page_names(resp.content)]
+    assert names == ["Roll Alpha"] * 3 + ["Roll Beta"] * 5
 
 
 def test_labels_roll_ignores_columns_and_rows(client, admin_headers):
@@ -840,10 +1069,138 @@ def test_labels_roll_ignores_columns_and_rows(client, admin_headers):
         locale="en",
     )
     assert resp.status_code == 200, resp.text
-    width, height = _media_box(resp.content)
-    assert width == pytest.approx(58 * _MM, abs=0.01)  # always one across
-    assert height == pytest.approx(62 * _MM, abs=0.01)  # derived: 2*30+2
-    assert _page_count(resp.content) == 1  # rows never paginate a roll
+    assert _page_count(resp.content) == 2  # rows never paginate a roll
+    for width, height in _page_boxes(resp.content):
+        assert width == pytest.approx(58 * _MM, abs=0.01)  # always one across
+        assert height == pytest.approx(30 * _MM, abs=0.01)
+
+
+# ── Redesigned label layout (centred, bold, larger) ──────────────────────
+
+
+def _single_label_pdf(**layout_overrides) -> tuple[bytes, str, float, float]:
+    row = _price_row("Centred Item", "CEN123")
+    layout = LabelLayout(**_roll_45(**layout_overrides))
+    pdf = render_price_labels([row], layout, "roll", "en", compress=False)
+    width, height = _media_box(pdf)
+    return pdf, _page_streams(pdf)[0], width, height
+
+
+def test_label_store_and_name_are_bold_and_larger():
+    _pdf, stream, _w, _h = _single_label_pdf()
+    runs = {run.text: run for run in _runs(stream)}
+
+    store = runs["Roll Store"]
+    name = runs["Centred Item"]
+    price = runs["200.00 DA"]
+    digits = runs["CEN123"]
+
+    # Noticeably larger than the old 5 pt store / 7.2 pt name ramp.
+    assert store.size > 5.0 and store.size >= 7.0
+    assert name.size > 7.2 and name.size >= 9.5
+    assert price.size >= 12.0
+    # Store, name and price share ONE bold face; the human-readable
+    # barcode line stays regular.
+    assert store.font == name.font == price.font
+    assert digits.font != name.font
+
+
+def test_label_blocks_are_centered_horizontally():
+    _pdf, stream, width, _h = _single_label_pdf()
+    center = width / 2
+    runs = _runs(stream)
+    assert {r.text for r in runs} >= {
+        "Roll Store",
+        "Centred Item",
+        "200.00 DA",
+        "CEN123",
+    }
+    for run in runs:
+        font = FONT_REGULAR if run.text == "CEN123" else FONT_BOLD
+        half = stringWidth(shape_text(run.text), font, run.size) / 2
+        assert run.x + half == pytest.approx(center, abs=1.0), run
+
+
+def test_label_barcode_is_centered_and_keeps_quiet_zones():
+    _pdf, stream, width, _h = _single_label_pdf()
+    x0, x1, y0, y1 = _bar_bounds(stream)
+    assert (x0 + x1) / 2 == pytest.approx(width / 2, abs=1.0)  # centred
+    assert x0 >= 3.0  # ≈1 mm quiet zone on each side, never edge-to-edge
+    assert width - x1 >= 3.0
+    assert y1 - y0 >= 9.0  # tall enough to scan
+
+    digits = next(r for r in _runs(stream) if r.text == "CEN123")
+    assert digits.y < y0  # human-readable value sits BELOW the bars
+
+
+def test_label_blocks_stack_without_overlap():
+    _pdf, stream, _w, height = _single_label_pdf()
+    runs = {run.text: run for run in _runs(stream)}
+    store, name, price = runs["Roll Store"], runs["Centred Item"], runs["200.00 DA"]
+    digits = runs["CEN123"]
+    _x0, _x1, bars_y0, bars_y1 = _bar_bounds(stream)
+
+    # store -> name -> price -> bars -> digits, top to bottom
+    assert store.y > name.y > price.y > bars_y1 > bars_y0 > digits.y
+    assert bars_y1 <= height  # nothing above the label
+    assert digits.y >= 0.0  # nothing below the label
+
+
+def test_label_long_name_wraps_inside_the_label():
+    name = "Premium Organic Wholegrain Breakfast Cereal With Raisins"
+    row = PriceLabel(
+        name=name,
+        barcode="1234567890128",
+        retail=Decimal("200.000"),
+        price=Decimal("200.000"),
+        promo=False,
+        unit="piece",
+        store_name="Roll Store",
+    )
+    layout = LabelLayout(**_roll_45())
+    pdf = render_price_labels([row], layout, "roll", "en", compress=False)
+    stream = _page_streams(pdf)[0]
+    width, _height = _media_box(pdf)
+
+    runs = _runs(stream)
+    name_runs = [
+        r for r in runs if r.text not in {"Roll Store", "200.00 DA", "1234567890128"}
+    ]
+    assert 1 <= len(name_runs) <= 2  # wrapped, never a third line
+    for run in name_runs:
+        half = stringWidth(shape_text(run.text), FONT_BOLD, run.size) / 2
+        assert run.x + half == pytest.approx(width / 2, abs=1.0)
+        assert 0.0 <= run.x and run.x + 2 * half <= width
+    _x0, _x1, bars_y0, _y1 = _bar_bounds(stream)
+    assert min(r.y for r in name_runs) > bars_y0  # name never touches bars
+
+
+def test_label_arabic_blocks_are_centered():
+    name = "عصير التفاح الطازج"
+    row = PriceLabel(
+        name=name,
+        barcode="AR123",
+        retail=Decimal("200.000"),
+        price=Decimal("200.000"),
+        promo=False,
+        unit="piece",
+        store_name="سوبر ماركت النخبة",
+    )
+    layout = LabelLayout(**_roll_45())
+    pdf = render_price_labels([row], layout, "roll", "ar", compress=False)
+    stream = _page_streams(pdf)[0]
+    width, _height = _media_box(pdf)
+
+    shaped_store = shape_text("سوبر ماركت النخبة")
+    shaped_name = shape_text(name)
+    runs = _runs(stream)
+    # Arabic is drawn through the subset encoder, so the raw Tj operand is
+    # not readable text — identify the blocks by draw order (store, then
+    # name) and measure their width with the same font + shaped string.
+    store_run, name_run = runs[0], runs[1]
+    for run, shaped in ((store_run, shaped_store), (name_run, shaped_name)):
+        half = stringWidth(shaped, FONT_BOLD, run.size) / 2
+        assert run.x + half == pytest.approx(width / 2, abs=1.0)
 
 
 def test_labels_roll_promotion_matches_a4_presentation(client, admin_headers):

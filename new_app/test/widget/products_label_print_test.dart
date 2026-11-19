@@ -334,15 +334,21 @@ class _FakePdfPreview implements PdfPreviewBuilder {
 class _FakePrintService implements PrintService {
   final List<Uint8List> printedPdfs = <Uint8List>[];
   final List<String> printedPapers = <String>[];
+  final List<double?> printedPageWidths = <double?>[];
+  final List<double?> printedPageHeights = <double?>[];
 
   @override
   Future<void> printPdf(
     Uint8List bytes, {
     required String paper,
     String? filename,
+    double? pageWidthMm,
+    double? pageHeightMm,
   }) async {
     printedPdfs.add(bytes);
     printedPapers.add(paper);
+    printedPageWidths.add(pageWidthMm);
+    printedPageHeights.add(pageHeightMm);
   }
 
   @override
@@ -355,6 +361,8 @@ class _FailingPrintService implements PrintService {
     Uint8List bytes, {
     required String paper,
     String? filename,
+    double? pageWidthMm,
+    double? pageHeightMm,
   }) async {
     throw const PrintServiceException('no printer available');
   }
@@ -1078,5 +1086,117 @@ void main() {
       expect(sent['paper'], 'roll');
       expect(tester.takeException(), isNull);
     });
+    testWidgets('every selected product keeps its own quantity in the POST '
+        'and the whole batch is printed once', (tester) async {
+      final dio = MockDio();
+      late Map<String, dynamic> sent;
+      _stub(
+        dio,
+        labelsHandler: (path, data) {
+          sent = data;
+          return _bytes(path, <int>[37, 80, 68, 70], 'labels_2026.pdf');
+        },
+      );
+      final printer = _FakePrintService();
+      await _pumpApp(tester, dio, printer: printer);
+      await _enterLabelMode(tester);
+      for (final id in [_p1, _p2]) {
+        await tester.ensureVisible(find.byKey(Key('product-label-check-$id')));
+        await tester.tap(find.byKey(Key('product-label-check-$id')));
+        await tester.pumpAndSettle();
+      }
+      await tester.tap(find.byKey(const Key('products-print-action')));
+      await tester.pumpAndSettle();
+
+      // p1 -> 2 labels, p2 stays at 1: three labels, two products.
+      await tester.tap(find.byKey(const Key('label-qty-inc-$_p1')));
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<Text>(find.byKey(const Key('label-total-count'))).data,
+        contains(': 3'),
+      );
+
+      await tester.tap(find.byKey(const Key('label-dialog-print')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('print-preview-confirm')));
+      await tester.pumpAndSettle();
+
+      // One row per product with ITS quantity — never "one item, n labels"
+      // and never only the first product.
+      final items = (sent['items'] as List).cast<Map<String, dynamic>>();
+      expect(items, hasLength(2));
+      expect(items[0]['product_id'], _p1);
+      expect(items[0]['quantity'], 2);
+      expect(items[0].containsKey('price'), isFalse);
+      expect(items[1]['product_id'], _p2);
+      expect(items[1]['quantity'], 1);
+      // The complete document goes to the printer in a single call.
+      expect(printer.printedPdfs, hasLength(1));
+      expect(printer.printedPdfs.single, isNotEmpty);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('roll print hands the printer the exact label page size',
+        (tester) async {
+      final dio = MockDio();
+      _stub(dio);
+      final printer = _FakePrintService();
+      await _pumpApp(tester, dio, printer: printer);
+      await _enterLabelMode(tester);
+      await tester.ensureVisible(
+        find.byKey(const Key('product-label-check-$_p1')),
+      );
+      await tester.tap(find.byKey(const Key('product-label-check-$_p1')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('products-print-action')));
+      await tester.pumpAndSettle();
+      await selectPaper(tester, AppStrings.t('label_paper_roll', 'ar'));
+
+      // XP-365B stock: 45 mm media, 45 x 35 mm label.
+      await tester.enterText(
+        find.byKey(const Key('label-field-roll-width')),
+        '45',
+      );
+      await tester.enterText(find.byKey(const Key('label-field-width')), '45');
+      await tester.enterText(find.byKey(const Key('label-field-height')), '35');
+      await tester.tap(find.byKey(const Key('label-dialog-print')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('print-preview-confirm')));
+      await tester.pumpAndSettle();
+
+      // One page IS one label — the print format must not fall back to the
+      // 80 mm receipt guess, or the spooler scales the labels.
+      expect(printer.printedPageWidths, [45.0]);
+      expect(printer.printedPageHeights, [35.0]);
+      expect(printer.printedPapers, ['roll']);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('45x35 stock preset fills the XP-365B label size',
+        (tester) async {
+      final dio = MockDio();
+      await openDialog(tester, dio);
+      await selectPaper(tester, AppStrings.t('label_paper_roll', 'ar'));
+
+      await tester.tap(find.byKey(const Key('label-preset-stock')));
+      await tester.pumpAndSettle();
+
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const Key('label-field-width')))
+            .controller!
+            .text,
+        '45',
+      );
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const Key('label-field-height')))
+            .controller!
+            .text,
+        '35',
+      );
+      expect(tester.takeException(), isNull);
+    });
+
   });
 }
