@@ -99,6 +99,44 @@ void main() {
   });
 
   group('SettingsNotifier.save', () {
+    // Regression (receipt printing mode not persisted): a backend that does
+    // not know the new columns answers 200 and OMITS them. Re-seeding from
+    // that body is what silently reset the dropdown to Disabled, so it must
+    // be reported as a failed save instead.
+    test('a 2xx response without the receipt printing columns is a failed '
+        'save and keeps the previous snapshot', () async {
+      final adapter = FakeJsonAdapter((options) async {
+        if (options.method == 'PUT') {
+          final body = Map<String, dynamic>.from(options.data as Map)
+            ..remove('receipt_print_mode')
+            ..remove('receipt_min_amount');
+          return (statusCode: 200, body: body);
+        }
+        return (statusCode: 200, body: kDefaultSettingsJson);
+      });
+      final notifier = _notifier(adapter);
+      await notifier.load();
+
+      final ok = await notifier.save(
+        _seed().copyWith(
+          receiptPrintMode: ReceiptPrintMode.askAboveThreshold,
+          receiptMinAmount: 500,
+        ),
+      );
+
+      expect(ok, isFalse);
+      expect(notifier.state.failedDuringSave, isTrue);
+      expect(notifier.state.hasError, isTrue);
+      expect(
+        notifier.state.errorMessage,
+        AppStrings.t('settings_save_incomplete', 'en'),
+      );
+      // The last confirmed snapshot survives untouched.
+      expect(notifier.state.settings?.receiptPrintMode,
+          ReceiptPrintMode.disabled);
+      expect(notifier.state.settings?.receiptMinAmount, 0);
+    });
+
     test('PUTs the full body and returns true on 2xx', () async {
       final adapter = FakeJsonAdapter((options) async {
         if (options.method == 'PUT') {
@@ -127,11 +165,15 @@ void main() {
       final body = Map<String, dynamic>.from(
         request.data as Map<String, dynamic>,
       );
-      expect(body, hasLength(16));
+      expect(body, hasLength(18));
       expect(body['store_name'], 'Boutique Centrale');
       expect(body['allow_debt'], isFalse);
       expect(body['low_stock_threshold'], 3);
       expect(body['default_paper'], '80mm');
+      // The new receipt printing mode + threshold ride the same PUT and keep
+      // the snapshot's values when they were not edited here.
+      expect(body['receipt_print_mode'], 'disabled');
+      expect(body['receipt_min_amount'], 0);
 
       final state = notifier.state;
       expect(state.status, SettingsStatus.loaded);

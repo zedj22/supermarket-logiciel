@@ -25,6 +25,8 @@ void main() {
         'default_paper': 'A4',
         'ask_before_print': true,
         'auto_print_invoice': true,
+        'receipt_print_mode': 'ask_above_threshold',
+        'receipt_min_amount': 500,
         'allow_debt': false,
         'low_stock_threshold': 12,
       });
@@ -43,6 +45,8 @@ void main() {
       expect(settings.defaultPaper, 'A4');
       expect(settings.askBeforePrint, isTrue);
       expect(settings.autoPrintInvoice, isTrue);
+      expect(settings.receiptPrintMode, ReceiptPrintMode.askAboveThreshold);
+      expect(settings.receiptMinAmount, 500);
       expect(settings.allowDebt, isFalse);
       expect(settings.lowStockThreshold, 12);
     });
@@ -64,8 +68,19 @@ void main() {
       expect(settings.defaultPaper, '80mm');
       expect(settings.askBeforePrint, isFalse);
       expect(settings.autoPrintInvoice, isFalse);
+      // New setting: an existing installation defaults to Disabled, so
+      // nothing about its post-checkout behaviour changes.
+      expect(settings.receiptPrintMode, ReceiptPrintMode.disabled);
+      expect(settings.receiptMinAmount, 0);
       expect(settings.allowDebt, isTrue);
       expect(settings.lowStockThreshold, 5);
+    });
+
+    test('an unknown receipt print mode falls back to disabled', () {
+      final settings = StoreSettings.fromJson(
+        const <String, Object>{'receipt_print_mode': 'from_the_future'},
+      );
+      expect(settings.receiptPrintMode, ReceiptPrintMode.disabled);
     });
 
     test('accepts an int sent as a num (JSON number)', () {
@@ -100,6 +115,8 @@ void main() {
         defaultPaper: 'A4',
         askBeforePrint: true,
         autoPrintInvoice: false,
+        receiptPrintMode: ReceiptPrintMode.askAboveThreshold,
+        receiptMinAmount: 250.5,
         allowDebt: false,
         lowStockThreshold: 9,
       );
@@ -126,11 +143,13 @@ void main() {
         defaultPaper: '80mm',
         askBeforePrint: false,
         autoPrintInvoice: false,
+        receiptPrintMode: ReceiptPrintMode.disabled,
+        receiptMinAmount: 0,
         allowDebt: true,
         lowStockThreshold: 0,
       );
 
-      expect(empty.toJson(), hasLength(16));
+      expect(empty.toJson(), hasLength(18));
       expect(
         empty.toJson().keys,
         containsAll(<String>[
@@ -148,6 +167,8 @@ void main() {
           'default_paper',
           'ask_before_print',
           'auto_print_invoice',
+          'receipt_print_mode',
+          'receipt_min_amount',
           'allow_debt',
           'low_stock_threshold',
         ]),
@@ -172,6 +193,8 @@ void main() {
         defaultPaper: '80mm',
         askBeforePrint: false,
         autoPrintInvoice: false,
+        receiptPrintMode: ReceiptPrintMode.disabled,
+        receiptMinAmount: 0,
         allowDebt: true,
         lowStockThreshold: 5,
       );
@@ -206,6 +229,8 @@ void main() {
         defaultPaper: '80mm',
         askBeforePrint: false,
         autoPrintInvoice: false,
+        receiptPrintMode: ReceiptPrintMode.disabled,
+        receiptMinAmount: 0,
         allowDebt: true,
         lowStockThreshold: 5,
       );
@@ -218,6 +243,64 @@ void main() {
       expect(a, isNot(c));
       expect(a, isNot(d),
           reason: 'a fiscal field change must enable the save button');
+    });
+  });
+
+  group('receipt printing mode', () {
+    test('wire values mirror the backend vocabulary', () {
+      expect(
+        ReceiptPrintMode.values.map((mode) => mode.wire),
+        <String>['disabled', 'auto_print', 'ask_above_threshold'],
+      );
+    });
+
+    test('every mode carries its localization label key', () {
+      for (final mode in ReceiptPrintMode.values) {
+        expect(mode.labelKey, 'receipt_print_mode_${mode.wire}');
+      }
+    });
+
+    test('fromWire round trips every known value', () {
+      for (final mode in ReceiptPrintMode.values) {
+        expect(ReceiptPrintMode.fromWire(mode.wire), mode);
+      }
+      expect(ReceiptPrintMode.fromWire(null), ReceiptPrintMode.disabled);
+    });
+
+    test('copyWith changes the mode and the threshold independently', () {
+      const base = StoreSettings(
+        storeName: 'S',
+        storePhone: '',
+        storeAddress: '',
+        invoiceFooter: '',
+        storeWilaya: '',
+        storeEmail: '',
+        storeNif: '',
+        storeNis: '',
+        storeRc: '',
+        storeAi: '',
+        storeRib: '',
+        defaultPaper: '80mm',
+        askBeforePrint: false,
+        autoPrintInvoice: false,
+        receiptPrintMode: ReceiptPrintMode.disabled,
+        receiptMinAmount: 0,
+        allowDebt: true,
+        lowStockThreshold: 5,
+      );
+
+      final gated = base.copyWith(
+        receiptPrintMode: ReceiptPrintMode.askAboveThreshold,
+        receiptMinAmount: 750,
+      );
+
+      expect(gated.receiptPrintMode, ReceiptPrintMode.askAboveThreshold);
+      expect(gated.receiptMinAmount, 750);
+      expect(gated.askBeforePrint, isFalse,
+          reason: 'the legacy print booleans are untouched');
+      expect(gated.autoPrintInvoice, isFalse);
+      expect(base.receiptPrintMode, ReceiptPrintMode.disabled);
+      expect(base.receiptMinAmount, 0);
     });
   });
 

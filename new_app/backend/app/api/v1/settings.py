@@ -55,6 +55,8 @@ def to_settings_response(row: AppSetting) -> SettingsResponse:
         default_paper=row.default_paper,
         ask_before_print=row.ask_before_print,
         auto_print_invoice=row.auto_print_invoice,
+        receipt_print_mode=row.receipt_print_mode,
+        receipt_min_amount=float(row.receipt_min_amount),
         allow_debt=row.allow_debt,
         low_stock_threshold=row.low_stock_threshold,
     )

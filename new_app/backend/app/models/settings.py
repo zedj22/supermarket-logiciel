@@ -33,7 +33,9 @@ is identical under Alembic and ``create_all`` and identical on PostgreSQL
 and SQLite, so the migration and the unit-test schema can never drift.
 """
 
-from sqlalchemy import Boolean, CheckConstraint, Integer, String
+from decimal import Decimal
+
+from sqlalchemy import Boolean, CheckConstraint, Integer, Numeric, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, TimestampMixin
@@ -46,6 +48,13 @@ DEFAULT_STORE_NAME = "Supermarket Pro"
 DEFAULT_PAPER = "80mm"
 PAPERS = ("80mm", "A4")
 DEFAULT_LOW_STOCK_THRESHOLD = 5
+
+#: Post-checkout receipt printing modes (``ck_app_settings_receipt_print_mode``).
+#: ``disabled`` is the default so an existing installation keeps the legacy
+#: ``ask_before_print`` / ``auto_print_invoice`` behaviour untouched.
+RECEIPT_PRINT_MODES = ("disabled", "auto_print", "ask_above_threshold")
+DEFAULT_RECEIPT_PRINT_MODE = "disabled"
+DEFAULT_RECEIPT_MIN_AMOUNT = Decimal("0")
 
 
 class AppSetting(Base, TimestampMixin):
@@ -60,6 +69,15 @@ class AppSetting(Base, TimestampMixin):
         CheckConstraint(
             "low_stock_threshold >= 0",
             name="ck_app_settings_low_stock_threshold",
+        ),
+        CheckConstraint(
+            "receipt_print_mode IN ('disabled', 'auto_print', "
+            "'ask_above_threshold')",
+            name="ck_app_settings_receipt_print_mode",
+        ),
+        CheckConstraint(
+            "receipt_min_amount >= 0",
+            name="ck_app_settings_receipt_min_amount",
         ),
         CheckConstraint(
             "id = 1",
@@ -109,6 +127,17 @@ class AppSetting(Base, TimestampMixin):
     ask_before_print: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     auto_print_invoice: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False
+    )
+    # New, independent post-checkout receipt printing control. It sits next
+    # to — never replaces — the two legacy booleans above: ``disabled``
+    # delegates to them, the two explicit modes override them.
+    receipt_print_mode: Mapped[str] = mapped_column(
+        String(30), nullable=False, default=DEFAULT_RECEIPT_PRINT_MODE
+    )
+    # Only meaningful in ``ask_above_threshold`` mode; the amount is a
+    # currency figure, so it uses the project's NUMERIC(18, 3) convention.
+    receipt_min_amount: Mapped[Decimal] = mapped_column(
+        Numeric(18, 3), nullable=False, default=DEFAULT_RECEIPT_MIN_AMOUNT
     )
 
     # -- POS rules the backend enforces ------------------------------------

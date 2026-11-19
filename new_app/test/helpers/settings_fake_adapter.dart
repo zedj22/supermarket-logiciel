@@ -68,6 +68,8 @@ const Map<String, Object> kDefaultSettingsJson = <String, Object>{
   'default_paper': '80mm',
   'ask_before_print': false,
   'auto_print_invoice': false,
+  'receipt_print_mode': 'disabled',
+  'receipt_min_amount': 0,
   'allow_debt': true,
   'low_stock_threshold': 5,
 };

@@ -1,5 +1,48 @@
 import 'package:flutter/foundation.dart';
 
+/// Post-checkout receipt printing mode (`receipt_print_mode`).
+///
+/// New, independent control that sits *next to* the legacy
+/// `ask_before_print` / `auto_print_invoice` booleans rather than replacing
+/// them:
+///
+/// * [disabled] — no additional automatic behaviour; the legacy pair keeps
+///   working exactly as before (ask → prompt, else auto-print, else
+///   nothing). This is the default, so an existing installation behaves
+///   identically after upgrading.
+/// * [autoPrint] — the receipt is sent straight to the configured printer
+///   through the existing direct-print mechanism. The legacy booleans are
+///   ignored (the explicit mode wins).
+/// * [askAboveThreshold] — when the confirmed receipt total reaches
+///   [StoreSettings.receiptMinAmount] the receipt PDF is generated and the
+///   native Windows Print Setup dialog opens (no custom preview);
+///   cancelling it prints nothing. Nothing is direct-printed, and the
+///   legacy booleans are ignored.
+///
+/// The [wire] value is the backend vocabulary
+/// (`ck_app_settings_receipt_print_mode`).
+enum ReceiptPrintMode {
+  disabled('disabled'),
+  autoPrint('auto_print'),
+  askAboveThreshold('ask_above_threshold');
+
+  const ReceiptPrintMode(this.wire);
+
+  final String wire;
+
+  /// Localization key of the option label.
+  String get labelKey => 'receipt_print_mode_$wire';
+
+  /// Unknown/missing values fall back to [disabled] — the documented
+  /// default, so a client older than the backend never changes behaviour.
+  static ReceiptPrintMode fromWire(Object? value) {
+    for (final mode in ReceiptPrintMode.values) {
+      if (mode.wire == value) return mode;
+    }
+    return ReceiptPrintMode.disabled;
+  }
+}
+
 /// Store/application settings — the `GET/PUT /api/v1/settings` body
 /// (Phase 17, §17.1).
 ///
@@ -24,6 +67,8 @@ class StoreSettings {
     required this.defaultPaper,
     required this.askBeforePrint,
     required this.autoPrintInvoice,
+    required this.receiptPrintMode,
+    required this.receiptMinAmount,
     required this.allowDebt,
     required this.lowStockThreshold,
   });
@@ -34,6 +79,28 @@ class StoreSettings {
 
   /// Paper formats accepted by the backend (`ck_app_settings_default_paper`).
   static const List<String> papers = <String>['80mm', 'A4'];
+
+  /// Wire keys of the independent receipt-printing control. A settings
+  /// response that does not carry BOTH did not persist them (a backend
+  /// older than the client), which the provider must never present as a
+  /// successful save.
+  static const List<String> receiptPrintKeys = <String>[
+    'receipt_print_mode',
+    'receipt_min_amount',
+  ];
+
+  /// True when [json] carries both receipt-printing keys.
+  static bool carriesReceiptPrintSettings(Map<String, dynamic> json) =>
+      receiptPrintKeys.every(json.containsKey);
+
+  /// Numeric amount from JSON — a `NUMERIC` column may legitimately arrive
+  /// as a JSON number or as its decimal string form (PostgreSQL `Decimal`),
+  /// so both are accepted instead of throwing and losing the whole form.
+  static double _amountFromJson(Object? value) {
+    if (value is num) return value.toDouble();
+    if (value is String) return double.tryParse(value.trim()) ?? 0;
+    return 0;
+  }
 
   final String storeName;
   final String storePhone;
@@ -55,6 +122,14 @@ class StoreSettings {
   final String defaultPaper;
   final bool askBeforePrint;
   final bool autoPrintInvoice;
+
+  /// Post-checkout receipt printing mode — see [ReceiptPrintMode].
+  final ReceiptPrintMode receiptPrintMode;
+
+  /// Minimum confirmed receipt total (in currency units) that opens the
+  /// receipt print dialog in [ReceiptPrintMode.askAboveThreshold].
+  final double receiptMinAmount;
+
   final bool allowDebt;
   final int lowStockThreshold;
 
@@ -74,6 +149,8 @@ class StoreSettings {
       defaultPaper: json['default_paper'] as String? ?? '80mm',
       askBeforePrint: json['ask_before_print'] as bool? ?? false,
       autoPrintInvoice: json['auto_print_invoice'] as bool? ?? false,
+      receiptPrintMode: ReceiptPrintMode.fromWire(json['receipt_print_mode']),
+      receiptMinAmount: _amountFromJson(json['receipt_min_amount']),
       allowDebt: json['allow_debt'] as bool? ?? true,
       lowStockThreshold: (json['low_stock_threshold'] as num?)?.toInt() ?? 5,
     );
@@ -98,6 +175,8 @@ class StoreSettings {
         'default_paper': defaultPaper,
         'ask_before_print': askBeforePrint,
         'auto_print_invoice': autoPrintInvoice,
+        'receipt_print_mode': receiptPrintMode.wire,
+        'receipt_min_amount': receiptMinAmount,
         'allow_debt': allowDebt,
         'low_stock_threshold': lowStockThreshold,
       };
@@ -117,6 +196,8 @@ class StoreSettings {
     String? defaultPaper,
     bool? askBeforePrint,
     bool? autoPrintInvoice,
+    ReceiptPrintMode? receiptPrintMode,
+    double? receiptMinAmount,
     bool? allowDebt,
     int? lowStockThreshold,
   }) {
@@ -135,6 +216,8 @@ class StoreSettings {
       defaultPaper: defaultPaper ?? this.defaultPaper,
       askBeforePrint: askBeforePrint ?? this.askBeforePrint,
       autoPrintInvoice: autoPrintInvoice ?? this.autoPrintInvoice,
+      receiptPrintMode: receiptPrintMode ?? this.receiptPrintMode,
+      receiptMinAmount: receiptMinAmount ?? this.receiptMinAmount,
       allowDebt: allowDebt ?? this.allowDebt,
       lowStockThreshold: lowStockThreshold ?? this.lowStockThreshold,
     );
@@ -158,6 +241,8 @@ class StoreSettings {
           other.defaultPaper == defaultPaper &&
           other.askBeforePrint == askBeforePrint &&
           other.autoPrintInvoice == autoPrintInvoice &&
+          other.receiptPrintMode == receiptPrintMode &&
+          other.receiptMinAmount == receiptMinAmount &&
           other.allowDebt == allowDebt &&
           other.lowStockThreshold == lowStockThreshold);
 
@@ -177,6 +262,8 @@ class StoreSettings {
         defaultPaper,
         askBeforePrint,
         autoPrintInvoice,
+        receiptPrintMode,
+        receiptMinAmount,
         allowDebt,
         lowStockThreshold,
       ]);

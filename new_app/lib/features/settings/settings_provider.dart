@@ -125,6 +125,22 @@ class SettingsNotifier extends StateNotifier<SettingsState> {
         data: next.toJson(),
       );
       final data = response.data as Map<String, dynamic>? ?? const {};
+      // A 2xx is not proof that the new columns were written: a backend
+      // that does not know `receipt_print_mode` / `receipt_min_amount`
+      // answers 200 and omits them, and re-seeding from that response is
+      // exactly what used to reset the operator's choice to Disabled while
+      // the screen claimed "Settings saved". Never report that as success.
+      if (!StoreSettings.carriesReceiptPrintSettings(data)) {
+        state = state.copyWith(
+          status: SettingsStatus.error,
+          errorMessage: AppStrings.t(
+            'settings_save_incomplete',
+            _localeCode(),
+          ),
+          failedDuringSave: true,
+        );
+        return false;
+      }
       state = state.copyWith(
         status: SettingsStatus.loaded,
         settings: StoreSettings.fromJson(data),

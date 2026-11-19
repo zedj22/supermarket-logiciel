@@ -298,9 +298,15 @@ class _StoreSettingsSectionState extends ConsumerState<_StoreSettingsSection> {
   late final TextEditingController _storeAddress;
   late final TextEditingController _invoiceFooter;
   late final TextEditingController _lowStockThreshold;
+  late final TextEditingController _receiptMinAmountController;
 
   bool _askBeforePrint = false;
   bool _autoPrintInvoice = false;
+  ReceiptPrintMode _receiptPrintMode = ReceiptPrintMode.disabled;
+
+  /// Parsed minimum receipt amount; `-1` while the visible threshold input
+  /// does not parse (the only state in which the save button is disabled).
+  double _receiptMinAmount = 0;
   bool _allowDebt = true;
   String _defaultPaper = '80mm';
   int _lowStock = 5;
@@ -326,6 +332,7 @@ class _StoreSettingsSectionState extends ConsumerState<_StoreSettingsSection> {
     _storeAddress = TextEditingController();
     _invoiceFooter = TextEditingController();
     _lowStockThreshold = TextEditingController();
+    _receiptMinAmountController = TextEditingController();
     final current = ref.read(settingsProvider).settings;
     if (current != null) _seedFrom(current);
     // Deferred out of initState: the provider must not be read while the
@@ -350,10 +357,19 @@ class _StoreSettingsSectionState extends ConsumerState<_StoreSettingsSection> {
     _storeAddress.dispose();
     _invoiceFooter.dispose();
     _lowStockThreshold.dispose();
+    _receiptMinAmountController.dispose();
     super.dispose();
   }
 
+  /// `500.0` → `500`, `12.5` → `12.5` (the stored amount is a currency
+  /// figure, so trailing zeros are presentation noise).
+  static String _amountText(double value) =>
+      value == value.roundToDouble() ? value.toInt().toString() : '$value';
+
   void _seedFrom(StoreSettings settings) {
+    _receiptPrintMode = settings.receiptPrintMode;
+    _receiptMinAmount = settings.receiptMinAmount;
+    _receiptMinAmountController.text = _amountText(settings.receiptMinAmount);
     _storeName.text = settings.storeName;
     _storePhone.text = settings.storePhone;
     _storeAddress.text = settings.storeAddress;
@@ -388,6 +404,10 @@ class _StoreSettingsSectionState extends ConsumerState<_StoreSettingsSection> {
         defaultPaper: _defaultPaper,
         askBeforePrint: _askBeforePrint,
         autoPrintInvoice: _autoPrintInvoice,
+        receiptPrintMode: _receiptPrintMode,
+        // A non-parsing input is `-1`; it only exists while the threshold
+        // field is visible, and Save is disabled in that state.
+        receiptMinAmount: _receiptMinAmount < 0 ? 0 : _receiptMinAmount,
         allowDebt: _allowDebt,
         lowStockThreshold: _lowStock,
       );
@@ -510,6 +530,48 @@ class _StoreSettingsSectionState extends ConsumerState<_StoreSettingsSection> {
               value: _autoPrintInvoice,
               onChanged: (value) => setState(() => _autoPrintInvoice = value),
             ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<ReceiptPrintMode>(
+              key: const Key('settings-receipt-print-mode'),
+              initialValue: _receiptPrintMode,
+              isExpanded: true,
+              decoration: InputDecoration(
+                labelText: AppStrings.t('receipt_print_mode', loc),
+              ),
+              items: [
+                for (final mode in ReceiptPrintMode.values)
+                  DropdownMenuItem<ReceiptPrintMode>(
+                    value: mode,
+                    child: Text(AppStrings.t(mode.labelKey, loc)),
+                  ),
+              ],
+              onChanged: (value) {
+                if (value == null) return;
+                setState(() => _receiptPrintMode = value);
+              },
+            ),
+            // The threshold only exists for the amount-gated mode: it has no
+            // meaning for Disabled / Automatically print.
+            if (_receiptPrintMode == ReceiptPrintMode.askAboveThreshold) ...[
+              const SizedBox(height: 12),
+              _textField(
+                key: const Key('settings-receipt-min-amount'),
+                controller: _receiptMinAmountController,
+                label: AppStrings.t('receipt_min_amount', loc),
+                keyboardType:
+                    const TextInputType.numberWithOptions(decimal: true),
+                errorText: _receiptMinAmount < 0
+                    ? AppStrings.t('validation_error', loc)
+                    : null,
+                onChanged: (value) {
+                  setState(
+                    () => _receiptMinAmount =
+                        double.tryParse(value.trim().replaceAll(',', '.')) ??
+                            -1,
+                  );
+                },
+              ),
+            ],
             const SizedBox(height: 16),
             _sectionTitle(theme, loc, 'settings_pos'),
             const SizedBox(height: 12),
@@ -539,7 +601,10 @@ class _StoreSettingsSectionState extends ConsumerState<_StoreSettingsSection> {
               children: [
                 FilledButton(
                   key: const Key('settings-save-button'),
-                  onPressed: state.isSaving || !hasChanges || _lowStock < 0
+                  onPressed: state.isSaving ||
+                          !hasChanges ||
+                          _lowStock < 0 ||
+                          _receiptMinAmount < 0
                       ? null
                       : _save,
                   child: state.isSaving

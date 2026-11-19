@@ -33,7 +33,7 @@ pytestmark = pytest.mark.skipif(
     reason="PostgreSQL test database (supermarket_pro_test) not available",
 )
 
-HEAD_REV = "a7c1e9f3b5d2"  # 0036_purchase_supplier_optional
+HEAD_REV = "b6c8f1a3d527"  # 0038_receipt_print_mode
 PREV_REV = "b2e603d5c016"  # 0027_phase2_facturation_year_numbering
 # The 0028 revision is a FIXED historical fact — it revises 0027 forever,
 # regardless of which revision is currently the head (0029+).
@@ -48,6 +48,13 @@ NEW_COLUMNS: dict[str, tuple[str, int | None, str]] = {
     "store_rc": ("character varying", 30, "NO"),
     "store_ai": ("character varying", 30, "NO"),
     "store_rib": ("character varying", 30, "NO"),
+}
+
+# Columns added after 0028 and present at head (0038 receipt printing
+# mode): the exact head shape assertion below must include them.
+RECEIPT_COLUMNS: dict[str, tuple[str, int | None, str]] = {
+    "receipt_print_mode": ("character varying", 30, "NO"),
+    "receipt_min_amount": ("numeric", None, "NO"),
 }
 
 # The pre-Phase-6 shape: these must survive every operation unchanged.
@@ -238,7 +245,9 @@ class TestPhase6SettingsMigration:
             assert _shape(columns, name) == expected, name
             # model-side default only, exactly like every 0022 column
             assert columns[name]["default"] is None, name
-        assert set(columns) == set(NEW_COLUMNS) | set(ORIGINAL_COLUMNS)
+        assert set(columns) == (
+            set(NEW_COLUMNS) | set(ORIGINAL_COLUMNS) | set(RECEIPT_COLUMNS)
+        )
 
     def test_original_columns_are_untouched(self):
         columns = _app_settings_columns()

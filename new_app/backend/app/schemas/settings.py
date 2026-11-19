@@ -11,11 +11,13 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import Field, model_validator
+from pydantic import ConfigDict, Field, model_validator
 
 from app.schemas.common import StrictBaseModel
 
 PaperSize = Literal["80mm", "A4"]
+#: Post-checkout receipt printing mode (``ck_app_settings_receipt_print_mode``).
+ReceiptPrintMode = Literal["disabled", "auto_print", "ask_above_threshold"]
 
 
 class SettingsResponse(StrictBaseModel):
@@ -38,12 +40,25 @@ class SettingsResponse(StrictBaseModel):
     default_paper: PaperSize
     ask_before_print: bool
     auto_print_invoice: bool
+    # Independent post-checkout receipt printing control (see AppSetting).
+    receipt_print_mode: ReceiptPrintMode
+    receipt_min_amount: float = Field(ge=0, le=1000000000)
     allow_debt: bool
     low_stock_threshold: int = Field(ge=0, le=100000)
 
 
 class SettingsUpdateRequest(StrictBaseModel):
-    """Partial update — every field optional, at least one required."""
+    """Partial update — every field optional, at least one required.
+
+    ``extra="forbid"`` is deliberate: a key this schema does not know is a
+    **client/server version mismatch**, not something to ignore. Silently
+    dropping it is what turns a newly added setting (e.g.
+    ``receipt_print_mode``) into "saved" while the row never changes — the
+    exact silent-revert failure this guards against. A 422 tells the caller
+    to update the backend instead.
+    """
+
+    model_config = ConfigDict(extra="forbid")
 
     store_name: str | None = Field(None, min_length=1, max_length=120)
     store_phone: str | None = Field(None, max_length=40)
@@ -63,6 +78,8 @@ class SettingsUpdateRequest(StrictBaseModel):
     default_paper: PaperSize | None = None
     ask_before_print: bool | None = None
     auto_print_invoice: bool | None = None
+    receipt_print_mode: ReceiptPrintMode | None = None
+    receipt_min_amount: float | None = Field(None, ge=0, le=1000000000)
     allow_debt: bool | None = None
     low_stock_threshold: int | None = Field(None, ge=0, le=100000)
 

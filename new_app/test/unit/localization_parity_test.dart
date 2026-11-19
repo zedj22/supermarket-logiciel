@@ -250,7 +250,11 @@ void main() {
       // Update this deliberately when a subphase
       // adds strings — an unexplained drop means keys were deleted from
       // one map only.
-      expect(_map('en').keys.length, 1644);
+      // The receipt-printing-mode pass added the mode dropdown label, its
+      // three option labels and the minimum-receipt-amount label — 5 keys
+      // (1649); the receipt-printing save-feedback key for a backend that
+      // does not confirm the new columns added 1 more — 1650.
+      expect(_map('en').keys.length, 1650);
       expect(_map('ar').keys.length, _map('en').keys.length);
       expect(_map('fr').keys.length, _map('en').keys.length);
     });

@@ -83,6 +83,7 @@ import '../products/variant_picker.dart';
 import '../returns/return_providers.dart';
 import '../settings/pos_settings_provider.dart';
 import '../settings/scan_settings_provider.dart';
+import '../settings/settings_models.dart';
 import '../settings/settings_provider.dart';
 import '../shell/shortcuts_help_dialog.dart';
 import '../stock/adjust_dialog.dart';
@@ -2318,22 +2319,69 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     return details.join(' · ');
   }
 
+  /// Sale whose post-checkout print hook already ran.
+  ///
+  /// One checkout is printed (or prompted) at most once: the hook is
+  /// entered from a single place, but this guard makes a replayed success
+  /// callback for the same sale a no-op instead of a second dialog or a
+  /// second direct-print command.
+  String? _printedSaleId;
+
   /// Post-sale print hook (POS workflow §9, Phase 17 §17.6).
   ///
-  /// `ask_before_print` shows a "Print invoice?" dialog and prints only on
-  /// yes; otherwise `auto_print_invoice` prints straight away; with both off
-  /// (the fresh-install default) nothing happens and the cashier prints from
-  /// the sale detail exactly as before.  Every failure is a localized toast —
-  /// a completed sale is never reported as failed because of a printer.
+  /// Precedence (one action per checkout, never two):
+  /// 1. `receipt_print_mode = auto_print` → direct print through the
+  ///    existing print service, on `default_paper`.
+  /// 2. `receipt_print_mode = ask_above_threshold` → only when the
+  ///    confirmed receipt total is `>= receipt_min_amount`, generate the
+  ///    receipt PDF and hand it STRAIGHT to the native Windows Print Setup
+  ///    dialog (`printPdf` → `Printing.layoutPdf` without a printer name,
+  ///    which the printing plugin implements as `PrintDlg(PD_PRINTSETUP)`).
+  ///    The custom preview dialog is deliberately skipped; confirming in
+  ///    the native dialog prints, cancelling prints nothing and is neutral.
+  /// 3. `receipt_print_mode = disabled` (the default for existing
+  ///    installations) → no new behaviour; the legacy pair still applies:
+  ///    `ask_before_print` shows a "Print invoice?" dialog and prints only
+  ///    on yes, otherwise `auto_print_invoice` prints straight away, and
+  ///    with both off nothing happens.
+  ///
+  /// Because the explicit modes 1–2 return early, they *override* the two
+  /// legacy booleans instead of stacking another print on top of them.
+  /// Every failure is a localized toast — a completed sale is never
+  /// reported as failed because of a printer.
   Future<void> _maybeAutoPrint(CheckoutResult result) async {
+    if (_printedSaleId == result.id) return; // one action per checkout
+    _printedSaleId = result.id;
     final store = await loadStoreSettingsOnce(ref);
     if (!mounted || store == null) return;
+    switch (store.receiptPrintMode) {
+      case ReceiptPrintMode.autoPrint:
+        await _printInvoice(result, paper: store.defaultPaper);
+        return;
+      case ReceiptPrintMode.askAboveThreshold:
+        if (!_receiptReachesThreshold(result, store.receiptMinAmount)) return;
+        // Same generation + print path as every other receipt, minus the
+        // custom preview: the native Windows dialog IS the confirmation.
+        await _printInvoice(result, paper: store.defaultPaper);
+        return;
+      case ReceiptPrintMode.disabled:
+        break; // falls through to the unchanged legacy pair below
+    }
     if (store.askBeforePrint) {
       if (!await _confirmPrintInvoice()) return;
     } else if (!store.autoPrintInvoice) {
       return;
     }
     await _printInvoice(result, paper: store.defaultPaper);
+  }
+
+  /// `receipt_total >= configured_threshold`, compared in exact
+  /// thousandths (money never goes through floating-point arithmetic).
+  bool _receiptReachesThreshold(CheckoutResult result, double threshold) {
+    final totalMilli = moneyToMilli(result.total);
+    if (totalMilli == null) return false;
+    final thresholdMilli = (threshold * 1000).round();
+    return totalMilli >= thresholdMilli;
   }
 
   Future<bool> _confirmPrintInvoice() async {

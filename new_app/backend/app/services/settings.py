@@ -36,6 +36,8 @@ from app.models.enums import AuditAction, AuditModule, AuditOutcome
 from app.models.settings import (
     DEFAULT_LOW_STOCK_THRESHOLD,
     DEFAULT_PAPER,
+    DEFAULT_RECEIPT_MIN_AMOUNT,
+    DEFAULT_RECEIPT_PRINT_MODE,
     DEFAULT_STORE_NAME,
     SINGLETON_ID,
     AppSetting,
@@ -128,6 +130,8 @@ class SettingsService(BaseService):
             "default_paper": DEFAULT_PAPER,
             "ask_before_print": False,
             "auto_print_invoice": False,
+            "receipt_print_mode": DEFAULT_RECEIPT_PRINT_MODE,
+            "receipt_min_amount": DEFAULT_RECEIPT_MIN_AMOUNT,
             "allow_debt": True,
             "low_stock_threshold": DEFAULT_LOW_STOCK_THRESHOLD,
         }

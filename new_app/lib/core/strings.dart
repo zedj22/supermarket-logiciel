@@ -319,8 +319,16 @@ class AppStrings {
     'auto_print_invoice': 'طباعة الفاتورة تلقائيًا',
     'ask_before_print': 'السؤال قبل الطباعة',
     'ask_before_print_question': 'هل تريد طباعة الفاتورة؟',
+    'receipt_print_mode': 'وضع طباعة الإيصال',
+    'receipt_print_mode_disabled': 'معطّل',
+    'receipt_print_mode_auto_print': 'طباعة الإيصال تلقائيًا',
+    'receipt_print_mode_ask_above_threshold':
+        'فتح نافذة الطباعة عند بلوغ المبلغ',
+    'receipt_min_amount': 'الحد الأدنى لمبلغ الإيصال',
     'settings_saved': 'تم حفظ الإعدادات',
     'settings_save_failed': 'تعذر حفظ الإعدادات',
+    'settings_save_incomplete':
+        'لم يؤكد الخادم حفظ إعدادات طباعة الإيصال — حدّث الخادم.',
     'settings_load_failed': 'تعذر تحميل الإعدادات',
     // النسخ الاحتياطي (المرحلة 17، §17.2)
     'backups': 'النسخ الاحتياطي',
@@ -2070,8 +2078,17 @@ class AppStrings {
     'auto_print_invoice': 'Imprimer la facture automatiquement',
     'ask_before_print': 'Demander avant impression',
     'ask_before_print_question': 'Voulez-vous imprimer la facture ?',
+    'receipt_print_mode': "Mode d'impression du ticket",
+    'receipt_print_mode_disabled': 'Désactivé',
+    'receipt_print_mode_auto_print': 'Imprimer le ticket automatiquement',
+    'receipt_print_mode_ask_above_threshold':
+        "Ouvrir la fenêtre d'impression au montant atteint",
+    'receipt_min_amount': 'Montant minimum du ticket',
     'settings_saved': 'Paramètres enregistrés',
     'settings_save_failed': "Échec de l'enregistrement des paramètres",
+    'settings_save_incomplete':
+        "Le serveur n'a pas confirmé l'enregistrement du mode d'impression "
+        'du ticket — mettez le serveur à jour.',
     'settings_load_failed': 'Échec du chargement des paramètres',
     // Sauvegardes (Phase 17, §17.2)
     'backups': 'Sauvegardes',
@@ -3867,8 +3884,17 @@ class AppStrings {
     'auto_print_invoice': 'Print invoice automatically',
     'ask_before_print': 'Ask before printing',
     'ask_before_print_question': 'Do you want to print the invoice?',
+    'receipt_print_mode': 'Receipt printing mode',
+    'receipt_print_mode_disabled': 'Disabled',
+    'receipt_print_mode_auto_print': 'Automatically print receipt',
+    'receipt_print_mode_ask_above_threshold':
+        'Open print window when amount is reached',
+    'receipt_min_amount': 'Minimum receipt amount',
     'settings_saved': 'Settings saved',
     'settings_save_failed': 'Could not save settings',
+    'settings_save_incomplete':
+        'The server did not confirm the receipt printing setting — '
+        'update the backend.',
     'settings_load_failed': 'Could not load settings',
     // Backups (Phase 17, §17.2)
     'backups': 'Backups',

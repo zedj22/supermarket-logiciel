@@ -50,9 +50,14 @@ class MockDio extends Mock implements Dio {}
 String _m(String v) => bidiIsolateLtr(v);
 
 class _FakePrintService implements PrintService {
-  _FakePrintService({this.fail = false});
+  _FakePrintService({this.fail = false, this.cancel = false});
 
   final bool fail;
+
+  /// Models the cashier dismissing the native Print Setup dialog: the
+  /// plugin's `layoutPdf` completes normally, nothing is spooled, and the
+  /// app must treat it as neutral (no error toast).
+  final bool cancel;
   final List<String> printed = <String>[];
   final List<Uint8List> printedPdfs = <Uint8List>[];
   final List<String> printedPapers = <String>[];
@@ -68,6 +73,7 @@ class _FakePrintService implements PrintService {
     if (fail) {
       throw const PrintServiceException('no printer');
     }
+    if (cancel) return; // native dialog cancelled — no print, no error
     printedPdfs.add(bytes);
     printedPapers.add(paper);
   }
@@ -9378,6 +9384,8 @@ void main() {
       bool askBeforePrint = false,
       bool autoPrintInvoice = false,
       String defaultPaper = '80mm',
+      String receiptPrintMode = 'disabled',
+      num receiptMinAmount = 0,
     }) =>
         <String, Object>{
           'store_name': 'Supermarket Pro',
@@ -9387,6 +9395,8 @@ void main() {
           'default_paper': defaultPaper,
           'ask_before_print': askBeforePrint,
           'auto_print_invoice': autoPrintInvoice,
+          'receipt_print_mode': receiptPrintMode,
+          'receipt_min_amount': receiptMinAmount,
           'allow_debt': true,
           'low_stock_threshold': 5,
         };
@@ -9522,6 +9532,190 @@ void main() {
       expect(containerOf(tester).read(posCartProvider).isEmpty, isTrue);
       expect(find.byKey(const Key('payment-dialog')), findsNothing);
       expect(find.byKey(const Key('ask-print-dialog')), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+
+    // -- receipt_print_mode (new, independent dropdown) ----------------------
+    // The mock sale's confirmed total is 10.00 DA.
+
+    testWidgets('receipt_print_mode=auto_print sends the receipt straight to '
+        'the printer and overrides the legacy toggles', (tester) async {
+      final mock = MockDio();
+      _mockDio(
+        mock,
+        settingsBody: settingsJson(
+          askBeforePrint: true, // ignored: the explicit mode wins
+          autoPrintInvoice: false, // ignored as well
+          defaultPaper: 'A4',
+          receiptPrintMode: 'auto_print',
+        ),
+      );
+      final printer = _FakePrintService();
+      await _pumpApp(tester, dio: mock, printService: printer);
+
+      await checkout(tester);
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('ask-print-dialog')), findsNothing);
+      expect(find.byKey(const Key('print-preview-dialog')), findsNothing);
+      expect(printRequestBodies, hasLength(1));
+      expect(printer.printedPapers, <String>['A4']);
+      expect(find.byKey(const Key('checkout-success-snackbar')), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('ask_above_threshold: a total below the configured amount does '
+        'nothing at all', (tester) async {
+      final mock = MockDio();
+      _mockDio(
+        mock,
+        settingsBody: settingsJson(
+          receiptPrintMode: 'ask_above_threshold',
+          receiptMinAmount: 50, // 10.00 < 50
+        ),
+      );
+      final printer = _FakePrintService();
+      await _pumpApp(tester, dio: mock, printService: printer);
+
+      await checkout(tester);
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('print-preview-dialog')), findsNothing);
+      expect(find.byKey(const Key('ask-print-dialog')), findsNothing);
+      expect(printRequestBodies, isEmpty);
+      expect(printer.printedPdfs, isEmpty);
+      expect(find.byKey(const Key('checkout-success-snackbar')), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('ask_above_threshold: a total exactly at the amount goes '
+        'straight to the native Print Setup dialog (no custom preview)',
+        (tester) async {
+      final mock = MockDio();
+      _mockDio(
+        mock,
+        settingsBody: settingsJson(
+          receiptPrintMode: 'ask_above_threshold',
+          receiptMinAmount: 10, // 10.00 >= 10 (boundary)
+        ),
+      );
+      final printer = _FakePrintService();
+      await _pumpApp(tester, dio: mock, printService: printer);
+
+      await checkout(tester);
+      await tester.pumpAndSettle();
+
+      // The custom receipt preview is skipped entirely in this mode.
+      expect(find.byKey(const Key('print-preview-dialog')), findsNothing);
+      expect(find.byKey(const Key('print-preview-confirm')), findsNothing);
+      expect(find.byKey(const Key('ask-print-dialog')), findsNothing);
+      // The receipt PDF is generated internally, then handed to the native
+      // dialog in one go (printPdf with no printer name → PrintDlg).
+      expect(printRequestBodies, hasLength(1));
+      expect(printRequestBodies.single['document_type'], 'sale');
+      expect(printer.printedPdfs, hasLength(1));
+      expect(printer.printedPapers, <String>['80mm']);
+      expect(find.byKey(const Key('checkout-success-snackbar')), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('ask_above_threshold: a total above the amount goes straight '
+        'to the native Print Setup dialog', (tester) async {
+      final mock = MockDio();
+      _mockDio(
+        mock,
+        settingsBody: settingsJson(
+          receiptPrintMode: 'ask_above_threshold',
+          receiptMinAmount: 5, // 10.00 > 5
+          defaultPaper: 'A4',
+        ),
+      );
+      final printer = _FakePrintService();
+      await _pumpApp(tester, dio: mock, printService: printer);
+
+      await checkout(tester);
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('print-preview-dialog')), findsNothing);
+      expect(printer.printedPdfs, hasLength(1));
+      expect(printer.printedPapers, <String>['A4']);
+      expect(printRequestBodies.single['paper'], 'A4');
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('ask_above_threshold: cancelling the native dialog prints '
+        'nothing and is not an error', (tester) async {
+      final mock = MockDio();
+      _mockDio(
+        mock,
+        settingsBody: settingsJson(
+          receiptPrintMode: 'ask_above_threshold',
+          receiptMinAmount: 5,
+        ),
+      );
+      final printer = _FakePrintService(cancel: true);
+      await _pumpApp(tester, dio: mock, printService: printer);
+
+      await checkout(tester);
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('print-preview-dialog')), findsNothing);
+      expect(printer.printedPdfs, isEmpty);
+      expect(find.byKey(const Key('auto-print-failed-toast')), findsNothing);
+      expect(find.byKey(const Key('checkout-success-snackbar')), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('ask_above_threshold ignores ask_before_print/'
+        'auto_print_invoice — no prompt and no direct print below the amount',
+        (tester) async {
+      final mock = MockDio();
+      _mockDio(
+        mock,
+        settingsBody: settingsJson(
+          askBeforePrint: true,
+          autoPrintInvoice: true,
+          receiptPrintMode: 'ask_above_threshold',
+          receiptMinAmount: 500,
+        ),
+      );
+      final printer = _FakePrintService();
+      await _pumpApp(tester, dio: mock, printService: printer);
+
+      await checkout(tester);
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('ask-print-dialog')), findsNothing);
+      expect(find.byKey(const Key('print-preview-dialog')), findsNothing);
+      expect(printRequestBodies, isEmpty);
+      expect(printer.printedPdfs, isEmpty);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('one checkout never opens a second dialog or issues a second '
+        'print command', (tester) async {
+      final mock = MockDio();
+      _mockDio(
+        mock,
+        settingsBody: settingsJson(
+          receiptPrintMode: 'ask_above_threshold',
+          receiptMinAmount: 10,
+        ),
+      );
+      final printer = _FakePrintService();
+      await _pumpApp(tester, dio: mock, printService: printer);
+
+      await checkout(tester);
+      await tester.pumpAndSettle();
+      expect(printer.printedPdfs, hasLength(1));
+
+      // Extra frames must not re-open a dialog or re-issue the print.
+      await tester.pump(const Duration(milliseconds: 500));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('print-preview-dialog')), findsNothing);
+      expect(printRequestBodies, hasLength(1));
+      expect(printer.printedPdfs, hasLength(1));
       expect(tester.takeException(), isNull);
     });
   });
