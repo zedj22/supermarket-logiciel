@@ -66,10 +66,34 @@ class LocalStoragePaths {
 
 /// Resolves the probe locations from the running process (never from
 /// request data — there is no path parameter anywhere in this feature).
+/// P9/Q18: the exports folder is deterministic, never the process CWD.
+///
+/// A production install runs from `C:\Program Files\...`, whose working
+/// directory flips between `System32` (service-spawned) and the install
+/// tree (shortcut) — measuring/reporting "Directory.current" therefore
+/// described the wrong volume and wrote nowhere an operator could find.
+/// Documents is user-writable, survives uninstall and is what the backup
+/// and export flows expect.
+@visibleForTesting
+String localExportsDir() {
+  final profile = Platform.environment['USERPROFILE'];
+  if (profile == null || profile.isEmpty) return '';
+  return '$profile\\Documents\\Supermarket Pro';
+}
+
 LocalStoragePaths resolveLocalStoragePaths() {
+  final exports = localExportsDir();
+  if (exports.isNotEmpty) {
+    // The capacity probe (GetDiskFreeSpaceExW) needs an existing path.
+    try {
+      Directory(exports).createSync(recursive: true);
+    } catch (_) {
+      // Read-only profile: the probe reports "unavailable" instead.
+    }
+  }
   return LocalStoragePaths(
     applicationDir: File(Platform.resolvedExecutable).parent.path,
-    exportsDir: Directory.current.path,
+    exportsDir: exports.isEmpty ? Directory.current.path : exports,
     cacheDir: localAppCacheDir(),
   );
 }
