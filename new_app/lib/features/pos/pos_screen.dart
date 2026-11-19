@@ -73,6 +73,7 @@ import '../clients/customer_models.dart';
 import '../loyalty/loyalty_models.dart';
 import '../loyalty/loyalty_providers.dart';
 import '../packs/pack_models.dart';
+import '../packs/packs_providers.dart';
 import '../products/models.dart';
 import '../products/product_form_dialog.dart';
 import '../products/products_providers.dart';
@@ -93,6 +94,7 @@ import 'loyalty_discount_dialog.dart';
 import 'pack_picker_dialog.dart';
 import 'payment_dialog.dart';
 import 'pos_error_message.dart';
+import 'pos_line_total_dialog.dart';
 import 'pos_layout.dart';
 import 'pos_models.dart';
 import 'pos_providers.dart';
@@ -298,6 +300,8 @@ class _PosScreenState extends ConsumerState<PosScreen> {
   void _refreshWorkspace() {
     if (!mounted) return;
     ref.read(posSearchProvider.notifier).load();
+    // Packs ride the same catalog panel, so F5 refreshes both lists.
+    ref.read(posCatalogPacksProvider.notifier).load();
     ref.read(favoritesProvider.notifier).load();
     ref.read(holdsProvider.notifier).load();
     _syncCartStocks();
@@ -337,12 +341,55 @@ class _PosScreenState extends ConsumerState<PosScreen> {
   /// add-product form); Ctrl+N keeps its shell meaning while focus is not
   /// inside the POS page, and no page key is reachable from a modal route.
   Future<void> _openProductPicker() async {
-    final product = await showProductPickerDialog(context);
-    if (product == null || !mounted) return;
-    // Reuse the canonical add path: it runs the full decision tree
-    // (variant / selling-unit pickers, stock guard, wholesale / promo,
+    final selection = await showProductPickerDialog(context);
+    if (selection == null || !mounted) return;
+    // A pack goes through the canonical pack flow (availability pre-flight,
+    // then ONE charged pack line with `pack_id` — never a fake product).
+    if (selection.pack != null) {
+      await _addCatalogPack(selection.pack!);
+      return;
+    }
+    // A product reuses the canonical add path: it runs the full decision
+    // tree (variant / selling-unit pickers, stock guard, wholesale / promo,
     // merge-increment) exactly like the catalog tile opens it.
+    final product = selection.product;
+    if (product == null) return;
     await _addProduct(product, fromScan: false);
+  }
+
+  /// Double-click on a cart line's total — the manual-total dialog, then ONE
+  /// notifier call ([PosCartNotifier.setLineTotal]).
+  ///
+  /// The dialog never mutates the cart itself: it only returns the typed
+  /// amount, so cancelling (or a refused amount) leaves the line exactly as
+  /// it was. A stale row (removed while the dialog was open) resolves to no
+  /// line and is ignored.
+  Future<void> _openLineTotal(String key) async {
+    CartLine? line;
+    for (final candidate in ref.read(posCartProvider).lines) {
+      if (candidate.key == key) {
+        line = candidate;
+        break;
+      }
+    }
+    if (line == null) return;
+    final loc = ref.read(localeProvider).flutterLocale.languageCode;
+    final total = await showLineTotalDialog(context, line: line, loc: loc);
+    if (total == null || !mounted) return;
+    ref.read(posCartProvider.notifier).setLineTotal(key, total);
+  }
+
+  /// POS "quick custom item" — a price-only cart line. No catalog product is
+  /// created and no stock is touched: the cart carries a custom line and the
+  /// sale payload sends `custom_name` (see `CartLine.toSaleJson`).
+  Future<void> _addCustomItem() async {
+    final loc = ref.read(localeProvider).flutterLocale.languageCode;
+    final item = await showCustomItemDialog(context, loc: loc);
+    if (item == null || !mounted) return;
+    ref.read(posCartProvider.notifier).addCustomLine(
+          name: item.name,
+          total: item.price,
+        );
   }
 
   /// Escape — the context-safe clear. With text in the search box it only
@@ -369,9 +416,8 @@ class _PosScreenState extends ConsumerState<PosScreen> {
 
     if (key == LogicalKeyboardKey.f6) {
       final customer = await showCustomerPickerDialog(context);
-      if (customer != null) {
-        ref.read(posCartProvider.notifier).setCustomer(customer);
-      }
+      if (!mounted) return;
+      _applyPickerCustomer(customer);
       _restoreSearchFocusAfterDialog();
       return;
     }
@@ -389,19 +435,20 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       if (mounted) _searchFocusNode.requestFocus();
       return;
     }
-    // Phase 17 §18 — SPACE is the payment shortcut; the legacy F8 binding is
-    // gone. The activator refuses the key while ANY other text field has
+    // SPACE and F8 are the SAME payment shortcut: one branch, one call into
+    // the canonical payment action, so the two keys can never drift apart.
+    // The space activator refuses the key while ANY other text field has
     // primary focus (search, dialogs, pickers — the cashier keeps typing),
     // so this branch runs with the POS workspace active or while a cart
     // quantity field is focused; the space character never reaches that
     // quantity field, so its value cannot be touched by the pay key. The
     // empty-cart toast comes from the same `_openPayment()` the PAY button
-    // uses — one flow, one message. With Quick sale (Space) ON the SAME
-    // key completes the sale directly through the existing checkout
-    // pipeline (see [_quickSale]); the focus predicate above then declines
-    // in EVERY editable context, so Space keeps its normal typing meaning
-    // in the search box, quantity fields and any dialog input.
-    if (key == LogicalKeyboardKey.space) {
+    // uses — one flow, one message. With Quick sale (Space) ON BOTH keys
+    // complete the sale directly through the existing checkout pipeline
+    // (see [_quickSale]); the focus predicates decline in EVERY editable
+    // context, so Space keeps its normal typing meaning in the search box,
+    // quantity fields and any dialog input.
+    if (key == LogicalKeyboardKey.space || key == LogicalKeyboardKey.f8) {
       if (ref.read(posSettingsProvider).quickSaleWithSpace) {
         await _quickSale();
       } else {
@@ -1184,9 +1231,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       }
       if (items.length > 1) {
         final customer = await showCustomerPickerDialog(context);
-        if (customer != null && mounted) {
-          ref.read(posCartProvider.notifier).setCustomer(customer);
-        }
+        if (mounted) _applyPickerCustomer(customer);
         _restoreSearchFocusAfterDialog();
         return;
       }
@@ -1564,6 +1609,71 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     );
   }
 
+  /// Adds a pack straight from its catalog tile/filter row.
+  ///
+  /// Exactly the picker's contract minus the dialog: a READ-ONLY
+  /// availability pre-flight decides whether the pack may enter the cart,
+  /// then ONE charged pack line is placed. Components are never expanded in
+  /// the cart and stock is never touched here — the backend explodes the
+  /// pack, re-checks availability and deducts component stock at checkout
+  /// (`PACK_INACTIVE` / `PACK_STOCK_INSUFFICIENT` stay authoritative).
+  Future<void> _addCatalogPack(PackModel pack) async {
+    final loc = ref.read(localeProvider).flutterLocale.languageCode;
+    if (!pack.isSaleable) {
+      showPosToast(
+        context,
+        message: AppStrings.t('pack_not_saleable', loc),
+        kind: PosToastKind.warning,
+      );
+      return;
+    }
+    final availability =
+        await ref.read(packsProvider.notifier).fetchAvailability(pack.id);
+    if (!mounted) return;
+    if (availability == null) {
+      showPosToast(
+        context,
+        message: AppStrings.t('network_error_retry', loc),
+        kind: PosToastKind.error,
+        key: const Key('pos-pack-availability-error'),
+      );
+      return;
+    }
+    if (!availability.saleable) {
+      showPosToast(
+        context,
+        message: AppStrings.t('pack_not_saleable', loc),
+        kind: PosToastKind.warning,
+      );
+      return;
+    }
+    final max = double.tryParse(availability.maxPackQuantity) ?? 0;
+    if (max < 1) {
+      showPosToast(
+        context,
+        message: AppStrings.t('pack_stock_insufficient', loc),
+        kind: PosToastKind.warning,
+        key: const Key('pos-pack-stock-error'),
+      );
+      return;
+    }
+    _addCartLine(
+      packId: pack.id,
+      name: pack.name,
+      quantity: '1',
+      // The availability payload is the LIVE pack price the backend will
+      // charge; the list row's snapshot is only a fallback.
+      unitPrice:
+          availability.price == '0' ? pack.price : availability.price,
+      barcode: pack.barcode,
+      productUnit: 'pack',
+      unitName: 'pack',
+      availableStock: availability.maxPackQuantity,
+      componentsSummary: packComponentsSummary(availability, loc),
+    );
+    _searchFocusNode.requestFocus();
+  }
+
   /// Product stays out of the cart until the required lookup succeeds.
   /// Localized headline + backend detail (UX FIX #12 — FIX #5).
   ///
@@ -1893,12 +2003,23 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     _restoreSearchFocusAfterDialog();
   }
 
+  /// Applies a customer-picker result — the ONE funnel every picker caller
+  /// goes through (F6, the loyalty disambiguation and the cart header).
+  ///
+  /// The picker's "walk-in" action pops `null`, and that must CLEAR the
+  /// selected customer instead of keeping the previous one: the header, the
+  /// loyalty session and the checkout payload (which omits `customer_id`
+  /// whenever the cart has no customer) all read this one cart field. Cart
+  /// lines, quantities, discounts, manual totals and payment state are NOT
+  /// touched, and no customer record is created for a walk-in sale.
+  void _applyPickerCustomer(PosCustomer? customer) {
+    ref.read(posCartProvider.notifier).setCustomer(customer);
+  }
+
   Future<void> _pickCustomer() async {
     final customer = await showCustomerPickerDialog(context);
     if (!mounted) return;
-    if (customer != null) {
-      ref.read(posCartProvider.notifier).setCustomer(customer);
-    }
+    _applyPickerCustomer(customer);
     _restoreSearchFocusAfterDialog();
   }
 
@@ -2424,8 +2545,15 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       onSubmitted: (_) => _submitSearch(),
     );
 
+    final catalogPacks = ref.watch(posCatalogPacksProvider);
+
     final productCatalog = _ProductCatalog(
       products: search.items,
+      packs: catalogPacks.items,
+      // Packs carry no category, so a category filter hides them instead of
+      // showing rows the filter cannot describe.
+      showPacks: search.categoryId == null,
+      onAddPack: _addCatalogPack,
       loading: search.loading,
       loadingMore: search.loadingMore,
       hasMore: search.hasMore,
@@ -2493,7 +2621,9 @@ class _PosScreenState extends ConsumerState<PosScreen> {
           ref.read(posCartProvider.notifier).setActiveLine(key),
       onUpdateLineDiscount: (key, d) =>
           ref.read(posCartProvider.notifier).updateLine(key, lineDiscount: d),
+      onEditTotalLine: _openLineTotal,
       onCustomer: _pickCustomer,
+      onCustomItem: _addCustomItem,
       onDiscount: () async {
         if (!ref.read(hasPermissionProvider('pos_discount'))) {
           showPosToast(
@@ -2691,9 +2821,9 @@ class _PosScreenState extends ConsumerState<PosScreen> {
                           child: _ViewModeToggle(
                             mode: viewMode,
                             compact: false,
-                            onChanged: (m) => ref
-                                .read(posCatalogViewModeProvider.notifier)
-                                .setMode(m),
+                            onChanged: (m) =>
+                                ref.read(posCatalogViewModeProvider.notifier)
+                                    .setMode(m),
                           ),
                         ),
                       ),
@@ -2909,6 +3039,18 @@ class _PosScreenState extends ConsumerState<PosScreen> {
               !ref.read(posSettingsProvider).quickSaleWithSpace &&
               spaceMayClaimFocusedField(),
         ): () => _handleShortcut(LogicalKeyboardKey.space),
+        // F8 — the second payment key beside SPACE, running the very same
+        // action. The focus gate is the Shift+F6/F7 one: the bare workspace
+        // and the IDLE barcode field only, so F8 never fires while the
+        // cashier types in the search box, a quantity/discount field or an
+        // amount input. Dialogs own their keys through their route scope,
+        // which keeps F8 out of every open modal too. F8 produces no text
+        // and no other page binds it, so there is nothing to conflict with.
+        const SingleActivator(LogicalKeyboardKey.f8): () {
+          if (_shortcutMayClaimFocus()) {
+            _handleShortcut(LogicalKeyboardKey.f8);
+          }
+        },
         const SingleActivator(LogicalKeyboardKey.f9): () =>
             _handleShortcut(LogicalKeyboardKey.f9),
         const SingleActivator(LogicalKeyboardKey.f10): () =>
@@ -3282,6 +3424,15 @@ Image? _tryProductImage(
 
 class _ProductCatalog extends StatelessWidget {
   final List<ProductModel> products;
+
+  /// Eligible (active, unarchived) packs listed AFTER the products in the
+  /// same scroll view, under the same search term.
+  final List<PackModel> packs;
+
+  /// False while a category filter is active (packs have no category).
+  final bool showPacks;
+
+  final Future<void> Function(PackModel) onAddPack;
   final bool loading;
 
   /// Next page is being appended (bottom spinner).
@@ -3304,6 +3455,9 @@ class _ProductCatalog extends StatelessWidget {
 
   const _ProductCatalog({
     required this.products,
+    required this.packs,
+    required this.showPacks,
+    required this.onAddPack,
     required this.loading,
     required this.loadingMore,
     required this.hasMore,
@@ -3672,6 +3826,180 @@ class _ProductCatalog extends StatelessWidget {
     );
   }
 
+  /// The ONE way a pack is told apart from a product, in both view modes:
+  /// the localized `pack` label (ar/fr/en) on a tertiary chip, plus the
+  /// offer icon. Nothing about the pack's price, composition or stock is
+  /// changed by how it is listed.
+  Widget _packBadge(BuildContext context, PackModel pack) {
+    final loc = Localizations.localeOf(context).languageCode;
+    final theme = Theme.of(context);
+    return Container(
+      key: Key('pos-pack-badge-${pack.id}'),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.tertiaryContainer,
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Text(
+        AppStrings.t('pack', loc),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: theme.textTheme.labelSmall?.copyWith(
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+          color: theme.colorScheme.onTertiaryContainer,
+        ),
+      ),
+    );
+  }
+
+  /// "2 components" summary line shared by the pack card and row.
+  Widget _packComponentsLine(BuildContext context, PackModel pack) {
+    final loc = Localizations.localeOf(context).languageCode;
+    final theme = Theme.of(context);
+    return Text(
+      '${pack.componentsCount} ${AppStrings.t('components', loc)}',
+      key: Key('pos-pack-components-${pack.id}'),
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: theme.textTheme.bodySmall?.copyWith(
+        color: theme.colorScheme.outline,
+      ),
+    );
+  }
+
+  Widget _packPrice(BuildContext context, PackModel pack) {
+    return numericText(
+      formatGrouped(pack.price),
+      key: Key('pos-pack-price-${pack.id}'),
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+            color: Theme.of(context).colorScheme.primary,
+            fontWeight: FontWeight.bold,
+          ),
+    );
+  }
+
+  Widget _packGridCard(BuildContext context, PackModel pack) {
+    final theme = Theme.of(context);
+    return Card(
+      key: Key('pos-pack-${pack.id}'),
+      clipBehavior: Clip.antiAlias,
+      elevation: 1,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(
+          color: theme.colorScheme.tertiary.withValues(alpha: 0.45),
+        ),
+      ),
+      child: InkWell(
+        onTap: () => onAddPack(pack),
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Align(
+                alignment: AlignmentDirectional.centerEnd,
+                child: _packBadge(context, pack),
+              ),
+              const SizedBox(height: 4),
+              Expanded(
+                child: Center(
+                  child: Text(
+                    pack.name,
+                    key: Key('pos-pack-name-${pack.id}'),
+                    textAlign: TextAlign.center,
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.w700,
+                      height: 1.15,
+                      color: theme.textTheme.titleLarge?.color ??
+                          theme.colorScheme.onSurface,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 4),
+              _packPrice(context, pack),
+              const SizedBox(height: 2),
+              _packComponentsLine(context, pack),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _packListTile(BuildContext context, PackModel pack) {
+    final theme = Theme.of(context);
+    final loc = Localizations.localeOf(context).languageCode;
+    return Material(
+      key: Key('pos-pack-${pack.id}'),
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () => onAddPack(pack),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          child: Row(
+            children: [
+              Icon(
+                Icons.local_offer_outlined,
+                size: 20,
+                color: theme.colorScheme.tertiary,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            pack.name,
+                            key: Key('pos-pack-name-${pack.id}'),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.titleSmall?.copyWith(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        _packBadge(context, pack),
+                      ],
+                    ),
+                    const SizedBox(height: 2),
+                    _packComponentsLine(context, pack),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              _packPrice(context, pack),
+              const SizedBox(width: 4),
+              IconButton(
+                key: Key('pos-pack-add-${pack.id}'),
+                tooltip: AppStrings.t('add_to_cart', loc),
+                visualDensity: VisualDensity.compact,
+                icon: Icon(
+                  Icons.add_circle_outline,
+                  size: 22,
+                  color: theme.colorScheme.primary,
+                ),
+                onPressed: () => onAddPack(pack),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   /// Near-the-end trigger: ask for the next page while the cashier scrolls.
   /// The provider no-ops when exhausted or already loading, so this can fire
   /// on every scroll tick near the bottom without issuing extra requests.
@@ -3738,7 +4066,12 @@ class _ProductCatalog extends StatelessWidget {
         ),
       );
     }
-    if (products.isEmpty) {
+    // One flat row count: products first, then the eligible packs. Both
+    // kinds share the scrollable, the pagination footer and the search term.
+    final visiblePacks = showPacks ? packs : const <PackModel>[];
+    final rowCount = products.length + visiblePacks.length;
+
+    if (rowCount == 0) {
       return Center(
         child: Text(
           AppStrings.t('no_products_found', loc),
@@ -3757,13 +4090,17 @@ class _ProductCatalog extends StatelessWidget {
         child: ListView.separated(
           key: const Key('pos-product-list'),
           padding: const EdgeInsets.symmetric(vertical: 4),
-          itemCount: products.length + footerCount,
+          itemCount: rowCount + footerCount,
           separatorBuilder: (_, index) =>
-              index + 1 == products.length && footerCount > 0
+              index + 1 == rowCount && footerCount > 0
                   ? const SizedBox(height: 0)
                   : const Divider(height: 1),
           itemBuilder: (context, index) {
-            if (index >= products.length) return _footer(context);
+            if (index >= rowCount) return _footer(context);
+            final packIndex = index - products.length;
+            if (packIndex >= 0) {
+              return _packListTile(context, visiblePacks[packIndex]);
+            }
             return _listTile(context, products[index]);
           },
         ),
@@ -3781,9 +4118,13 @@ class _ProductCatalog extends StatelessWidget {
           crossAxisSpacing: 10,
           childAspectRatio: 1.05,
         ),
-        itemCount: products.length + footerCount,
+        itemCount: rowCount + footerCount,
         itemBuilder: (context, index) {
-          if (index >= products.length) return _footer(context);
+          if (index >= rowCount) return _footer(context);
+          final packIndex = index - products.length;
+          if (packIndex >= 0) {
+            return _packGridCard(context, visiblePacks[packIndex]);
+          }
           return _gridCard(context, products[index]);
         },
       ),
@@ -4003,8 +4344,16 @@ class _CartPanel extends StatelessWidget {
   /// Marks a line as the `+` / `*` target (line tap or qty-field focus).
   final void Function(String key) onActivateLine;
   final void Function(String, String) onUpdateLineDiscount;
+
+  /// Double-click on a line's total → the manual-total dialog. The panel
+  /// forwards the line key; the screen owns the dialog and the ONE
+  /// notifier call ([PosCartNotifier.setLineTotal]).
+  final void Function(String key) onEditTotalLine;
   final VoidCallback onCustomer;
   final VoidCallback onDiscount;
+
+  /// Add a price-only custom line (the cart header's post-add control).
+  final VoidCallback onCustomItem;
   final VoidCallback onPayment;
   final VoidCallback onHold;
   final VoidCallback onHolds;
@@ -4056,8 +4405,10 @@ class _CartPanel extends StatelessWidget {
     required this.onScanLine,
     required this.onActivateLine,
     required this.onUpdateLineDiscount,
+    required this.onEditTotalLine,
     required this.onCustomer,
     required this.onDiscount,
+    required this.onCustomItem,
     required this.onPayment,
     required this.onHold,
     required this.onHolds,
@@ -4160,6 +4511,23 @@ class _CartPanel extends StatelessWidget {
                         ),
                       ],
                     ),
+                  ),
+                  // POS "quick custom item" — a price-only cart line (no
+                  // catalog product, no stock). It lives in the CART header
+                  // rather than the catalog toolbar: that toolbar has zero
+                  // horizontal slack at its minimum widths (a labelled
+                  // control overflowed 1024px by 144px), while this row's
+                  // Expanded title absorbs one compact control without
+                  // touching the FIX #3 / UX FIX #8 geometry guarantees.
+                  IconButton(
+                    key: const Key('pos-custom-item-button'),
+                    tooltip: AppStrings.t('quick_custom_item', loc),
+                    constraints:
+                        const BoxConstraints(minWidth: 44, minHeight: 44),
+                    padding: EdgeInsets.zero,
+                    iconSize: 24,
+                    onPressed: onCustomItem,
+                    icon: const Icon(Icons.post_add),
                   ),
                   IconButton(
                     key: const Key('pos-clear-cart'),
@@ -4398,6 +4766,7 @@ class _CartPanel extends StatelessWidget {
                         onQty: (q) => onUpdateQty(line.key, q),
                         onDiscount: (d) =>
                             onUpdateLineDiscount(line.key, d),
+                        onEditTotal: () => onEditTotalLine(line.key),
                         onScan: onScanLine,
                         clearQtyTextRequest: clearQtyTextRequest,
                       );
@@ -4706,6 +5075,7 @@ class _CartPanel extends StatelessWidget {
                             onQty: (q) => onUpdateQty(line.key, q),
                             onDiscount: (d) =>
                                 onUpdateLineDiscount(line.key, d),
+                            onEditTotal: () => onEditTotalLine(line.key),
                             onScan: onScanLine,
                           ),
                       ],
@@ -5559,6 +5929,9 @@ class _CartLineTile extends StatefulWidget {
   final bool Function(String quantity) onQty;
   final ValueChanged<String> onDiscount;
 
+  /// Double-click on this line's total: open the manual-total dialog.
+  final VoidCallback onEditTotal;
+
   /// A keyboard-wedge scan landed in this line's focused qty field (the
   /// next scan of a continuous session): the digit run is a barcode, not a
   /// quantity — handed to the POS scan path instead of the qty parser.
@@ -5584,6 +5957,7 @@ class _CartLineTile extends StatefulWidget {
     required this.onActivate,
     required this.onQty,
     required this.onDiscount,
+    required this.onEditTotal,
     this.onScan,
     this.clearQtyTextRequest,
     this.revealRequest,
@@ -6142,6 +6516,10 @@ class _CartLineTileState extends State<_CartLineTile> {
                             ),
                             const SizedBox(width: 6),
                           ],
+                          if (line.customLine || line.manualTotal != null) ...[
+                            _lineBadges(loc: loc),
+                            const SizedBox(width: 4),
+                          ],
                           Expanded(
                             child: Text(
                               line.name,
@@ -6159,13 +6537,23 @@ class _CartLineTileState extends State<_CartLineTile> {
                     ),
                   ),
                   const SizedBox(width: 6),
-                  numericText(
-                    formatGroupedFixed(line.lineTotal, 2),
-                    key: Key('cart-line-total-${line.key}'),
-                    style: theme.textTheme.titleMedium?.copyWith(
-                      fontSize: short ? 16.0 : 17.0,
-                      fontWeight: FontWeight.w700,
-                      color: theme.colorScheme.primary,
+                  // Double-click (not a single click: a stray tap must never
+                  // open a money editor) — the discoverable pointer path to
+                  // the manual-total dialog.
+                  GestureDetector(
+                    key: Key('cart-line-total-tap-${line.key}'),
+                    behavior: HitTestBehavior.opaque,
+                    onDoubleTap: widget.onEditTotal,
+                    child: numericText(
+                      formatGroupedFixed(line.lineTotal, 2),
+                      key: Key('cart-line-total-${line.key}'),
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        fontSize: short ? 16.0 : 17.0,
+                        fontWeight: FontWeight.w700,
+                        color: line.manualTotal != null
+                            ? AppColors.warning
+                            : theme.colorScheme.primary,
+                      ),
                     ),
                   ),
                   const SizedBox(width: 2),
@@ -6327,7 +6715,9 @@ class _CartLineTileState extends State<_CartLineTile> {
         iconSize: 26,
         icon: const Icon(Icons.remove_circle_outline),
         onPressed:
-            (double.tryParse(_qty.text) ?? 0) <= 1 ? null : () => _bumpQty(-1),
+            line.customLine || (double.tryParse(_qty.text) ?? 0) <= 1
+                ? null
+                : () => _bumpQty(-1),
       ),
     );
   }
@@ -6347,6 +6737,9 @@ class _CartLineTileState extends State<_CartLineTile> {
         controller: _qty,
         focusNode: _qtyFocus,
         textAlign: TextAlign.center,
+        // A custom line holds exactly one unit — nothing to decrement from
+        // stock, so the field is not an editor at all.
+        readOnly: line.customLine,
         keyboardType: const TextInputType.numberWithOptions(decimal: true),
         style: TextStyle(
           fontSize: short ? 15.0 : 16.0,
@@ -6378,8 +6771,61 @@ class _CartLineTileState extends State<_CartLineTile> {
         padding: EdgeInsets.zero,
         iconSize: 26,
         icon: const Icon(Icons.add_circle_outline),
-        onPressed: () => _bumpQty(1),
+        // A custom line is quantity-1 by definition (no stock to move).
+        onPressed: line.customLine ? null : () => _bumpQty(1),
       ),
+    );
+  }
+
+  /// Badges that distinguish a price-only custom line and a cashier-set
+  /// manual total from an ordinary catalog line. Shared by the standard
+  /// card and the dense row (same keys, same strings).
+  Widget _lineBadges({required String loc, bool compact = false}) {
+    final line = widget.line;
+    final theme = Theme.of(context);
+    if (!line.customLine && line.manualTotal == null) {
+      return const SizedBox.shrink();
+    }
+    Widget chip(Key key, String label, Color color) => Container(
+          key: key,
+          padding: EdgeInsets.symmetric(
+            horizontal: compact ? 4 : 6,
+            vertical: compact ? 1 : 2,
+          ),
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.14),
+            borderRadius: BorderRadius.circular(compact ? 5 : 6),
+            border: Border.all(color: color.withValues(alpha: 0.55)),
+          ),
+          child: Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: theme.textTheme.labelSmall?.copyWith(
+              fontSize: compact ? 11 : 12,
+              fontWeight: FontWeight.w700,
+              color: color,
+            ),
+          ),
+        );
+    return Wrap(
+      spacing: 4,
+      runSpacing: 2,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        if (line.customLine)
+          chip(
+            Key('cart-line-custom-badge-${line.key}'),
+            AppStrings.t('custom_item', loc),
+            theme.colorScheme.tertiary,
+          ),
+        if (line.manualTotal != null)
+          chip(
+            Key('cart-line-manual-badge-${line.key}'),
+            AppStrings.t('manual_total_badge', loc),
+            AppColors.warning,
+          ),
+      ],
     );
   }
 
@@ -6413,8 +6859,10 @@ class _CartLineTileState extends State<_CartLineTile> {
         // so it is DISPLAY ONLY on an auto line: readOnly blocks typing and
         // pasting (onChanged never fires) while the amount stays visible,
         // selectable and in the warning colour. Manual lines keep the exact
-        // editor they always had, with no extra permission gate.
-        readOnly: line.autoPriced,
+        // editor they always had, with no extra permission gate. A custom
+        // line has no discount to edit either: its amount IS its unit price
+        // (see PosCartNotifier.setLineTotal).
+        readOnly: line.autoPriced || line.customLine,
         keyboardType: const TextInputType.numberWithOptions(decimal: true),
         style: TextStyle(
           fontSize: 13.5,
@@ -6558,6 +7006,7 @@ class _CartLineTileState extends State<_CartLineTile> {
                                 fontSize: 15,
                               ),
                             ),
+                            _lineBadges(loc: loc, compact: true),
                             if (overStock ||
                                 line.promotionApplied ||
                                 line.wholesaleApplied)
@@ -6690,13 +7139,20 @@ class _CartLineTileState extends State<_CartLineTile> {
                 width: kPosDenseTotalWidth,
                 child: Align(
                   alignment: AlignmentDirectional.centerEnd,
-                  child: numericText(
-                    formatGroupedFixed(line.lineTotal, 2),
-                    key: Key('cart-line-total-${line.key}'),
-                    style: theme.textTheme.titleSmall?.copyWith(
-                      fontWeight: FontWeight.w700,
-                      fontSize: 15,
-                      color: theme.colorScheme.primary,
+                  child: GestureDetector(
+                    key: Key('cart-line-total-tap-${line.key}'),
+                    behavior: HitTestBehavior.opaque,
+                    onDoubleTap: widget.onEditTotal,
+                    child: numericText(
+                      formatGroupedFixed(line.lineTotal, 2),
+                      key: Key('cart-line-total-${line.key}'),
+                      style: theme.textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 15,
+                        color: line.manualTotal != null
+                            ? AppColors.warning
+                            : theme.colorScheme.primary,
+                      ),
                     ),
                   ),
                 ),
