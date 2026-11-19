@@ -23,6 +23,13 @@
 
 The device guard applies as for every other route in LAN mode: these are
 not bootstrap endpoints.
+
+Phase L1-D: the three write routes (create / upload / restore) also call
+``require_backup_action`` themselves, *before* the handler body runs —
+the router-level ``license_guard`` already refused them earlier in the
+stack, and this is the second, independent answer from the same §4.4
+policy.  Read-only routes (list / download / inspect) rely on the guard
+plus the service-level check.
 """
 
 from __future__ import annotations
@@ -34,6 +41,7 @@ from sqlalchemy.orm import Session
 from app.api.dependencies import get_current_user, require_permission
 from app.core.exceptions import ValidationError
 from app.db.session import get_db
+from app.licensing.backup_policy import require_backup_action
 from app.models.enums import PermissionScope
 from app.models.user import User
 from app.schemas.backup import (
@@ -82,6 +90,8 @@ def create_backup(
     service: BackupService = Depends(_get_backup_service),
 ) -> BackupInfo:
     """Take a full ``pg_dump`` of the database."""
+    # Phase L1-D: refused before the service runs (the service re-checks).
+    require_backup_action("create")
     return service.create(actor_id=user.id)
 
 
@@ -139,6 +149,10 @@ def upload_backup(
     service: BackupService = Depends(_get_backup_service),
 ) -> BackupInfo:
     """Stage an uploaded ZIP (dump + manifest) or ``.sql`` as a backup."""
+    # Phase L1-D: licensing is answered before a single byte of the
+    # upload is read into memory, so a refused request never touches
+    # the body at all.
+    require_backup_action("upload")
     content = file.file.read(MAX_UPLOAD_BYTES + 1)
     if len(content) > MAX_UPLOAD_BYTES:
         raise ValidationError(
@@ -174,4 +188,7 @@ def restore_backup(
     the database.
     """
     confirm = bool(body and body.confirm)
+    # Phase L1-D: decided before the service, which checks again first —
+    # no safety snapshot, no replay, nothing destructive either way.
+    require_backup_action("restore")
     return service.restore(backup_id, confirm=confirm, actor_id=user.id)

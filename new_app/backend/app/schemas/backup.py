@@ -89,6 +89,21 @@ class BackupInspect(StrictBaseModel):
             "manifest carries no hash (hand-copied dump)."
         ),
     )
+    format_version: int | None = Field(
+        default=None,
+        description=(
+            "Manifest format version: 1 (legacy, unsigned) or 2 "
+            "(signed); None when the sidecar is missing."
+        ),
+    )
+    signature_ok: bool | None = Field(
+        default=None,
+        description=(
+            "v2 Ed25519 signature verdict; None for v1 manifests, "
+            "which carry no signature. False means the document was "
+            "modified and a restore will be refused."
+        ),
+    )
     current_schema_revision: str | None = Field(
         default=None,
         description="alembic revision of the running database",

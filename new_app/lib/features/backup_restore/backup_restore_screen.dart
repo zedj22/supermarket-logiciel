@@ -22,8 +22,10 @@ import '../../core/widgets/status_chip.dart';
 import '../../l10n/locale_provider.dart';
 import '../../network/api_client.dart';
 import '../../network/byte_download.dart';
+import '../about/about_providers.dart';
 import '../auth/auth_provider.dart';
 import '../auth/permission_helpers.dart';
+import '../licensing/backup_license_policy.dart';
 import '../pos/pos_toast.dart';
 import '../settings/backup_models.dart';
 import '../settings/backup_provider.dart';
@@ -42,6 +44,9 @@ class _BackupRestoreScreenState extends ConsumerState<BackupRestoreScreen> {
   bool _uploadBusy = false;
   bool _createBusy = false;
 
+  /// Set once so the licence refresh below runs on the first frame only.
+  bool _licenseRefreshed = false;
+
   @override
   void initState() {
     super.initState();
@@ -49,8 +54,22 @@ class _BackupRestoreScreenState extends ConsumerState<BackupRestoreScreen> {
     // non-admin must never trigger a catalogue request (§17).
     Future.microtask(() async {
       if (!ref.read(hasPermissionProvider(backupRestoreScope))) return;
+      if (!mounted) return;
       await ref.read(backupProvider.notifier).load();
     });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Refresh the licence snapshot through the existing system-info flow
+    // (Phase L1-C) before build() watches it: one request either way — a
+    // never-loaded provider builds on that watch, a cached one is re-read.
+    // No new endpoint, no polling. `didChangeDependencies` (not initState)
+    // because reaching the container needs an inherited lookup.
+    if (_licenseRefreshed) return;
+    _licenseRefreshed = true;
+    ref.invalidate(systemInfoProvider);
   }
 
   String _loc() => ref.read(localeProvider).flutterLocale.languageCode;
@@ -58,6 +77,10 @@ class _BackupRestoreScreenState extends ConsumerState<BackupRestoreScreen> {
   Dio get _dio => ref.read(apiClientProvider).dio;
 
   String _messageOf(DioException e) {
+    // A licensing rejection is its own category: never fall back to
+    // `permission_denied` or a generic retry for it (§4.4 / L1-D).
+    final licenseKey = licenseErrorKeyFrom(e);
+    if (licenseKey != null) return AppStrings.t(licenseKey, _loc());
     final message = backendErrorMessage(e);
     if (message != null) return message;
     if (isConnectionError(e)) return AppStrings.t('network_error_retry', _loc());
@@ -87,6 +110,11 @@ class _BackupRestoreScreenState extends ConsumerState<BackupRestoreScreen> {
     BackupInfo backup, {
     required bool confirmMode,
   }) async {
+    // Licence backstop (L1-D): the buttons are already disabled by the
+    // gate, so this is unreachable from the UI — the server still owns
+    // the decision either way.
+    final perms = backupPermissionsFor(ref.read(backupLicenseGateProvider));
+    if (confirmMode ? !perms.canRestore : !perms.canInspect) return;
     final loc = _loc();
     setState(() => _busyId = backup.id);
     Map<String, dynamic>? inspect;
@@ -243,12 +271,27 @@ class _BackupRestoreScreenState extends ConsumerState<BackupRestoreScreen> {
               if (confirmMode)
                 Padding(
                   padding: const EdgeInsets.only(top: 6),
-                  child: Text(
-                    AppStrings.t('backup_restore_warning', loc),
-                    key: const Key('inspect-restore-warning'),
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: AppColors.error,
-                    ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        AppStrings.t('backup_restore_warning', loc),
+                        key: const Key('inspect-restore-warning'),
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: AppColors.error,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      // §8: the operator must see the full blast radius
+                      // (users/sessions/devices) before confirming.
+                      Text(
+                        AppStrings.t('backup_restore_side_effects', loc),
+                        key: const Key('inspect-side-effects'),
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: AppColors.error,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
             ],
@@ -332,6 +375,10 @@ class _BackupRestoreScreenState extends ConsumerState<BackupRestoreScreen> {
   }
 
   Future<void> _upload() async {
+    // Licence backstop (L1-D) — see _openInspect.
+    if (!backupPermissionsFor(ref.read(backupLicenseGateProvider)).canUpload) {
+      return;
+    }
     final loc = _loc();
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
@@ -383,6 +430,10 @@ class _BackupRestoreScreenState extends ConsumerState<BackupRestoreScreen> {
   }
 
   Future<void> _create() async {
+    // Licence backstop (L1-D) — see _openInspect.
+    if (!backupPermissionsFor(ref.read(backupLicenseGateProvider)).canCreate) {
+      return;
+    }
     final loc = _loc();
     setState(() => _createBusy = true);
     final ok = await ref.read(backupProvider.notifier).create();
@@ -406,7 +457,12 @@ class _BackupRestoreScreenState extends ConsumerState<BackupRestoreScreen> {
   // Rows
   // -------------------------------------------------------------------------
 
-  Widget _backupRow(BackupInfo backup, {required bool busy, String? loc}) {
+  Widget _backupRow(
+    BackupInfo backup, {
+    required bool busy,
+    required BackupPermissions perms,
+    String? loc,
+  }) {
     final locale = loc ?? _loc();
     return Card(
       key: Key('backup-${backup.id}'),
@@ -438,8 +494,9 @@ class _BackupRestoreScreenState extends ConsumerState<BackupRestoreScreen> {
                     tooltip: AppStrings.t('br_inspect', locale),
                     iconSize: 20,
                     icon: const Icon(Icons.info_outline),
-                    onPressed: () =>
-                        _openInspect(backup, confirmMode: false),
+                    onPressed: perms.canInspect
+                        ? () => _openInspect(backup, confirmMode: false)
+                        : null,
                   ),
                   IconButton(
                     key: Key('download-${backup.id}'),
@@ -453,7 +510,9 @@ class _BackupRestoreScreenState extends ConsumerState<BackupRestoreScreen> {
                     tooltip: AppStrings.t('backup_restore', locale),
                     iconSize: 20,
                     icon: const Icon(Icons.settings_backup_restore),
-                    onPressed: () => _openInspect(backup, confirmMode: true),
+                    onPressed: perms.canRestore
+                        ? () => _openInspect(backup, confirmMode: true)
+                        : null,
                   ),
                 ],
               ),
@@ -480,6 +539,14 @@ class _BackupRestoreScreenState extends ConsumerState<BackupRestoreScreen> {
         ),
       );
     }
+
+    // Licence snapshot, refreshed through the existing system-info flow
+    // (the shared client hands every /system/info body to the licensing
+    // layer — Phase L1-C). Watching it here both fetches it if nothing
+    // else has and rebuilds the restrictions when it changes.
+    ref.watch(systemInfoProvider);
+    final gate = ref.watch(backupLicenseGateProvider);
+    final perms = backupPermissionsFor(gate);
 
     final loadFailed = state.hasError && !state.failedDuringAction;
 
@@ -524,6 +591,28 @@ class _BackupRestoreScreenState extends ConsumerState<BackupRestoreScreen> {
               ),
             ),
             const SizedBox(height: 12),
+            if (gate != BackupLicenseGate.unknown)
+              Card(
+                key: const Key('backup-restore-license-notice'),
+                color: AppColors.warning.withValues(alpha: 0.12),
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.lock_outline, size: 18),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          AppStrings.t(perms.noticeKeyFor(gate)!, loc),
+                          key: const Key('backup-restore-license-text'),
+                          style: theme.textTheme.bodySmall,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            const SizedBox(height: 12),
             Wrap(
               spacing: 8,
               runSpacing: 8,
@@ -531,7 +620,9 @@ class _BackupRestoreScreenState extends ConsumerState<BackupRestoreScreen> {
                 FilledButton.icon(
                   key: const Key('backup-restore-create'),
                   onPressed:
-                      (_createBusy || state.busy) ? null : _create,
+                      (_createBusy || state.busy || !perms.canCreate)
+                          ? null
+                          : _create,
                   icon: _createBusy
                       ? const SizedBox(
                           width: 16,
@@ -543,7 +634,8 @@ class _BackupRestoreScreenState extends ConsumerState<BackupRestoreScreen> {
                 ),
                 OutlinedButton.icon(
                   key: const Key('backup-restore-upload'),
-                  onPressed: _uploadBusy ? null : _upload,
+                  onPressed:
+                      (_uploadBusy || !perms.canUpload) ? null : _upload,
                   icon: _uploadBusy
                       ? const SizedBox(
                           width: 16,
@@ -588,6 +680,7 @@ class _BackupRestoreScreenState extends ConsumerState<BackupRestoreScreen> {
                 _backupRow(
                   backup,
                   loc: loc,
+                  perms: perms,
                   busy: _busyId == backup.id ||
                       state.pendingRestoreId == backup.id,
                 ),

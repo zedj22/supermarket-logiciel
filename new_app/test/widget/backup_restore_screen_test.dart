@@ -370,6 +370,30 @@ void main() {
       await _drainToasts(tester);
     });
 
+    testWidgets('the confirm dialog spells out the restore side effects',
+        (tester) async {
+      // Phase L3 (audit §8): replacing ALL data on this PC — users,
+      // roles, sessions and paired devices — must be visible *before*
+      // the operator can confirm, next to the destructive warning.
+      final adapter = _adapter();
+      await _pump(tester, user: _admin, adapter: adapter);
+
+      await _tap(tester, find.byKey(const Key('restore-3')));
+
+      expect(find.byType(AlertDialog), findsOneWidget);
+      expect(find.byKey(const Key('inspect-restore-warning')), findsOneWidget);
+      expect(find.byKey(const Key('inspect-side-effects')), findsOneWidget);
+      expect(
+        find.text(AppStrings.t('backup_restore_warning', 'en')),
+        findsOneWidget,
+      );
+      expect(
+        find.text(AppStrings.t('backup_restore_side_effects', 'en')),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    });
+
     testWidgets('a hash mismatch disables the confirm button and never '
         'posts', (tester) async {
       final adapter = _adapter(

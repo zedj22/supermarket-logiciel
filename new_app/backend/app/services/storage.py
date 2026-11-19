@@ -96,25 +96,35 @@ _TREE_KEYS = (APPLICATION, BACKUPS, DATA, CACHE_TEMP)
 # ---------------------------------------------------------------------------
 
 
+def _runtime_root() -> Path:
+    """Writable data root: ``DATA_DIR`` (production) or the backend root
+    (development) — R1; identical to ``BackupService._runtime_root``."""
+    raw = (getattr(settings, "DATA_DIR", "") or "").strip()
+    return Path(raw) if raw else Path(BACKEND_ROOT)
+
+
 def resolve_backup_dir() -> Path:
     """Absolute backup directory — same rule as ``BackupService.directory``."""
+    root = _runtime_root()
     raw = settings.BACKUP_DIR.strip()
-    path = Path(raw) if raw else Path(BACKEND_ROOT) / "backups"
+    path = Path(raw) if raw else root / "backups"
     if not path.is_absolute():
-        path = Path(BACKEND_ROOT) / path
+        path = root / path
     return path
 
 
 def resolve_data_dir() -> Path:
-    """Directory holding the server-identity file (``data/server_id``).
+    """Directory holding the server-identity file.
 
-    Relative settings resolve against the CWD exactly like
-    ``app.core.server_identity`` does, so the measured location is the
-    one the application actually writes to.
+    ``SERVER_ID_FILE`` is resolved to an absolute path by ``Settings``
+    (R1), so the measured location is the one the application actually
+    writes to regardless of the CWD.  A relative override (possible only
+    via test fakes) resolves against the writable data root — never the
+    process working directory.
     """
     path = Path(settings.SERVER_ID_FILE)
     if not path.is_absolute():
-        path = Path.cwd() / path
+        path = _runtime_root() / path
     return path.parent
 
 

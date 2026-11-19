@@ -97,4 +97,30 @@ void main() {
       }
     });
   });
+
+  // Phase L3 (audit §8): the confirm dialog must spell out the full
+  // blast radius (users/sessions/devices reset, licence kept), in all
+  // three locales — the parity test only proves the keys exist.
+  group('Phase L3 restore side-effects notice', () {
+    test('resolves in every locale and is actually localized', () {
+      final values = <String, String>{};
+      for (final locale in _locales) {
+        final value = AppStrings.t('backup_restore_side_effects', locale);
+        expect(value, isNotEmpty, reason: 'missing/empty at $locale');
+        expect(
+          value,
+          isNot('backup_restore_side_effects'),
+          reason: 'raw key printed at $locale',
+        );
+        expect(
+          value.length,
+          greaterThan(60),
+          reason: 'the side effects must be spelled out at $locale',
+        );
+        values[locale] = value;
+      }
+      expect(values.values.toSet(), hasLength(3),
+          reason: 'the three locales must differ');
+    });
+  });
 }

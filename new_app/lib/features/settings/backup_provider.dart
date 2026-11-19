@@ -199,6 +199,8 @@ class BackupNotifier extends StateNotifier<BackupState> {
     if (isConnectionError(e)) {
       return AppStrings.t('network_error_retry', loc);
     }
+    final licenseKey = licenseErrorKeyFrom(e);
+    if (licenseKey != null) return AppStrings.t(licenseKey, loc);
     final backendMessage = backendErrorMessage(e);
     if (backendMessage != null) return backendMessage;
     final statusCode = e.response?.statusCode;

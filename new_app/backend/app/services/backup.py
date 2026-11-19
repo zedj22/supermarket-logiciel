@@ -32,10 +32,33 @@ Design (decisions recorded in ``docs/PHASE_17_IMPLEMENTATION.md``):
   so its audit row is written afterwards and a failure there is logged
   loudly instead of reported as a failed restore — reporting "restore
   failed" when the data has already been replaced would be a lie.
+* **Licensing (Phase L1-D, defense-in-depth)**: every public method
+  opens with ``require_backup_action(...)``, the same §4.4 matrix the
+  router guard applies.  The check reads the server's own ``trial.state``
+  (never a client-supplied status), runs before a dump is taken, before
+  an uploaded byte is accepted and before any destructive restore work
+  begins, and is a complete no-op while ``LICENSE_ENFORCEMENT=off``.
+  Backup files stay portable across machines: nothing here reads a
+  hardware fingerprint, and neither license state nor activation codes
+  are ever written into an archive or a manifest.
+* **Manifest v2 (Phase L3, audit §8)**: ``create``/``upload`` write a
+  signed v2 sidecar (``format_version``/``payload_sha256``/``created_by``
+  /``signature``/``key_id``/``public_key`` — all additive, every v1 key
+  unchanged) through the ``backup_manifest`` module; ``restore``
+  verifies the document *before* any destructive work (v1 keeps the
+  SHA-256 + structural path, unknown versions are refused, never
+  reinterpreted) and ``inspect`` reports the version and signature
+  verdict.  The signing key lives in the licensing state directory and
+  is never read for verification — a foreign install validates an
+  archive from its embedded public key alone, so portability and the
+  no-fingerprint rule above are preserved.  That module (not this
+  service) reaches into the licensing state: ``BackupService`` still
+  consults only the §4.4 policy, exactly as Phase L1-D required.
 """
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import os
@@ -56,6 +79,7 @@ from app.core.exceptions import (
     ValidationError,
 )
 from app.core.filenames import sanitize_filename
+from app.licensing.backup_policy import require_backup_action
 from app.models.audit import AuditLog
 from app.models.enums import AuditAction
 from app.schemas.backup import (
@@ -63,6 +87,12 @@ from app.schemas.backup import (
     BackupInspect,
     BackupListResponse,
     BackupRestoreResponse,
+)
+from app.services.backup_manifest import (
+    FORMAT_VERSION,
+    SIGNATURE_INVALID,
+    finalize_manifest,
+    verify_manifest,
 )
 from app.services.base import BaseService
 
@@ -98,22 +128,32 @@ class BackupService(BaseService):
 
     # -- locations ---------------------------------------------------------
 
+    @staticmethod
+    def _runtime_root() -> Path:
+        """Writable data root: ``DATA_DIR`` (production) or the backend
+        root (development) — R1 keeps backups out of Program Files."""
+        raw = (getattr(settings, "DATA_DIR", "") or "").strip()
+        return Path(raw) if raw else Path(BACKEND_ROOT)
+
     @property
     def directory(self) -> Path:
         """Absolute backup directory (never depends on the CWD).
 
         An explicit ``directory`` passed to the constructor wins; otherwise
-        ``BACKUP_DIR`` from settings; otherwise ``backend/backups``.
+        ``BACKUP_DIR`` from settings; otherwise the default under the
+        writable data root — ``<DATA_DIR>/backups`` in production (R1),
+        ``<backend>/backups`` in development.
         """
+        root = self._runtime_root()
         if self._directory is not None:
             path = self._directory
             if not path.is_absolute():
-                path = BACKEND_ROOT / path
+                path = root / path
             return path
         raw = settings.BACKUP_DIR.strip()
-        path = Path(raw) if raw else BACKEND_ROOT / "backups"
+        path = Path(raw) if raw else root / "backups"
         if not path.is_absolute():
-            path = BACKEND_ROOT / path
+            path = root / path
         return path
 
     @property
@@ -128,6 +168,9 @@ class BackupService(BaseService):
 
     def create(self, *, actor_id: uuid.UUID | None = None) -> BackupInfo:
         """Take a new backup and append its ``backup`` audit row."""
+        # Phase L1-D: licensing is decided here too, so a direct service
+        # call cannot create a backup the router guard would refuse.
+        require_backup_action("create")
         directory = self.directory
         directory.mkdir(parents=True, exist_ok=True)
 
@@ -153,6 +196,10 @@ class BackupService(BaseService):
             "app_version": settings.VERSION,
             "database": self._database_name(),
         }
+        # Phase L3 (audit §8): every backup this install creates is a
+        # signed v2 manifest; the v1 keys above stay byte-compatible so
+        # older builds keep reading the document.
+        manifest = finalize_manifest(manifest)
         self._write_manifest(directory / (path.stem + _MANIFEST_SUFFIX), manifest)
 
         try:
@@ -194,6 +241,7 @@ class BackupService(BaseService):
         Adoption only ever creates the ``.json`` index, never touches a
         dump.
         """
+        require_backup_action("list")
         directory = self.directory
         if not directory.is_dir():
             return BackupListResponse(items=[], count=0)
@@ -229,7 +277,12 @@ class BackupService(BaseService):
         database is snapshotted once more (safety backup) *before* the
         replay so a mistaken restore is itself undoable; a cheap
         connectivity check runs afterwards and is reported, never hidden.
+
+        Phase L1-D: the licensing check is the **first** statement — a
+        refused restore must be decided before the confirmation gate, the
+        safety snapshot or anything else touches the database.
         """
+        require_backup_action("restore")
         if not confirm:
             raise BusinessRuleError(
                 "Restoring replaces the entire database. Send "
@@ -247,6 +300,16 @@ class BackupService(BaseService):
         if not path.is_file():
             raise NotFoundError(f"backup file missing: {info.filename}")
 
+        # Phase L3 (audit §8): verify the manifest BEFORE any restore
+        # work — a v2 document must carry a valid signature, an unknown
+        # format_version is refused (never reinterpreted), and a v1
+        # document falls through to the hash + structural checks below.
+        manifest_doc = self._read_manifest(
+            path.with_suffix(_MANIFEST_SUFFIX)
+        )
+        if manifest_doc is not None:
+            verify_manifest(manifest_doc)
+
         if info.sha256:
             actual = sha256_of(path)
             if actual != info.sha256:
@@ -255,6 +318,19 @@ class BackupService(BaseService):
                     "and will not be restored.",
                     details={"filename": info.filename},
                 )
+
+        # Structural check (audit §8): whatever the manifest version,
+        # the payload must still look like a pg_dump script before it is
+        # replayed over the live database.
+        with path.open("rb") as handle:
+            head = handle.read(8192)
+        if not self._looks_like_sql(head):
+            raise ValidationError(
+                "This backup does not contain a SQL dump and will not "
+                "be restored.",
+                details={"filename": info.filename},
+                code="BACKUP_RESTORE_INVALID",
+            )
 
         # Safety net: snapshot the database as it is RIGHT NOW, so the
         # restore itself can be undone.  A failed snapshot aborts the
@@ -342,6 +418,7 @@ class BackupService(BaseService):
 
     def inspect(self, backup_id: int) -> BackupInspect:
         """Integrity + compatibility summary for the confirmation dialog."""
+        require_backup_action("inspect")
         entries = self.list().items
         info = next((entry for entry in entries if entry.id == backup_id), None)
         if info is None:
@@ -375,6 +452,30 @@ class BackupService(BaseService):
                 "hand); its integrity cannot be proven."
             )
 
+        # Phase L3: surface the manifest version and, for v2, the
+        # signature verdict.  An unsupported or malformed document is
+        # refused outright; a bad signature is *reported* here so the
+        # operator sees why — restore is where it becomes a hard refusal.
+        format_version: int | None = None
+        signature_ok: bool | None = None
+        manifest_doc = self._read_manifest(
+            path.with_suffix(_MANIFEST_SUFFIX)
+        )
+        if manifest_doc is not None:
+            try:
+                format_version = verify_manifest(manifest_doc)
+            except ValidationError as exc:
+                if exc.code != SIGNATURE_INVALID:
+                    raise
+                format_version = FORMAT_VERSION
+                signature_ok = False
+                warnings.append(
+                    "The manifest signature does not verify; this backup "
+                    "has been modified and restoring it will be refused."
+                )
+            else:
+                signature_ok = True if format_version == 2 else None
+
         current_revision = self._schema_revision()
         compatible: bool | None = None
         if info.schema_revision and current_revision:
@@ -395,6 +496,8 @@ class BackupService(BaseService):
             backup=info,
             file_present=file_present,
             sha256_ok=sha_ok,
+            format_version=format_version,
+            signature_ok=signature_ok,
             current_schema_revision=current_revision,
             schema_compatible=compatible,
             warnings=warnings,
@@ -408,6 +511,7 @@ class BackupService(BaseService):
         Returns ``(zip_bytes, filename)``.  The archive is what an
         operator moves to another machine; ``upload`` accepts it back.
         """
+        require_backup_action("download")
         entries = self.list().items
         info = next((entry for entry in entries if entry.id == backup_id), None)
         if info is None:
@@ -449,7 +553,11 @@ class BackupService(BaseService):
         non-empty and plausibly SQL; the id is always re-allocated on
         this server (an uploaded file never claims an existing id); the
         hash is recomputed here, never trusted from the upload.
+
+        Phase L1-D: the licensing check runs **before** anything else —
+        a refused upload must not be read, validated or persisted.
         """
+        require_backup_action("upload")
         if len(content) > MAX_UPLOAD_BYTES:
             raise ValidationError(
                 "The uploaded backup exceeds the size limit.",
@@ -471,6 +579,16 @@ class BackupService(BaseService):
                 "The uploaded file does not look like a SQL dump.",
                 details={"filename": filename},
                 code="BACKUP_UPLOAD_INVALID",
+            )
+
+        # Phase L3: a carried v2 manifest must verify against these exact
+        # bytes before anything is written to disk — a tampered, malformed
+        # or unsupported document is refused, never reinterpreted and
+        # never silently downgraded to v1.
+        if carried_manifest is not None:
+            verify_manifest(
+                carried_manifest,
+                expected_sha256=hashlib.sha256(dump_bytes).hexdigest(),
             )
 
         directory = self.directory
@@ -499,6 +617,10 @@ class BackupService(BaseService):
             "database": (carried_manifest or {}).get("database"),
             "uploaded_from": sanitize_filename(filename or "upload", max_length=120),
         }
+        # Phase L3: the staged copy becomes a first-class v2 backup of
+        # THIS install — freshly signed here; the origin document's
+        # signature travels only inside the original archive.
+        manifest = finalize_manifest(manifest)
         self._write_manifest(directory / (path.stem + _MANIFEST_SUFFIX), manifest)
 
         try:
