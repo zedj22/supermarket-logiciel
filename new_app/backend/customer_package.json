@@ -1,0 +1,103 @@
+{
+  "format": "supermarket-pro/customer-package",
+  "version": 1,
+  "description": "Exact contents of the Supermarket Pro customer release (R4 §4). Paths are relative to new_app/backend. Enforced by tests/unit/test_customer_package_boundary.py; the running application never reads this file.",
+
+  "include_roots": [
+    "app",
+    "../lib"
+  ],
+
+  "include_files": [
+    "pyproject.toml",
+    "run_production.py",
+    "production.env.example",
+    "alembic.ini",
+    "migrations",
+    "winsw"
+  ],
+
+  "must_include": [
+    "app/licensing/__init__.py",
+    "app/licensing/activation_code.py",
+    "app/licensing/authorization.py",
+    "app/licensing/backup_policy.py",
+    "app/licensing/errors.py",
+    "app/licensing/fingerprint.py",
+    "app/licensing/guard.py",
+    "app/licensing/license_manager.py",
+    "app/licensing/release_metadata.py",
+    "app/licensing/release_metadata.json",
+    "app/licensing/state_store.py",
+    "app/licensing/trial.py",
+    "app/licensing/verification_keys.py",
+    "app/licensing/verification_keys.json",
+    "app/licensing/verification_keys.README.md",
+    "app/core/config.py",
+    "app/core/secrets.py",
+    "app/api/v1/license.py",
+    "run_production.py",
+    "production.env.example",
+    "winsw/SupermarketProBackend.xml",
+    "../lib/features/licensing/activation_panel.dart",
+    "../lib/features/licensing/backup_license_policy.dart",
+    "../lib/features/licensing/license_info.dart",
+    "../lib/features/licensing/license_providers.dart",
+    "../lib/features/licensing/license_snapshot.dart",
+    "../lib/features/licensing/license_widgets.dart",
+    "../lib/features/licensing/licensing_screen.dart",
+    "../lib/core/strings.dart"
+  ],
+
+  "must_exclude": [
+    "tools/",
+    "tools/license_generator/",
+    "tests/",
+    "test/",
+    "../test/",
+    "signing_keystore.json",
+    "issuance_log.jsonl",
+    ".env",
+    ".env.example",
+    "data/",
+    "__pycache__/",
+    "*.pyc",
+    "*.key",
+    "*.pem",
+    "*.p12",
+    "*.pfx",
+    "*.jks"
+  ],
+
+  "forbidden_filenames": [
+    "signing_keystore.json",
+    "issuance_log.jsonl",
+    ".env"
+  ],
+
+  "forbidden_extensions": [
+    ".key",
+    ".pem",
+    ".p12",
+    ".pfx",
+    ".jks",
+    ".der",
+    ".crt"
+  ],
+
+  "forbidden_content": [
+    "-----BEGIN",
+    "\"private\":",
+    "private_seed",
+    "signing_keystore.json",
+    "issuance_log.jsonl"
+  ],
+
+  "notes": {
+    "enforcement": "backend/tools/license_generator/ is owner-only and never part of the customer distribution (pyproject packages only app*).",
+    "keys": "Only PUBLIC Ed25519 material ships: verification_keys.json (base64 of 32 raw bytes) and release_metadata.json (sha256 fingerprints).",
+    "install_key": "app/services/backup_manifest.py builds an Ed25519 key from the per-install backup signing key held in <DATA_DIR>; that key is generated at runtime and never appears in the package, which is why it is not a forbidden-content marker.",
+    "state": "<LICENSE_STATE_DIR> and <DATA_DIR> are customer state created at runtime, never package contents.",
+    "tests": "Developer tests and helper scripts are excluded from both roots."
+  }
+}

@@ -1,0 +1,62 @@
+﻿# Supermarket Pro backend - runtime dependency lock (R5 contract 13).
+# Generated 2026-11-10 from pyproject.toml [project].dependencies, resolved
+# against the development environment's frozen versions (pip freeze of new_app/backend/.venv
+#   used as a constraints file) so the shipped set is the known-good dev set.
+# Interpreter: Python 3.13.17 CPython Windows AMD64 (official python.org runtime
+#   zip python-3.13.17-amd64.zip, SHA-256
+#   b26ca4b4ee51e157836049934d2b8eabd55939be296f3130254251b6df96ec2f).
+# Regenerate:
+#   pip install -r <pyproject deps> -c <dev pip freeze> ; pip freeze > this file
+# Payload wheelhouse:
+#   pip download -r requirements.lock.txt -d wheelhouse
+# Offline install (installer step):
+#   pip install --no-index --find-links wheelhouse -r requirements.lock.txt
+
+alembic==1.20.0
+annotated-doc==0.0.5
+annotated-types==0.8.0
+anyio==4.15.1
+arabic-reshaper==3.0.1
+argon2-cffi==25.1.0
+argon2-cffi-bindings==26.1.0
+certifi==2026.7.22
+cffi==2.1.1
+charset-normalizer==3.5.2
+click==8.5.0
+cryptography==50.0.1
+ecdsa==0.19.2
+et_xmlfile==2.0.0
+fastapi==0.141.1
+greenlet==3.5.6
+h11==0.16.0
+httpcore==1.0.9
+httptools==0.8.0
+httpx==0.28.1
+idna==3.20
+Mako==1.4.1
+MarkupSafe==3.0.3
+openpyxl==3.1.5
+passlib==1.7.4
+pillow==12.3.0
+psycopg2-binary==2.9.13
+pyasn1==0.6.4
+pycparser==3.0
+pydantic==2.13.5
+pydantic-settings==2.15.0
+pydantic_core==2.46.5
+python-bidi==0.6.11
+python-dotenv==1.2.3
+python-jose==3.5.0
+python-multipart==0.0.32
+PyYAML==6.0.3
+reportlab==5.0.1
+rsa==4.9.1
+six==1.17.0
+SQLAlchemy==2.0.54
+starlette==1.6.0
+structlog==26.1.0
+typing-inspection==0.4.4
+typing_extensions==4.16.0
+uvicorn==0.53.0
+watchfiles==1.3.0
+websockets==16.1.1

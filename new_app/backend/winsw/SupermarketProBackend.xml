@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Supermarket Pro - backend Windows service definition (WinSW v2 / v3).
+
+  R2 DELIBERATELY DOES NOT INSTALL THIS SERVICE.  The file exists so the
+  installer phase (or an operator following winsw/README.md) can register
+  it without inventing the configuration.  Every path is absolute: the
+  service must behave identically no matter which directory the SCM
+  starts it from.
+
+  Launcher: <backend>\run_production.py — requires DATA_DIR, provisions
+  the per-install secrets, then serves app.main:app with reload=False and
+  workers=1 (single worker is a hard invariant: rate limits and pairing
+  state are process-local).
+
+  Stop behaviour: WinSW sends Ctrl+C to the console child and waits
+  <stoptimeout> for it to exit by itself before terminating it.  The
+  launcher converts that signal into a clean exit code 0, so a normal
+  stop is never reported as a failure and never triggers <onfailure>.
+-->
+<service>
+  <!-- Alphanumeric id (WinSW recommendation); also the base name of the
+       wrapper executable and of the stdout/stderr log files. -->
+  <id>SupermarketProBackend</id>
+  <name>Supermarket Pro Backend</name>
+  <description>Supermarket Pro FastAPI backend (single worker, LAN only).
+Serves the POS API on the configured host/port from
+C:\Program Files\Supermarket Pro\backend, with all writable state under
+C:\ProgramData\SupermarketPro.</description>
+
+  <!-- Absolute paths — never PATH lookups, never relative. -->
+  <executable>C:\Program Files\Supermarket Pro\backend\.venv\Scripts\python.exe</executable>
+  <arguments>"C:\Program Files\Supermarket Pro\backend\run_production.py"</arguments>
+  <workingdirectory>C:\Program Files\Supermarket Pro\backend</workingdirectory>
+
+  <!-- Runtime environment.  DATA_DIR is what makes the backend resolve
+       .env, license state, server id, backups and logs under ProgramData
+       (docs/R1_DATA_PATHS.md).  APP_ENV is also forced by the launcher;
+       it is set here as well so the intent is visible in the service
+       configuration. -->
+  <env name="DATA_DIR" value="C:\ProgramData\SupermarketPro"/>
+  <env name="APP_ENV" value="production"/>
+  <env name="PYTHONDONTWRITEBYTECODE" value="1"/>
+
+  <!-- Start automatically after boot.  Delayed start gives PostgreSQL
+       (and the rest of the machine) a chance to come up first; the
+       backend itself never waits for the WAN. -->
+  <startmode>Automatic</startmode>
+  <delayedAutoStart>true</delayedAutoStart>
+
+  <!-- Graceful shutdown: WinSW first sends Ctrl+C, then waits up to 30 s
+       for the process to exit on its own before terminating it.  The
+       application lifespan (discovery responder, trial state) runs its
+       shutdown path within that window. -->
+  <stoptimeout>30 sec</stoptimeout>
+  <stopparentprocessfirst>false</stopparentprocessfirst>
+
+  <!-- Controlled restart with an ESCALATING delay: 10 s, 30 s, 60 s, then
+       60 s for every further failure.  WinSW cannot branch on the exit
+       code, so a configuration error (exit 3: unreadable .env / secrets /
+       database env — see run_production.py) cannot disable restarts
+       outright; what this policy guarantees is that such a crash loop can
+       never hammer the machine once per second: the worst case is one
+       attempt per minute.  The counter resets after an hour of uptime. -->
+  <onfailure action="restart" delay="10 sec"/>
+  <onfailure action="restart" delay="30 sec"/>
+  <onfailure action="restart" delay="60 sec"/>
+  <resetfailure>1 hour</resetfailure>
+
+  <!-- Raw process stdout/stderr redirection into the ProgramData log
+       directory (crash traces, anything emitted before the application
+       logging is configured).  The application's own structured log is
+       written next to it as backend.log — see app/core/logging.py. -->
+  <logpath>C:\ProgramData\SupermarketPro\logs</logpath>
+  <log mode="roll-by-size">
+    <sizeThreshold>20480</sizeThreshold>
+    <keepFiles>10</keepFiles>
+  </log>
+
+  <!-- Dedicated low-privilege Windows account (explicitly documented,
+       no password stored in this file).  It receives Modify only on
+       C:\ProgramData\SupermarketPro via winsw\grant_data_dir_acl.ps1 and
+       read access to the installation tree — never LocalSystem.
+
+       NetworkService is a built-in account with a stable, well-known SID
+       (S-1-5-20): it needs no password, never expires, exists on every
+       Windows 10/11 install, and grant_data_dir_acl.ps1 resolves it by SID
+       so localized Windows names cannot break the grant.  A custom domain
+       or local account would require storing a credential (forbidden here)
+       or a gMSA (not available on a workgroup shop PC). -->
+  <serviceaccount>
+    <username>NT AUTHORITY\NetworkService</username>
+    <allowservicelogon>true</allowservicelogon>
+  </serviceaccount>
+
+  <!-- PostgreSQL service dependency.
+
+       Deliberately NOT hard-coded in this template: the PostgreSQL service
+       name depends on what the installer found (a reused server may be any
+       major version, a dedicated install is `postgresql-x64-18`).
+       `render_service_xml.ps1 -PgService <name>` injects a real <depend>
+       into the rendered copy, and the installer calls it with the service
+       name returned by provisioning.  `delayedAutoStart` above still gives
+       PostgreSQL a head start when no dependency is injected. -->
+</service>

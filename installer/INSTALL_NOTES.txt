@@ -1,0 +1,83 @@
+Supermarket Pro - before you install
+====================================
+
+This installer sets up everything the till needs on ONE Windows PC:
+
+  - the Supermarket Pro desktop application (the window you sell from);
+  - the local Supermarket Pro service (stores and serves your sales);
+  - the private database engine it uses (PostgreSQL);
+  - the Microsoft Visual C++ runtime, if this PC does not have it yet.
+
+You do NOT need Python, Flutter, Visual Studio, a terminal or a browser to
+use the program. After installation a "Supermarket Pro" shortcut appears on
+the desktop: double-click it and create the first administrator account.
+
+
+1. BEFORE THE INSTALLATION (please read)
+----------------------------------------
+a) You need administrator rights on this PC.
+
+b) A receipt printer is optional for a first look, but a real till needs
+   one. Install the printer's own Windows driver FIRST, from the
+   manufacturer's disc or download page. 80 mm thermal receipt printers
+   ("POS-80", "XP-58", "TM-T20" and similar) must be installed as a Windows
+   PRINTER with the vendor driver:
+     - the generic "Generic / Text Only" driver does not print receipts
+       correctly;
+     - a printer that only appears as a COM port is not offered by the
+       program;
+     - set the printer as the default printer, and set paper width to
+       80 mm (or 58 mm) in the driver preferences.
+
+c) Close any other copy of Supermarket Pro before you start.
+
+d) Allow about 1.2 GB of free space on the system drive.
+
+
+2. PORTS USED (only relevant if this PC runs other servers)
+-----------------------------------------------------------
+     8000/TCP   Supermarket Pro service (the desktop app talks to it)
+     5432/TCP   PostgreSQL database
+
+If port 5432 is already used by an existing PostgreSQL server on this PC,
+the installer detects it and REUSES that server instead of installing a
+second copy. Your existing databases are not touched.
+
+If port 8000 is already used by an unrelated programme, the installer stops
+before changing anything and tells you which programme it is. Close it and
+run the installer again.
+
+
+3. WHERE YOUR DATA LIVES
+------------------------
+   C:\ProgramData\SupermarketPro            sales data, uploads, licence,
+                                            logs, backups
+   C:\ProgramData\SupermarketPro\logs       backend.log (for support)
+   C:\Program Files\Supermarket Pro         programme files only
+
+Your data is NOT stored in the programme folder, so uninstalling the
+programme keeps your sales, users, products and backups.
+
+
+4. AFTER THE INSTALLATION
+-------------------------
+The Supermarket Pro service starts automatically with Windows, and the
+desktop app connects to it on its own - you never type an address on a
+single PC.
+
+To add a second till on the same local network: enable LAN mode on the main
+PC (Settings > Network), then use "Connect to a server" in the setup wizard
+on the second PC. The installer adds the Windows Firewall rules for
+8000/TCP and 8000/UDP when LAN mode is on.
+
+
+5. INFORMATION TO COLLECT FOR SUPPORT
+-------------------------------------
+   - C:\ProgramData\SupermarketPro\logs\backend.log
+   - C:\ProgramData\SupermarketPro\logs\install_steps.log
+   - Services (services.msc) > "Supermarket Pro Backend" > Status
+   - http://localhost:8000/api/v1/health in a browser
+
+
+Third-party licences are staged as vendor\THIRD_PARTY_NOTICES.md next to the
+installed programme files.
