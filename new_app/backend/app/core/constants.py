@@ -43,3 +43,23 @@ ARGON2_SALT_LENGTH = 16
 # read the free-text device id without importing the api package.
 DEVICE_ID_HEADER = "X-Device-ID"
 DEVICE_TOKEN_HEADER = "X-Device-Token"
+
+# ── Repository placeholder secrets (Phase 17 §17.7, hardened by R2) ──────────
+#
+# Kept in core (not config) so BOTH `app.core.config` (settings validation)
+# and `app.core.secrets` (per-install secret provisioning) can use them:
+# the provisioning module must be importable before `Settings()` exists.
+#
+# PLACEHOLDER_SECRETS is the per-key map the Phase 17 tests rely on.
+# PLACEHOLDER_SECRET_VALUES is the superset of every known placeholder
+# string — including the `.env.example` copy-paste values, which a
+# production start must refuse just as loudly as the code defaults.
+PLACEHOLDER_SECRETS: dict[str, str] = {
+    "APP_SECRET_KEY": "change-me-in-production",
+    "JWT_SECRET_KEY": "jwt-change-me-in-production",
+}
+
+PLACEHOLDER_SECRET_VALUES: frozenset[str] = frozenset(PLACEHOLDER_SECRETS.values()) | {
+    "change-me-to-a-strong-random-value",
+    "change-me-to-another-strong-random-value",
+}

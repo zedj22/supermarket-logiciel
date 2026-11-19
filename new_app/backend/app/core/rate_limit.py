@@ -81,9 +81,11 @@ class RateLimitedError(AppError):
     message_key = "errors.rateLimited"
 
 
-#: Whole-API backstop and the stricter PIN-entry cap.
+#: Whole-API backstop, the stricter PIN-entry cap, and the Phase L2-A
+#: Lifetime-activation cap (10 attempts/minute/client IP by default).
 api_limiter = SlidingWindowLimiter(settings.API_RATE_LIMIT_PER_MINUTE)
 auth_limiter = SlidingWindowLimiter(settings.AUTH_RATE_LIMIT_PER_MINUTE)
+license_limiter = SlidingWindowLimiter(settings.LICENSE_ACTIVATION_RATE_LIMIT_PER_MINUTE)
 
 
 def client_key(request: Request) -> str:
@@ -125,3 +127,4 @@ def reset_rate_limiters() -> None:
     """Testing seam: drop all sliding-window state between tests."""
     api_limiter.clear()
     auth_limiter.clear()
+    license_limiter.clear()

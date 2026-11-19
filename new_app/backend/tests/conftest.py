@@ -5,7 +5,10 @@ Integration tests use a dedicated PostgreSQL test database (supermarket_pro_test
 The production database (supermarket_pro) is NEVER touched by tests.
 """
 
+import atexit
 import os
+import shutil
+import tempfile
 import warnings
 
 # Suppress all deprecation warnings during test collection/import
@@ -25,6 +28,23 @@ os.environ["JWT_SECRET_KEY"] = "test-jwt-secret"
 # monkeypatch.setattr(settings, "LAN_MODE", True).
 os.environ.setdefault("LAN_MODE", "0")
 os.environ.setdefault("DISCOVERY_ENABLED", "0")
+
+# Phase L0: the license guard must be a complete no-op for the whole
+# existing suite (exit criterion of §12 L0).  Guard tests that need
+# enforcement flip it explicitly with monkeypatch.setattr(settings,
+# "LICENSE_ENFORCEMENT", "trial").
+os.environ.setdefault("LICENSE_ENFORCEMENT", "off")
+
+# Phase L1: the Free Trial is created on the first backend start (D5), so
+# the suite must run against a throwaway state directory instead of the
+# developer's real <backend>/data/license. The path keeps the
+# ".../data/license" shape the config contract asserts (see
+# test_license_state_dir_resolves_outside_postgres) and is removed at exit.
+_LICENSE_STATE_TMP = tempfile.mkdtemp(prefix="supermarket_pro_license_test_")
+atexit.register(shutil.rmtree, _LICENSE_STATE_TMP, ignore_errors=True)
+os.environ.setdefault(
+    "LICENSE_STATE_DIR", os.path.join(_LICENSE_STATE_TMP, "data", "license")
+)
 
 # SQLite for unit tests (default)
 os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")

@@ -6,12 +6,19 @@ requires-python = ">=3.10"
 dependencies = [
     "fastapi>=0.104.0",
     "uvicorn[standard]>=0.24.0",
-    "sqlalchemy>=2.0.0",
+    "sqlalchemy>=2.0.0,<2.1",  # 2.1 makes postgresql:// use psycopg3; code is psycopg2
     "alembic>=1.13.0",
     "psycopg2-binary>=2.9.0",
     "pydantic>=2.5.0",
     "pydantic-settings>=2.1.0",
+    # R5: run_production.py reads <DATA_DIR>/config/.env directly with
+    # dotenv_values (R4 §5 handoff) — a direct import, not just transitive.
+    "python-dotenv>=1.0.0",
     "python-jose[cryptography]>=3.3.0",
+    # Phase L2-A: Ed25519 license verification is a direct application
+    # dependency (not merely transitive via python-jose) — the Lifetime
+    # activation path imports it unconditionally.
+    "cryptography>=42.0.0",
     "passlib[argon2]>=1.7.4",
     "python-multipart>=0.0.6",
     "httpx>=0.25.0",
@@ -32,6 +39,12 @@ dev = [
     "httpx>=0.25.0",
     "ruff>=0.1.0",
     "mypy>=1.7.0",
+    # Test-only: PDF geometry assertions in test_export_render.py and
+    # test_phase7_facturation_pdf.py (never imported by app/).
+    "pymupdf>=1.26.0",
+    # setuptools is imported by the customer-package boundary tests and
+    # is no longer bundled in Python 3.12+ venvs.
+    "setuptools>=68.0",
 ]
 
 [build-system]

@@ -11,6 +11,18 @@ route below (including ones added later). It is a no-op unless
 Phase 17 §17.7: the router also carries the **app-wide rate-limit backstop**
 (per client IP), which is the roadmap Phase 3 "Rate limiting" control that
 D-08 deferred to this security pass.
+
+Phase L0: the router additionally carries the **license guard** as the
+last router-level dependency, so it runs after rate limiting and the
+device guard on every route below (pairing errors are never masked by
+licensing ones). It is a complete no-op unless
+``LICENSE_ENFORCEMENT != "off"``. With ``=trial`` (Phase L1) the guard
+enforces the Free Trial engine (expired installs get HTTP 403
+``trial_expired``), and with ``=on`` (Phase L2-B) the combined decision
+admits either a valid Lifetime license or an active trial; without one,
+expired/missing state is HTTP 403 ``trial_expired`` /
+``license_required`` and unverifiable state HTTP 503
+``license_status_unavailable``.
 """
 
 from fastapi import APIRouter, Depends
@@ -31,6 +43,7 @@ from app.api.v1.hardware import router as hardware_router
 from app.api.v1.health import router as health_router
 from app.api.v1.inventory import router as inventory_router
 from app.api.v1.invoice_clients import router as invoice_clients_router
+from app.api.v1.license import router as license_router
 from app.api.v1.loyalty import router as loyalty_router
 from app.api.v1.packs import router as packs_router
 from app.api.v1.pos import pos_router, sales_router
@@ -48,8 +61,15 @@ from app.api.v1.system import router as system_router
 from app.api.v1.users import router as users_router
 from app.api.v1.zakat import router as zakat_router
 from app.core.rate_limit import api_rate_guard
+from app.licensing.guard import license_guard
 
-api_router = APIRouter(dependencies=[Depends(api_rate_guard), Depends(device_guard)])
+api_router = APIRouter(
+    dependencies=[
+        Depends(api_rate_guard),
+        Depends(device_guard),
+        Depends(license_guard),
+    ]
+)
 
 api_router.include_router(health_router, tags=["health"])
 api_router.include_router(system_router, tags=["system"])
@@ -73,6 +93,9 @@ api_router.include_router(factures_router, prefix="/factures", tags=["factures"]
 api_router.include_router(
     invoice_clients_router, prefix="/invoice-clients", tags=["invoice-clients"]
 )
+# Phase L2-A: Lifetime licensing (activation request / activate / status).
+# Pre-login surface already covered by the license-guard allowlist.
+api_router.include_router(license_router, prefix="/license", tags=["license"])
 api_router.include_router(expenses_router, prefix="/expenses", tags=["expenses"])
 api_router.include_router(inventory_router, prefix="/inventory", tags=["inventory"])
 api_router.include_router(sales_router, prefix="/sales", tags=["sales"])
