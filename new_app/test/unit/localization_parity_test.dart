@@ -254,7 +254,11 @@ void main() {
       // three option labels and the minimum-receipt-amount label — 5 keys
       // (1649); the receipt-printing save-feedback key for a backend that
       // does not confirm the new columns added 1 more — 1650.
-      expect(_map('en').keys.length, 1650);
+      // The scanner-first POS pass added the Settings toggle label and its
+      // description (`show_pos_product_list` + `_desc`) and the scan-only
+      // barcode-field hint (`pos_scan_field_hint`) in ar/fr/en — 3 keys
+      // (1653).
+      expect(_map('en').keys.length, 1653);
       expect(_map('ar').keys.length, _map('en').keys.length);
       expect(_map('fr').keys.length, _map('en').keys.length);
     });

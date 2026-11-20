@@ -737,7 +737,11 @@ Future<void> _pumpApp(
         localeProvider
             .overrideWith((ref) => LocaleNotifier()..setLocale(locale)),
         scanSettingsProvider.overrideWith((ref) => ScanSettingsNotifier(prefs)),
-        posSettingsProvider.overrideWith((ref) => PosSettingsNotifier(prefs)),
+        // This suite exercises the catalog layout, which is now opt-in
+        // (`show_pos_product_list` defaults to false — scanner-first POS).
+        posSettingsProvider.overrideWith(
+          (ref) => PosSettingsNotifier(prefs)..setShowPosProductList(true),
+        ),
         pdfPreviewProvider.overrideWithValue(_fakePreview),
         if (printService != null)
           printServiceProvider.overrideWithValue(printService),
@@ -864,6 +868,10 @@ void main() {
       container.read(posCartProvider.notifier).addLine(line);
       await tester.pump();
       expect(find.byKey(Key('cart-line-remove-${line.key}')), findsOneWidget);
+      // The compact row is wider than a narrow cart panel: reveal the
+      // remove column before clicking it.
+      await tester.ensureVisible(find.byKey(Key('cart-line-remove-${line.key}')));
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(Key('cart-line-remove-${line.key}')));
       await tester.pump();
       expect(container.read(posCartProvider).isEmpty, isTrue);
@@ -1784,13 +1792,11 @@ void main() {
       expect(line.unitMultiplier, isNull);
 
       final key = line.key;
+      // Compact table: the price cell carries the unit price, the unit
+      // label sits under it.
       expect(
-        find.byKey(Key('cart-line-summary-$key')),
-        findsOneWidget,
-      );
-      expect(
-        find.text('1 ${AppStrings.unitLabel('piece', 'en')} × 10.0'),
-        findsOneWidget,
+        tester.widget<Text>(find.byKey(Key('cart-line-price-$key'))).data,
+        '10.0',
       );
       expect(find.byKey(Key('cart-line-base-qty-$key')), findsNothing);
       expect(find.byKey(Key('cart-line-base-price-$key')), findsNothing);
@@ -1820,10 +1826,9 @@ void main() {
       expect(line.baseUnitPrice, '60');
       expect(line.unitMultiplier, '10');
 
-      expect(
-        find.text('1 Box × 550'),
-        findsOneWidget,
-      );
+      // Compact table: the unit price cell + the Box unit label.
+      expect(find.text('550'), findsWidgets);
+      expect(find.text('Box'), findsWidgets);
       expect(
         find.byKey(Key('cart-line-base-qty-$cartLineKey')),
         findsOneWidget,
@@ -1863,7 +1868,7 @@ void main() {
       await _pumpApp(tester, dio: unitDio);
       await pickSellingUnit(tester, quantity: '1');
 
-      expect(find.text('1 Box × 550'), findsOneWidget);
+      expect(find.text('550'), findsWidgets);
       expect(find.text('10 Piece'), findsOneWidget);
       final line = containerOf(tester).read(posCartProvider).lines.first;
       expect(line.quantity, '1');
@@ -1878,7 +1883,7 @@ void main() {
 
       final cart = containerOf(tester).read(posCartProvider);
       expect(cart.lines, hasLength(1));
-      expect(find.text('2 Box × 550'), findsOneWidget);
+      expect(find.text('550'), findsWidgets);
       expect(find.text('20 Piece'), findsOneWidget);
       expect(cart.lines.first.quantity, '2');
       expect(tester.takeException(), isNull);
@@ -1968,11 +1973,10 @@ void main() {
 
       // The selling-unit name is localized too (Box → علبة in ar).
       expect(
-        find.text(
-          '1 ${AppStrings.unitLabel('Box', 'ar')} × 550',
-        ),
-        findsOneWidget,
+        find.text(AppStrings.unitLabel('Box', 'ar')),
+        findsWidgets,
       );
+      expect(find.text('550'), findsWidgets);
       expect(
         find.text('10 ${AppStrings.unitLabel('piece', 'ar')}'),
         findsOneWidget,
@@ -3083,7 +3087,7 @@ void main() {
 
     testWidgets(
         'secondary actions are a 2-column grid of F7/F9/F10/F11 '
-        'buttons height 44–48', (tester) async {
+        'buttons height 36–40 (compact table)', (tester) async {
       await _pumpApp(tester, dio: dio);
       final actionKeys = <Key>[
         const Key('pos-discount-button'),
@@ -3098,8 +3102,8 @@ void main() {
         final btn = find.byKey(key);
         expect(btn, findsOneWidget, reason: '$key');
         final h = tester.getSize(btn).height;
-        expect(h, greaterThanOrEqualTo(44), reason: '$key height $h');
-        expect(h, lessThanOrEqualTo(48), reason: '$key height $h');
+        expect(h, greaterThanOrEqualTo(36), reason: '$key height $h');
+        expect(h, lessThanOrEqualTo(40), reason: '$key height $h');
         sizes[tester.getCenter(btn)] = tester.getSize(btn);
       }
 
@@ -3698,10 +3702,11 @@ void main() {
         '1 100.00 DA',
       );
       final key = cart.lines.first.key;
-      expect(find.byKey(Key('cart-line-summary-$key')), findsOneWidget);
+      expect(find.byKey(Key('cart-line-price-$key')), findsOneWidget);
       expect(find.byKey(Key('cart-line-base-qty-$key')), findsOneWidget);
       expect(find.byKey(Key('cart-line-base-price-$key')), findsOneWidget);
-      expect(find.text('2 Box × 550'), findsOneWidget);
+      expect(find.text('550'), findsWidgets);
+      expect(find.text('Box'), findsWidgets);
       expect(tester.takeException(), isNull);
     });
   });
@@ -3775,7 +3780,7 @@ void main() {
       }
     });
 
-    testWidgets('header readable: title 20–22, counts 14–16, height 64–76',
+    testWidgets('header readable: title 20–22, counts 14–16, height 50–56',
         (tester) async {
       await _pumpApp(tester, dio: dio, size: const Size(1366, 768));
       addLine(containerOf(tester));
@@ -3783,7 +3788,7 @@ void main() {
 
       final headerH =
           tester.getSize(find.byKey(const Key('pos-cart-header'))).height;
-      expect(headerH, inInclusiveRange(64, 76));
+      expect(headerH, inInclusiveRange(50, 56));
 
       final title = tester
           .widget<Text>(find.byKey(const Key('pos-cart-title')))
@@ -3808,12 +3813,12 @@ void main() {
       expect(size.height, greaterThanOrEqualTo(44));
     });
 
-    testWidgets('customer row height 48–52, name font ≥14, button ≥44',
+    testWidgets('customer row height 44, name font ≥14, button ≥44',
         (tester) async {
       await _pumpApp(tester, dio: dio, size: const Size(1366, 768));
       final rowH =
           tester.getSize(find.byKey(const Key('pos-customer-row'))).height;
-      expect(rowH, inInclusiveRange(48, 52));
+      expect(rowH, inInclusiveRange(43, 45));
 
       final nameStyle = tester
           .widget<Text>(find.byKey(const Key('pos-customer-name')))
@@ -3827,8 +3832,7 @@ void main() {
       expect(find.byIcon(Icons.person_outline), findsOneWidget);
     });
 
-    testWidgets('product name font ≥16 semibold, max 2 lines',
-        (tester) async {
+    testWidgets('product name font ≥15 bold, one line', (tester) async {
       await _pumpApp(tester, dio: dio);
       addLine(
         containerOf(tester),
@@ -3839,9 +3843,9 @@ void main() {
       final name = tester.widget<Text>(
         find.byKey(Key('cart-line-name-$key')),
       );
-      expect(name.style?.fontSize ?? 16, greaterThanOrEqualTo(16));
+      expect(name.style?.fontSize ?? 15, greaterThanOrEqualTo(15));
       expect(name.style?.fontWeight, FontWeight.w700);
-      expect(name.maxLines, 2);
+      expect(name.maxLines, 1);
       expect(name.overflow, TextOverflow.ellipsis);
     });
 
@@ -3867,7 +3871,7 @@ void main() {
       expect(fieldStyle?.fontSize, inInclusiveRange(15, 16));
     });
 
-    testWidgets('line total font 16–18 semibold/bold and primary visible',
+    testWidgets('line total font 15 bold and primary visible',
         (tester) async {
       await _pumpApp(tester, dio: dio);
       addLine(containerOf(tester));
@@ -3876,7 +3880,7 @@ void main() {
       final style = tester
           .widget<Text>(find.byKey(Key('cart-line-total-$key')))
           .style!;
-      expect(style.fontSize!, inInclusiveRange(16, 18));
+      expect(style.fontSize!, inInclusiveRange(15, 16));
       expect(style.fontWeight, FontWeight.w700);
       expect(
         tester.widget<Text>(find.byKey(Key('cart-line-total-$key'))).data,
@@ -3909,7 +3913,7 @@ void main() {
       );
     });
 
-    testWidgets('cart line content min height ≥90 (selling-unit ≥100)',
+    testWidgets('cart line row keeps a compact height (≥60)',
         (tester) async {
       final unitDio = MockDio();
       _mockDio(
@@ -3935,7 +3939,7 @@ void main() {
           containerOf(tester).read(posCartProvider).lines.first.key;
       final plainH =
           tester.getSize(find.byKey(Key('cart-line-$plainKey'))).height;
-      expect(plainH, greaterThanOrEqualTo(90), reason: 'plain line $plainH');
+      expect(plainH, greaterThanOrEqualTo(60), reason: 'plain line $plainH');
 
       // Selling-unit line with base info present.
       await tester.pump(const Duration(milliseconds: 500));
@@ -3960,7 +3964,7 @@ void main() {
       );
       final sellH =
           tester.getSize(find.byKey(Key('cart-line-${withBase.key}'))).height;
-      expect(sellH, greaterThanOrEqualTo(100), reason: 'selling $sellH');
+      expect(sellH, greaterThanOrEqualTo(60), reason: 'selling $sellH');
       expect(tester.takeException(), isNull);
     });
 
@@ -4099,7 +4103,7 @@ void main() {
 
       final headerH =
           tester.getSize(find.byKey(const Key('pos-cart-header'))).height;
-      expect(headerH, greaterThanOrEqualTo(64));
+      expect(headerH, greaterThanOrEqualTo(50));
 
       final customerH = find.byKey(const Key('pos-customer-row')).evaluate().isEmpty
           ? 0.0
@@ -4107,7 +4111,7 @@ void main() {
               .getSize(find.byKey(const Key('pos-customer-row')))
               .height;
       if (customerH > 0) {
-        expect(customerH, greaterThanOrEqualTo(48));
+        expect(customerH, greaterThanOrEqualTo(44));
       }
       expect(tester.takeException(), isNull);
     });
@@ -4232,7 +4236,7 @@ void main() {
       ]) {
         expect(
           tester.getSize(find.byKey(Key(key))).height,
-          inInclusiveRange(44, 48),
+          inInclusiveRange(36, 40),
           reason: key,
         );
       }
@@ -4496,7 +4500,7 @@ void main() {
     });
 
     // ── FIX 2: cart product name always visible ───────────────────────
-    testWidgets('cart product name is 17–18px w700 for short name',
+    testWidgets('cart product name is 15px w700 for short name',
         (tester) async {
       await _pumpApp(tester, dio: dio);
       addLine(containerOf(tester), name: 'eau');
@@ -4505,14 +4509,14 @@ void main() {
       final name = tester.widget<Text>(
         find.byKey(Key('cart-line-name-$key')),
       );
-      expect(name.style?.fontSize, inInclusiveRange(17, 18));
+      expect(name.style?.fontSize, inInclusiveRange(15, 16));
       expect(name.style?.fontWeight, FontWeight.w700);
-      expect(name.maxLines, 2);
+      expect(name.maxLines, 1);
       expect(name.overflow, TextOverflow.ellipsis);
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('cart product name never below 16px for long name',
+    testWidgets('cart product name never below 15px for long name',
         (tester) async {
       await _pumpApp(tester, dio: dio);
       addLine(
@@ -4524,9 +4528,9 @@ void main() {
       final name = tester.widget<Text>(
         find.byKey(Key('cart-line-name-$key')),
       );
-      expect(name.style?.fontSize ?? 16, greaterThanOrEqualTo(16));
+      expect(name.style?.fontSize ?? 15, greaterThanOrEqualTo(15));
       expect(name.style?.fontWeight, FontWeight.w700);
-      expect(name.maxLines, 2);
+      expect(name.maxLines, 1);
       expect(name.overflow, TextOverflow.ellipsis);
       expect(tester.takeException(), isNull);
     });
@@ -4557,8 +4561,8 @@ void main() {
       final name = tester.widget<Text>(
         find.byKey(Key('cart-line-name-$key')),
       );
-      expect(name.style?.fontSize ?? 16, greaterThanOrEqualTo(16));
-      expect(name.maxLines, 2);
+      expect(name.style?.fontSize ?? 15, greaterThanOrEqualTo(15));
+      expect(name.maxLines, 1);
       expect(tester.takeException(), isNull);
     });
 
@@ -4578,9 +4582,9 @@ void main() {
       final name = tester.widget<Text>(
         find.byKey(Key('cart-line-name-$key')),
       );
-      expect(name.style?.fontSize ?? 16, greaterThanOrEqualTo(16));
+      expect(name.style?.fontSize ?? 15, greaterThanOrEqualTo(15));
       expect(name.style?.fontWeight, FontWeight.w700);
-      expect(name.maxLines, 2);
+      expect(name.maxLines, 1);
       expect(tester.takeException(), isNull);
     });
 
@@ -5483,7 +5487,8 @@ void main() {
         'eau',
         reason: 'product name visible from snapshot',
       );
-      expect(find.text('1 Fardeau × 270'), findsOneWidget);
+      expect(find.text('270'), findsWidgets);
+      expect(find.text('Fardeau'), findsWidgets);
       expect(
         tester.widget<Text>(find.byKey(Key('cart-line-total-$key'))).data,
         '270.00',
@@ -5617,8 +5622,11 @@ void main() {
       expect(line.lineTotal, closeTo(550, 0.001));
 
       final key = line.key;
-      expect(find.text('1 Box × 550'), findsOneWidget);
-      expect(find.text('1 Piece × 550'), findsNothing,
+      expect(
+        tester.widget<Text>(find.byKey(Key('cart-line-price-$key'))).data,
+        '550',
+      );
+      expect(find.text('Box'), findsWidgets,
           reason: 'not reduced to base unit');
       expect(find.byKey(Key('cart-line-base-qty-$key')), findsOneWidget);
       expect(find.text('10 Piece'), findsOneWidget);
@@ -5984,7 +5992,7 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('secondary actions still 2-column height 44–48',
+    testWidgets('secondary actions still 2-column height 36–40',
         (tester) async {
       await _pumpApp(tester, dio: dio);
       final actionKeys = <Key>[
@@ -5996,8 +6004,8 @@ void main() {
       final centers = <Offset>[];
       for (final key in actionKeys) {
         final h = tester.getSize(find.byKey(key)).height;
-        expect(h, greaterThanOrEqualTo(44), reason: '$key');
-        expect(h, lessThanOrEqualTo(48), reason: '$key');
+        expect(h, greaterThanOrEqualTo(36), reason: '$key');
+        expect(h, lessThanOrEqualTo(40), reason: '$key');
         centers.add(tester.getCenter(find.byKey(key)));
       }
       final rows = <int, List<Offset>>{};
@@ -10501,7 +10509,11 @@ void main() {
       await tester.pump();
       final key = container.read(posCartProvider).lines.first.key;
       expect(find.byKey(Key('cart-line-wholesale-$key')), findsOneWidget);
-      expect(find.text(AppStrings.t('wholesale', 'en')), findsOneWidget);
+      // Compact table: the cue is an icon whose tooltip names the rate.
+      expect(
+        find.byTooltip(AppStrings.t('wholesale', 'en')),
+        findsOneWidget,
+      );
 
       // Drop below the threshold → back to retail, cue disappears.
       container.read(posCartProvider.notifier).updateLine(key, quantity: '2');
@@ -10820,13 +10832,14 @@ void main() {
       await tester.pump(const Duration(milliseconds: 500));
       expect(find.byKey(const Key('pos-layout-switch')), findsOneWidget);
       expect(cartCenterX(tester), greaterThan(catalogCenterX(tester)));
-      // Standard mode keeps the stacked card (summary line present).
+      // The compact table renders in EVERY layout.
       addLine(tester, bread);
       await tester.pump();
       expect(
-        find.byKey(Key('cart-line-summary-${bread.key}')),
+        find.byKey(Key('cart-line-price-${bread.key}')),
         findsOneWidget,
       );
+      expect(find.byKey(const Key('pos-dense-header')), findsOneWidget);
     });
 
     testWidgets('tap toggle swaps catalog and cart to reversed',
@@ -10839,53 +10852,42 @@ void main() {
       await toggleLayout(tester);
 
       expect(cartCenterX(tester), lessThan(catalogCenterX(tester)));
-      // Reversed mode renders the dense row (price cell; no card summary).
+      // The cart keeps the SAME compact table — only the panels move.
       expect(find.byKey(Key('cart-line-price-${bread.key}')), findsOneWidget);
-      expect(find.byKey(Key('cart-line-summary-${bread.key}')), findsNothing);
+      expect(find.byKey(const Key('pos-dense-header')), findsOneWidget);
+      expect(
+        find.byKey(Key('cart-line-summary-${bread.key}')),
+        findsNothing,
+      );
       expect(find.byKey(const Key('pos-cart-panel')), findsOneWidget);
       expect(find.byKey(const Key('pos-pay-button')), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('dense typography: 14px semibold column headers, 15px row '
-        'name / unit price / line total', (tester) async {
+    testWidgets('reversed mode keeps the compact table renderer',
+        (tester) async {
       await _pumpApp(tester, dio: dio);
       await tester.pump(const Duration(milliseconds: 500));
       addLine(tester, bread);
       await tester.pump();
       await toggleLayout(tester);
 
-      // Column headers share one 14px w600 label style (was 12px bold —
-      // glance-text the cashier reads while scanning rows).
-      final header = find.byKey(const Key('pos-dense-header'));
-      expect(header, findsOneWidget);
-      for (final label in [
-        AppStrings.t('name', 'en'),
-        AppStrings.t('unit_price', 'en'),
-        AppStrings.t('total_label', 'en'),
-      ]) {
-        final cell = tester.widget<Text>(
-          find.descendant(of: header, matching: find.text(label)),
-        );
-        expect(cell.style?.fontSize, 14,
-            reason: '$label column header must be 14px');
-        expect(cell.style?.fontWeight, FontWeight.w600,
-            reason: '$label column header must be semibold');
-      }
-
-      // Row text bumped to the readable band: name, unit price, line total.
-      final name = tester.widget<Text>(
-        find.byKey(Key('cart-line-name-${bread.key}')),
+      // The table chrome and one row per line, exactly as in standard.
+      expect(find.byKey(const Key('pos-dense-header')), findsOneWidget);
+      expect(find.byKey(Key('cart-line-price-${bread.key}')), findsOneWidget);
+      expect(find.byKey(Key('cart-line-name-${bread.key}')), findsOneWidget);
+      expect(find.byKey(Key('cart-line-total-${bread.key}')), findsOneWidget);
+      expect(find.byKey(Key('cart-line-qty-${bread.key}')), findsOneWidget);
+      expect(
+        find.byKey(Key('cart-line-discount-${bread.key}')),
+        findsOneWidget,
       );
-      expect(name.style?.fontSize, 15);
-      final price = tester.widget<Text>(
-        find.byKey(Key('cart-line-price-${bread.key}')),
+      expect(find.byKey(Key('cart-line-remove-${bread.key}')), findsOneWidget);
+      // The card-only summary cell is gone.
+      expect(
+        find.byKey(Key('cart-line-summary-${bread.key}')),
+        findsNothing,
       );
-      expect(price.style?.fontSize, 15);
-      final total = tester.widget<Text>(
-        find.byKey(Key('cart-line-total-${bread.key}')),
-      );
-      expect(total.style?.fontSize, 15);
       expect(tester.takeException(), isNull);
     });
 
@@ -10928,10 +10930,7 @@ void main() {
       // is re-seeded from the committed quantity, never lost.
       expect(qtyAfter.controller!.text, '1');
       // Selection follows the provider (lastActiveKey), not the tile State.
-      expect(
-        find.byKey(Key('cart-line-selected-$key')),
-        findsOneWidget,
-      );
+      expect(containerOf(tester).read(posCartProvider).lastActiveKey, key);
       expect(tester.takeException(), isNull);
     });
 
@@ -10960,7 +10959,6 @@ void main() {
       expect(cart.lines, hasLength(2));
       final key = cart.lines.last.key;
       expect(cart.lastActiveKey, key);
-      expect(find.byKey(Key('cart-line-selected-$key')), findsOneWidget);
       expect(
         focusedFieldKey(tester),
         'pos-search-field',
@@ -11005,12 +11003,23 @@ void main() {
           ),
         );
       }
-      await tester.pump();
+      await tester.pumpAndSettle();
 
       final cart = containerOf(tester).read(posCartProvider);
       final keys = [for (final line in cart.lines) line.key];
       expect(cart.lastActiveKey, keys.last,
           reason: 'the newest line is preselected by the last add');
+
+      // The card list is lazy: walk to the end so both the selected and
+      // the moved-to rows are laid out, exactly like a cashier at the
+      // bottom of a long cart.
+      for (var i = 0; i < 10; i++) {
+        await tester.drag(
+          find.byKey(const Key('pos-cart-lines')),
+          const Offset(0, -1000),
+        );
+        await tester.pumpAndSettle();
+      }
 
       // §5: only the key press + explicit duration frames — no
       // pumpAndSettle (a full settle would mask a reveal that never
@@ -11019,17 +11028,18 @@ void main() {
       await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
       await tester.pump(const Duration(milliseconds: 50));
       await tester.pump(const Duration(milliseconds: 300));
+      await tester.pump(const Duration(milliseconds: 300));
 
       expect(containerOf(tester).read(posCartProvider).lastActiveKey,
           keys[keys.length - 2],
-          reason: 'Up must walk the selection in the dense table');
+          reason: 'Up must walk the selection in the card list');
       final viewport = tester.getRect(find.byKey(const Key('pos-cart-lines')));
       final tile = tester.getRect(
           find.byKey(Key('cart-line-${keys[keys.length - 2]}')));
       expect(tile.top, greaterThanOrEqualTo(viewport.top - 0.5),
           reason: 'the moved-to row must be revealed above the fold');
       expect(tile.bottom, lessThanOrEqualTo(viewport.bottom + 0.5),
-          reason: 'and fully inside the dense viewport');
+          reason: 'and fully inside the viewport');
       expect(tester.takeException(), isNull);
     });
 
@@ -11082,7 +11092,7 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('reversed mode compacts the cart chrome; TOTAL and PAY stay '
+    testWidgets('reversed mode keeps the SAME card chrome; TOTAL and PAY stay '
         'prominent', (tester) async {
       await _pumpApp(tester, dio: dio);
       await tester.pump(const Duration(milliseconds: 500));
@@ -11104,19 +11114,14 @@ void main() {
       final revTotals = sizeOf(const Key('pos-totals-panel'));
       final revPay = sizeOf(const Key('pos-pay-button'));
 
-      // Header/customer rows give their slack back to the lines region
-      // (72 → 56, 52 → 44).
-      expect(revHeader.height, lessThan(stdHeader.height));
-      expect(revHeader.height, inInclusiveRange(50, 56));
-      expect(revCustomer.height, lessThan(stdCustomer.height));
-      expect(revCustomer.height, greaterThanOrEqualTo(44));
-      // Action buttons (Hold/F7/F9/F10 rows): 46 → 40, whole block 112 → 88.
-      expect(revHold.height, lessThan(stdHold.height));
-      expect(revHold.height, inInclusiveRange(36, 40));
-      expect(revActions.height, lessThan(stdActions.height));
-      // Totals panel trims padding/row gaps only…
-      expect(revTotals.height, lessThan(stdTotals.height));
-      // …while TOTAL and PAY keep their prominence (60px PAY, unchanged).
+      // Every chrome row is byte-for-byte the same height: the layout
+      // switch moves the panels, it never re-renders or compacts the cart.
+      expect(revHeader.height, stdHeader.height);
+      expect(revCustomer.height, stdCustomer.height);
+      expect(revHold.height, stdHold.height);
+      expect(revActions.height, stdActions.height);
+      expect(revTotals.height, stdTotals.height);
+      // TOTAL and PAY keep their prominence.
       expect(revPay.height, greaterThanOrEqualTo(56));
       expect(revPay.height, greaterThanOrEqualTo(stdPay.height));
 
@@ -11136,7 +11141,7 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('compact chrome holds in AR RTL and FR LTR reversed mode',
+    testWidgets('card chrome holds in AR RTL and FR LTR reversed mode',
         (tester) async {
       final cases = <(TextDirection, AppLocale)>[
         (TextDirection.rtl, AppLocale.ar),
@@ -11166,7 +11171,7 @@ void main() {
       }
     });
 
-    testWidgets('overflowing dense list scrolls the last row fully into view '
+    testWidgets('overflowing card list scrolls the last row fully into view '
         'above the checkout section', (tester) async {
       await _pumpApp(tester, dio: dio, size: const Size(1280, 800));
       await tester.pump(const Duration(milliseconds: 500));
@@ -11184,11 +11189,14 @@ void main() {
       }
       await tester.pump();
 
-      await tester.drag(
-        find.byKey(const Key('pos-cart-lines')),
-        const Offset(0, -5000),
-      );
-      await tester.pumpAndSettle();
+      // The card list is lazy: walk to the end before reading the last row.
+      for (var i = 0; i < 10; i++) {
+        await tester.drag(
+          find.byKey(const Key('pos-cart-lines')),
+          const Offset(0, -1000),
+        );
+        await tester.pumpAndSettle();
+      }
 
       final lines =
           tester.getRect(find.byKey(const Key('pos-cart-lines')));
@@ -11230,6 +11238,16 @@ void main() {
         );
       }
       await tester.pump();
+
+      // The card list is lazy: land near the end so the appended row's
+      // region exists for the post-add reveal.
+      for (var i = 0; i < 10; i++) {
+        await tester.drag(
+          find.byKey(const Key('pos-cart-lines')),
+          const Offset(0, -1000),
+        );
+        await tester.pumpAndSettle();
+      }
 
       // Real barcode scan flow (search field → Enter) — the screen-driven
       // add path that issues the post-add reveal request (never a focus
@@ -11336,22 +11354,24 @@ void main() {
 
       final cart = containerOf(tester).read(posCartProvider);
       final someTile = tester
-          .getRect(find.byKey(Key('cart-line-${cart.lines.last.key}')));
+          .getRect(find.byKey(Key('cart-line-${cart.lines.first.key}')));
       var lines = tester.getRect(find.byKey(const Key('pos-cart-lines')));
-      // The compacted chrome leaves room for at least ONE complete dense
-      // row (previously the region shrank below the row height and every
-      // row was cut at the fixed section).
+      // The compacted chrome keeps a usable scrollable lines region above
+      // the fixed section (a full card is taller than the drawer allows at
+      // 600x500, so the region scrolls rather than clipping the tail).
       expect(
         lines.height,
-        greaterThanOrEqualTo(someTile.height - 0.75),
-        reason: 'lines region fits a full row',
+        greaterThan(someTile.height * 0.8),
+        reason: 'lines region stays usable in the drawer',
       );
 
-      await tester.drag(
-        find.byKey(const Key('pos-cart-lines')),
-        const Offset(0, -5000),
-      );
-      await tester.pumpAndSettle();
+      for (var i = 0; i < 10; i++) {
+        await tester.drag(
+          find.byKey(const Key('pos-cart-lines')),
+          const Offset(0, -1000),
+        );
+        await tester.pumpAndSettle();
+      }
 
       lines = tester.getRect(find.byKey(const Key('pos-cart-lines')));
       final actions =
@@ -11363,7 +11383,9 @@ void main() {
       final lastTile = tester
           .getRect(find.byKey(Key('cart-line-${cart.lines.last.key}')));
 
-      expect(lastTile.top, greaterThanOrEqualTo(lines.top - 0.75));
+      // A card is taller than this drawer's lines region, so the list is
+      // scrolled to its END: the last row's bottom (its qty/total/remove
+      // controls) is fully inside the region, never under the fixed tail.
       expect(lastTile.bottom, lessThanOrEqualTo(lines.bottom + 0.75));
       expect(lines.bottom, lessThanOrEqualTo(actions.top + 0.75));
       expect(actions.bottom, lessThanOrEqualTo(totals.top + 0.75));
@@ -11393,7 +11415,7 @@ void main() {
         expect(
           find.byKey(Key('cart-line-price-${bread.key}')),
           findsOneWidget,
-          reason: '$size dense row',
+          reason: '$size table row',
         );
         await toggleLayout(tester);
         expect(tester.takeException(), isNull, reason: '$size back');
@@ -11488,7 +11510,7 @@ void main() {
         isNull,
       );
 
-      // A line (dense row in the wide panel) enables PAY.
+      // A line (a table row in the wide panel) enables PAY.
       addLine(tester, bread);
       await tester.pump();
       expect(find.byKey(Key('cart-line-price-${bread.key}')), findsOneWidget);
@@ -11501,7 +11523,7 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('narrow 600x500: toggle in toolbar, dense cart in drawer',
+    testWidgets('narrow 600x500: toggle in toolbar, compact cart in drawer',
         (tester) async {
       await _pumpApp(tester, dio: dio, size: const Size(600, 500));
       await tester.pump(const Duration(milliseconds: 500));
@@ -11576,7 +11598,7 @@ void main() {
         expect(
           find.byKey(Key('cart-line-price-${bread.key}')),
           findsOneWidget,
-          reason: '${entry.key} dense row',
+          reason: '${entry.key} table row',
         );
         expect(find.byKey(const Key('pos-pay-button')), findsOneWidget);
         expect(tester.takeException(), isNull, reason: entry.key);
@@ -11601,13 +11623,14 @@ void main() {
       await tester.pump(const Duration(milliseconds: 500));
       addLine(tester, bread);
       await tester.pump();
-      // Restored: cart renders dense/reversed without tapping the toggle.
+      // Restored: the cart keeps the compact table without tapping the
+      // toggle; only the panels' sides are reversed.
       expect(find.byKey(Key('cart-line-price-${bread.key}')), findsOneWidget);
       expect(cartCenterX(tester), lessThan(catalogCenterX(tester)));
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('dense table shows header, price, total and selection cells',
+    testWidgets('reversed mode shows the same table cells as standard',
         (tester) async {
       await _pumpApp(tester, dio: dio);
       await tester.pump(const Duration(milliseconds: 500));
@@ -11615,30 +11638,22 @@ void main() {
       await tester.pump();
       await toggleLayout(tester);
 
-      // Header labels (EN) above the rows; the row cells share the keys.
-      expect(find.text(AppStrings.t('name', 'en')), findsWidgets);
-      expect(find.text(AppStrings.t('unit_price', 'en')), findsWidgets);
-      expect(find.text(AppStrings.t('qty', 'en')), findsWidgets);
-      expect(find.text(AppStrings.t('total_label', 'en')), findsWidgets);
-      expect(find.text(AppStrings.t('line_discount', 'en')), findsWidgets);
-
       final key = bread.key;
+      // Column headers + one row per line, same cells as in standard.
+      expect(find.byKey(const Key('pos-dense-header')), findsOneWidget);
       expect(find.byKey(Key('cart-line-name-$key')), findsOneWidget);
       expect(find.byKey(Key('cart-line-price-$key')), findsOneWidget);
       expect(find.byKey(Key('cart-line-total-$key')), findsOneWidget);
       expect(find.byKey(Key('cart-line-qty-$key')), findsOneWidget);
       expect(find.byKey(Key('cart-line-discount-$key')), findsOneWidget);
       expect(find.byKey(Key('cart-line-remove-$key')), findsOneWidget);
-      expect(find.byKey(Key('cart-line-selected-$key')), findsOneWidget);
-      expect(find.byKey(Key('cart-line-unselected-$key')), findsNothing);
-      // Standard-card-only cell is gone.
       expect(find.byKey(Key('cart-line-summary-$key')), findsNothing);
       // Catalog untouched: still the grid view.
       expect(find.byKey(const Key('pos-product-grid')), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('dense row shows the stock warning when qty exceeds stock',
+    testWidgets('table row shows the stock warning when qty exceeds stock',
         (tester) async {
       await _pumpApp(tester, dio: dio);
       await tester.pump(const Duration(milliseconds: 500));
@@ -11867,6 +11882,9 @@ void main() {
       expect(focusedFieldKey(tester), 'cart-line-discount-${milk.key}');
 
       // Tap bread: selection moves, focus stays in the discount field.
+      await tester.ensureVisible(
+          find.byKey(Key('cart-line-name-${bread.key}')));
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(Key('cart-line-name-${bread.key}')));
       await tester.pump();
       expect(containerOf(tester).read(posCartProvider).lastActiveKey,
@@ -11900,7 +11918,7 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('Delete removes the selected row in the reversed dense '
+    testWidgets('Delete removes the selected row in the reversed card '
         'layout', (tester) async {
       await _pumpApp(
         tester,
@@ -11915,8 +11933,8 @@ void main() {
       await tester.tap(find.byKey(Key('cart-line-name-${bread.key}')));
       await tester.pump();
       expect(
-        find.byKey(Key('cart-line-selected-${bread.key}')),
-        findsOneWidget,
+        containerOf(tester).read(posCartProvider).lastActiveKey,
+        bread.key,
       );
 
       await pressDelete(tester);
@@ -16232,6 +16250,10 @@ void main() {
         );
 
     Future<void> doubleTap(WidgetTester tester, Finder finder) async {
+      // The compact row is wider than a narrow cart panel — reveal the
+      // total column before delivering the double click.
+      await tester.ensureVisible(finder);
+      await tester.pumpAndSettle();
       // Raw pointer events at the widget's centre: two quick press/release
       // pairs are exactly what a Windows mouse double-click delivers.
       final center = tester.getCenter(finder);
@@ -16273,6 +16295,8 @@ void main() {
       await tester.pump(const Duration(milliseconds: 50));
       expect(find.byKey(const Key('line-total-dialog')), findsNothing);
 
+      await tester.ensureVisible(totalTap);
+      await tester.pumpAndSettle();
       await doubleTap(tester, totalTap);
       expect(find.byKey(const Key('line-total-dialog')), findsOneWidget);
       expect(
@@ -16405,8 +16429,12 @@ void main() {
         isTrue,
       );
 
+            await tester
+          .ensureVisible(find.byKey(Key('cart-line-remove-${line.key}')));
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(Key('cart-line-remove-${line.key}')));
       await tester.pumpAndSettle();
+
       expect(container.read(posCartProvider).isEmpty, isTrue);
       expect(tester.takeException(), isNull);
     });

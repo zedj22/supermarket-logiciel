@@ -48,6 +48,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import '../helpers/pos_catalog_mode.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supermarket_pos/core/barcode_scanner.dart';
@@ -419,6 +421,7 @@ Future<ProviderContainer> _pumpApp(WidgetTester tester, MockDio dio) async {
       overrides: <Override>[
         apiClientProvider.overrideWithValue(ApiClient(dio: dio)),
         credentialStorageProvider.overrideWithValue(TestCredentialStorage()),
+        posCatalogMode(),
       ],
       child: const SupermarketPosApp(),
     ),

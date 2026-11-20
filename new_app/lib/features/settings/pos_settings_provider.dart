@@ -17,6 +17,11 @@
 //         discount from its quantity (core/sell_unit_pricing.dart).
 //     Default is MANUAL so an existing installation behaves identically
 //     until an administrator changes the setting.
+//   * [PosSettings.showPosProductList] — scanner-first layout. OFF by
+//     default: the POS product catalog is hidden, the cart owns the
+//     workspace and the barcode field is scan-only (no name/description
+//     search, never auto-focused). ON restores the existing catalog
+//     layout exactly as it worked before.
 //
 // Persistence follows the app_locale / app_theme_mode / scan-settings
 // pattern: a StateNotifier that reads its keys SYNCHRONOUSLY in the
@@ -60,6 +65,12 @@ enum SellUnitPricingMode {
 class PosSettings {
   final bool quickSaleWithSpace;
 
+  /// Whether the POS product catalog is shown beside the cart
+  /// (`show_pos_product_list`). Default `false` — every installation,
+  /// existing or new, starts scanner-first: the catalog is hidden, the
+  /// barcode field stays scan-only, and the cart uses the whole workspace.
+  final bool showPosProductList;
+
   /// Method 1 (manual picker, default) or Method 2 (automatic bundle).
   /// Read per add, never cached in the cart: a mode switch therefore
   /// applies to NEWLY added lines and leaves every existing cart line
@@ -69,15 +80,18 @@ class PosSettings {
   const PosSettings({
     this.quickSaleWithSpace = false,
     this.sellUnitPricingMode = SellUnitPricingMode.manual,
+    this.showPosProductList = false,
   });
 
   PosSettings copyWith({
     bool? quickSaleWithSpace,
     SellUnitPricingMode? sellUnitPricingMode,
+    bool? showPosProductList,
   }) {
     return PosSettings(
       quickSaleWithSpace: quickSaleWithSpace ?? this.quickSaleWithSpace,
       sellUnitPricingMode: sellUnitPricingMode ?? this.sellUnitPricingMode,
+      showPosProductList: showPosProductList ?? this.showPosProductList,
     );
   }
 }
@@ -85,6 +99,10 @@ class PosSettings {
 class PosSettingsNotifier extends StateNotifier<PosSettings> {
   static const quickSaleWithSpaceKey = 'quick_sale_with_space';
   static const sellUnitPricingModeKey = 'sell_unit_pricing_mode';
+
+  /// `show_pos_product_list` — absent on every installation that never
+  /// saved it, which is the documented `false` default.
+  static const showPosProductListKey = 'show_pos_product_list';
 
   final SharedPreferences? _prefs;
 
@@ -96,11 +114,21 @@ class PosSettingsNotifier extends StateNotifier<PosSettings> {
           sellUnitPricingMode: SellUnitPricingMode.fromStorage(
             prefs?.getString(sellUnitPricingModeKey),
           ),
+          showPosProductList:
+              prefs?.getBool(showPosProductListKey) ?? false,
         ));
 
   void setQuickSaleWithSpace(bool value) {
     state = state.copyWith(quickSaleWithSpace: value);
     _prefs?.setBool(quickSaleWithSpaceKey, value);
+  }
+
+  /// Persists the catalog visibility. Purely presentational: the cart, the
+  /// barcode pipeline and every shortcut are the same in both modes.
+  void setShowPosProductList(bool value) {
+    if (state.showPosProductList == value) return;
+    state = state.copyWith(showPosProductList: value);
+    _prefs?.setBool(showPosProductListKey, value);
   }
 
   /// Persists the chosen mode. The cart is NOT touched: existing lines keep

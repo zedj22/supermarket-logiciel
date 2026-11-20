@@ -21,6 +21,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import '../helpers/pos_catalog_mode.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supermarket_pos/core/colors.dart';
@@ -341,6 +343,8 @@ Future<ProviderContainer> _pumpPos(
           ..setLocale(rtl ? AppLocale.ar : AppLocale.en)),
         pdfPreviewProvider.overrideWithValue(_FakePdfPreview()),
         posCartProvider.overrideWith((ref) => cart),
+        // Catalog layout suite: `show_pos_product_list` is opt-in now.
+        posCatalogMode(),
       ],
       child: MaterialApp(
         theme: AppTheme.dark(),
@@ -511,9 +515,9 @@ void main() {
       await _settleScrollToEnd(tester);
 
       final viewport = tester.getRect(_lines().first);
-      // A standard cart tile measures ~170px; the viewport must keep
-      // room for at least one full row with the loyalty block attached.
-      expect(viewport.height, greaterThanOrEqualTo(165));
+      // A compact table row measures ~66px; the viewport must keep room
+      // for at least one full row with the loyalty block attached.
+      expect(viewport.height, greaterThanOrEqualTo(66));
       final last = tester.getRect(_tiles().last);
       expect(last.top, greaterThanOrEqualTo(viewport.top - 0.5));
       expect(last.bottom, lessThanOrEqualTo(viewport.bottom + 0.5));

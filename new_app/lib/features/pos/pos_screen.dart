@@ -258,10 +258,14 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     // visible input and the tracked catalog term always describe the same
     // search (the notifier's text covers a burst whose debounce had not
     // fired when this State was disposed).
-    seedSearchField(
-      _searchController,
-      ref.read(posSearchProvider.notifier).trackedQuery,
-    );
+    // Only the catalog layout has a search query to restore. In
+    // scanner-first mode the field is barcode-only, so nothing is seeded.
+    if (ref.read(posSettingsProvider).showPosProductList) {
+      seedSearchField(
+        _searchController,
+        ref.read(posSearchProvider.notifier).trackedQuery,
+      );
+    }
     Future.microtask(() async {
       // Await the catalog first: the cart's per-line stock snapshots are
       // re-seeded from what actually loads (a purchase received while the
@@ -404,7 +408,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       _searchController.clear();
       ref.read(posSearchProvider.notifier).clear();
       ref.read(posSearchProvider.notifier).load();
-      _searchFocusNode.requestFocus();
+      _restoreScanHome();
       return;
     }
     _focusNode.requestFocus();
@@ -433,7 +437,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
         return;
       }
       await showInvoiceDiscountDialog(context);
-      if (mounted) _searchFocusNode.requestFocus();
+      _restoreScanHome();
       return;
     }
     // SPACE and F8 are the SAME payment shortcut: one branch, one call into
@@ -455,7 +459,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       } else {
         await _openPayment();
       }
-      if (mounted) _searchFocusNode.requestFocus();
+      _restoreScanHome();
       return;
     }
     if (key == LogicalKeyboardKey.f9) {
@@ -480,12 +484,12 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     }
     if (key == LogicalKeyboardKey.f10) {
       await showHoldsDialog(context);
-      if (mounted) _searchFocusNode.requestFocus();
+      _restoreScanHome();
       return;
     }
     if (key == LogicalKeyboardKey.f11) {
       await showSaleHistoryDialog(context);
-      if (mounted) _searchFocusNode.requestFocus();
+      _restoreScanHome();
       return;
     }
     if (key == LogicalKeyboardKey.f12) {
@@ -514,7 +518,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
         // them — no search reset, no refetch, no navigation.
         ref.read(posCartProvider.notifier).clearCart(reason: 'clear-dialog');
       }
-      if (mounted) _searchFocusNode.requestFocus();
+      _restoreScanHome();
       return;
     }
   }
@@ -667,11 +671,10 @@ class _PosScreenState extends ConsumerState<PosScreen> {
   /// empty cart is a no-op. The moved-to tile reveals itself when it
   /// becomes selected (geometry check inside [_CartLineTile] — a fully
   /// visible row never moves, a row above the fold top-aligns, a row below
-  /// it bottom-aligns). The standard list builds tiles lazily: an entering
+  /// it bottom-aligns). The card list builds tiles lazily: an entering
   /// jump can cross the whole list, so the matching END is scrolled to
   /// first, and a mid-list step that lands outside the built window lays
-  /// the target's estimated region out first ([_jumpNearTarget]) — the
-  /// dense table builds every row eagerly and needs neither jump. Focus
+  /// the target's estimated region out first ([_jumpNearTarget]). Focus
   /// never moves — the activator only fires outside text editing, so the
   /// barcode field keeps it.
   void _moveActiveLine(int delta) {
@@ -681,12 +684,10 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     final keys = [for (final line in lines) line.key];
     final active = cart.lastActiveKey;
     var index = active == null ? -1 : keys.indexOf(active);
-    final dense =
-        ref.read(posLayoutSwitchProvider) == PosScreenLayout.reversed;
     final controller = _linesController;
     if (index < 0) {
       index = delta > 0 ? 0 : keys.length - 1;
-      if (!dense && controller.hasClients) {
+      if (controller.hasClients) {
         // Lay out the END the entering selection starts from so the target
         // tile EXISTS for its reveal in the very next frame.
         controller.jumpTo(delta > 0
@@ -696,7 +697,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     } else {
       final next = index + delta;
       index = next < 0 ? 0 : (next >= keys.length ? keys.length - 1 : next);
-      if (!dense && controller.hasClients) {
+      if (controller.hasClients) {
         _jumpNearTarget(controller.position, index, keys.length);
       }
     }
@@ -1002,7 +1003,68 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       scanDiag('focus-yank', {'outcome': 'blocked-input'});
       return;
     }
-    _searchFocusNode.requestFocus();
+    _restoreScanHome();
+  }
+
+  /// Where the keyboard lives between actions — mode-aware on purpose.
+  ///
+  /// * Catalog mode (`show_pos_product_list` ON): the barcode/search field
+  ///   is the keyboard home, exactly as it always was; a cashier types a
+  ///   query or scans into it.
+  /// * Scanner-first mode (product list hidden — the default): focus goes
+  ///   back to the WORKSPACE node and the barcode field is left empty and
+  ///   unfocused. A field that keeps focus swallows the SPACE pay key as a
+  ///   space character, which is exactly the bug this mode fixes. The
+  ///   app-level scanner gateway (`core/barcode_scanner.dart`) captures a
+  ///   wedge burst with NOTHING focused, so scanning keeps working while
+  ///   SPACE / F8 / every other shortcut stays live.
+  void _restoreScanHome() {
+    if (!mounted) return;
+    if (ref.read(posSettingsProvider).showPosProductList) {
+      _searchFocusNode.requestFocus();
+      return;
+    }
+    _searchController.clear();
+    _focusNode.requestFocus();
+  }
+
+  /// Scanner-first submit: the text in the barcode field is a BARCODE, never
+  /// a product name/description query (there is no catalog to search).
+  ///
+  /// Resolution goes through the canonical scan pipeline ([_handleLineScan]
+  /// → server lookup → variant / selling-unit / pack / stock guards), i.e.
+  /// the very path an unfocused wedge burst takes. The buffer is cleared
+  /// BEFORE the add so a repeated scan can never concatenate onto this code,
+  /// and focus returns to the workspace so SPACE keeps paying.
+  bool _submitBarcodeInFlight = false;
+
+  Future<void> _submitBarcode() async {
+    if (_submitBarcodeInFlight) return;
+    final raw = _searchController.text.trim();
+    final code = normalizeBarcode(raw);
+    if (code.isEmpty) return;
+    _submitBarcodeInFlight = true;
+    try {
+      _searchController.clear();
+      await _handleLineScan(code);
+    } finally {
+      _submitBarcodeInFlight = false;
+    }
+    _restoreScanHome();
+  }
+
+  /// May SPACE claim the key from the focused field?
+  ///
+  /// Catalog mode keeps the existing rule ([spaceMayClaimFocusedField]: the
+  /// empty barcode field and the cart quantity field). Scanner-first mode
+  /// adds the barcode field with text: it is not a search box any more and
+  /// a barcode can never contain a space, so SPACE must still pay there
+  /// instead of typing a blank into the buffer.
+  bool _spaceMayClaimNow() {
+    if (spaceMayClaimFocusedField()) return true;
+    return !ref.read(posSettingsProvider).showPosProductList &&
+        posFocusRouting() == PosFocusRouting.searchTyping &&
+        focusedPosTextFieldKey() == posSearchFieldKey;
   }
 
   /// A scan could not be resolved because the REQUEST failed (timeout,
@@ -1159,7 +1221,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     } finally {
       _scanActionDialogOpen = false;
     }
-    if (mounted) _searchFocusNode.requestFocus();
+    _restoreScanHome();
   }
 
   /// Behavior B: the existing Adjust Stock dialog for a scan-driven add
@@ -1227,7 +1289,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
         // reload would leave the product panel stuck empty after the
         // loyalty QR was scanned into the search field.
         unawaited(ref.read(posSearchProvider.notifier).load());
-        _searchFocusNode.requestFocus();
+        _restoreScanHome();
         return;
       }
       if (items.length > 1) {
@@ -1322,8 +1384,8 @@ class _PosScreenState extends ConsumerState<PosScreen> {
         // back to the retail card, which may show the promotion price).
         productPromoPrice: product.promotion?.price,
       );
-      // Restore barcode/search focus after dialog closes (keyboard-first).
-      if (mounted) _searchFocusNode.requestFocus();
+      // Return the keyboard to the POS home after the dialog closes.
+      _restoreScanHome();
       if (variant == null) return; // cancelled
       // The cashier waited in a dialog: the unit snapshot started together
       // with the scan is now arbitrarily old — refetch it fresh below.
@@ -1545,8 +1607,8 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       // applied here, where the retail-branch gate can be evaluated).
       productPromoPrice: product.promotion?.price,
     );
-    // Restore barcode/search focus after dialog closes (keyboard-first).
-    if (mounted) _searchFocusNode.requestFocus();
+    // Return the keyboard to the POS home after the dialog closes.
+    _restoreScanHome();
     if (pick == null) return;
     // Phase 18 gate — promotion only when the BASE unit was chosen with no
     // explicit selling price and the line prices off `products.price`.
@@ -1593,8 +1655,8 @@ class _PosScreenState extends ConsumerState<PosScreen> {
   Future<void> _addPack() async {
     final PackPickResult? pick = await showPackPickerDialog(context);
     if (pick == null || !mounted) return;
-    // Restore barcode/search focus after the dialog (keyboard-first).
-    _searchFocusNode.requestFocus();
+    // Return the keyboard to the POS home after the dialog.
+    _restoreScanHome();
     _addCartLine(
       packId: pick.packId,
       name: pick.name,
@@ -1672,7 +1734,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       availableStock: availability.maxPackQuantity,
       componentsSummary: packComponentsSummary(availability, loc),
     );
-    _searchFocusNode.requestFocus();
+    _restoreScanHome();
   }
 
   /// Product stays out of the cart until the required lookup succeeds.
@@ -1891,7 +1953,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     // focus only on an explicit click/tap. The written line still becomes
     // the `+`/`*` target: addLine/updateLine set `lastActiveKey`
     // themselves, so no focus move is needed for that. The line is still
-    // REVEALED without focus: dense-table ensureVisible used to ride the
+    // REVEALED without focus: an ensureVisible used to ride the
     // post-add focus request; the reveal request gives the same visibility
     // (claimed synchronously by a mounted tile or in initState by the
     // just-built one) while the qty field is never auto-focused.
@@ -1913,7 +1975,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
   void _restoreSearchFocusAfterDialog() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      _searchFocusNode.requestFocus();
+      _restoreScanHome();
     });
   }
 
@@ -1927,6 +1989,11 @@ class _PosScreenState extends ConsumerState<PosScreen> {
   /// field already owns the key before this layer is reached.
   bool _shortcutMayClaimFocus() => switch (posFocusRouting()) {
         PosFocusRouting.noEditable || PosFocusRouting.searchIdle => true,
+        // Scanner-first: the barcode field is not a search box, so the
+        // Shift-combo shortcuts stay reachable while it holds a code.
+        PosFocusRouting.searchTyping =>
+          !ref.read(posSettingsProvider).showPosProductList &&
+              focusedPosTextFieldKey() == posSearchFieldKey,
         _ => false,
       };
 
@@ -2538,6 +2605,10 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     final search = ref.watch(posSearchProvider);
     final favorites = ref.watch(favoritesProvider);
     final viewMode = ref.watch(posCatalogViewModeProvider);
+    // Scanner-first layout (the default): the product catalog is hidden and
+    // the cart owns the workspace. Purely presentational — the cart, the
+    // barcode pipeline and every shortcut are identical in both modes.
+    final showProductList = ref.watch(posSettingsProvider).showPosProductList;
     // Layout switch (standard | reversed) — presentation only; the cart
     // provider and every checkout path are identical in both modes.
     final screenLayout = ref.watch(posLayoutSwitchProvider);
@@ -2589,8 +2660,16 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       focusNode: _searchFocusNode,
       query: search.query,
       loading: search.loading,
-      onChanged: (v) => ref.read(posSearchProvider.notifier).setQuery(v),
-      onSubmitted: (_) => _submitSearch(),
+      // Scanner-first: the field is a BARCODE input only — it never filters
+      // the (hidden) catalog by name/description (onChanged is null) and
+      // Enter resolves the code through the canonical scan pipeline. It also
+      // never autofocuses, so SPACE / F8 stay the pay keys.
+      scanOnly: !showProductList,
+      onChanged: showProductList
+          ? (v) => ref.read(posSearchProvider.notifier).setQuery(v)
+          : null,
+      onSubmitted: (_) =>
+          showProductList ? _submitSearch() : _submitBarcode(),
     );
 
     final catalogPacks = ref.watch(posCatalogPacksProvider);
@@ -2645,11 +2724,11 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     );
 
     final cartPanel = _CartPanel(
-      // Reversed mode renders the lines as one compact table; standard
-      // mode keeps the existing card list untouched.
-      dense: reversedLayout,
+      // The cart ALWAYS renders the card list. The line renderer is
+      // deliberately decoupled from the catalog visibility and from the
+      // standard/reversed layout switch — that switch only decides which
+      // side the catalog and the cart sit on.
       cart: cart,
-      linesController: _linesController,
       compaction: _chromeLevel,
       onCompactionChange: (level) {
         if (level == _chromeLevel) return;
@@ -2824,9 +2903,13 @@ class _PosScreenState extends ConsumerState<PosScreen> {
                       child: searchField,
                     ),
                     packsButton,
+                    // Manual selection must stay reachable WITHOUT the
+                    // catalog: the same product picker Ctrl+N opens.
+                    productPickerButton,
                     shortcutsButton,
-                    compactToggle,
-                    layoutToggleCompact,
+                    // Catalog-only controls disappear with the catalog.
+                    if (showProductList) compactToggle,
+                    if (showProductList) layoutToggleCompact,
                   ],
                 );
               }
@@ -2846,55 +2929,68 @@ class _PosScreenState extends ConsumerState<PosScreen> {
                   productPickerButton,
                   const SizedBox(width: 8),
                   shortcutsButton,
-                  const SizedBox(width: 8),
-                  // FIX #3: full labels when workspace allows; icons+tooltip
-                  // when tight. Both toggles are scale-shrinkable
-                  // (Flexible + FittedBox): at large text scales their
-                  // intrinsic width pushed this Row past its box by a
-                  // fraction of a pixel — they now yield instead.
-                  if (tightWorkspace)
-                    Flexible(
-                      child: FittedBox(
-                        fit: BoxFit.scaleDown,
-                        child: compactToggle,
-                      ),
-                    )
-                  else
-                    Flexible(
-                      child: FittedBox(
-                        fit: BoxFit.scaleDown,
-                        child: ConstrainedBox(
-                          // FIX #3: ≥190 when space allows; grow for full labels.
-                          constraints: const BoxConstraints(minWidth: 190),
-                          child: _ViewModeToggle(
-                            mode: viewMode,
-                            compact: false,
-                            onChanged: (m) =>
-                                ref.read(posCatalogViewModeProvider.notifier)
-                                    .setMode(m),
+                  // Catalog-only controls (view mode + panel switch) are
+                  // meaningless once the catalog is hidden.
+                  if (showProductList) ...[
+                    const SizedBox(width: 8),
+                    // FIX #3: full labels when workspace allows; icons+tooltip
+                    // when tight. Both toggles are scale-shrinkable
+                    // (Flexible + FittedBox): at large text scales their
+                    // intrinsic width pushed this Row past its box by a
+                    // fraction of a pixel — they now yield instead.
+                    if (tightWorkspace)
+                      Flexible(
+                        child: FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: compactToggle,
+                        ),
+                      )
+                    else
+                      Flexible(
+                        child: FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: ConstrainedBox(
+                            // FIX #3: ≥190 when space allows; grow for full
+                            // labels.
+                            constraints: const BoxConstraints(minWidth: 190),
+                            child: _ViewModeToggle(
+                              mode: viewMode,
+                              compact: false,
+                              onChanged: (m) => ref
+                                  .read(posCatalogViewModeProvider.notifier)
+                                  .setMode(m),
+                            ),
                           ),
                         ),
                       ),
+                    const SizedBox(width: 8),
+                    // Layout switch sits with the display-mode control it
+                    // complements; full label only when even the worst case
+                    // (full view-mode labels + min search width) still fits.
+                    Flexible(
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: toolbarConstraints.maxWidth >=
+                                (tightWorkspace ? 560 : 700)
+                            ? layoutToggleFull
+                            : layoutToggleCompact,
+                      ),
                     ),
-                  const SizedBox(width: 8),
-                  // Layout switch sits with the display-mode control it
-                  // complements; full label only when even the worst case
-                  // (full view-mode labels + min search width) still fits.
-                  Flexible(
-                    child: FittedBox(
-                      fit: BoxFit.scaleDown,
-                      child: toolbarConstraints.maxWidth >=
-                              (tightWorkspace ? 560 : 700)
-                          ? layoutToggleFull
-                          : layoutToggleCompact,
-                    ),
-                  ),
+                  ],
                 ],
               );
             },
           ),
         ),
-        Expanded(child: productCatalog),
+        // Catalog layout only: hiding it gives the cart the whole
+        // workspace instead of an empty panel.
+        if (showProductList)
+          Expanded(
+            child: KeyedSubtree(
+              key: const Key('pos-product-catalog'),
+              child: productCatalog,
+            ),
+          ),
       ],
     );
 
@@ -2912,7 +3008,48 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     final narrowCart = SizedBox(width: cartWidth, child: cartPanel);
 
     Widget body;
-    switch (layout) {
+    if (!showProductList) {
+      // Scanner-first: there is no catalog panel to swap, so the barcode bar
+      // and the POS tools stay pinned above a cart that expands into the
+      // whole workspace — in every layout mode, in RTL and LTR alike.
+      //
+      // The cart keeps the LION's share: its fixed chrome (header, customer
+      // row, actions, totals/PAY) is the tallest thing on screen, so on a
+      // short viewport the tools area is the part that yields (it scrolls)
+      // instead of squeezing the cart below its own chrome and overflowing.
+      body = LayoutBuilder(
+        builder: (context, constraints) {
+          const cartFloor = 420.0;
+          final workspaceMax = constraints.maxHeight.isFinite
+              ? (constraints.maxHeight - cartFloor).clamp(0.0, 260.0)
+              : 260.0;
+          // Below the panel's own minimum a squeezed Expanded can only
+          // overflow: give the cart its natural height there and let the
+          // whole region scroll (the fixed chrome, PAY included, stays
+          // reachable) instead of clipping the tail.
+          final cramped = constraints.maxHeight.isFinite &&
+              constraints.maxHeight - workspaceMax < 420.0;
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              ConstrainedBox(
+                constraints: BoxConstraints(maxHeight: workspaceMax),
+                child: SingleChildScrollView(child: workspace),
+              ),
+              const Divider(height: 1),
+              Expanded(
+                child: cramped
+                    ? SingleChildScrollView(
+                        child: SizedBox(height: 620, child: cartPanel),
+                      )
+                    : cartPanel,
+              ),
+            ],
+          );
+        },
+      );
+    } else {
+      switch (layout) {
       case PosLayoutMode.wide:
       case PosLayoutMode.medium:
         body = Row(
@@ -2998,6 +3135,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
               ? Column(children: [totalBar, Expanded(child: workspace)])
               : Column(children: [Expanded(child: workspace), totalBar]);
         }
+      }
     }
 
     // Global shortcuts — Escape never clears cart; F12 requires confirm.
@@ -3083,9 +3221,9 @@ class _PosScreenState extends ConsumerState<PosScreen> {
         // and the quick-sale path only answers from the bare workspace.
         TextFreeKeyActivator(
           LogicalKeyboardKey.space,
-          allowWhileEditing: () =>
+                      allowWhileEditing: () =>
               !ref.read(posSettingsProvider).quickSaleWithSpace &&
-              spaceMayClaimFocusedField(),
+              _spaceMayClaimNow(),
         ): () => _handleShortcut(LogicalKeyboardKey.space),
         // F8 — the second payment key beside SPACE, running the very same
         // action. The focus gate is the Shift+F6/F7 one: the bare workspace
@@ -3195,7 +3333,13 @@ class _SearchField extends StatelessWidget {
   final FocusNode focusNode;
   final String query;
   final bool loading;
-  final ValueChanged<String> onChanged;
+
+  /// Scanner-first mode: the field is a BARCODE input only. It never
+  /// autofocuses (focus parked in a text field is what used to swallow the
+  /// SPACE pay key), it never filters the catalog, and Enter resolves the
+  /// code through the canonical scan pipeline.
+  final bool scanOnly;
+  final ValueChanged<String>? onChanged;
   final ValueChanged<String> onSubmitted;
 
   const _SearchField({
@@ -3203,8 +3347,9 @@ class _SearchField extends StatelessWidget {
     required this.focusNode,
     required this.query,
     required this.loading,
-    required this.onChanged,
     required this.onSubmitted,
+    this.scanOnly = false,
+    this.onChanged,
   });
 
   @override
@@ -3218,10 +3363,16 @@ class _SearchField extends StatelessWidget {
           key: const Key('pos-search-field'),
           controller: controller,
           focusNode: focusNode,
-          autofocus: true,
+          // Catalog mode keeps the established keyboard home; scan-only
+          // mode NEVER requests focus — the gateway captures unfocused
+          // bursts and the workspace node keeps every shortcut alive.
+          autofocus: !scanOnly,
           decoration: InputDecoration(
-            hintText: AppStrings.t('search_products', loc),
-            prefixIcon: const Icon(Icons.search),
+            hintText: AppStrings.t(
+              scanOnly ? 'pos_scan_field_hint' : 'search_products',
+              loc,
+            ),
+            prefixIcon: Icon(scanOnly ? Icons.qr_code_scanner : Icons.search),
             suffixIcon: loading
                 ? const Padding(
                     padding: EdgeInsets.all(12),
@@ -3236,15 +3387,17 @@ class _SearchField extends StatelessWidget {
           onChanged: onChanged,
           onSubmitted: onSubmitted,
         ),
-        const SizedBox(height: 4),
-        Text(
-          AppStrings.t('scan_barcode_hint', loc),
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: Theme.of(context).colorScheme.outline,
-              ),
-        ),
+        if (!scanOnly) ...[
+          const SizedBox(height: 4),
+          Text(
+            AppStrings.t('scan_barcode_hint', loc),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: Theme.of(context).colorScheme.outline,
+                ),
+          ),
+        ],
       ],
     );
   }
@@ -4261,17 +4414,14 @@ class _FavoriteChip extends StatelessWidget {
 ///
 /// The floor is the tallest element keyed `cart-line-*` in the lines
 /// subtree (the row-level box of every built tile); with no built tile
-/// it falls back to a layout-class estimate (standard ≈ 170, dense
-/// reversed ≈ 66 at 1.0 text scale).
+/// it falls back to the cart-row estimate (≈ 170 at 1.0 text scale).
 class _LinesFloorProbe extends StatefulWidget {
   const _LinesFloorProbe({
-    required this.dense,
     required this.level,
     required this.onLevel,
     required this.child,
   });
 
-  final bool dense;
   final int level;
   final ValueChanged<int> onLevel;
   final Widget child;
@@ -4307,10 +4457,8 @@ class _LinesFloorProbeState extends State<_LinesFloorProbe> {
 
   void _measure() {
     if (!mounted) return;
-    // The floor applies to the SCROLL VIEWPORT, not this wrapper: the
-    // dense layout parks fixed column chrome above the list, which would
-    // otherwise masquerade as extra row room. No keyed viewport = empty
-    // state = no row to protect.
+    // The floor applies to the SCROLL VIEWPORT, not this wrapper. No
+    // keyed viewport = empty state = no row to protect.
     Element? viewportEl;
     void find(Element e) {
       if (viewportEl != null) return;
@@ -4344,7 +4492,7 @@ class _LinesFloorProbeState extends State<_LinesFloorProbe> {
     }
 
     walk(context as Element);
-    final floor = rowMax > 0 ? rowMax : (widget.dense ? 66.0 : 170.0);
+    final floor = rowMax > 0 ? rowMax : 66.0;
 
     var next = widget.level;
     if (linesH < floor - 0.5) {
@@ -4359,12 +4507,6 @@ class _LinesFloorProbeState extends State<_LinesFloorProbe> {
 class _CartPanel extends StatelessWidget {
   final PosCartState cart;
   final void Function(String) onRemoveLine;
-
-  /// Reversed layout: the lines render as one compact, single-row-per-line
-  /// table (selection · name · unit price · qty · total · discount ·
-  /// remove) inside a vertically scrolling body with a shared horizontal
-  /// region — instead of the standard stacked card list.
-  final bool dense;
 
   /// Line key whose qty field should show the committed quantity again
   /// once the current frame lands — set by a scan submitted FROM that
@@ -4424,12 +4566,6 @@ class _CartPanel extends StatelessWidget {
   /// Localized last return failure — inline in the return banner.
   final String? returnError;
 
-  /// Parent-owned standard list scroll position — the State jumps it when
-  /// an entering arrow press (_PosScreenState._moveActiveLine) lands on a
-  /// tile the lazy list has not built yet; the dense table builds every
-  /// row eagerly and never needs it.
-  final ScrollController linesController;
-
   /// Progressive chrome compaction level (0 = full layout; ≥1 merged
   /// action row + inline TOTAL + tightest rhythm; ≥2 merged
   /// Subtotal/Discount band): raised by the lines-region probe while the
@@ -4442,10 +4578,8 @@ class _CartPanel extends StatelessWidget {
 
   const _CartPanel({
     required this.cart,
-    required this.linesController,
     this.compaction = 0,
     required this.onCompactionChange,
-    this.dense = false,
     required this.clearQtyTextRequest,
     required this.revealRequest,
     required this.onRemoveLine,
@@ -4497,19 +4631,10 @@ class _CartPanel extends StatelessWidget {
     // exactly 1, so existing layouts, goldens and geometry tests stand.
     final ts = MediaQuery.textScalerOf(context).scale(1.0);
     final textUp = ts > 1.0 ? ts : 1.0;
-    final headerHeight = (dense
-            ? (short ? 50.0 : 56.0)
-            : compact
-                ? 64.0
-                : 72.0) *
-        textUp;
-    // A selected customer keeps the SAME essential content (name, phone,
-    // change-customer action) in the dense 44px footprint — walk-in keeps
-    // the roomy 48/52 row. Attaching a customer must never steal vertical
-    // space from the cart lines region below (customer-attached clipping).
-    final customerHeight =
-        (dense || cart.customer != null ? 44.0 : compact ? 48.0 : 52.0) *
-            textUp;
+    // The compact table compacts the chrome so the rows get the height:
+    // header 50/56, customer row pinned at 44 (walk-in and selected alike).
+    final headerHeight = (short ? 50.0 : 56.0) * textUp;
+    final customerHeight = 44.0 * textUp;
 
     return Container(
       key: const Key('pos-cart-panel'),
@@ -4518,15 +4643,11 @@ class _CartPanel extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           // Header: real POS header (UX FIX #8) — 64–76px, 20–22 title.
-          // Dense (reversed) compacts it to 52–56 so the lines region
-          // below gets more of the panel (see [_denseCartLines]).
           SizedBox(
             height: headerHeight,
             child: Padding(
               key: const Key('pos-cart-header'),
-              padding: dense
-                  ? const EdgeInsetsDirectional.fromSTEB(10, 2, 8, 2)
-                  : const EdgeInsetsDirectional.fromSTEB(12, 6, 8, 4),
+              padding: const EdgeInsetsDirectional.fromSTEB(10, 2, 8, 2),
               child: Row(
                 children: [
                   Text('🛒', style: TextStyle(fontSize: compact ? 22 : 24)),
@@ -4735,7 +4856,6 @@ class _CartPanel extends StatelessWidget {
             // so a full row always fits above the fixed footer (the
             // loyalty/totals block never obscures the last visible row).
             child: _LinesFloorProbe(
-              dense: dense,
               level: compaction,
               onLevel: onCompactionChange,
               child: cart.isEmpty
@@ -4785,41 +4905,7 @@ class _CartPanel extends StatelessWidget {
                       ),
                     ),
                   )
-                : dense
-                    ? _denseCartLines(theme: theme, loc: loc)
-                    : ListView.separated(
-                    key: const Key('pos-cart-lines'),
-                    controller: linesController,
-                    padding: const EdgeInsets.symmetric(
-                      vertical: 6,
-                      horizontal: 6,
-                    ),
-                    itemCount: cart.lines.length,
-                    separatorBuilder: (_, _) => const SizedBox(height: 6),
-                    itemBuilder: (context, index) {
-                      final line = cart.lines[index];
-                      return _CartLineTile(
-                        // State follows the *line*, not the list position —
-                        // the focused qty field must stay with its line when
-                        // another product is added above it.
-                        key: ValueKey<String>(line.key),
-                        line: line,
-                        // Selection drives the row's highlight (primary
-                        // tint + border, check-circle in the dense table)
-                        // and the arrow-key reveal.
-                        selected: line.key == cart.lastActiveKey,
-                        revealRequest: revealRequest,
-                        onRemove: () => onRemoveLine(line.key),
-                        onActivate: () => onActivateLine(line.key),
-                        onQty: (q) => onUpdateQty(line.key, q),
-                        onDiscount: (d) =>
-                            onUpdateLineDiscount(line.key, d),
-                        onEditTotal: () => onEditTotalLine(line.key),
-                        onScan: onScanLine,
-                        clearQtyTextRequest: clearQtyTextRequest,
-                      );
-                    },
-                  ),
+                : _denseCartLines(theme: theme, loc: loc),
             ),
           ),
           // EXPLICIT checkout-section budget: the fixed chrome above the
@@ -4854,7 +4940,6 @@ class _CartPanel extends StatelessWidget {
                 label: AppStrings.t('discount_shortcut', loc),
                 onPressed: onDiscount,
                 short: short || compact,
-                dense: dense,
                 accent: AppColors.warning,
                 shortcut: PosShortcutKeys.invoiceDiscount,
               );
@@ -4869,7 +4954,6 @@ class _CartPanel extends StatelessWidget {
                 onPressed:
                     (cart.isEmpty || cart.returnMode) ? null : onHold,
                 short: short || compact,
-                dense: dense,
                 accent: AppColors.actionHold,
                 shortcut: PosShortcutKeys.hold,
               );
@@ -4880,7 +4964,6 @@ class _CartPanel extends StatelessWidget {
                 label: AppStrings.t('holds_shortcut', loc),
                 onPressed: onHolds,
                 short: short || compact,
-                dense: dense,
                 badgeCount: heldCount,
                 shortcut: PosShortcutKeys.holds,
               );
@@ -4891,7 +4974,6 @@ class _CartPanel extends StatelessWidget {
                 label: AppStrings.t('history_shortcut', loc),
                 onPressed: onHistory,
                 short: short || compact,
-                dense: dense,
                 accent: AppColors.actionHistory,
                 shortcut: PosShortcutKeys.history,
               );
@@ -4902,7 +4984,6 @@ class _CartPanel extends StatelessWidget {
                 label: AppStrings.t('pos_return', loc),
                 onPressed: cart.isEmpty ? null : onReturn,
                 short: short || compact,
-                dense: dense,
                 accent: AppColors.actionReturn,
                 // The one solid chip: entering return
                 // mode must stay an unmissable red.
@@ -4934,7 +5015,6 @@ class _CartPanel extends StatelessWidget {
                     // above only decides the painted disabled state).
                     onPressed: enabled ? onRedemption : null,
                     short: short || compact,
-                    dense: dense,
                     accent: AppColors.success,
                     shortcut: PosShortcutKeys.useLoyaltyPoints,
                   );
@@ -4964,16 +5044,11 @@ class _CartPanel extends StatelessWidget {
                         ),
                       ),
                     // 2-column secondary action grid (UX FIX #8): 44–48px, 13–15px
-                    // font. Dense (reversed) compacts it: 40px buttons (36 on short
-                    // screens), 4px row gaps, 2px block padding — the checkout
-                    // chrome must leave the lines region as much height as possible.
+                    // font. The checkout chrome must leave the lines region
+                    // as much height as possible.
                     Padding(
                       key: const Key('pos-cart-actions'),
-                      padding: dense
-                          ? const EdgeInsets.fromLTRB(8, 2, 8, 2)
-                          : compact
-                              ? const EdgeInsets.fromLTRB(10, 4, 10, 4)
-                              : const EdgeInsets.fromLTRB(10, 6, 10, 6),
+                      padding: const EdgeInsets.fromLTRB(8, 2, 8, 2),
                       child: Column(
                         children: [
                           if (compaction >= 1)
@@ -5006,7 +5081,7 @@ class _CartPanel extends StatelessWidget {
                                 Expanded(child: holdAction),
                               ],
                             ),
-                            SizedBox(height: dense ? (short ? 2 : 4) : 8),
+                            SizedBox(height: short ? 2 : 4),
                             Row(
                               children: [
                                 Expanded(child: holdsAction),
@@ -5022,7 +5097,7 @@ class _CartPanel extends StatelessWidget {
                           // permission); the whole row is withheld in return
                           // mode — that sale earns nothing.
                           if (!cart.returnMode && (canReturn || compaction < 1)) ...[
-                            SizedBox(height: dense ? (short ? 2 : 4) : 8),
+                            SizedBox(height: short ? 2 : 4),
                             Row(
                               children: [
                                 if (canReturn) ...[
@@ -5041,7 +5116,6 @@ class _CartPanel extends StatelessWidget {
                     // PAY slot becomes Confirm return / Cancel return.
                     _PosTotalsPanel(
                       cart: cart,
-                      dense: dense,
                       compaction: compaction,
                       onPayment: onPayment,
                       onConfirmReturn: onConfirmReturn,
@@ -5114,7 +5188,6 @@ class _CartPanel extends StatelessWidget {
                             // line.
                             key: ValueKey<String>(line.key),
                             line: line,
-                            dense: true,
                             selected: line.key == cart.lastActiveKey,
                             clearQtyTextRequest: clearQtyTextRequest,
                             revealRequest: revealRequest,
@@ -5206,22 +5279,16 @@ class _CartPanel extends StatelessWidget {
     required String label,
     required VoidCallback? onPressed,
     required bool short,
-    bool dense = false,
     int badgeCount = 0,
     Color? accent,
     bool solid = false,
     String? shortcut,
   }) {
-    // Dense (reversed) rows: 40px (36 on short screens) instead of the
-    // standard 44–46 — labels stay identical, only the chrome is
-    // compacted so the cart lines get the height back. [shortcut] is the
-    // key chip beside the label (PosShortcutKeys — the same table the
-    // shortcuts map documents); it never changes the button's height.
-    final height = dense
-        ? (short ? 36.0 : 40.0)
-        : short
-            ? 44.0
-            : 46.0;
+    // Compact table chrome: 40px (36 on short screens) — labels stay
+    // identical, only the height is compacted so the rows get it back.
+    // [shortcut] is the key chip beside the label (PosShortcutKeys — the
+    // same table the shortcuts map documents); it never changes the height.
+    final height = short ? 36.0 : 40.0;
     final theme = Theme.of(context);
     // Semantic action colors: an accent paints a SUBTLE TINT wash of its
     // hue over the panel ([AppColors.tint] × brightness) with the hue
@@ -5287,13 +5354,13 @@ class _CartPanel extends StatelessWidget {
                 label: Text('$badgeCount'),
                 backgroundColor: theme.colorScheme.primary,
                 textColor: theme.colorScheme.onPrimary,
-                child: Icon(icon, size: dense || short ? 18 : 20),
+                child: Icon(icon, size: short ? 18 : 20),
               )
-            : Icon(icon, size: dense || short ? 18 : 20),
+            : Icon(icon, size: short ? 18 : 20),
         label: ShortcutBadgeLabel(
           label,
           keys: shortcut,
-          compact: dense || short,
+          compact: short,
           labelStyle: theme.textTheme.labelLarge?.copyWith(
             fontSize: 14,
             fontWeight: FontWeight.w600,
@@ -5309,11 +5376,6 @@ class _CartPanel extends StatelessWidget {
 class _PosTotalsPanel extends ConsumerStatefulWidget {
   final PosCartState cart;
 
-  /// Dense (reversed) cart: trims the panel's vertical padding/row gaps so
-  /// the cart lines region above gets the height back. TOTAL and PAY stay
-  /// prominent — only breathing room is removed.
-  final bool dense;
-
   /// Chrome compaction level from the cart-panel probe (0 = full layout;
   /// ≥1 merged action row, inline TOTAL and tightest rhythm; ≥2 merged
   /// Subtotal/Discount band). Presentation only — every value, key and
@@ -5327,7 +5389,6 @@ class _PosTotalsPanel extends ConsumerStatefulWidget {
 
   const _PosTotalsPanel({
     required this.cart,
-    this.dense = false,
     this.compaction = 0,
     required this.onPayment,
     required this.onConfirmReturn,
@@ -5384,21 +5445,8 @@ class _PosTotalsPanelState extends ConsumerState<_PosTotalsPanel> {
         // §4 height budget: the stacked TOTAL (+~25px of label above the
         // amount) is paid for by leaner chrome here — the bottom region
         // must NOT grow against the cart lines (customer-attached
-        // clipping, last-row fits). Dense keeps its own tighter rhythm.
-        padding: EdgeInsets.fromLTRB(
-          12,
-          widget.dense
-              ? 4
-              : MediaQuery.sizeOf(context).height < 700
-                  ? 4
-                  : 6,
-          12,
-          widget.dense
-              ? 2
-              : MediaQuery.sizeOf(context).height < 700
-                  ? 4
-                  : 4,
-        ),
+        // clipping, last-row fits).
+                  padding: const EdgeInsets.fromLTRB(12, 4, 12, 2),
         child: LayoutBuilder(
           builder: (context, constraints) {
             final w = constraints.maxWidth;
@@ -5430,32 +5478,11 @@ class _PosTotalsPanelState extends ConsumerState<_PosTotalsPanel> {
                     : 15.0;
             final payFontSize = mediaH < 560 ? 15.0 : 17.0;
             final payIconSize = mediaH < 560 ? 20.0 : 22.0;
-            // Dense (reversed): row padding, divider and post-TOTAL gap
-            // yield their breathing room to the cart lines above (even
-            // more so on short screens); the TOTAL size and PAY height
-            // are untouched (both prominent). Compaction ≥ 1 pins every
-            // rhythm knob to its tightest value regardless of window.
-            final rowPad = tightest
-                ? 1.0
-                : widget.dense
-                    ? (mediaH < 560 ? 1.0 : 3.0)
-                    : mediaH < 700
-                        ? 2.0
-                        : 3.0;
-            final gapAfterTotal = tightest
-                ? 2.0
-                : widget.dense
-                    ? (mediaH < 560 ? 2.0 : 6.0)
-                    : mediaH < 700
-                        ? 4.0
-                        : 6.0;
-            final dividerH = tightest
-                ? 4.0
-                : widget.dense
-                    ? (mediaH < 560 ? 4.0 : 8.0)
-                    : mediaH < 700
-                        ? 8.0
-                        : 10.0;
+            // Compaction ≥ 1 pins every rhythm knob to its tightest value
+            // regardless of window.
+            final rowPad = tightest ? 1.0 : (mediaH < 560 ? 1.0 : 3.0);
+            final gapAfterTotal = tightest ? 2.0 : (mediaH < 560 ? 2.0 : 6.0);
+            final dividerH = tightest ? 4.0 : (mediaH < 560 ? 4.0 : 8.0);
 
             // §4/§6: the label sits immediately ABOVE the dominant amount,
             // both right-aligned to the money edge — a stacked focal block.
@@ -6009,18 +6036,12 @@ class _CartLineTile extends StatefulWidget {
     this.onScan,
     this.clearQtyTextRequest,
     this.revealRequest,
-    this.dense = false,
     this.selected = false,
   });
 
-  /// Reversed-layout single-row rendering (see [_CartPanel._denseCartLines]);
-  /// false keeps the standard stacked card untouched.
-  final bool dense;
-
   /// Whether this line is the cart's current shortcut target
-  /// (lastActiveKey). Drives the selection marker and tint — the dense
-  /// row's check-circle, the standard row's highlighted card border — and
-  /// the arrow-key reveal.
+  /// (lastActiveKey). Drives the selection tint and border — and the
+  /// arrow-key reveal.
   final bool selected;
 
   @override
@@ -6180,9 +6201,7 @@ class _CartLineTileState extends State<_CartLineTile> {
   /// ([ScrollPositionAlignmentPolicy.keepVisibleAtStart]) and a row below
   /// the fold bottom-aligns (keepVisibleAtEnd) — each scrolls the MINIMUM
   /// distance that reveals the row. Runs post-frame so the selection
-  /// rebuild has laid the row out first; the horizontal dense-table
-  /// ancestor (if any) is revealed by the same ensureVisible walk the
-  /// post-add focus path already relies on.
+  /// rebuild has laid the row out first.
   void _revealIfOffscreen() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
@@ -6480,275 +6499,7 @@ class _CartLineTileState extends State<_CartLineTile> {
   }
 
   @override
-  Widget build(BuildContext context) {
-    if (widget.dense) return _buildDenseRow(context);
-    final loc = Localizations.localeOf(context).languageCode;
-    final theme = Theme.of(context);
-    final line = widget.line;
-    // Selected unit label: free-text selling-unit name (Box) or a backend
-    // unit code localized via unitLabel (piece → Piece/Pièce/قطعة).
-    final selectedUnit = AppStrings.unitLabel(line.unitName, loc);
-    final baseUnit = AppStrings.unitLabel(line.productUnit, loc);
-    final baseQty = (double.tryParse(line.quantity) ?? 0) *
-        (double.tryParse(line.unitMultiplier ?? '') ?? 0);
-    // Base info only when a selling unit was chosen and its multiplier
-    // actually represents multiple base pieces (or differs from base).
-    final showBaseInfo = line.sellingUnitId != null &&
-        line.unitMultiplier != null &&
-        line.baseUnitPrice != null &&
-        baseQty > 0;
-    final mediaH = MediaQuery.sizeOf(context).height;
-    final short = mediaH < 560;
-    // Min content height 90; selling-unit lines need 100–120 (UX FIX #8).
-    final minHeight = showBaseInfo
-        ? (short ? 100.0 : 112.0)
-        : (short ? 88.0 : 96.0);
-
-    return Padding(
-      key: Key('cart-line-${line.key}'),
-      padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
-      child: Material(
-        // Selection highlight (same tints the dense row already uses):
-        // without a marker the arrow walk would move an invisible cursor.
-        color: widget.selected
-            ? theme.colorScheme.primary.withValues(alpha: 0.08)
-            : theme.cardColor,
-        borderRadius: BorderRadius.circular(10),
-        child: Container(
-          constraints: BoxConstraints(minHeight: minHeight),
-          padding: const EdgeInsets.fromLTRB(10, 8, 8, 8),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(
-              color: widget.selected
-                  ? theme.colorScheme.primary.withValues(alpha: 0.55)
-                  : theme.dividerColor.withValues(alpha: 0.55),
-            ),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    // Tapping the line selects it as the `+` / `*` target.
-                    child: GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onTap: widget.onActivate,
-                      child: Row(
-                        children: [
-                          if (line.isPack) ...[
-                            Container(
-                              key: Key('cart-line-pack-badge-${line.key}'),
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 6,
-                                vertical: 2,
-                              ),
-                              decoration: BoxDecoration(
-                                color: theme.colorScheme.primary
-                                    .withValues(alpha: 0.15),
-                                borderRadius: BorderRadius.circular(6),
-                                border: Border.all(
-                                  color: theme.colorScheme.primary
-                                      .withValues(alpha: 0.5),
-                                ),
-                              ),
-                              child: Text(
-                                AppStrings.t('pack_badge', loc),
-                                style: theme.textTheme.labelSmall?.copyWith(
-                                  color: theme.colorScheme.primary,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 6),
-                          ],
-                          if (line.customLine || line.manualTotal != null) ...[
-                            _lineBadges(loc: loc),
-                            const SizedBox(width: 4),
-                          ],
-                          Expanded(
-                            child: Text(
-                              line.name,
-                              key: Key('cart-line-name-${line.key}'),
-                              style: theme.textTheme.titleMedium?.copyWith(
-                                fontSize: short ? 17.0 : 18.0,
-                                fontWeight: FontWeight.w700,
-                              ),
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                  // Double-click (not a single click: a stray tap must never
-                  // open a money editor) — the discoverable pointer path to
-                  // the manual-total dialog.
-                  GestureDetector(
-                    key: Key('cart-line-total-tap-${line.key}'),
-                    behavior: HitTestBehavior.opaque,
-                    onDoubleTap: widget.onEditTotal,
-                    child: numericText(
-                      formatGroupedFixed(line.lineTotal, 2),
-                      key: Key('cart-line-total-${line.key}'),
-                      style: theme.textTheme.titleMedium?.copyWith(
-                        fontSize: short ? 16.0 : 17.0,
-                        fontWeight: FontWeight.w700,
-                        color: line.manualTotal != null
-                            ? AppColors.warning
-                            : theme.colorScheme.primary,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 2),
-                  _removeButton(loc: loc),
-                ],
-              ),
-              const SizedBox(height: 4),
-              Row(
-                children: [
-                  _qtyDecButton(loc: loc),
-                  _qtyField(loc: loc, short: short),
-                  _qtyIncButton(loc: loc),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        // Dominant: selected qty × unit × selling-unit price.
-                        Text(
-                          '${line.quantity} $selectedUnit × ${line.unitPrice}',
-                          key: Key('cart-line-summary-${line.key}'),
-                          style: theme.textTheme.bodyLarge?.copyWith(
-                            fontWeight: FontWeight.w600,
-                            fontSize: short ? 14.0 : 15.0,
-                          ),
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        // Method 2 — the exact bundle the line is priced
-                        // with (the sell-unit price is never stamped on the
-                        // line, so this caption is the only place the
-                        // cashier sees "4 × 1900"). Display only: totals,
-                        // payload and invoice keep using quantity × unit
-                        // price − derived discount.
-                        if (line.autoPriced)
-                          Text(
-                            '${AppStrings.t('auto_bundle', loc)}: '
-                            '${line.autoBundleQuantity} × '
-                            '${line.autoBundlePrice}',
-                            key: Key('cart-line-auto-bundle-${line.key}'),
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              color: theme.colorScheme.primary,
-                              fontWeight: FontWeight.w600,
-                              fontSize: short ? 12.0 : 13.0,
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        if (line.promotionApplied)
-                          // Phase 18 — the line is charging the promotion
-                          // price; the original retail is struck through
-                          // (display only, server recomputes at checkout).
-                          Text.rich(
-                            TextSpan(
-                              text: AppStrings.t('promotion', loc),
-                              style: theme.textTheme.bodySmall?.copyWith(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w700,
-                                color: theme.colorScheme.tertiary,
-                              ),
-                              children: [
-                                if (line.retailPrice != null)
-                                  TextSpan(
-                                    text: ' · ${line.retailPrice}',
-                                    style: TextStyle(
-                                      decoration: TextDecoration.lineThrough,
-                                      fontWeight: FontWeight.w500,
-                                      color: theme.colorScheme.onSurface
-                                          .withValues(alpha: 0.6),
-                                    ),
-                                  ),
-                              ],
-                            ),
-                            key: Key('cart-line-promotion-${line.key}'),
-                          ),
-                        if (line.wholesaleApplied)
-                          // Phase 17 pricing — the line crossed the whole-
-                          // sale threshold (base quantity) and is charging
-                          // the wholesale rate.
-                          Text(
-                            AppStrings.t('wholesale', loc),
-                            key: Key('cart-line-wholesale-${line.key}'),
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w700,
-                              color: theme.colorScheme.primary,
-                            ),
-                          ),
-                        if (line.isPack &&
-                            (line.componentsSummary ?? '').isNotEmpty) ...[
-                          // Phase 10 — what the pack bundles (display only).
-                          Text(
-                            line.componentsSummary!,
-                            key: Key('cart-line-pack-components-${line.key}'),
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              fontSize: 13,
-                              color: theme.colorScheme.onSurface
-                                  .withValues(alpha: 0.7),
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ],
-                        if (showBaseInfo) ...[
-                          // Secondary: base-quantity equivalence (multiplier).
-                          numericText(
-                            '${_fmtQty(baseQty)} $baseUnit',
-                            key: Key('cart-line-base-qty-${line.key}'),
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              fontSize: 13,
-                              color: theme.colorScheme.onSurface
-                                  .withValues(alpha: 0.7),
-                            ),
-                          ),
-                          // Informational only — never feeds the cart total.
-                          // Bidi: Arabic "Base price:" label natural; the
-                          // grouped price is one LTR isolate (W7).
-                          Text(
-                            '${AppStrings.t('base_price', loc)}: '
-                            '${bidiIsolateLtr(_fmtPrice(line.baseUnitPrice))} '
-                            '/ $baseUnit',
-                            key: Key('cart-line-base-price-${line.key}'),
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              fontSize: 13,
-                              color: theme.colorScheme.onSurface
-                                  .withValues(alpha: 0.7),
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 6),
-              // Compact line discount 36–40px, warning when > 0 (UX FIX #8).
-              _discountField(loc: loc, width: short ? 120 : 140),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  /// Shared cell widgets — the standard card and the reversed-layout dense
-  /// row build the exact same qty/discount/remove controls (same keys,
-  /// same controllers), so behaviour and tests hold in both layouts.
+  Widget build(BuildContext context) => _buildDenseRow(context);
 
   Widget _qtyDecButton({required String loc}) {
     final line = widget.line;
@@ -6770,7 +6521,7 @@ class _CartLineTileState extends State<_CartLineTile> {
     );
   }
 
-  /// The shared qty field. The dense row pins it to 52px (44+52+44 = the
+  /// The shared qty field.
   /// 140px qty column); the card keeps the short/tall 48/56 widths.
   Widget _qtyField({
     required String loc,
@@ -6891,8 +6642,7 @@ class _CartLineTileState extends State<_CartLineTile> {
   }
 
   /// Compact line discount field (36–40px tall, warning colour when > 0).
-  /// [width] lets the dense row pin the 136px discount column; the card
-  /// keeps the short/tall 120/140 widths.
+  /// [width] is the card's short/tall 120/140 width.
   Widget _discountField({required String loc, required double width}) {
     final theme = Theme.of(context);
     final line = widget.line;
@@ -7055,6 +6805,39 @@ class _CartLineTileState extends State<_CartLineTile> {
                               ),
                             ),
                             _lineBadges(loc: loc, compact: true),
+                            // Method 2: the exact bundle this line is
+                            // priced with ("4 × 1900") — display only.
+                            if (line.autoPriced)
+                              Text(
+                                '${AppStrings.t('auto_bundle', loc)}: '
+                                '${line.autoBundleQuantity} × '
+                                '${line.autoBundlePrice}',
+                                key: Key(
+                                    'cart-line-auto-bundle-${line.key}'),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: theme.textTheme.labelSmall?.copyWith(
+                                  fontSize: 12,
+                                  color: theme.colorScheme.primary,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            // Pack contents (display only): what the bundle
+                            // actually holds, right under the pack name.
+                            if (line.isPack &&
+                                (line.componentsSummary ?? '').isNotEmpty)
+                              Text(
+                                line.componentsSummary!,
+                                key: Key(
+                                    'cart-line-pack-components-${line.key}'),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: theme.textTheme.labelSmall?.copyWith(
+                                  fontSize: 12,
+                                  color: theme.colorScheme.onSurface
+                                      .withValues(alpha: 0.7),
+                                ),
+                              ),
                             if (overStock ||
                                 line.promotionApplied ||
                                 line.wholesaleApplied)
@@ -7166,6 +6949,23 @@ class _CartLineTileState extends State<_CartLineTile> {
                                 .withValues(alpha: 0.6),
                           ),
                           overflow: TextOverflow.ellipsis,
+                        ),
+                      // Informational only (never feeds the total): the
+                      // base-unit catalog price the cashier may need to
+                      // read while a selling unit is selected.
+                      if (showBaseInfo)
+                        Text(
+                          '${AppStrings.t('base_price', loc)}: '
+                          '${bidiIsolateLtr(_fmtPrice(line.baseUnitPrice))} '
+                          '/ $baseUnit',
+                          key: Key('cart-line-base-price-${line.key}'),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            fontSize: 12,
+                            color: theme.colorScheme.onSurface
+                                .withValues(alpha: 0.6),
+                          ),
                         ),
                     ],
                   ),

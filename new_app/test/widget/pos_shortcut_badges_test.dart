@@ -176,7 +176,10 @@ Future<void> _pumpPos(
         localeProvider
             .overrideWith((ref) => LocaleNotifier()..setLocale(locale)),
         scanSettingsProvider.overrideWith((ref) => ScanSettingsNotifier(prefs)),
-        posSettingsProvider.overrideWith((ref) => PosSettingsNotifier(prefs)),
+        // Catalog layout suite: `show_pos_product_list` is opt-in.
+        posSettingsProvider.overrideWith(
+          (ref) => PosSettingsNotifier(prefs)..setShowPosProductList(true),
+        ),
         pdfPreviewProvider.overrideWithValue(_FakePdfPreview()),
       ],
       child: MaterialApp(

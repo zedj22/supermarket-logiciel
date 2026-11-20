@@ -9,6 +9,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import '../helpers/pos_catalog_mode.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supermarket_pos/core/strings.dart';
@@ -203,6 +205,7 @@ Future<ProviderContainer> _pumpPos(
         localeProvider
             .overrideWith((ref) => LocaleNotifier()..setLocale(AppLocale.en)),
         posCartProvider.overrideWith((ref) => cart),
+        posCatalogMode(),
       ],
       child: MaterialApp(
         locale: const Locale('en'),

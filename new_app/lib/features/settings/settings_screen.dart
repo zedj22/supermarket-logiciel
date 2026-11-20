@@ -268,6 +268,22 @@ class _PosActionsSection extends ConsumerWidget {
               value: settings.quickSaleWithSpace,
               onChanged: (value) => notifier.setQuickSaleWithSpace(value),
             ),
+            // Scanner-first layout (default OFF): the POS catalog is
+            // hidden and the cart owns the workspace. Purely presentational
+            // — the barcode pipeline, cart and shortcuts are identical in
+            // both modes.
+            SwitchListTile(
+              key: const Key('settings-show-pos-product-list'),
+              contentPadding: EdgeInsets.zero,
+              title: Text(
+                AppStrings.t('show_pos_product_list', loc),
+              ),
+              subtitle: Text(
+                AppStrings.t('show_pos_product_list_desc', loc),
+              ),
+              value: settings.showPosProductList,
+              onChanged: (value) => notifier.setShowPosProductList(value),
+            ),
           ],
         ),
       ),

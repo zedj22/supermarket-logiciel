@@ -286,6 +286,10 @@ class AppStrings {
     'quick_sale_with_space': 'البيع السريع بزر المسافة',
     'quick_sale_with_space_desc':
         'عند التفعيل: يُكمل مفتاح المسافة البيع مباشرةً كدفع نقدي كامل بالمبلغ المستحق دون فتح نافذة الدفع. عند الإيقاف: يفتح المسافة نافذة الدفع كالمعتاد.',
+    'show_pos_product_list': 'إظهار قائمة المنتجات في نقطة البيع',
+    'show_pos_product_list_desc':
+        'عند التفعيل: تظهر قائمة المنتجات بجانب السلة كما كانت. عند الإيقاف (الافتراضي): تبقى القائمة مخفية ويتسع حقل الباركود والسلة لكامل مساحة العمل.',
+    'pos_scan_field_hint': 'امسح الباركود ثم Enter',
     // وضع تسعير وحدة البيع (الطريقة 1 / الطريقة 2)
     'settings_sell_unit_pricing_mode': 'وضع تسعير وحدة البيع',
     'settings_sell_unit_pricing_mode_desc':
@@ -2045,6 +2049,10 @@ class AppStrings {
     'quick_sale_with_space': 'Vente rapide avec la barre d\'espace',
     'quick_sale_with_space_desc':
         'Activé : la barre d\'espace encaisse directement le montant exact en espèces, sans dialogue de paiement. Désactivé : la barre d\'espace ouvre le dialogue de paiement.',
+    'show_pos_product_list': 'Afficher la liste des produits dans le POS',
+    'show_pos_product_list_desc':
+        'Activé : la liste des produits réapparaît à côté du panier, comme avant. Désactivé (par défaut) : elle reste masquée, et le champ code-barres comme le panier occupent tout l\'espace disponible.',
+    'pos_scan_field_hint': 'Scannez le code-barres puis Entrée',
     // Mode de tarification de l'unité de vente (méthode 1 / méthode 2)
     'settings_sell_unit_pricing_mode': "Mode de tarification de l'unité de vente",
     'settings_sell_unit_pricing_mode_desc':
@@ -3851,6 +3859,10 @@ class AppStrings {
     'quick_sale_with_space': 'Quick sale with Space',
     'quick_sale_with_space_desc':
         'On: Space completes the sale immediately as a full cash payment of the amount due — no payment dialog. Off: Space opens the payment dialog as usual.',
+    'show_pos_product_list': 'Show Product List in POS',
+    'show_pos_product_list_desc':
+        'On: the product catalog returns beside the cart, exactly as before. Off (default): the catalog stays hidden and the barcode field and cart use the full workspace.',
+    'pos_scan_field_hint': 'Scan barcode, then Enter',
     // Sell unit pricing mode (Method 1 / Method 2)
     'settings_sell_unit_pricing_mode': 'Sell unit pricing mode',
     'settings_sell_unit_pricing_mode_desc':

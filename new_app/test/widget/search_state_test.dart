@@ -20,6 +20,8 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import '../helpers/pos_catalog_mode.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:supermarket_pos/features/auth/auth_provider.dart';
 import 'package:supermarket_pos/features/auth/credential_storage.dart';
@@ -199,6 +201,9 @@ void main() {
         overrides: [
           apiClientProvider.overrideWithValue(ApiClient(dio: dio)),
           credentialStorageProvider.overrideWithValue(FakeCredentialStorage()),
+          // This suite exercises the catalog search: opt into the legacy
+          // product-list layout (`show_pos_product_list` is OFF by default).
+          posCatalogMode(),
         ],
         child: const SupermarketPosApp(),
       ),
