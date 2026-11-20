@@ -26,6 +26,8 @@ void main() {
 
   void stubBootRequests(MockDio dio) {
     when(() => dio.interceptors).thenReturn(Interceptors());
+    // Cold start drops the persisted session through the shared client.
+    when(() => dio.options).thenReturn(BaseOptions());
     when(() => dio.get('/api/v1/auth/setup/check')).thenAnswer(
       (_) async => Response<dynamic>(
         requestOptions: RequestOptions(path: '/api/v1/auth/setup/check'),

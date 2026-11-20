@@ -4,9 +4,9 @@
 //   1. mount the brand splash (drawn logo, wordmark, localized tagline)
 //      as the FIRST surface and hold every route there while auth is
 //      checking AND until the fixed minimum sequence has played;
-//   2. reveal the real destination exactly when auth is done — login for
-//      a fresh install, the shell for a restored session, never a stuck
-//      splash on an auth failure;
+//   2. reveal the real destination exactly when auth is done — the login
+//      screen on EVERY launch (a persisted token is never a session), never
+//      a stuck splash on an auth failure;
 //   3. release its one-shot gate only once: logout, navigation and auth
 //      changes must never replay the splash;
 //   4. honour reduced motion by opening the gate without animating;
@@ -283,8 +283,8 @@ void main() {
     );
 
     testWidgets(
-      'a restored session reveals the shell directly — no login flash, '
-      'no splash left behind',
+      'a persisted session still lands on the login screen — a saved token '
+      'is never a login',
       (tester) async {
         tester.view.physicalSize = const Size(1200, 1000);
         tester.view.devicePixelRatio = 1.0;
@@ -292,47 +292,6 @@ void main() {
 
         final dio = MockDio();
         stubBootRequests(dio);
-        when(() => dio.get(_usersPath)).thenAnswer(
-          (_) async => _response(_usersPath, {
-            'items': [
-              {
-                'id': 'u1',
-                'full_name': 'Admin',
-                'is_active': true,
-                'roles': [
-                  {'name': 'admin'},
-                ],
-              },
-            ],
-            'total': 1,
-          }),
-        );
-        when(() => dio.get(_mePath)).thenAnswer(
-          (_) async => _response(_mePath, {
-            'id': 'u1',
-            'full_name': 'Admin',
-            'is_active': true,
-            'roles': [
-              {'name': 'admin'},
-            ],
-            'permissions': ['user_manage'],
-          }),
-        );
-        when(() => dio.post(_verifyTokenPath, data: any(named: 'data')))
-            .thenAnswer(
-          (_) async => _response(_verifyTokenPath, {
-            'valid': true,
-            'user': {
-              'id': 'u1',
-              'full_name': 'Admin',
-              'is_active': true,
-              'roles': [
-                {'name': 'admin'},
-              ],
-              'permissions': ['user_manage'],
-            },
-          }),
-        );
 
         await pumpApp(
           tester,
@@ -341,10 +300,17 @@ void main() {
         );
         await tester.pumpAndSettle();
 
-        expect(find.byType(ScaffoldWithNav), findsOneWidget);
-        expect(find.byType(LoginScreen), findsNothing,
-            reason: 'a valid session never touches the login screen');
+        expect(find.byType(LoginScreen), findsOneWidget);
+        expect(find.text(AppStrings.t('select_user', 'ar')), findsOneWidget);
+        expect(find.byType(ScaffoldWithNav), findsNothing,
+            reason: 'a saved token must never reach the shell');
         expect(find.byType(SplashScreen), findsNothing);
+        // The stale credential is never replayed to prove a session.
+        verifyNever(
+          () => dio.post(_verifyTokenPath, data: any(named: 'data')),
+        );
+        verifyNever(() => dio.get(_mePath));
+        verifyNever(() => dio.get(_usersPath));
         expect(tester.takeException(), isNull);
       },
     );

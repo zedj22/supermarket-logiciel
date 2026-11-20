@@ -20,6 +20,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:supermarket_pos/core/strings.dart';
+import 'package:supermarket_pos/features/auth/auth_models.dart';
 import 'package:supermarket_pos/features/auth/auth_provider.dart';
 import 'package:supermarket_pos/features/auth/credential_storage.dart';
 import 'package:supermarket_pos/features/products/models.dart';
@@ -240,9 +241,15 @@ Future<void> _pumpHost(
   required ProductModel product,
 }) async {
   final storage = FakeCredentialStorage();
-  await storage.saveToken('tok');
-  await storage.saveUserPermissions(scopes);
-  await storage.saveUserRoles(const ['admin']);
+  // Cold start never adopts a persisted session: the fixture supplies the
+  // signed-in user explicitly, with the scopes under test.
+  final user = AuthUser(
+    id: '00000000-0000-0000-0000-0000000000a1',
+    fullName: 'Admin',
+    isActive: true,
+    roles: const ['admin'],
+    permissions: scopes,
+  );
 
   tester.view.physicalSize = const Size(1600, 1000);
   tester.view.devicePixelRatio = 1.0;
@@ -253,6 +260,7 @@ Future<void> _pumpHost(
       overrides: [
         apiClientProvider.overrideWithValue(ApiClient(dio: dio)),
         credentialStorageProvider.overrideWithValue(storage),
+        currentUserProvider.overrideWithValue(user),
         localeProvider
             .overrideWith((_) => LocaleNotifier()..setLocale(AppLocale.en)),
       ],
@@ -465,9 +473,13 @@ void main() {
       _stub(dio, scopes: _stockScopes);
 
       final storage = FakeCredentialStorage();
-      await storage.saveToken('tok');
-      await storage.saveUserPermissions(_stockScopes);
-      await storage.saveUserRoles(const ['admin']);
+      final user = AuthUser(
+        id: '00000000-0000-0000-0000-0000000000a1',
+        fullName: 'Admin',
+        isActive: true,
+        roles: const ['admin'],
+        permissions: _stockScopes,
+      );
 
       tester.view.physicalSize = const Size(1600, 1000);
       tester.view.devicePixelRatio = 1.0;
@@ -478,6 +490,7 @@ void main() {
           overrides: [
             apiClientProvider.overrideWithValue(ApiClient(dio: dio)),
             credentialStorageProvider.overrideWithValue(storage),
+            currentUserProvider.overrideWithValue(user),
             localeProvider
                 .overrideWith((_) => LocaleNotifier()..setLocale(AppLocale.en)),
           ],

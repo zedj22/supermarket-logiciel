@@ -16,6 +16,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:supermarket_pos/core/strings.dart';
+import 'package:supermarket_pos/features/auth/auth_models.dart';
 import 'package:supermarket_pos/features/auth/auth_provider.dart';
 import 'package:supermarket_pos/features/auth/credential_storage.dart';
 import 'package:supermarket_pos/features/products/product_form_dialog.dart';
@@ -128,9 +129,15 @@ Future<void> _pumpForm(
   List<String> scopes = _scopes,
 }) async {
   final storage = FakeCredentialStorage();
-  await storage.saveToken('tok');
-  await storage.saveUserPermissions(scopes);
-  await storage.saveUserRoles(const ['admin']);
+  // Cold start never adopts a persisted session, so the fixture supplies the
+  // signed-in user explicitly instead of faking a token in the keystore.
+  final user = AuthUser(
+    id: '00000000-0000-0000-0000-0000000000a1',
+    fullName: 'Admin',
+    isActive: true,
+    roles: const ['admin'],
+    permissions: scopes,
+  );
 
   tester.view.physicalSize = const Size(1600, 1000);
   tester.view.devicePixelRatio = 1.0;
@@ -141,6 +148,7 @@ Future<void> _pumpForm(
       overrides: [
         apiClientProvider.overrideWithValue(ApiClient(dio: dio)),
         credentialStorageProvider.overrideWithValue(storage),
+        currentUserProvider.overrideWithValue(user),
         localeProvider.overrideWith((_) => LocaleNotifier()..setLocale(locale)),
       ],
       child: MaterialApp(

@@ -16,6 +16,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:supermarket_pos/core/strings.dart';
+import 'package:supermarket_pos/features/auth/auth_models.dart';
 import 'package:supermarket_pos/features/auth/auth_provider.dart';
 import 'package:supermarket_pos/features/auth/credential_storage.dart';
 import 'package:supermarket_pos/features/products/models.dart';
@@ -302,16 +303,22 @@ Future<void> pumpApp(
 }) async {
   final mockDio = dio ?? MockDio();
   final storage = FakeCredentialStorage();
-  await storage.saveToken('tok');
-  await storage.saveUserPermissions([
-    'product_view',
-    'product_create',
-    'product_update',
-    'product_archive',
-    'category_view',
-    'category_manage',
-  ]);
-  await storage.saveUserRoles(['admin']);
+  // Cold start no longer adopts a persisted session, so the fixture states
+  // the signed-in admin (and its scopes) explicitly.
+  final user = AuthUser(
+    id: '00000000-0000-0000-0000-0000000000a1',
+    fullName: 'Admin',
+    isActive: true,
+    roles: const ['admin'],
+    permissions: const [
+      'product_view',
+      'product_create',
+      'product_update',
+      'product_archive',
+      'category_view',
+      'category_manage',
+    ],
+  );
 
   if (stubDio) {
     // Caller already stubbed with getBodies → only ensure interceptors/options
@@ -333,6 +340,7 @@ Future<void> pumpApp(
       overrides: [
         apiClientProvider.overrideWithValue(ApiClient(dio: mockDio)),
         credentialStorageProvider.overrideWithValue(storage),
+        currentUserProvider.overrideWithValue(user),
         // English locale so AppStrings.t(..., 'en') matches on-screen text.
         localeProvider.overrideWith((_) => LocaleNotifier()..setLocale(AppLocale.en)),
       ],

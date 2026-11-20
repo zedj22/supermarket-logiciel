@@ -72,47 +72,29 @@ class AuthNotifier extends StateNotifier<AuthState> {
     }
   }
 
+  /// Cold start ALWAYS begins unauthenticated.
+  ///
+  /// A token in the keystore is a session credential, not a login. The
+  /// previous build replayed it through `/auth/verify-token` and entered the
+  /// shell directly, so a shared shop terminal reopened on the last
+  /// cashier's session forever without asking anyone for a PIN — the exact
+  /// bug this method now prevents. Launching the app must ask who is using
+  /// it and prove that answer with the existing PIN login; nothing persisted
+  /// may stand in for that.
+  ///
+  /// The persisted session (access token + the identity cached beside it) is
+  /// discarded here so a stale JWT can never be adopted later in this run or
+  /// replayed after a restart. Only that session layer is touched: users,
+  /// roles, permissions and the Phase 16 device-pairing token live in the
+  /// backend / under their own keystore key and stay intact.
   Future<void> _initialize() async {
     try {
-      final hasToken = await _credentials.hasToken();
-      if (!hasToken) {
-        // Check if setup is needed
-        final needsSetup = await _checkSetupNeeded();
-        state = AuthState(
-          status: needsSetup ? AuthStatus.setupRequired : AuthStatus.unauthenticated,
-        );
-        return;
-      }
-
-      // Try to restore session
-      final token = await _credentials.readToken();
-
-      if (token == null) {
-        final needsSetup = await _checkSetupNeeded();
-        state = AuthState(
-          status: needsSetup ? AuthStatus.setupRequired : AuthStatus.unauthenticated,
-        );
-        return;
-      }
-
-      _apiClient.setToken(token);
-
-      // Verify token with backend
-      final user = await _verifyToken(token);
-      if (user != null) {
-        final enriched = await _applyMePermissions(user);
-        state = AuthState(
-          status: AuthStatus.authenticated,
-          user: enriched,
-        );
-      } else {
-        await _credentials.clearAll();
-        _apiClient.clearToken();
-        final needsSetup = await _checkSetupNeeded();
-        state = AuthState(
-          status: needsSetup ? AuthStatus.setupRequired : AuthStatus.unauthenticated,
-        );
-      }
+      await _credentials.clearAll();
+      _apiClient.clearToken();
+      final needsSetup = await _checkSetupNeeded();
+      state = AuthState(
+        status: needsSetup ? AuthStatus.setupRequired : AuthStatus.unauthenticated,
+      );
     } catch (e) {
       // Network error or other issue — go to unauthenticated
       final needsSetup = await _checkSetupNeeded().catchError((_) => false);
@@ -128,23 +110,6 @@ class AuthNotifier extends StateNotifier<AuthState> {
       return response.data['setup_needed'] as bool? ?? false;
     } catch (e) {
       return false;
-    }
-  }
-
-  Future<AuthUser?> _verifyToken(String token) async {
-    try {
-      final response = await _apiClient.dio.post(
-        '/api/v1/auth/verify-token',
-        data: {'token': token},
-      );
-      final valid = response.data['valid'] as bool? ?? false;
-      if (valid && response.data['user'] != null) {
-        return AuthUser.fromJson(response.data['user'] as Map<String, dynamic>);
-      }
-      return null;
-    } on DioException catch (e) {
-      if (e.response?.statusCode == 401) return null;
-      rethrow;
     }
   }
 

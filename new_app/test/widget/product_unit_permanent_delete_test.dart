@@ -13,6 +13,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:supermarket_pos/core/strings.dart';
+import 'package:supermarket_pos/features/auth/auth_models.dart';
 import 'package:supermarket_pos/features/auth/auth_provider.dart';
 import 'package:supermarket_pos/features/auth/credential_storage.dart';
 import 'package:supermarket_pos/features/products/models.dart';
@@ -315,9 +316,15 @@ Future<void> pumpProductForm(
   List<String> scopes = _allScopes,
 }) async {
   final storage = FakeCredentialStorage();
-  await storage.saveToken('tok');
-  await storage.saveUserPermissions(scopes);
-  await storage.saveUserRoles(['admin']);
+  // Cold start never adopts a persisted session: state the signed-in user
+  // (with the scopes under test) explicitly.
+  final user = AuthUser(
+    id: 'u-admin',
+    fullName: 'Admin',
+    isActive: true,
+    roles: const ['admin'],
+    permissions: scopes,
+  );
 
   tester.view.physicalSize = const Size(1280, 1200);
   tester.view.devicePixelRatio = 1.0;
@@ -328,6 +335,7 @@ Future<void> pumpProductForm(
       overrides: [
         apiClientProvider.overrideWithValue(ApiClient(dio: backend.dio)),
         credentialStorageProvider.overrideWithValue(storage),
+        currentUserProvider.overrideWithValue(user),
         localeProvider
             .overrideWith((_) => LocaleNotifier()..setLocale(AppLocale.en)),
       ],
