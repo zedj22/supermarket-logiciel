@@ -36,7 +36,14 @@ from typing import Literal
 
 from app.core.config import settings
 from app.printing.labels import label
-from app.printing.text import format_date, format_datetime, format_money, format_qty, format_time
+from app.printing.text import (
+    format_date,
+    format_datetime,
+    format_money,
+    format_qty,
+    format_receipt_stamp,
+    format_time,
+)
 from app.schemas.purchase import PurchaseResponse
 from app.schemas.returns import ReturnResponse
 from app.schemas.sale import SaleResponse
@@ -163,6 +170,34 @@ class PaymentLine:
 
 
 @dataclass
+class ReceiptSummary:
+    """Thermal-receipt header/summary values (80mm customer sale only).
+
+    A dedicated block instead of new ``HeaderBlock``/``TotalsBlock`` fields:
+    those two are shared with the A4 invoice and with internal return /
+    purchase documents, and their output must not move.  Populated ONLY by
+    `build_sale_document`, so its presence is what routes a document to the
+    redesigned thermal receipt (``data.receipt is not None``).
+
+    Every value is a display string already produced by the formatting
+    helpers — zero business logic downstream.  ``total_discount`` is the
+    SUM of the line discounts and the invoice discount, formatted once, so
+    a receipt can never charge the same discount twice.  ``cash_payment    ``records whether any money arrived in cash; a card-only sale must not
+    print a cash ``Change`` row.  ``total_qty`` counts physical pieces,
+    including pack components (never the pack summary row itself).
+    """
+
+    stamp: str | None = None
+    cashier: str | None = None
+    article_count: int = 0
+    total_qty: str | None = None
+    qty_unit: str | None = None
+    total_discount: str | None = None
+    cash_payment: bool = True
+    reference: str | None = None
+
+
+@dataclass
 class MetaBlock:
     locale: str
     generated_at: str
@@ -184,6 +219,8 @@ class DocumentData:
     #: presentation-only omissions (SKU column, identifier rows) off this;
     #: return/purchase/report documents stay internal and keep them.
     customer_facing: bool = False
+    #: Thermal-receipt block — set by `build_sale_document` only.
+    receipt: ReceiptSummary | None = None
 
     @property
     def rtl(self) -> bool:
@@ -344,6 +381,43 @@ def build_sale_document(
         for p in sale.payments
     ]
 
+    # Receipt summary (80mm thermal layout).  Pure display aggregation of
+    # values the sale response already carries: no total is recomputed from
+    # rounded text, and discounts are added up exactly once.
+    top_level = [line for line in sale.lines if _line_kind(line) != "pack_component"]
+    article_count = len({line.product_name for line in top_level})
+    # Physical pieces: every regular line contributes its sold quantity
+    # (× its selling-unit multiplier), and every pack COMPONENT line its
+    # own quantity — the component rows already store `per_pack × packs`.
+    # The pack summary line is skipped: counting it as well would charge
+    # the pack itself on top of its components.
+    pieces = Decimal("0")
+    for line in sale.lines:
+        if _line_kind(line) == "pack_summary":
+            continue
+        multiplier = line.selling_unit_multiplier
+        pieces += _dec(line.quantity) * (
+            _dec(multiplier) if multiplier is not None else Decimal("1")
+        )
+    discount_total = discount_sum + invoice_discount
+    # Any cash tendered means a change row is meaningful; a card-only or
+    # credit sale must never display cash change.
+    cash_payment = any(p.method == "cash" for p in sale.payments) or (
+        not sale.payments and sale.payment_method == "cash"
+    )
+    receipt = ReceiptSummary(
+        stamp=format_receipt_stamp(sale.sale_date),
+        # §15.7 A4 keeps `cashier_name` off the A4 invoice; the thermal
+        # receipt names the operator who took the money (same sale field).
+        cashier=getattr(sale, "cashier_name", None),
+        article_count=article_count,
+        total_qty=format_qty(pieces) if pieces != 0 else None,
+        qty_unit=label("receipt_units_pcs", locale),
+        total_discount=format_money(discount_total) if discount_total != 0 else None,
+        cash_payment=cash_payment,
+        reference=sale.invoice_number,
+    )
+
     is_void = sale.status == "void"
     header = HeaderBlock(
         document_number=sale.invoice_number,
@@ -378,6 +452,7 @@ def build_sale_document(
         payments=payments,
         meta=_meta(locale, sale.note, generated_at),
         customer_facing=True,
+        receipt=receipt,
     )
 
 

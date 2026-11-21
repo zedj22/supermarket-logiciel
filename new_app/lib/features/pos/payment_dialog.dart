@@ -2,6 +2,8 @@
 //
 // Server re-validates everything; this dialog enforces client-side rules
 // for UX (customer required for partial/credit, paid >= total for cash).
+// Cash submits the ENTERED amount (the server derives the change); card
+// submits the exact amount due, so a card sale never carries cash change.
 // Escape closes without touching the cart. Checkout retry reuses the same
 // client_request_id held by PosCartNotifier.
 //
@@ -123,10 +125,14 @@ class _PaymentDialogState extends ConsumerState<PaymentDialog> {
       _error = null;
     });
     final paid = switch (_method) {
-      // Cash/card settle the AMOUNT DUE (validation already proved the
-      // entered amount covers it); any overpayment is the change handed
-      // back, never a larger `paid` on the sale record.
-      PaymentMethod.cash || PaymentMethod.card => _due,
+      // Cash sends what the customer actually handed over: the server
+      // stores it as `paid` and derives `change`, so the receipt can print
+      // Reçu (tendered) / Total / Rendu truthfully.  Validation above
+      // already proved the entered amount covers the amount due.
+      PaymentMethod.cash => _paidAmount,
+      // Card settles exactly the amount due — a card sale never carries
+      // cash tendered and never produces a cash change.
+      PaymentMethod.card => _due,
       PaymentMethod.credit => 0.0,
       PaymentMethod.partial => _paidAmount,
     };

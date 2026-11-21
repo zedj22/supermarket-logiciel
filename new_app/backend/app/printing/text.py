@@ -140,3 +140,13 @@ def format_date(value) -> str:  # noqa: ANN001 - date-like
 def format_time(value) -> str:  # noqa: ANN001 - datetime-like
     """Clock part of `format_datetime` — same timezone, same source value."""
     return value.strftime("%H:%M")
+
+
+def format_receipt_stamp(value) -> str:  # noqa: ANN001 - datetime-like
+    """Thermal-receipt stamp: seconds + clock, then the day-first date.
+
+    `15:40:17  19/11/2026` — one string so the receipt header cannot drift
+    between the two halves.  Same authoritative `sale.sale_date` as every
+    other stamp (never the printing time).
+    """
+    return f"{value.strftime('%H:%M:%S')}  {value.strftime('%d/%m/%Y')}"

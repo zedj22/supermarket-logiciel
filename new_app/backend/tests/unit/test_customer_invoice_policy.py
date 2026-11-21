@@ -34,7 +34,7 @@ from app.printing.document_data import DocumentData, build_sale_document
 from app.printing.fonts import register_fonts
 from app.printing.labels import label
 from app.printing.render import render_invoice
-from app.printing.templates import invoice_80mm
+from app.printing.templates import invoice_80mm, receipt_80mm
 from app.printing.templates.invoice_80mm import build_flowables as flow80
 from app.printing.templates.invoice_a4 import build_flowables as a4_flowables
 from app.printing.text import format_datetime, format_money, shape_text
@@ -198,19 +198,32 @@ def test_receipt_prints_neither_sku_nor_barcode(locale: str) -> None:
 
 
 @pytest.mark.parametrize("locale", LOCALES)
-def test_receipt_prints_no_cashier_device_or_cash_customer(locale: str) -> None:
+def test_receipt_prints_the_cashier_but_not_the_device_or_a_fake_customer(
+    locale: str,
+) -> None:
+    """Thermal receipt: the operator who took the money IS named.
+
+    The A4 invoice keeps the §15.7 A4 policy (`cashier_name` stays None);
+    the 80mm sale receipt names the cashier through `data.receipt`, which
+    is a receipt-only block, so A4 output cannot move.
+    """
     data = _data(locale, cashier_name=CASHIER)
     assert data.cashier_name is None  # A4
     assert data.header.device_id is None  # A5
     assert data.customer is None  # A3 — no placeholder "person"
+    assert data.receipt is not None and data.receipt.cashier == CASHIER
 
     drawn = _drawn(data)
     flat = " | ".join(drawn)
-    assert CASHIER not in flat
     assert DEVICE not in flat
-    assert label("cashier", locale) not in flat
     assert label("col_device", locale) not in flat
     assert label("cash_customer", locale) not in flat
+    assert _shows(drawn, f"{label('receipt_cashier_by', locale)} : {CASHIER}")
+
+
+def test_receipt_without_a_cashier_prints_no_cashier_line() -> None:
+    drawn = _drawn(_data("en", cashier_name=None))
+    assert not any(label("receipt_cashier_by", "en") in block for block in drawn)
 
 
 @pytest.mark.parametrize("locale", LOCALES)
@@ -247,28 +260,45 @@ def test_customer_invoice_keeps_every_shopper_facing_field(
     (``2 × piece``) while A4 splits them over two columns.
     """
     data = _data(locale)
-    story = flow80(data) if paper == "80mm" else a4_flowables(data)
+    if paper == "80mm":
+        story = receipt_80mm.build_flowables(data)
+        fragments = (
+            # the receipt prints the stamp, not meta rows or a footer reference
+            "10:30:00  05/01/2026",
+            label("subtotal", locale),
+            label("total", locale),
+            label("receipt_received", locale),
+            # no `change` row: this sale hands back no change
+            label("base", locale),
+            AR_NAME,
+            "Cola",
+            "Lait",
+            "2",
+            format_money(Decimal("490.000")),
+        )
+    else:
+        story = a4_flowables(data)
+        fragments = (
+            label("invoice_number", locale),
+            "INV-000123",
+            label("date", locale),
+            "2026-01-05",
+            label("time", locale),
+            "10:30",
+            label("subtotal", locale),
+            label("total", locale),
+            label("amount_paid", locale),
+            label("change", locale),
+            label("base", locale),
+            AR_NAME,
+            "Cola",
+            "Lait",
+            "2",
+            label("col_unit", locale),
+            format_money(Decimal("490.000")),
+        )
     drawn = " | ".join(_normalize(p.text) for p in _paragraphs(story))
-
-    quantity = ("2 × piece",) if paper == "80mm" else ("2", label("col_unit", locale))
-    for fragment in (
-        label("invoice_number", locale),
-        "INV-000123",
-        label("date", locale),
-        "2026-01-05",
-        label("time", locale),
-        "10:30",
-        label("subtotal", locale),
-        label("total", locale),
-        label("amount_paid", locale),
-        label("change", locale),
-        label("base", locale),
-        AR_NAME,
-        "Cola",
-        "Lait",
-        *quantity,
-        format_money(Decimal("490.000")),
-    ):
+    for fragment in fragments:
         shaped = _normalize(shape_text(fragment))
         assert shaped in drawn, f"{paper}/{locale}: missing {fragment!r}"
 
@@ -287,26 +317,20 @@ def test_split_date_and_time_come_from_the_single_sale_timestamp() -> None:
 
 
 @pytest.mark.parametrize("locale", LOCALES)
-def test_receipt_shows_invoice_number_then_date_then_time(locale: str) -> None:
+def test_receipt_shows_the_sale_stamp_and_no_footer_reference(locale: str) -> None:
+    """A6 — the stamp comes from `sale_date`; the footer carries no reference.
+
+    The redesigned receipt prints one clock+date line under the store
+    identity (`10:30:00  05/01/2026`), instead of three `label: value` meta
+    rows.  The barcode/footer reference was removed, so the invoice number
+    is not printed on the thermal receipt at all.
+    """
     data = _data(locale)
     drawn = _drawn(data)
 
-    number = _shows(drawn, f"{label('invoice_number', locale)}: INV-000123")
-    date = _shows(drawn, f"{label('date', locale)}: 2026-01-05")
-    time = _shows(drawn, f"{label('time', locale)}: 10:30")
-    assert number and date and time, f"{locale}: {drawn}"
-
-    positions = [
-        drawn.index(
-            _normalize(shape_text(f"{label(key, locale)}: {value}"))
-        )
-        for key, value in (
-            ("invoice_number", "INV-000123"),
-            ("date", "2026-01-05"),
-            ("time", "10:30"),
-        )
-    ]
-    assert positions == sorted(positions), "A6: invoice number → date → time"
+    stamp = _normalize(shape_text("10:30:00  05/01/2026"))
+    assert stamp in drawn, f"{locale}: {drawn}"
+    assert "INV-000123" not in drawn
 
 
 def test_internal_documents_keep_their_single_occurred_at_row() -> None:
@@ -401,7 +425,9 @@ def test_rtl_mirrors_the_three_value_columns() -> None:
     [
         (locale, token)
         for locale in LOCALES
-        for token in ("2026-01-05", "10:30", "INV-000123", "490.00 DA", "160.00 DA")
+        # The item table states bare amounts (the currency is on the totals
+        # rows), so `160.00` and `490.00 DA` are both part of the contract.
+        for token in ("05/01/2026", "10:30:00", "490.00 DA", "160.00")
     ],
 )
 def test_digits_currency_invoice_and_clock_stay_readable(locale: str, token: str) -> None:
@@ -412,20 +438,20 @@ def test_digits_currency_invoice_and_clock_stay_readable(locale: str, token: str
 
 
 @pytest.mark.parametrize("locale", RTL)
-def test_rtl_meta_is_shaped_exactly_once(locale: str) -> None:
+def test_rtl_receipt_text_is_shaped_exactly_once(locale: str) -> None:
     """A second bidi pass would visibly corrupt Arabic + digit mixes."""
-    data = _data(locale)
-    for key, value in (
-        ("invoice_number", "INV-000123"),
-        ("date", "2026-01-05"),
-        ("time", "10:30"),
+    data = _data(locale, cashier_name=CASHIER)
+    drawn = _drawn(data)
+    for text in (
+        f"{label('receipt_cashier_by', locale)} : {CASHIER}",
+        f"{label('receipt_articles', locale)}",
+        label("receipt_keep_ticket", locale),
     ):
-        once = shape_text(f"{label(key, locale)}: {value}")
+        once = shape_text(text)
         twice = shape_text(once)
-        assert twice != once, "fixture must be non-idempotent to prove anything"
-        drawn = _drawn(data)
-        assert _normalize(once) in drawn, key
-        assert _normalize(twice) not in drawn, f"{key}: shaped twice"
+        assert _normalize(once) in " | ".join(drawn), text
+        if twice != once:
+            assert _normalize(twice) not in " | ".join(drawn), f"{text}: shaped twice"
 
 
 @pytest.mark.parametrize("locale", LOCALES)

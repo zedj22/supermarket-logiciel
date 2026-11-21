@@ -11,6 +11,9 @@ from __future__ import annotations
 DEFAULT_LOCALE = "ar"
 LOCALES = ("ar", "fr", "en")
 
+#: Printed once for every locale — header of the thermal receipt item table.
+RECEIPT_COLUMNS = ("col_description", "col_price_unit", "col_qty", "col_amount")
+
 # Currency suffix — identical in all 3 locales (strings.dart `currency`).
 CURRENCY = "DA"
 
@@ -308,6 +311,8 @@ LABELS: dict[str, tuple[str, str, str]] = {
     "phone": ("الهاتف", "Tél", "Phone"),
     # Item table + totals (legacy French headers).
     "col_description": ("البيان", "Désignation", "Description"),
+    "col_price_unit": ("سعر الوحدة", "Prix U", "Unit price"),
+    "col_amount": ("المبلغ", "Montant", "Amount"),
     "col_unit_price_ht": ("السعر دون الرسم", "P.U. HT", "Unit price excl. tax"),
     "col_remise_pct": ("الخصم %", "Remise %", "Discount %"),
     "col_tva_rate": ("الرسم %", "TVA %", "VAT %"),
@@ -332,6 +337,22 @@ LABELS: dict[str, tuple[str, str, str]] = {
     "unit_milliliter": ("مل", "Millilitre", "Milliliter"),
     "unit_meter": ("متر", "Mètre", "Meter"),
     "unit_pack": ("حزمة", "Paquet", "Pack"),
+    # ---- thermal receipt (80mm sale receipt redesign) ----
+    # Fixed closing lines: the SAME text in every locale, because the
+    # receipt prints all three (Arabic, French, French legal notice).
+    "receipt_thanks_ar": ("شكراً على زيارتكم",) * 3,
+    "receipt_thanks_fr": ("Merci pour votre visite",) * 3,
+    "receipt_keep_ticket": (
+        "Veuillez conserver votre Ticket de Caisse",
+    ) * 3,
+    "receipt_articles": ("مقالات", "Articles", "Articles"),
+    "receipt_units_pcs": ("قطعة", "pièces", "pcs"),
+    "receipt_received": ("المستلم", "Reçu", "Received"),
+    "receipt_cashier_by": (
+        "تم التحصيل بواسطة",
+        "Encaissé par",
+        "Collected by",
+    ),
     # ---- Zakat (Zakat al-Tijarah) report labels ----
     "notes": ("ملاحظات", "Notes", "Notes"),
     "zakat_report_title": ("تقرير الزكاة", "Rapport de Zakat", "Zakat Report"),

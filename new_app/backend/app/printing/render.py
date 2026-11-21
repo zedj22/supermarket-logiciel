@@ -22,7 +22,13 @@ from app.printing.document_data import DocumentData
 from app.printing.facture_data import FactureData
 from app.printing.fonts import register_fonts
 from app.printing.labels import is_rtl, label
-from app.printing.templates import facture_a4, invoice_80mm, invoice_a4, report_table
+from app.printing.templates import (
+    facture_a4,
+    invoice_80mm,
+    invoice_a4,
+    receipt_80mm,
+    report_table,
+)
 from app.printing.templates.report_table import ReportTableInput
 from app.printing.text import shape_text
 
@@ -103,8 +109,15 @@ def render_invoice(data: DocumentData, paper: Paper, *, compress: bool = True) -
     locale = data.meta.locale  # meta is always set by builders
 
     if paper == "80mm":
-        story = invoice_80mm.build_flowables(data)
-        height = invoice_80mm.estimate_height(data)
+        # Customer SALE receipts use the redesigned thermal layout; the
+        # internal return/purchase documents and every A4 document keep
+        # their existing templates untouched.
+        if data.receipt is not None:
+            story = receipt_80mm.build_flowables(data)
+            height = receipt_80mm.estimate_height(data)
+        else:
+            story = invoice_80mm.build_flowables(data)
+            height = invoice_80mm.estimate_height(data)
         doc = SimpleDocTemplate(
             buffer,
             pagesize=(80 * mm, height),

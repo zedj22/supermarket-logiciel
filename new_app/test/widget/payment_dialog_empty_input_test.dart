@@ -9,10 +9,10 @@
 //    method validation (cash: paid_too_low, card/partial: invalid_amount)
 //    — it is never an implicit full payment and never submits a sale;
 //  - once the cashier types an amount, full / over / partial payment
-//    math works exactly as before: cash settles the amount due (the
-//    overpayment is the change shown), partial sends the entered amount
-//    and shows the remaining debt, card demands the exact due, credit
-//    sends 0 with the field hidden;
+//    math works exactly as before: cash sends the amount received (the
+//    overpayment is the change shown and the receipt's Rendu), partial
+//    sends the entered amount and shows the remaining debt, card demands
+//    the exact due, credit sends 0 with the field hidden;
 //  - switching payment methods and rebuilding the dialog never
 //    populate the field.
 import 'package:flutter/material.dart';
@@ -314,8 +314,8 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('overpayment: change is calculated, sale still settles '
-        'the amount due', (tester) async {
+    testWidgets('overpayment: change is calculated and the tendered amount '
+        'is what gets paid', (tester) async {
       final payloads = <Map<String, Object>>[];
       final adapter = _adapter(salePayloads: payloads);
       await pumpHarness(tester, _overrides(adapter));
@@ -329,8 +329,8 @@ void main() {
 
       expect(find.byKey(const Key('payment-dialog')), findsNothing);
       expect(payloads, hasLength(1));
-      expect(payloads.single['paid'], '100.00',
-          reason: 'the overpayment is change, never a larger paid');
+      expect(payloads.single['paid'], '150.00',
+          reason: 'receipt must print Reçu 150 / Total 100 / Rendu 50');
       expect(tester.takeException(), isNull);
     });
 

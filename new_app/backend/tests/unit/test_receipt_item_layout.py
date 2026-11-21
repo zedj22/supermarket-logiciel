@@ -144,26 +144,30 @@ def _normalize(text: str) -> str:
     return " ".join(text.split())
 
 
+def _bare(money: str) -> str:
+    """Item-table amounts print without the currency suffix."""
+    return money[: -len(" DA")] if money.endswith(" DA") else money
+
+
 def _expected_item_blocks(data: DocumentData) -> list[str]:
-    """Every string the items table puts on the paper for one document."""
+    """Every string the redesigned receipt item table puts on the paper.
+
+    The sale receipt is a four-column table (Désignation / Prix U / Qté /
+    Montant): one row per line, bare amounts, and the optional meta and
+    discount lines underneath.  Return/purchase 80mm documents still use
+    the legacy name-row + value-row layout in ``invoice_80mm``.
+    """
     locale = data.meta.locale
     out: list[str] = []
     for line in data.lines:
-        name = f"└ {line.name}" if line.kind == "pack_component" else line.name
+        name = f"- {line.name}" if line.kind == "pack_component" else line.name
         out.append(name)
-        out.append(f"{line.qty} × {line.unit_label}")
+        out.append(line.qty)
         if line.show_money:
-            out.append(line.unit_price)
-            out.append(line.line_total)
-        meta_bits = []
-        if line.sku:
-            meta_bits.append(f"{label('col_sku', locale)}: {line.sku}")
-        elif line.barcode:
-            meta_bits.append(f"{label('barcode', locale)}: {line.barcode}")
+            out.append(_bare(line.unit_price))
+            out.append(_bare(line.line_total))
         if line.base_qty:
-            meta_bits.append(f"{label('base', locale)}: {line.base_qty} {line.unit_label}")
-        if meta_bits:
-            out.append("   ".join(meta_bits))
+            out.append(f"{label('base', locale)}: {line.base_qty} {line.unit_label}")
         if line.line_discount:
             out.append(f"{label('discount', locale)}: {line.line_discount}")
     return out
@@ -530,17 +534,26 @@ def test_rendered_pdf_shows_every_field_for_every_line(locale: str) -> None:
 
 
 @pytest.mark.parametrize("locale", LOCALES)
-def test_rendered_pdf_draws_name_then_value_row(locale: str) -> None:
+def test_rendered_pdf_keeps_the_four_column_order(locale: str) -> None:
+    """Désignation → Prix U → Qté → Montant, mirrored for Arabic."""
     data = build_sale_document(_sale_payload(lines=[_payload_lines()[0]]), locale=locale)
     blocks = _blocks(render_invoice(data, "80mm"))
     item = data.lines[0]
 
     assert shape_text("Cola") in blocks
     index = blocks.index(shape_text("Cola"))
-    value = [f"{item.qty} × {item.unit_label}", item.unit_price, item.line_total]
+    name, price, qty, total = (
+        shape_text("Cola"),
+        _bare(item.unit_price),
+        item.qty,
+        _bare(item.line_total),
+    )
     if locale == "ar":
-        value.reverse()
-    assert blocks[index + 1 : index + 4] == value
+        # RTL draws the mirrored row first, the designation cell last
+        assert blocks[index - 3 : index] == [total, qty, price]
+    else:
+        assert blocks[index + 1 : index + 4] == [price, qty, total]
+    assert blocks.count(name) == 1
 
     # §15.7 A1/A2 — the line's identifiers never reach the customer paper.
     drawn = " | ".join(blocks)
