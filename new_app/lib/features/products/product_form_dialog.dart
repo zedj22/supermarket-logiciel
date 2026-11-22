@@ -22,6 +22,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -450,7 +451,42 @@ class _ProductFormDialogState extends ConsumerState<ProductFormDialog> {
     router.go('/stock');
   }
 
+  /// Enter on any single-line field runs the SAME save as the button.
+  ///
+  /// Root cause of the missing keyboard save: `DefaultTextEditingShortcuts`
+  /// maps a hardware Enter to `DoNothingAndStopPropagationTextIntent` on
+  /// desktop ("these keys should go to the IME"), so a focused field never
+  /// turns Enter into `onSubmitted` and the dialog — which only ever had an
+  /// `onSubmitted`-less Save button — simply ignored the key. A
+  /// dialog-level shortcut cannot fix that, because the field's own
+  /// shortcut map is consulted first.
+  ///
+  /// So each single-line field is wrapped by [_enterSubmits], whose
+  /// `CallbackShortcuts` sits closer to the field than Flutter's default
+  /// map and therefore wins. `onSubmitted` stays for the IME path (mobile /
+  /// on-screen "done"); both funnel into `_submit`, which refuses to run
+  /// twice, so one Enter can never become two products.
+  void _submitFromField() => _submit();
+
+  /// One single-line field + "Enter saves", for that field only.
+  ///
+  /// Deliberately per-field rather than around the whole form: the
+  /// multiline description must keep Enter for its own editing, and the
+  /// dropdowns must keep Enter for opening/confirming their menu, so
+  /// neither can submit by accident.
+  Widget _enterSubmits(Widget field) => CallbackShortcuts(
+        bindings: <ShortcutActivator, VoidCallback>{
+          const SingleActivator(LogicalKeyboardKey.enter): _submitFromField,
+          const SingleActivator(LogicalKeyboardKey.numpadEnter):
+              _submitFromField,
+        },
+        child: field,
+      );
+
   Future<void> _submit() async {
+    // One save at a time: a second Enter (or Enter plus a click on Save)
+    // while a request is in flight must never create a second product.
+    if (_saving) return;
     final validation = _validate();
     if (validation != null) {
       setState(() => _error = validation);
@@ -581,28 +617,44 @@ class _ProductFormDialogState extends ConsumerState<ProductFormDialog> {
                     AppStrings.t('product_information', loc),
                   ),
                   const SizedBox(height: 8),
-                  TextField(
-                    key: const Key('product-name-field'),
-                    controller: _name,
-                    decoration:
-                        InputDecoration(labelText: AppStrings.t('name', loc)),
-                    autofocus: true,
+                  _enterSubmits(
+                    TextField(
+                      key: const Key('product-name-field'),
+                      controller: _name,
+                      decoration: InputDecoration(
+                        labelText: AppStrings.t('name', loc),
+                      ),
+                      autofocus: true,
+                      textInputAction: TextInputAction.done,
+                      onSubmitted: (_) => _submitFromField(),
+                    ),
                   ),
                   const SizedBox(height: 12),
                   _fieldRow(
                     narrow: narrow,
                     children: [
-                      TextField(
-                        key: const Key('product-barcode-field'),
-                        controller: _barcode,
-                        decoration: InputDecoration(
-                          labelText: AppStrings.t('barcode', loc),
+                      // A wedge scan's Enter terminator is claimed by the
+                      // scanner gateway before this field sees it, so only a
+                      // human Enter saves.
+                      _enterSubmits(
+                        TextField(
+                          key: const Key('product-barcode-field'),
+                          controller: _barcode,
+                          decoration: InputDecoration(
+                            labelText: AppStrings.t('barcode', loc),
+                          ),
+                          textInputAction: TextInputAction.done,
+                          onSubmitted: (_) => _submitFromField(),
                         ),
                       ),
-                      TextField(
-                        controller: _sku,
-                        decoration: InputDecoration(
-                          labelText: AppStrings.t('sku', loc),
+                      _enterSubmits(
+                        TextField(
+                          controller: _sku,
+                          decoration: InputDecoration(
+                            labelText: AppStrings.t('sku', loc),
+                          ),
+                          textInputAction: TextInputAction.done,
+                          onSubmitted: (_) => _submitFromField(),
                         ),
                       ),
                     ],
@@ -655,25 +707,34 @@ class _ProductFormDialogState extends ConsumerState<ProductFormDialog> {
                   _fieldRow(
                     narrow: narrow,
                     children: [
-                      TextField(
-                        key: const Key('product-price-field'),
-                        controller: _price,
-                        keyboardType: const TextInputType.numberWithOptions(
-                          decimal: true,
-                        ),
-                        decoration: InputDecoration(
-                          labelText: AppStrings.t('price', loc),
-                        ),
-                      ),
-                      if (canSeeCost)
+                      _enterSubmits(
                         TextField(
-                          key: const Key('product-cost-field'),
-                          controller: _cost,
+                          key: const Key('product-price-field'),
+                          controller: _price,
                           keyboardType: const TextInputType.numberWithOptions(
                             decimal: true,
                           ),
                           decoration: InputDecoration(
-                            labelText: AppStrings.t('cost', loc),
+                            labelText: AppStrings.t('price', loc),
+                          ),
+                          textInputAction: TextInputAction.done,
+                          onSubmitted: (_) => _submitFromField(),
+                        ),
+                      ),
+                      if (canSeeCost)
+                        _enterSubmits(
+                          TextField(
+                            key: const Key('product-cost-field'),
+                            controller: _cost,
+                            keyboardType:
+                                const TextInputType.numberWithOptions(
+                                  decimal: true,
+                                ),
+                            decoration: InputDecoration(
+                              labelText: AppStrings.t('cost', loc),
+                            ),
+                            textInputAction: TextInputAction.done,
+                            onSubmitted: (_) => _submitFromField(),
                           ),
                         )
                       else
@@ -688,27 +749,36 @@ class _ProductFormDialogState extends ConsumerState<ProductFormDialog> {
                   _fieldRow(
                     narrow: narrow,
                     children: [
-                      TextField(
-                        key: const Key('product-quantity-field'),
-                        controller: _quantity,
-                        readOnly: quantityReadOnly,
-                        keyboardType: const TextInputType.numberWithOptions(
-                          decimal: true,
-                        ),
-                        decoration: InputDecoration(
-                          labelText: AppStrings.t('quantity', loc),
-                          helperText: quantityReadOnly
-                              ? AppStrings.t('quantity_readonly', loc)
-                              : null,
+                      _enterSubmits(
+                        TextField(
+                          key: const Key('product-quantity-field'),
+                          controller: _quantity,
+                          readOnly: quantityReadOnly,
+                          keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true,
+                          ),
+                          decoration: InputDecoration(
+                            labelText: AppStrings.t('quantity', loc),
+                            helperText: quantityReadOnly
+                                ? AppStrings.t('quantity_readonly', loc)
+                                : null,
+                          ),
+                          textInputAction: TextInputAction.done,
+                          onSubmitted: (_) => _submitFromField(),
                         ),
                       ),
-                      TextField(
-                        controller: _threshold,
-                        keyboardType: const TextInputType.numberWithOptions(
-                          decimal: true,
-                        ),
-                        decoration: InputDecoration(
-                          labelText: AppStrings.t('low_stock_threshold', loc),
+                      _enterSubmits(
+                        TextField(
+                          controller: _threshold,
+                          keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true,
+                          ),
+                          decoration: InputDecoration(
+                            labelText:
+                                AppStrings.t('low_stock_threshold', loc),
+                          ),
+                          textInputAction: TextInputAction.done,
+                          onSubmitted: (_) => _submitFromField(),
                         ),
                       ),
                     ],
@@ -731,24 +801,32 @@ class _ProductFormDialogState extends ConsumerState<ProductFormDialog> {
                   _fieldRow(
                     narrow: narrow,
                     children: [
-                      TextField(
-                        key: const Key('product-wholesale-price-field'),
-                        controller: _wholesalePrice,
-                        keyboardType: const TextInputType.numberWithOptions(
-                          decimal: true,
-                        ),
-                        decoration: InputDecoration(
-                          labelText: AppStrings.t('wholesale_price', loc),
+                      _enterSubmits(
+                        TextField(
+                          key: const Key('product-wholesale-price-field'),
+                          controller: _wholesalePrice,
+                          keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true,
+                          ),
+                          decoration: InputDecoration(
+                            labelText: AppStrings.t('wholesale_price', loc),
+                          ),
+                          textInputAction: TextInputAction.done,
+                          onSubmitted: (_) => _submitFromField(),
                         ),
                       ),
-                      TextField(
-                        key: const Key('product-wholesale-min-qty-field'),
-                        controller: _wholesaleMinQty,
-                        keyboardType: const TextInputType.numberWithOptions(
-                          decimal: true,
-                        ),
-                        decoration: InputDecoration(
-                          labelText: AppStrings.t('wholesale_min_qty', loc),
+                      _enterSubmits(
+                        TextField(
+                          key: const Key('product-wholesale-min-qty-field'),
+                          controller: _wholesaleMinQty,
+                          keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true,
+                          ),
+                          decoration: InputDecoration(
+                            labelText: AppStrings.t('wholesale_min_qty', loc),
+                          ),
+                          textInputAction: TextInputAction.done,
+                          onSubmitted: (_) => _submitFromField(),
                         ),
                       ),
                     ],
@@ -785,6 +863,9 @@ class _ProductFormDialogState extends ConsumerState<ProductFormDialog> {
                     AppStrings.t('additional_information', loc),
                   ),
                   const SizedBox(height: 8),
+                  // Multiline on purpose: Enter here is a newline, never a
+                  // save — the only field where the keyboard keeps its
+                  // editing meaning.
                   TextField(
                     controller: _description,
                     maxLines: 2,
@@ -793,11 +874,15 @@ class _ProductFormDialogState extends ConsumerState<ProductFormDialog> {
                     ),
                   ),
                   const SizedBox(height: 12),
-                  TextField(
-                    controller: _expiryDate,
-                    decoration: InputDecoration(
-                      labelText:
-                          '${AppStrings.t('expiry_date', loc)} (YYYY-MM-DD)',
+                  _enterSubmits(
+                    TextField(
+                      controller: _expiryDate,
+                      decoration: InputDecoration(
+                        labelText:
+                            '${AppStrings.t('expiry_date', loc)} (YYYY-MM-DD)',
+                      ),
+                      textInputAction: TextInputAction.done,
+                      onSubmitted: (_) => _submitFromField(),
                     ),
                   ),
                   const SizedBox(height: 16),

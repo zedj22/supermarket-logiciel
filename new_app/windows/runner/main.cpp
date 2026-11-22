@@ -28,7 +28,10 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   FlutterWindow window(project);
   Win32Window::Point origin(10, 10);
   Win32Window::Size size(1280, 720);
-  if (!window.Create(L"supermarket_pos", origin, size)) {
+  // Window title only — the executable, Dart package and installer keep
+  // their technical identifiers. ASCII so no code page can garble it; the
+  // in-app wordmark is the localized `app_name` string.
+  if (!window.Create(L"Store Management System", origin, size)) {
     return EXIT_FAILURE;
   }
   window.SetQuitOnClose(true);

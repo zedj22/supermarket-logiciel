@@ -14,6 +14,7 @@ import 'package:supermarket_pos/features/products/products_screen.dart';
 import 'package:supermarket_pos/features/users/users_screen.dart';
 import 'package:supermarket_pos/main.dart';
 import 'package:supermarket_pos/network/api_client.dart';
+import 'package:supermarket_pos/l10n/locale_provider.dart';
 import 'package:supermarket_pos/router/app_router.dart';
 
 class MockDio extends Mock implements Dio {}
@@ -274,6 +275,42 @@ void main() {
   }
 
   group('Authenticated shell', () {
+    testWidgets(
+        'the header wordmark is the generic product name in ar / fr / en, '
+        'with the direction each locale needs', (tester) async {
+      useDesktopViewport(tester);
+      final dio = MockDio();
+      stubBootRequests(dio);
+      stubLogin(dio, adminLoginResponse);
+
+      final container = await pumpFullApp(tester, dio);
+      await loginAs(tester, 'Admin');
+
+      // Default locale is Arabic: the generic wordmark, laid out RTL.
+      final ar = find.text('نظام تسيير المحلات');
+      expect(ar, findsOneWidget);
+      expect(Directionality.of(tester.element(ar)), TextDirection.rtl);
+
+      // French keeps the same alignment and typography, LTR.
+      container.read(localeProvider.notifier).setLocale(AppLocale.fr);
+      await tester.pumpAndSettle();
+      final fr = find.text('Système de gestion des commerces');
+      expect(fr, findsOneWidget);
+      expect(Directionality.of(tester.element(fr)), TextDirection.ltr);
+
+      // English mirrors French: one wordmark Text, LTR.
+      container.read(localeProvider.notifier).setLocale(AppLocale.en);
+      await tester.pumpAndSettle();
+      final en = find.text('Store Management System');
+      expect(en, findsOneWidget);
+      expect(Directionality.of(tester.element(en)), TextDirection.ltr);
+
+      // The old supermarket wording is gone from the header entirely.
+      for (final stale in ['نقطة بيع السوبرماركت', 'Supermarché POS']) {
+        expect(find.text(stale), findsNothing);
+      }
+    });
+
     testWidgets(
         'renders app title, current user name and roles, logout, and dashboard screen',
         (tester) async {

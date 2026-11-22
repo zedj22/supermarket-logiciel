@@ -52,7 +52,9 @@ class AppStrings {
   };
 
   static const Map<String, String> _arabic = {
-    'app_name': 'نقطة بيع السوبرماركت',
+    // Generic product name: the software serves any shop, not only a
+    // supermarket. One name, translated — never a supermarket label.
+    'app_name': 'نظام تسيير المحلات',
     'login': 'تسجيل الدخول',
     'pin': 'رقم التعريف الشخصي',
     'enter_pin': 'أدخل رقم التعريف الشخصي',
@@ -1819,7 +1821,7 @@ class AppStrings {
   };
 
   static const Map<String, String> _french = {
-    'app_name': 'Supermarché POS',
+    'app_name': 'Système de gestion des commerces',
     'login': 'Connexion',
     'pin': 'Code PIN',
     'enter_pin': 'Entrez votre code PIN',
@@ -3642,7 +3644,7 @@ class AppStrings {
   };
 
   static const Map<String, String> _english = {
-    'app_name': 'Supermarket POS',
+    'app_name': 'Store Management System',
     'login': 'Login',
     'pin': 'PIN',
     'enter_pin': 'Enter your PIN',

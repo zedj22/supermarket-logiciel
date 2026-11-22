@@ -1,5 +1,7 @@
 class AppConstants {
-  static const String appName = 'Supermarket POS';
+  /// Product name for surfaces Flutter owns outside `AppStrings` (the
+  /// `MaterialApp` title). The localized wordmark is `app_name`.
+  static const String appName = 'Store Management System';
   static const String appVersion = '1.0.0';
 
   static const int minPinLength = 4;

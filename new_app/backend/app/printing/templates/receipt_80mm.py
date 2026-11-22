@@ -63,18 +63,40 @@ CONTENT_WIDTH = 72 * mm - 12.0
 #: Item table columns (logical LTR order).  The designation column takes
 #: whatever the three numeric columns leave: money cells only hold a plain
 #: amount (no `DA` suffix), so 38pt fits `9 999.99` at the body size.
-COL_DESIGNATION = 88.0
-COL_PRICE = 40.0
+#: The bigger type needs a few more points than the old columns held.
+#: Sized from the WIDEST heading in any locale at the new size — Arabic
+#: `سعر الوحدة` and English `Unit price` both measure 39.1pt — so no column
+#: heading wraps onto a second line (`Montant` 33.2pt sets the amount floor,
+#: `9 999.99` at 34.9pt still fits the money column). The designation gives
+#: up 5pt (it wraps by design) and the quantity column keeps its width.
+#: The sum is still exactly CONTENT_WIDTH — four columns, same 80mm page.
+COL_DESIGNATION = 83.0
+COL_PRICE = 43.0
 COL_QTY = 26.0
 COL_AMOUNT = CONTENT_WIDTH - COL_DESIGNATION - COL_PRICE - COL_QTY
 
-BODY = 7.5
-HEADING = 7.5
-META = 6.5
+#: Type scale — the readability pass raised every rung by ~10–15% on the
+#: same 80mm geometry.  The four columns did not move: only the type grew,
+#: so the layout, separators and hierarchy are the ones the operator knows.
+BODY = 8.5  # was 7.5 (+13%) — items, quantities, totals, cashier
+HEADING = 8.5  # was 7.5 — column headings, bold as before
+META = 7.3  # was 6.5 (+12%) — pack/base/discount detail lines
+#: Store identity: raised only slightly (+8%) so it stays the loudest line
+#: on the paper and never competes with the total in the payment box.
+STORE_NAME = 13
+STORE_CONTACT = 7.8  # was 7 — phone / address
+STAMP = 8.8  # was 8 — sale timestamp
+FOOTER = 8.8  # was 8 — configured invoice footer / default thanks block
+FOOTER_SECONDARY = 8.5  # was 7.5 — French thanks line of the default block
+NOTICE = 7.8  # was 7 — retention notice
 PAD = 1.6
 HAIRLINE = 0.4
 HEADER_RULE = 0.8
 #: Shrink floor for a numeric cell that would otherwise wrap mid-amount.
+#: Deliberately UNCHANGED at 6pt: the body grew, but the last resort for a
+#: millions-scale amount must not become easier to trigger than before —
+#: a normal price never reaches it, and an extreme one wraps exactly as it
+#: always did.
 _NUM_SIZE_MIN = 6.0
 #: Product units are stored in English, so "piece" is matched against every
 #: localized spelling — that meta line is noise, not information.
@@ -400,18 +422,26 @@ def build_flowables(data: DocumentData) -> list[Flowable]:
     summary = data.receipt
     story: list[Flowable] = []
 
-    story.append(_p(data.store.name, 12, rtl=rtl, bold=True, align="center"))
+    story.append(
+        _p(data.store.name, STORE_NAME, rtl=rtl, bold=True, align="center")
+    )
     if data.store.phone:
-        story.append(_p(data.store.phone, 7, rtl=rtl, align="center"))
+        story.append(_p(data.store.phone, STORE_CONTACT, rtl=rtl, align="center"))
     if data.store.address:
-        story.append(_p(data.store.address, 7, rtl=rtl, align="center"))
+        story.append(
+            _p(data.store.address, STORE_CONTACT, rtl=rtl, align="center")
+        )
     story.append(Spacer(1, 1.2 * mm))
 
     if summary is not None and summary.stamp:
-        story.append(_p(summary.stamp, 8, rtl=rtl, align="center"))
+        story.append(_p(summary.stamp, STAMP, rtl=rtl, align="center"))
     if data.customer is not None and data.customer.name:
         story.append(
-            _p(f"{label(data.customer.label_key, locale)}: {data.customer.name}", 7, rtl=rtl)
+            _p(
+                f"{label(data.customer.label_key, locale)}: {data.customer.name}",
+                STORE_CONTACT,
+                rtl=rtl,
+            )
         )
 
     banner = _void_banner(data)
@@ -438,7 +468,7 @@ def build_flowables(data: DocumentData) -> list[Flowable]:
         story.append(
             _p(
                 f"{label('receipt_cashier_by', locale)} : {summary.cashier}",
-                7.5,
+                BODY,
                 rtl=rtl,
             )
         )
@@ -457,14 +487,25 @@ def build_flowables(data: DocumentData) -> list[Flowable]:
         # The closing message is the text configured in Settings
         # (`invoice_footer`) — the receipt never substitutes its own
         # thank-you wording for a configured one.
-        story.append(_p(data.store.footer, 8, rtl=rtl, align="center"))
+        story.append(_p(data.store.footer, FOOTER, rtl=rtl, align="center"))
     else:
         # No configured message → the built-in default block, unchanged.
-        story.append(_p(label("receipt_thanks_ar", locale), 8, rtl=True, align="center"))
+        story.append(
+            _p(label("receipt_thanks_ar", locale), FOOTER, rtl=True, align="center")
+        )
         story.append(Spacer(1, 0.8 * mm))
-        story.append(_p(label("receipt_thanks_fr", locale), 7.5, rtl=rtl, align="center"))
+        story.append(
+            _p(
+                label("receipt_thanks_fr", locale),
+                FOOTER_SECONDARY,
+                rtl=rtl,
+                align="center",
+            )
+        )
     story.append(Spacer(1, 0.8 * mm))
-    story.append(_p(label("receipt_keep_ticket", locale), 7, rtl=rtl, align="center"))
+    story.append(
+        _p(label("receipt_keep_ticket", locale), NOTICE, rtl=rtl, align="center")
+    )
     return story
 
 
