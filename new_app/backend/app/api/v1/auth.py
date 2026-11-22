@@ -60,10 +60,12 @@ def first_admin_setup(
     """Create the first admin account.
 
     Only works when no admin exists yet. The window cannot be closed
-    without completing setup (client-side enforcement).
+    without completing setup (client-side enforcement). The response
+    carries the new administrator's session token, so the first-run wizard
+    navigates straight to the dashboard without a second PIN prompt.
     """
     enforce_rate_limit(request, auth_limiter, scope="setup")
-    user = service.setup_first_admin(
+    token, user = service.setup_first_admin_with_session(
         name=payload.name,
         pin=payload.pin,
         pin_confirm=payload.pin_confirm,
@@ -71,6 +73,9 @@ def first_admin_setup(
     return SetupResponse(
         user_id=user.id,
         name=user.full_name,
+        access_token=token,
+        expires_in=settings.SESSION_LIFETIME_MINUTES * 60,
+        user=UserResponse.model_validate(user),
     )
 
 

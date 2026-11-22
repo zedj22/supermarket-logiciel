@@ -4,7 +4,7 @@ Covers the reported bug end to end at the HTTP boundary:
 
 * the two new columns are part of the ``GET``/``PUT /api/v1/settings``
   contract and survive a save + a later read;
-* all three modes round-trip, and the threshold travels with them;
+* all four modes round-trip, and the threshold travels with them;
 * a partial update (mode only) keeps the stored threshold;
 * an installation that never saved a mode reads as ``disabled`` / ``0``;
 * a request carrying a key the schema does not know is rejected (422)
@@ -79,6 +79,8 @@ def test_defaults_are_disabled_and_zero(api):
     ("mode", "amount"),
     [
         ("disabled", 0),
+        ("ask", 0),
+        ("ask", 250),
         ("auto_print", 0),
         ("auto_print", 250),
         ("ask_above_threshold", 500),

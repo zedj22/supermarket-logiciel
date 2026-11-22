@@ -108,11 +108,20 @@ class SetupRequest(StrictBaseModel):
 
 
 class SetupResponse(StrictBaseModel):
-    """First-admin setup response."""
+    """First-admin setup response.
+
+    Carries the freshly created administrator's session so first-run setup
+    lands on the dashboard already logged in.  Subsequent launches still
+    require the PIN: the client never restores a session across restarts.
+    """
 
     user_id: UUID
     name: str
     message: str = "Admin account created successfully"
+    access_token: str
+    token_type: str = "bearer"
+    expires_in: int = Field(description="Token lifetime in seconds")
+    user: UserResponse
 
 
 # ---------------------------------------------------------------------------

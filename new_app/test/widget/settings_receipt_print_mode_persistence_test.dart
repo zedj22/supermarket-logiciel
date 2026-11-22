@@ -124,6 +124,10 @@ void main() {
         'receipt_print_mode': 'disabled',
         'receipt_min_amount': 0,
       },
+      'ask': <String, Object?>{
+        'receipt_print_mode': 'disabled',
+        'receipt_min_amount': 0,
+      },
       'auto_print': <String, Object?>{
         'receipt_print_mode': 'disabled',
         'receipt_min_amount': 0,
@@ -248,6 +252,60 @@ void main() {
         findsOneWidget,
       );
       expect(find.byKey(_minAmountKey), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('ONE dropdown replaces the two legacy switches', (tester) async {
+      final server = _SettingsServer();
+      await pumpApp(tester, server);
+
+      // The separate ask/auto switches are gone…
+      expect(find.byKey(const Key('settings-ask-before-print')), findsNothing);
+      expect(find.byKey(const Key('settings-auto-print')), findsNothing);
+
+      // …and the single dropdown offers all four modes.
+      await tester.ensureVisible(find.byKey(_modeDropdownKey));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(_modeDropdownKey));
+      await tester.pumpAndSettle();
+      for (final mode in <String>[
+        'disabled',
+        'ask',
+        'auto_print',
+        'ask_above_threshold',
+      ]) {
+        expect(
+          find.text(AppStrings.t('receipt_print_mode_$mode', 'en')).last,
+          findsOneWidget,
+          reason: 'missing option $mode',
+        );
+      }
+      await tester.tapAt(const Offset(5, 5));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('the threshold field only appears in the threshold mode',
+        (tester) async {
+      final server = _SettingsServer();
+      await pumpApp(tester, server);
+
+      expect(find.byKey(_minAmountKey), findsNothing);
+
+      await _selectMode(tester, AppStrings.t('receipt_print_mode_ask', 'en'));
+      expect(find.byKey(_minAmountKey), findsNothing);
+
+      await _selectMode(
+        tester,
+        AppStrings.t('receipt_print_mode_auto_print', 'en'),
+      );
+      expect(find.byKey(_minAmountKey), findsNothing);
+
+      await _selectMode(
+        tester,
+        AppStrings.t('receipt_print_mode_ask_above_threshold', 'en'),
+      );
+      expect(find.byKey(_minAmountKey), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
 

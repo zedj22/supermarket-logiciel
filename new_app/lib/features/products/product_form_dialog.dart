@@ -503,20 +503,34 @@ class _ProductFormDialogState extends ConsumerState<ProductFormDialog> {
       stockChanged = true;
     }
 
+    // Auto-generated barcode: the backend mints one when the operator left
+    // the field empty. Show it, so the code is on screen (and on the paper
+    // label) the moment the product exists instead of being invisible.
+    final generatedBarcode = !_isEdit ? (created?.barcode ?? '').trim() : '';
+    final barcodeWasTyped = widget.barcode != null && widget.barcode!.isNotEmpty;
+    final announceBarcode =
+        generatedBarcode.isNotEmpty && _barcode.text.trim().isEmpty &&
+            !barcodeWasTyped;
+    if (announceBarcode) _barcode.text = generatedBarcode;
+
     // Pop with the created product so a quick-add caller (purchase
     // editor) can select it without re-searching; edits pop null.
     Navigator.pop(context, created);
+    final message = AppStrings.t(
+      _isEdit
+          ? (stockChanged
+              ? 'product_and_stock_updated'
+              : 'product_updated')
+          : 'product_created',
+      loc,
+    );
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          AppStrings.t(
-            _isEdit
-                ? (stockChanged
-                    ? 'product_and_stock_updated'
-                    : 'product_updated')
-                : 'product_created',
-            loc,
-          ),
+          announceBarcode
+              ? '$message · ${AppStrings.t('barcode', loc)}: $generatedBarcode'
+              : message,
+          key: const Key('product-form-snackbar'),
         ),
       ),
     );

@@ -258,7 +258,12 @@ void main() {
       // description (`show_pos_product_list` + `_desc`) and the scan-only
       // barcode-field hint (`pos_scan_field_hint`) in ar/fr/en — 3 keys
       // (1653).
-      expect(_map('en').keys.length, 1653);
+      // The unified receipt-printing-mode pass added the `ask` option label
+      // (1 key); the one-page first-admin setup pass added the subtitle, the
+      // username label/hint/required error, the PIN-required and PIN-mismatch
+      // errors, the show/hide PIN toggles, the creating label and the
+      // missing-setup-session error (10 keys).
+      expect(_map('en').keys.length, 1664);
       expect(_map('ar').keys.length, _map('en').keys.length);
       expect(_map('fr').keys.length, _map('en').keys.length);
     });

@@ -25,6 +25,7 @@ from app.core.exceptions import (
     NotFoundError,
     ValidationError,
 )
+from app.domain.barcode import generate_internal_ean13
 from app.domain.packaging import (
     PackagingError,
     PackagingState,
@@ -83,6 +84,37 @@ from app.services.base import BaseService
 logger = structlog.get_logger(__name__)
 
 VALID_STATUS_FILTERS = frozenset({"active", "archived", "all"})
+
+#: Automatic barcode generation: how many distinct codes one create may try
+#: before giving up.  A collision needs two simultaneous creations to draw
+#: the same 11 random digits (10^11 space), so even a handful of attempts is
+#: astronomically safe; the bound exists so a bug can never loop forever.
+MAX_BARCODE_ATTEMPTS = 10
+BARCODE_GENERATION_FAILED_CODE = "BARCODE_GENERATION_FAILED"
+BARCODE_GENERATION_FAILED_KEY = "errors.barcodeGenerationFailed"
+
+
+def _is_barcode_conflict(exc: ConflictError) -> bool:
+    """True when [exc] is the unique-barcode race the retry loop exists for."""
+    details = exc.details if isinstance(exc.details, dict) else {}
+    return bool(details.get("barcode")) or details.get("kind") == "unique"
+
+
+def normalise_barcode(value: str | None) -> str | None:
+    """One definition of "the operator supplied no barcode".
+
+    ``None``, ``""`` and whitespace-only input all mean *missing*: they must
+    trigger automatic generation, never be stored, and never be mistaken for
+    a hand-typed code.  A real value is returned stripped, which is what the
+    request schemas already do — this second pass makes the SERVICE
+    authoritative too, so no caller (a future import, a transfer, a request
+    model built by hand) can save an empty barcode or defeat generation by
+    sending blanks.
+    """
+    if value is None:
+        return None
+    stripped = value.strip()
+    return stripped or None
 
 
 def _normalize_status(status: str) -> str:
@@ -330,6 +362,43 @@ class ProductService(BaseService):
                 details={"barcode": barcode},
             )
 
+    def _barcode_taken_by_any_article(self, barcode: str) -> bool:
+        """True when ANY scannable record already carries [barcode].
+
+        A product barcode is not unique in a vacuum: the POS resolves a scan
+        through selling unit → variant → product, so a generated code that
+        already belongs to a selling unit or variant would make the scanner
+        open the wrong article.  Purchase units are included for the same
+        reason (they are scanned on receipts).
+        """
+        return bool(
+            self.repo.barcode_exists(barcode)
+            or ProductVariantRepository(self.db).barcode_exists(barcode)
+            or SellingUnitRepository(self.db).barcode_exists(barcode)
+            or PurchaseUnitRepository(self.db).barcode_exists(barcode)
+        )
+
+    def _generate_unique_barcode(self) -> str:
+        """A checksum-valid internal EAN-13 not used by any existing article.
+
+        This is a *pre-check* only — two concurrent creates can still pick
+        the same code between the check and the insert, which the unique
+        index then rejects; :meth:`create` catches that and retries.
+        """
+        for _ in range(MAX_BARCODE_ATTEMPTS):
+            candidate = generate_internal_ean13()
+            if not self._barcode_taken_by_any_article(candidate):
+                return candidate
+        raise BusinessRuleError(
+            message=(
+                "Could not generate a unique barcode for this product. "
+                "Please try again."
+            ),
+            details={"attempts": MAX_BARCODE_ATTEMPTS},
+            code=BARCODE_GENERATION_FAILED_CODE,
+            message_key=BARCODE_GENERATION_FAILED_KEY,
+        )
+
     def _ensure_category_usable(self, category_id: uuid.UUID | None) -> None:
         """Category must exist; archived categories reject new products."""
         if category_id is None:
@@ -352,12 +421,19 @@ class ProductService(BaseService):
         Children (variants / selling units / purchase units) are created in
         the SAME transaction as the product. Any child validation failure
         rolls back the product — never a half-created catalog entry.
+
+        Barcode: a code the operator typed is used verbatim and is never
+        replaced. When none was given, a checksum-valid internal EAN-13 is
+        generated, proven unused by every scannable article and stored on the
+        product, so the article is immediately scannable and printable.
+        Generation failure is a 4xx — a product is never saved without it.
         """
-        self._ensure_barcode_available(request.barcode)
         self._ensure_category_usable(request.category_id)
+        requested_barcode = normalise_barcode(request.barcode)
+        self._ensure_barcode_available(requested_barcode)
 
         product_fields = request.model_dump(
-            exclude={"variants", "selling_units", "purchase_units"}
+            exclude={"variants", "selling_units", "purchase_units", "barcode"}
         )
         variants = list(request.variants or [])
         selling_units = list(request.selling_units or [])
@@ -367,8 +443,74 @@ class ProductService(BaseService):
         # 4xx errors surface without touching the DB.
         self._validate_staged_children(variants, selling_units, purchase_units)
 
+        barcode = requested_barcode or self._generate_unique_barcode()
+        # A typed barcode is never retried (the conflict is the operator's to
+        # resolve); a generated one is redrawn when the unique index rejects
+        # it, which is exactly the concurrent-create race.
+        attempts = 1 if requested_barcode else MAX_BARCODE_ATTEMPTS
+        for attempt in range(attempts):
+            try:
+                product = self._persist_new_product(
+                    request,
+                    product_fields,
+                    barcode,
+                    variants,
+                    selling_units,
+                    purchase_units,
+                )
+            except ConflictError as exc:
+                if requested_barcode or not _is_barcode_conflict(exc):
+                    raise
+                logger.warning(
+                    "product_barcode_collision",
+                    barcode=barcode,
+                    attempt=attempt + 1,
+                )
+                barcode = self._generate_unique_barcode()
+                continue
+            break
+        else:
+            raise BusinessRuleError(
+                message=(
+                    "Could not generate a unique barcode for this product. "
+                    "Please try again."
+                ),
+                details={"attempts": MAX_BARCODE_ATTEMPTS},
+                code=BARCODE_GENERATION_FAILED_CODE,
+                message_key=BARCODE_GENERATION_FAILED_KEY,
+            )
+
+        logger.info(
+            "product_created",
+            product_id=str(product.id),
+            name=product.name,
+            barcode=product.barcode,
+            variants=len(variants),
+            selling_units=len(selling_units),
+            purchase_units=len(purchase_units),
+        )
+
+        # Phase 7: seed an ADJUSTMENT movement for create-with-quantity so
+        # stock is movement-audited from the first write (PMP already seeded).
+        if product.quantity and float(product.quantity) > 0:
+            from app.services.inventory import InventoryService
+
+            InventoryService(self.db).seed_initial_stock(product)
+
+        return product
+
+    def _persist_new_product(
+        self,
+        request: ProductCreateRequest,
+        product_fields: dict[str, Any],
+        barcode: str,
+        variants: list[Any],
+        selling_units: list[Any],
+        purchase_units: list[Any],
+    ) -> Product:
+        """One insert attempt: product + its staged children, one transaction."""
         with self.transaction():
-            product = Product(**product_fields)
+            product = Product(**product_fields, barcode=barcode)
             # Phase 7: seed PMP from nominal cost at create (updated by receipts).
             product.avg_cost = float(request.cost or 0)
             self.repo.create(product)
@@ -436,24 +578,6 @@ class ProductService(BaseService):
                         is_default=is_default,
                     )
                 )
-
-        logger.info(
-            "product_created",
-            product_id=str(product.id),
-            name=product.name,
-            barcode=product.barcode,
-            variants=len(variants),
-            selling_units=len(selling_units),
-            purchase_units=len(purchase_units),
-        )
-
-        # Phase 7: seed an ADJUSTMENT movement for create-with-quantity so
-        # stock is movement-audited from the first write (PMP already seeded).
-        if product.quantity and float(product.quantity) > 0:
-            from app.services.inventory import InventoryService
-
-            InventoryService(self.db).seed_initial_stock(product)
-
         return product
 
     def _validate_staged_children(
@@ -532,8 +656,14 @@ class ProductService(BaseService):
         updates: dict[str, Any] = request.model_dump(exclude_unset=True)
 
         if "barcode" in updates:
-            new_barcode = updates["barcode"]
-            if new_barcode != product.barcode:
+            # An edit never invents a barcode, and a blank/None field is not a
+            # request to destroy one: an existing code (auto-generated or
+            # typed) survives any edit that does not supply a real replacement.
+            new_barcode = normalise_barcode(updates["barcode"])
+            if new_barcode is None:
+                updates.pop("barcode")
+            elif new_barcode != product.barcode:
+                updates["barcode"] = new_barcode
                 self._ensure_barcode_available(
                     new_barcode, exclude_id=product_id
                 )

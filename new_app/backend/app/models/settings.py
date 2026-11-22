@@ -50,9 +50,12 @@ PAPERS = ("80mm", "A4")
 DEFAULT_LOW_STOCK_THRESHOLD = 5
 
 #: Post-checkout receipt printing modes (``ck_app_settings_receipt_print_mode``).
-#: ``disabled`` is the default so an existing installation keeps the legacy
-#: ``ask_before_print`` / ``auto_print_invoice`` behaviour untouched.
-RECEIPT_PRINT_MODES = ("disabled", "auto_print", "ask_above_threshold")
+#: One control, four behaviours: no printing, ask-then-print, print
+#: automatically, or open the native print dialog above an amount.  The two
+#: legacy booleans (``ask_before_print`` / ``auto_print_invoice``) are kept
+#: for wire compatibility only — they are migrated into this column once
+#: (0039) and never consulted again.
+RECEIPT_PRINT_MODES = ("disabled", "ask", "auto_print", "ask_above_threshold")
 DEFAULT_RECEIPT_PRINT_MODE = "disabled"
 DEFAULT_RECEIPT_MIN_AMOUNT = Decimal("0")
 
@@ -71,7 +74,7 @@ class AppSetting(Base, TimestampMixin):
             name="ck_app_settings_low_stock_threshold",
         ),
         CheckConstraint(
-            "receipt_print_mode IN ('disabled', 'auto_print', "
+            "receipt_print_mode IN ('disabled', 'ask', 'auto_print', "
             "'ask_above_threshold')",
             name="ck_app_settings_receipt_print_mode",
         ),
@@ -128,9 +131,9 @@ class AppSetting(Base, TimestampMixin):
     auto_print_invoice: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False
     )
-    # New, independent post-checkout receipt printing control. It sits next
-    # to — never replaces — the two legacy booleans above: ``disabled``
-    # delegates to them, the two explicit modes override them.
+    # The ONE post-checkout receipt printing control (see RECEIPT_PRINT_MODES).
+    # The legacy booleans above are no longer read by any behaviour; 0039
+    # folded their values into this column and zeroed them.
     receipt_print_mode: Mapped[str] = mapped_column(
         String(30), nullable=False, default=DEFAULT_RECEIPT_PRINT_MODE
     )

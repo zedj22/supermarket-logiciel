@@ -188,6 +188,18 @@ class AppStrings {
     'create_admin': 'إنشاء حساب المدير',
     'admin_name': 'اسم المدير',
     'enter_admin_name': 'أدخل اسم المدير الكامل',
+    'setup_subtitle': 'الإعداد الأولي: أنشئ حساب المدير الأول للبدء',
+    'setup_username': 'اسم المستخدم (المدير)',
+    'setup_username_hint': 'الاسم الذي سيظهر في شاشة الدخول',
+    'setup_username_required': 'اسم المستخدم مطلوب',
+    'pin_required': 'رقم التعريف الشخصي مطلوب (من 4 إلى 6 أرقام)',
+    'pin_mismatch': 'رقمَا التعريف الشخصي غير متطابقين',
+    'show_pin': 'إظهار رقم التعريف',
+    'hide_pin': 'إخفاء رقم التعريف',
+    'setup_creating': 'جارٍ إنشاء الحساب…',
+    'setup_incomplete':
+        'تم إنشاء الحساب لكن الخادم لم يُرجع جلسة الدخول — حدّث الخادم '
+        'ثم سجّل الدخول برمزك.',
     'create_pin': 'إنشاء رقم التعريف الشخصي',
     'confirm_pin': 'تأكيد رقم التعريف الشخصي',
     'create_account': 'إنشاء الحساب',
@@ -326,6 +338,7 @@ class AppStrings {
     'receipt_print_mode': 'وضع طباعة الإيصال',
     'receipt_print_mode_disabled': 'معطّل',
     'receipt_print_mode_auto_print': 'طباعة الإيصال تلقائيًا',
+    'receipt_print_mode_ask': 'السؤال قبل الطباعة',
     'receipt_print_mode_ask_above_threshold':
         'فتح نافذة الطباعة عند بلوغ المبلغ',
     'receipt_min_amount': 'الحد الأدنى لمبلغ الإيصال',
@@ -1949,6 +1962,19 @@ class AppStrings {
     'create_admin': 'Créer un compte administrateur',
     'admin_name': 'Nom de l\'administrateur',
     'enter_admin_name': 'Entrez le nom complet de l\'administrateur',
+    'setup_subtitle':
+        'Première installation : créez le compte administrateur pour commencer',
+    'setup_username': "Identifiant de l'administrateur",
+    'setup_username_hint': "Le nom affiché sur l'écran de connexion",
+    'setup_username_required': "L'identifiant est requis",
+    'pin_required': 'Le code PIN est requis (4 à 6 chiffres)',
+    'pin_mismatch': 'Les codes PIN ne correspondent pas',
+    'show_pin': 'Afficher le code PIN',
+    'hide_pin': 'Masquer le code PIN',
+    'setup_creating': 'Création du compte…',
+    'setup_incomplete':
+        "Compte créé mais le serveur n'a pas renvoyé de session — mettez "
+        'le serveur à jour puis connectez-vous avec votre code PIN.',
     'create_pin': 'Créer un code PIN',
     'confirm_pin': 'Confirmer le code PIN',
     'create_account': 'Créer le compte',
@@ -2089,6 +2115,7 @@ class AppStrings {
     'receipt_print_mode': "Mode d'impression du ticket",
     'receipt_print_mode_disabled': 'Désactivé',
     'receipt_print_mode_auto_print': 'Imprimer le ticket automatiquement',
+    'receipt_print_mode_ask': 'Demander avant impression',
     'receipt_print_mode_ask_above_threshold':
         "Ouvrir la fenêtre d'impression au montant atteint",
     'receipt_min_amount': 'Montant minimum du ticket',
@@ -3759,6 +3786,19 @@ class AppStrings {
     'create_admin': 'Create Administrator Account',
     'admin_name': 'Administrator Name',
     'enter_admin_name': 'Enter full administrator name',
+    'setup_subtitle':
+        'First-time setup: create the administrator account to get started',
+    'setup_username': 'Administrator username',
+    'setup_username_hint': 'The name shown on the login screen',
+    'setup_username_required': 'Username is required',
+    'pin_required': 'PIN is required (4 to 6 digits)',
+    'pin_mismatch': 'PINs do not match',
+    'show_pin': 'Show PIN',
+    'hide_pin': 'Hide PIN',
+    'setup_creating': 'Creating account…',
+    'setup_incomplete':
+        'Account created, but the server returned no session — update the '
+        'server, then sign in with your PIN.',
     'create_pin': 'Create PIN',
     'confirm_pin': 'Confirm PIN',
     'create_account': 'Create Account',
@@ -3899,6 +3939,7 @@ class AppStrings {
     'receipt_print_mode': 'Receipt printing mode',
     'receipt_print_mode_disabled': 'Disabled',
     'receipt_print_mode_auto_print': 'Automatically print receipt',
+    'receipt_print_mode_ask': 'Ask before printing',
     'receipt_print_mode_ask_above_threshold':
         'Open print window when amount is reached',
     'receipt_min_amount': 'Minimum receipt amount',

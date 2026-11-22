@@ -57,6 +57,43 @@ class AuthService(BaseService):
         - PIN must be 4-6 digits.
         - PINs must match.
         """
+        user, _token = self._setup_first_admin(
+            name, pin, pin_confirm, issue_session=False
+        )
+        return user
+
+    def setup_first_admin_with_session(
+        self, name: str, pin: str, pin_confirm: str
+    ) -> tuple[str, User]:
+        """Create the first admin AND open its session in one transaction.
+
+        First-run UX: the operator who just chose their own PIN is already
+        authenticated, so the app lands on the dashboard instead of asking
+        for that same PIN again.  Every later launch still requires a PIN
+        (the client never restores a session across restarts).
+        """
+        user, token = self._setup_first_admin(
+            name, pin, pin_confirm, issue_session=True
+        )
+        assert token is not None  # issue_session=True always mints one
+        return token, user
+
+    def _setup_first_admin(
+        self,
+        name: str,
+        pin: str,
+        pin_confirm: str,
+        *,
+        issue_session: bool,
+    ) -> tuple[User, str | None]:
+        """Shared first-admin creation; optionally mints a session token.
+
+        Concurrency: the admin role row is locked ``FOR UPDATE`` for the
+        whole transaction and the "does an admin exist?" check is repeated
+        *inside* it, so two simultaneous setup requests serialize — the
+        second one sees the first admin and gets a 409 instead of creating
+        a second initial administrator.
+        """
         # Validate PIN
         if not pin.isdigit() or len(pin) < PIN_MIN_LENGTH or len(pin) > PIN_MAX_LENGTH:
             raise BusinessRuleError(
@@ -70,7 +107,8 @@ class AuthService(BaseService):
         if not name.strip():
             raise BusinessRuleError(message="Name is required")
 
-        # Check if admin already exists (race condition protection)
+        # Fast path: an existing admin means setup is closed. Repeated under
+        # the row lock below for the concurrent case.
         existing_admin = self.db.execute(
             select(User).join(UserRole).join(Role).where(Role.name == "admin")
         ).scalar_one_or_none()
@@ -81,17 +119,34 @@ class AuthService(BaseService):
                 details={"admin_id": str(existing_admin.id)},
             )
 
+        token: str | None = None
         # Create user with admin role in a transaction
         with self.transaction():
-            # Find or create admin role
+            # Find or create admin role — the lock serializes concurrent
+            # setup requests (SQLite ignores FOR UPDATE but its write lock
+            # already serializes the transaction).
             admin_role = self.db.execute(
-                select(Role).where(Role.name == "admin")
+                select(Role).where(Role.name == "admin").with_for_update()
             ).scalar_one_or_none()
 
             if admin_role is None:
                 admin_role = Role(name="admin", description="Full system access")
                 self.db.add(admin_role)
                 self.db.flush()
+
+            # Re-check under the lock: a request that lost the race must not
+            # create a second initial administrator.
+            existing_admin = self.db.execute(
+                select(User)
+                .join(UserRole)
+                .join(Role)
+                .where(Role.name == "admin")
+            ).scalar_one_or_none()
+            if existing_admin is not None:
+                raise ConflictError(
+                    message="Admin account already exists",
+                    details={"admin_id": str(existing_admin.id)},
+                )
 
             # Create user
             user = User(
@@ -107,6 +162,28 @@ class AuthService(BaseService):
             self.db.add(user_role)
             self.db.flush()
 
+            if issue_session:
+                now = datetime.now(timezone.utc)
+                session = AuthSession(
+                    user_id=user.id,
+                    token_hash="",  # set once the JWT exists
+                    device_name=None,
+                    expires_at=now
+                    + timedelta(minutes=settings.SESSION_LIFETIME_MINUTES),
+                    last_seen_at=now,
+                )
+                self.db.add(session)
+                self.db.flush()
+                token = create_access_token(
+                    user_id=user.id,
+                    session_id=session.id,
+                    expires_delta=timedelta(
+                        minutes=settings.SESSION_LIFETIME_MINUTES
+                    ),
+                )
+                session.token_hash = hash_token(token)
+                user.last_login_at = now
+
             # Audit
             self._audit(
                 action=AuditAction.CREATE,
@@ -117,7 +194,7 @@ class AuthService(BaseService):
             )
 
         logger.info("first_admin_setup", user_id=str(user.id), name=name)
-        return user
+        return user, token
 
     def is_setup_needed(self) -> bool:
         """Check if first-admin setup is needed.

@@ -9447,8 +9447,8 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('auto_print_invoice prints on the default paper after checkout',
-        (tester) async {
+    testWidgets('the legacy auto_print_invoice flag alone no longer prints — '
+        'the unified mode is the only authority', (tester) async {
       final mock = MockDio();
       _mockDio(
         mock,
@@ -9461,20 +9461,16 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.byKey(const Key('ask-print-dialog')), findsNothing);
-      expect(printRequestBodies, hasLength(1));
-      expect(printRequestBodies.single['document_type'], 'sale');
-      expect(printRequestBodies.single['paper'], 'A4');
-      expect(printRequestBodies.single['document_id'], isNotEmpty);
-      expect(printer.printedPapers, <String>['A4']);
-      // The sale is reported completed whether or not the print went out.
+      expect(printRequestBodies, isEmpty);
+      expect(printer.printedPdfs, isEmpty);
       expect(find.byKey(const Key('checkout-success-snackbar')), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('ask_before_print: nothing prints until the cashier agrees',
+    testWidgets('mode=ask: nothing prints until the cashier agrees',
         (tester) async {
       final mock = MockDio();
-      _mockDio(mock, settingsBody: settingsJson(askBeforePrint: true));
+      _mockDio(mock, settingsBody: settingsJson(receiptPrintMode: 'ask'));
       final printer = _FakePrintService();
       await _pumpApp(tester, dio: mock, printService: printer);
 
@@ -9498,9 +9494,9 @@ void main() {
       expect(find.byKey(const Key('checkout-success-snackbar')), findsOneWidget);
     });
 
-    testWidgets('ask_before_print: confirming prints the invoice', (tester) async {
+    testWidgets('mode=ask: confirming prints the receipt', (tester) async {
       final mock = MockDio();
-      _mockDio(mock, settingsBody: settingsJson(askBeforePrint: true));
+      _mockDio(mock, settingsBody: settingsJson(receiptPrintMode: 'ask'));
       final printer = _FakePrintService();
       await _pumpApp(tester, dio: mock, printService: printer);
 
@@ -9519,7 +9515,7 @@ void main() {
     testWidgets('a failed auto print is a toast, never a failed sale',
         (tester) async {
       final mock = MockDio();
-      _mockDio(mock, settingsBody: settingsJson(autoPrintInvoice: true));
+      _mockDio(mock, settingsBody: settingsJson(receiptPrintMode: 'auto_print'));
       final printer = _FakePrintService(fail: true);
       await _pumpApp(tester, dio: mock, printService: printer);
 

@@ -17,7 +17,9 @@ from app.schemas.common import StrictBaseModel
 
 PaperSize = Literal["80mm", "A4"]
 #: Post-checkout receipt printing mode (``ck_app_settings_receipt_print_mode``).
-ReceiptPrintMode = Literal["disabled", "auto_print", "ask_above_threshold"]
+#: The single receipt-printing control: no printing / ask / automatic /
+#: native dialog above an amount.
+ReceiptPrintMode = Literal["disabled", "ask", "auto_print", "ask_above_threshold"]
 
 
 class SettingsResponse(StrictBaseModel):

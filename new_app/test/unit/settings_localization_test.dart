@@ -101,11 +101,12 @@ void main() {
     });
   });
 
-  // Receipt printing mode (new dropdown + its threshold input) — the label,
-  // the three option labels and the Minimum Receipt Amount field.
+  // Receipt printing mode (one dropdown + its threshold input) — the label,
+  // the four option labels and the Minimum Receipt Amount field.
   group('Receipt printing mode strings', () {
     const optionKeys = [
       'receipt_print_mode_disabled',
+      'receipt_print_mode_ask',
       'receipt_print_mode_auto_print',
       'receipt_print_mode_ask_above_threshold',
     ];
@@ -118,9 +119,9 @@ void main() {
       'settings_save_incomplete',
     ];
 
-    test('exactly 6 keys are under test', () {
-      expect(modeKeys, hasLength(6));
-      expect(modeKeys.toSet(), hasLength(6), reason: 'duplicate key');
+    test('exactly 7 keys are under test', () {
+      expect(modeKeys, hasLength(7));
+      expect(modeKeys.toSet(), hasLength(7), reason: 'duplicate key');
     });
 
     for (final locale in _locales) {
@@ -137,12 +138,12 @@ void main() {
       });
     }
 
-    test('the three option labels differ inside each locale', () {
+    test('the four option labels differ inside each locale', () {
       for (final locale in _locales) {
         final labels = {
           for (final key in optionKeys) AppStrings.t(key, locale),
         };
-        expect(labels, hasLength(3), reason: 'duplicate option label@$locale');
+        expect(labels, hasLength(4), reason: 'duplicate option label@$locale');
       }
     });
 

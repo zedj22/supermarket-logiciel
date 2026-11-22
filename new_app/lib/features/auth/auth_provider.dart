@@ -115,6 +115,12 @@ class AuthNotifier extends StateNotifier<AuthState> {
 
   // ── Setup ─────────────────────────────────────────────
 
+  /// Creates the first administrator and adopts the session it returns.
+  ///
+  /// The backend mints the admin's token inside the setup transaction, so
+  /// the operator lands on the dashboard already logged in — no second PIN
+  /// prompt for the PIN they just chose. That session is a normal one: the
+  /// next launch still starts unauthenticated and asks for the PIN.
   Future<void> setupFirstAdmin({
     required String name,
     required String pin,
@@ -122,7 +128,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
   }) async {
     state = state.copyWith(setupInProgress: true, errorMessage: null);
     try {
-      await _apiClient.dio.post(
+      final response = await _apiClient.dio.post(
         '/api/v1/auth/setup',
         data: {
           'name': name,
@@ -130,8 +136,30 @@ class AuthNotifier extends StateNotifier<AuthState> {
           'pin_confirm': pinConfirm,
         },
       );
+      final data = response.data;
+      final token = data is Map ? data['access_token'] as String? : null;
+      final userJson = data is Map ? data['user'] : null;
+      if (token == null || userJson is! Map<String, dynamic>) {
+        // A backend without the setup-session contract: setup may have
+        // succeeded, so never pretend it failed silently — say so.
+        state = state.copyWith(
+          setupInProgress: false,
+          errorMessage: AppStrings.t('setup_incomplete', _localeCode()),
+        );
+        return;
+      }
+
+      _apiClient.setToken(token);
+      final user = await _applyMePermissions(AuthUser.fromJson(userJson));
+      await _credentials.saveToken(token);
+      await _credentials.saveUserId(user.id);
+      await _credentials.saveUserName(user.fullName);
+      await _credentials.saveUserRoles(user.roles);
+      await _credentials.saveUserPermissions(user.permissions);
+
       state = AuthState(
-        status: AuthStatus.unauthenticated,
+        status: AuthStatus.authenticated,
+        user: user,
       );
     } on DioException catch (e) {
       final message = _extractError(e);

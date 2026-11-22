@@ -250,7 +250,7 @@ void main() {
     test('wire values mirror the backend vocabulary', () {
       expect(
         ReceiptPrintMode.values.map((mode) => mode.wire),
-        <String>['disabled', 'auto_print', 'ask_above_threshold'],
+        <String>['disabled', 'ask', 'auto_print', 'ask_above_threshold'],
       );
     });
 

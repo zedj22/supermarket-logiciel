@@ -296,6 +296,8 @@ class _PosActionsSection extends ConsumerWidget {
 /// Lifecycle notes:
 /// * the `GET` is issued once, from `initState`, and never for a user
 ///   without `settings_manage`;
+/// * the receipt-printing behaviour is chosen from ONE dropdown
+///   (`receipt_print_mode`); the legacy ask/auto switches are gone;
 /// * the form is keyed on the loaded [StoreSettings] so a **successful**
 ///   save re-seeds it from the server response, while a **failed** save
 ///   leaves the operator's typing untouched;
@@ -316,6 +318,10 @@ class _StoreSettingsSectionState extends ConsumerState<_StoreSettingsSection> {
   late final TextEditingController _lowStockThreshold;
   late final TextEditingController _receiptMinAmountController;
 
+  // Legacy wire fields, not edited here: the PUT body is the whole form, so
+  // they are re-sent exactly as the server last stored them (the backend
+  // zeroed them when it folded them into `receipt_print_mode`). No widget
+  // binds them any more — one dropdown, one truth.
   bool _askBeforePrint = false;
   bool _autoPrintInvoice = false;
   ReceiptPrintMode _receiptPrintMode = ReceiptPrintMode.disabled;
@@ -531,22 +537,11 @@ class _StoreSettingsSectionState extends ConsumerState<_StoreSettingsSection> {
                 setState(() => _defaultPaper = value);
               },
             ),
-            const SizedBox(height: 8),
-            SwitchListTile(
-              key: const Key('settings-ask-before-print'),
-              contentPadding: EdgeInsets.zero,
-              title: Text(AppStrings.t('ask_before_print', loc)),
-              value: _askBeforePrint,
-              onChanged: (value) => setState(() => _askBeforePrint = value),
-            ),
-            SwitchListTile(
-              key: const Key('settings-auto-print'),
-              contentPadding: EdgeInsets.zero,
-              title: Text(AppStrings.t('auto_print_invoice', loc)),
-              value: _autoPrintInvoice,
-              onChanged: (value) => setState(() => _autoPrintInvoice = value),
-            ),
             const SizedBox(height: 12),
+            // THE receipt-printing control: one dropdown, four behaviours.
+            // The two legacy switches that used to sit above it are gone —
+            // `receipt_print_mode` is the single authority and the backend
+            // migration folded their values into it.
             DropdownButtonFormField<ReceiptPrintMode>(
               key: const Key('settings-receipt-print-mode'),
               initialValue: _receiptPrintMode,
@@ -567,7 +562,7 @@ class _StoreSettingsSectionState extends ConsumerState<_StoreSettingsSection> {
               },
             ),
             // The threshold only exists for the amount-gated mode: it has no
-            // meaning for Disabled / Automatically print.
+            // meaning for Disabled / Ask / Automatically print.
             if (_receiptPrintMode == ReceiptPrintMode.askAboveThreshold) ...[
               const SizedBox(height: 12),
               _textField(

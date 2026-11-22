@@ -2,27 +2,28 @@ import 'package:flutter/foundation.dart';
 
 /// Post-checkout receipt printing mode (`receipt_print_mode`).
 ///
-/// New, independent control that sits *next to* the legacy
-/// `ask_before_print` / `auto_print_invoice` booleans rather than replacing
-/// them:
+/// THE receipt-printing control — the only one the POS consults:
 ///
-/// * [disabled] — no additional automatic behaviour; the legacy pair keeps
-///   working exactly as before (ask → prompt, else auto-print, else
-///   nothing). This is the default, so an existing installation behaves
-///   identically after upgrading.
+/// * [disabled] — no automatic printing and no print prompt.
+/// * [ask] — after a successful sale, the cashier is asked whether to
+///   print; yes prints, no finishes without printing.
 /// * [autoPrint] — the receipt is sent straight to the configured printer
-///   through the existing direct-print mechanism. The legacy booleans are
-///   ignored (the explicit mode wins).
+///   through the existing direct-print mechanism, no prompt.
 /// * [askAboveThreshold] — when the confirmed receipt total reaches
 ///   [StoreSettings.receiptMinAmount] the receipt PDF is generated and the
 ///   native Windows Print Setup dialog opens (no custom preview);
-///   cancelling it prints nothing. Nothing is direct-printed, and the
-///   legacy booleans are ignored.
+///   cancelling it prints nothing.
+///
+/// The legacy `ask_before_print` / `auto_print_invoice` fields still travel
+/// over the wire for older backends, but they are **inert**: the backend
+/// migration folded them into this mode and zeroed them, and this client
+/// never reads them.
 ///
 /// The [wire] value is the backend vocabulary
 /// (`ck_app_settings_receipt_print_mode`).
 enum ReceiptPrintMode {
   disabled('disabled'),
+  ask('ask'),
   autoPrint('auto_print'),
   askAboveThreshold('ask_above_threshold');
 
@@ -120,6 +121,9 @@ class StoreSettings {
   final String storeRib;
 
   final String defaultPaper;
+
+  /// Legacy wire fields — kept so the whole form can be PUT back unchanged;
+  /// never read by any behaviour (see [ReceiptPrintMode]).
   final bool askBeforePrint;
   final bool autoPrintInvoice;
 
