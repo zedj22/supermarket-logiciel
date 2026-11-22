@@ -1,20 +1,23 @@
-"""80mm receipt readability pass — bigger type, identical layout.
+"""80mm receipt readability passes — bigger type, identical layout.
 
-The readability change raised the thermal receipt's type scale by ~10–15%
-without touching geometry, columns, separators, money or the footer
-source.  These tests pin both halves of that promise:
+Three readability steps raised the thermal receipt's type scale
+(7.5 → 8.5 → 9.0 → 11.0 body).  The third was a real step (~22%), not
+another 5% nudge: the 9pt body was still hard to read on thermal paper, so
+the ledger columns were rebalanced from measurement to pay for it.  These
+tests pin both halves of that promise:
 
-* every rung of the scale is actually bigger than the one it replaced
-  (body 7.5 → 8.5, headings 7.5 → 8.5, meta 6.5 → 7.3, store 12 → 13,
-  contacts 7 → 7.8, stamp 8 → 8.8, footer 8 → 8.8);
+* every rung of the scale is bigger than the one the previous release
+  shipped (body 9 → 11, headings 9 → 10.5, meta 7.7 → 9) and the printed
+  sizes are the ones the operator asked for;
 * nothing else moved: the page is still exactly 80mm, the four columns
   still sum to the content width and still fit their text without
   clipping, there is still one separator after the last item, the
   payment summary is unchanged, and the closing message still comes from
   Settings when one is configured.
 
-The store name stays the largest line and the total stays bold, so the
-hierarchy the operator reads at a glance is preserved.
+The store name stays the largest line and the total is now a step above
+the body, bold, so the hierarchy the operator reads at a glance is
+preserved — and the figure the customer checks is the easiest to read.
 """
 
 from __future__ import annotations
@@ -31,7 +34,7 @@ from reportlab.pdfbase.pdfmetrics import stringWidth
 from reportlab.platypus import Paragraph, Table
 
 from app.printing.document_data import DocumentData, build_sale_document
-from app.printing.fonts import FONT_REGULAR, register_fonts
+from app.printing.fonts import FONT_BOLD, FONT_REGULAR, register_fonts
 from app.printing.labels import label
 from app.printing.render import render_invoice
 from app.printing.templates import receipt_80mm
@@ -44,9 +47,12 @@ LOCALES = ("en", "fr", "ar")
 D = Decimal
 PACK_MARKER = "- Lait 1L"
 
-#: The sizes the receipt shipped with before this pass — the yardstick for
-#: "the type actually got bigger", not a second copy of the constants.
-_PREVIOUS = {"BODY": 7.5, "HEADING": 7.5, "META": 6.5}
+#: The sizes the PREVIOUS release shipped — the yardstick for "the type
+#: actually got bigger again", not a second copy of the constants.
+_PREVIOUS = {"BODY": 9.0, "HEADING": 9.0, "META": 7.7}
+
+#: The original 7.5pt body, kept so the cumulative gain stays guarded.
+_ORIGINAL_BODY = 7.5
 
 
 # ─── helpers ────────────────────────────────────────────────────────────────
@@ -116,29 +122,56 @@ def _row_cells(table: Table, row: int) -> list[Any]:
 
 
 @pytest.mark.parametrize("name,previous", sorted(_PREVIOUS.items()))
-def test_every_rung_grew_by_at_least_ten_percent(name: str, previous: float) -> None:
+def test_every_rung_grew_since_the_previous_release(name: str, previous: float) -> None:
     current = getattr(receipt_80mm, name)
-    assert current / previous >= 1.10, (
-        f"{name} is {current}pt — only {current / previous:.1%} of the old {previous}pt"
+    assert current / previous >= 1.15, (
+        f"{name} is {current}pt — only {current / previous:.1%} of the previous {previous}pt"
     )
-    assert current / previous <= 1.20, "a modest bump, not a redesign"
+    assert current / previous <= 1.30, "a step up, not a redesign of the scale"
+
+
+def test_the_printed_sizes_are_the_ones_the_operator_asked_for() -> None:
+    """11pt body / 10.5pt headings / 9pt meta — measured on the paper."""
+    assert receipt_80mm.BODY == pytest.approx(11.0, abs=0.01)
+    assert receipt_80mm.HEADING == pytest.approx(10.5, abs=0.01)
+    assert receipt_80mm.META == pytest.approx(9.0, abs=0.01)
+
+
+def test_the_body_is_still_bigger_than_the_original_7_5pt() -> None:
+    assert receipt_80mm.BODY / _ORIGINAL_BODY == pytest.approx(1.47, abs=0.01)
 
 
 def test_store_identity_and_total_keep_their_hierarchy() -> None:
     # The store name is still the loudest line on the paper…
     assert receipt_80mm.STORE_NAME > receipt_80mm.BODY
-    # …the item body is one readable size with the headings…
-    assert receipt_80mm.BODY == receipt_80mm.HEADING
+    # …the headings sit just below the body (they are the scarce width)…
+    assert receipt_80mm.HEADING < receipt_80mm.BODY
+    # …the payment-box total is the loudest NUMBER, above the body…
+    assert receipt_80mm.TOTAL > receipt_80mm.BODY
+    assert receipt_80mm.TOTAL < receipt_80mm.STORE_NAME
     # …and the detail lines stay subordinate to it.
     assert receipt_80mm.META < receipt_80mm.BODY
     assert receipt_80mm.NOTICE < receipt_80mm.BODY
     assert receipt_80mm.STORE_CONTACT < receipt_80mm.STORE_NAME
 
 
-def test_payment_total_row_stays_bold_and_body_sized() -> None:
-    rows = _row_cells(_payment(_doc("fr")), 1)  # Reçu / Total / Rendu → Total
-    assert rows[0].style.fontSize == receipt_80mm.BODY
-    assert rows[0].style.fontName.lower().endswith("bold")
+@pytest.mark.parametrize("locale", LOCALES)
+def test_payment_total_row_is_bold_and_a_step_above_the_body(locale: str) -> None:
+    rows = _row_cells(_payment(_doc(locale)), 1)  # Reçu / Total / Rendu → Total
+    for cell in rows:
+        assert cell.style.fontSize == receipt_80mm.TOTAL, (
+            f"{locale}: total row printed at {cell.style.fontSize}pt"
+        )
+        assert cell.style.fontName.lower().endswith("bold")
+
+
+def test_the_total_is_wide_enough_for_a_large_amount_at_its_larger_size() -> None:
+    """The 13pt total never shrinks for a normal 4-digit amount."""
+    data = _doc("fr", paid=D("12000.000"), total=D("12000.000"), change=D("0"))
+    rows = _row_cells(_payment(data), 1)
+    money = [cell for cell in rows if "12" in cell.text]
+    assert money, "the total value must be in the box"
+    assert money[0].style.fontSize == receipt_80mm.TOTAL
 
 
 # ─── 2. the layout did not move ─────────────────────────────────────────────
@@ -201,6 +234,40 @@ def test_every_column_heading_fits_on_one_line(locale: str) -> None:
         assert cell.style.fontSize == receipt_80mm.HEADING
 
 
+def test_the_price_column_fits_the_widest_heading_in_any_locale() -> None:
+    """The column rebalance is sized from measurement, not from one locale.
+
+    Arabic `سعر الوحدة` (the widest) and English `Unit price` must both have
+    room inside COL_PRICE at the current heading size, with no shrinking and
+    no second line — that is exactly why the price column grew by 5.5pt.
+    """
+    usable = receipt_80mm.COL_PRICE - 2 * receipt_80mm.PAD
+    widest = 0.0
+    for locale in LOCALES:
+        text = shape_text(label(receipt_80mm.RECEIPT_COLUMNS[1], locale))
+        width = stringWidth(text, FONT_BOLD, receipt_80mm.HEADING)
+        widest = max(widest, width)
+        assert width <= usable + 0.01, (
+            f"{locale}: {label(receipt_80mm.RECEIPT_COLUMNS[1], locale)!r} "
+            f"needs {width:.2f}pt, column has {usable:.2f}pt"
+        )
+    # The margin is real, not sub-pixel luck.
+    assert usable - widest >= 0.3
+
+
+def test_the_quantity_heading_fits_the_narrow_ledger_column() -> None:
+    """Arabic `الكمية` is the widest quantity heading (26.20pt at 10.5)."""
+    usable = receipt_80mm.COL_QTY - 2 * receipt_80mm.PAD
+    for locale in LOCALES:
+        width = stringWidth(
+            shape_text(label(receipt_80mm.RECEIPT_COLUMNS[2], locale)),
+            FONT_BOLD,
+            receipt_80mm.HEADING,
+        )
+        assert width <= usable + 0.01, f"{locale}: quantity heading wraps"
+    assert usable - width >= 0.25
+
+
 @pytest.mark.parametrize("locale", LOCALES)
 def test_numeric_cells_never_wrap_at_the_new_size(locale: str) -> None:
     """Money and quantity stay on one line; only the name column may wrap."""
@@ -240,10 +307,41 @@ def test_the_long_product_name_still_gets_a_full_designation_column() -> None:
 
 @pytest.mark.parametrize("locale", LOCALES)
 def test_ordinary_amounts_are_printed_at_the_full_body_size(locale: str) -> None:
-    """A normal price/quantity/amount never triggers the shrink fallback.
+    """A three-digit price/quantity/amount never triggers the shrink fallback.
 
-    `9 999.99` is the widest ordinary unit price and it must fit the money
-    column at the new 8.5pt — that is what the +2pt column rebalance bought.
+    `999.99` fits the money column at the full 11pt — that is what the
+    measured rebalance bought (44.79pt column, 42.19pt usable, 35.99pt of
+    text).
+    """
+    data = _doc(
+        locale,
+        lines=[
+            _sale_line(
+                product_name="Cola",
+                quantity=D("1"),
+                unit_price=D("999.990"),
+                line_total=D("999.990"),
+            )
+        ],
+    )
+    cells = _row_cells(_items(data), 1)
+    numeric = [cell for cell in cells if isinstance(cell, Paragraph)]
+    sized = [cell for cell in numeric if cell.text][1:]  # skip the name cell
+    assert sized, "the value cells must exist"
+    for cell in sized:
+        assert cell.style.fontSize == pytest.approx(receipt_80mm.BODY), (
+            f"{cell.text!r} shrank to {cell.style.fontSize}pt"
+        )
+
+
+@pytest.mark.parametrize("locale", LOCALES)
+def test_a_four_digit_amount_keeps_its_readability(locale: str) -> None:
+    """`9 999.99` may shrink — but never to the old size, and never to a gap.
+
+    The name column had to keep 64pt usable for ordinary product names, so
+    the very widest ordinary amount gives up a few 0.25pt steps instead of
+    wrapping or touching its neighbour: 9.5pt on paper, still bigger than
+    the 9pt this cell shipped at before.
     """
     data = _doc(
         locale,
@@ -256,13 +354,61 @@ def test_ordinary_amounts_are_printed_at_the_full_body_size(locale: str) -> None
             )
         ],
     )
-    cells = _row_cells(_items(data), 1)
-    numeric = [cell for cell in cells if isinstance(cell, Paragraph)]
-    sized = [cell for cell in numeric if cell.text][1:]  # skip the name cell
-    assert sized, "the value cells must exist"
-    for cell in sized:
-        assert cell.style.fontSize == pytest.approx(receipt_80mm.BODY), (
-            f"{cell.text!r} shrank to {cell.style.fontSize}pt"
+    cells = [
+        cell
+        for cell in _row_cells(_items(data), 1)
+        if isinstance(cell, Paragraph) and cell.text
+    ][1:]  # skip the name cell
+    for cell in cells:
+        assert cell.style.fontSize >= receipt_80mm.BODY - 1.5, (
+            f"{cell.text!r} fell to {cell.style.fontSize}pt"
+        )
+        assert cell.style.fontSize <= receipt_80mm.BODY
+
+
+@pytest.mark.parametrize("locale", LOCALES)
+def test_a_wide_amount_never_touches_the_quantity_cell(locale: str) -> None:
+    """Two adjacent numbers must be separated by more than a digit space.
+
+    The columns are 2.6pt apart; without the reserved gutter a shrunk
+    amount would sit ~2.7pt from the quantity and print as `1 1 350.00`.
+    """
+    data = _doc(
+        locale,
+        lines=[
+            _sale_line(
+                product_name="Huile",
+                quantity=D("1"),
+                unit_price=D("1350.000"),
+                line_total=D("1350.000"),
+            )
+        ],
+    )
+    table = _items(data)
+    widths = _widths(data.rtl)
+    money_columns = (1, 3)  # logical price / amount
+    checked = 0
+    for column, cell in enumerate(_row_cells(table, 1)):
+        if not isinstance(cell, Paragraph) or "1 350.00" not in cell.text:
+            continue
+        gap = widths[column] - _cell_text_width(cell)
+        checked += 1
+        assert gap >= 5.0, f"{locale}: {cell.text!r} leaves only {gap:.2f}pt of gutter"
+    assert checked == len(money_columns), f"{locale}: expected both money cells"
+
+
+def test_an_ordinary_product_name_stays_on_one_line() -> None:
+    """The whole point of the rebalance: 11-char names do not wrap at 11pt.
+
+    Longer names (`Lait Candia 1L`, 69.3pt) wrap onto a second line — that
+    is the unavoidable trade on 80mm paper, and the name column is still
+    the widest of the four.
+    """
+    usable = receipt_80mm.COL_DESIGNATION - 2 * receipt_80mm.PAD
+    for name in ("Coca Cola 1L", "Huile 5L", "Eau 1.5L"):
+        width = stringWidth(shape_text(name), FONT_REGULAR, receipt_80mm.BODY)
+        assert width <= usable + 0.01, (
+            f"{name!r} needs {width:.2f}pt, name column has {usable:.2f}pt"
         )
 
 
@@ -398,7 +544,9 @@ def test_no_barcode_and_no_invoice_reference(locale: str) -> None:
 def test_body_text_is_measurably_wider_than_before_the_pass() -> None:
     """Guard the intent: the same string now draws wider on the paper."""
     text = "Coca Cola 1L"
-    old = stringWidth(shape_text(text), FONT_REGULAR, 7.5)
+    old = stringWidth(shape_text(text), FONT_REGULAR, _PREVIOUS["BODY"])
     new = stringWidth(shape_text(text), FONT_REGULAR, receipt_80mm.BODY)
     assert new > old
-    assert new / old == pytest.approx(receipt_80mm.BODY / 7.5, rel=1e-6)
+    assert new / old == pytest.approx(
+        receipt_80mm.BODY / _PREVIOUS["BODY"], rel=1e-6
+    )

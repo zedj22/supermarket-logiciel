@@ -15,8 +15,8 @@ Layout (top → bottom), on 80mm paper with 4mm side margins:
     ------------------------------ hairline
     Coca Cola       160.00     2   320.00   one row per line
     └ Milk (pack component)                 muted, no money
-      Base: 24 piece                        optional, 6.5pt
-      Remise : 10.00 DA                     optional, 6.5pt
+      Base: 24 piece                        optional, META
+      Remise : 10.00 DA                     optional, META
     ------------------------------ one hairline after the last row
     3 Articles
     32 pcs
@@ -39,7 +39,7 @@ logical fields in every locale; for Arabic the column order and widths are
 reversed so the designation reads from the right edge, exactly like the
 existing A4/legacy 80mm tables.  Numeric cells use tabular, right-aligned
 shaped text with no currency suffix (the currency is stated once, on the
-totals rows), which is what keeps four columns readable at 7.5pt on
+totals rows), which is what keeps four columns readable at 11pt on
 thermal paper.
 """
 
@@ -62,34 +62,55 @@ from app.printing.text import shape_text
 CONTENT_WIDTH = 72 * mm - 12.0
 #: Item table columns (logical LTR order).  The designation column takes
 #: whatever the three numeric columns leave: money cells only hold a plain
-#: amount (no `DA` suffix), so 38pt fits `9 999.99` at the body size.
-#: The bigger type needs a few more points than the old columns held.
-#: Sized from the WIDEST heading in any locale at the new size — Arabic
-#: `سعر الوحدة` and English `Unit price` both measure 39.1pt — so no column
-#: heading wraps onto a second line (`Montant` 33.2pt sets the amount floor,
-#: `9 999.99` at 34.9pt still fits the money column). The designation gives
-#: up 5pt (it wraps by design) and the quantity column keeps its width.
-#: The sum is still exactly CONTENT_WIDTH — four columns, same 80mm page.
-COL_DESIGNATION = 83.0
-COL_PRICE = 43.0
-COL_QTY = 26.0
+#: amount (no `DA` suffix).
+#: Measured at the CURRENT type size, from the WIDEST heading in any locale
+#: at 10.5pt bold: Arabic `سعر الوحدة` 48.34pt, English `Unit price` 48.01pt,
+#: French `Désignation` 58.75pt, Arabic `الكمية` 26.20pt and French
+#: `Montant` 41.05pt.  Every heading still sits on ONE line with real slack:
+#: price 48.9 usable (0.56 spare), qty 26.6 (0.40).  The designation column
+#: is sized so an ordinary name stays on ONE line at 11pt — `Coca Cola 1L`
+#: is 63.56pt and gets 64.0pt usable; longer names still wrap by design.
+#: The amount column keeps 42.19pt usable: a three-digit amount (`999.99`,
+#: 35.99pt) prints at the full 11pt, and a four-digit one (`9 999.99`,
+#: 45.19pt) takes three 0.25pt shrink steps to 10.25pt — invisible on paper
+#: and still larger than the 9pt this cell used to print at.  The sum is
+#: still exactly CONTENT_WIDTH — four columns, same 80mm page.
+COL_DESIGNATION = 66.6
+COL_PRICE = 51.5
+COL_QTY = 29.2
 COL_AMOUNT = CONTENT_WIDTH - COL_DESIGNATION - COL_PRICE - COL_QTY
 
-#: Type scale — the readability pass raised every rung by ~10–15% on the
-#: same 80mm geometry.  The four columns did not move: only the type grew,
-#: so the layout, separators and hierarchy are the ones the operator knows.
-BODY = 8.5  # was 7.5 (+13%) — items, quantities, totals, cashier
-HEADING = 8.5  # was 7.5 — column headings, bold as before
-META = 7.3  # was 6.5 (+12%) — pack/base/discount detail lines
-#: Store identity: raised only slightly (+8%) so it stays the loudest line
-#: on the paper and never competes with the total in the payment box.
-STORE_NAME = 13
-STORE_CONTACT = 7.8  # was 7 — phone / address
-STAMP = 8.8  # was 8 — sale timestamp
-FOOTER = 8.8  # was 8 — configured invoice footer / default thanks block
-FOOTER_SECONDARY = 8.5  # was 7.5 — French thanks line of the default block
-NOTICE = 7.8  # was 7 — retention notice
-PAD = 1.6
+#: Type scale — the readability passes raised every rung on the same 80mm
+#: geometry.  This pass is a REAL step (~17–22%), not another 5% nudge:
+#: the operator was still squinting at the 9pt body, so the item rows now
+#: print at 11pt on the same paper width, the ledger columns were rebalanced
+#: from measurement (above) and the tall rows use the empty tail of the roll
+#: instead of leaving it blank.
+BODY = 11.0  # — items, pack rows, totals, cashier
+HEADING = 10.5  # — column headings, bold as before
+META = 9.0  # — pack/base/discount detail lines
+#: Store identity: still the loudest line on the paper and now legible from
+#: arm's length on the counter.
+STORE_NAME = 17.0
+STORE_CONTACT = 9.5  # — phone / address / customer line
+STAMP = 10.0  # — sale timestamp
+#: The one number the customer actually checks: the payment box total is
+#: printed a step above the body, bold, inside its own rule.
+TOTAL = 13.0
+FOOTER = 10.5  # — configured invoice footer / thanks block
+FOOTER_SECONDARY = 10.0  # — French line of the default block
+NOTICE = 9.5  # — retention notice
+#: Cell padding.  Tightened from 1.6pt so the four columns could each grow
+#: without bleeding into a neighbour; at 11pt the glyphs themselves now
+#: provide the separation the old extra 1.2pt of padding used to.
+PAD = 1.3
+#: Extra clearance the two MONEY cells keep for themselves (headings keep
+#: the plain PAD).  The columns are only 2.6pt apart, which is narrower than
+#: the space INSIDE `9 999.99` — a shrunk amount would read as if the quantity
+#: belonged to it (`1 1 350.00`).  A wide amount therefore takes one more
+#: shrink step and leaves this gutter: measured 5.8pt of white space for
+#: `1 350.00`, against 3.0pt between digits inside a number.
+MONEY_GUTTER = 2.5
 HAIRLINE = 0.4
 HEADER_RULE = 0.8
 #: Shrink floor for a numeric cell that would otherwise wrap mid-amount.
@@ -117,7 +138,10 @@ def _p(
     style = paragraph_style(
         f"r80r-{size}-{bold}-{align}-{rtl}",
         size=size,
-        leading=size * 1.18,
+        # 1.24 instead of 1.18: at 11pt the Arabic alef/yeh descenders and the
+        # shaped ligatures need the extra leading to stay clear of the line
+        # below, and the taller rows use the empty tail of the roll.
+        leading=size * 1.24,
         rtl=rtl,
         bold=bold,
         align=align,
@@ -161,7 +185,8 @@ def _items_table(data: DocumentData) -> Flowable | None:
     widths = [COL_DESIGNATION, COL_PRICE, COL_QTY, COL_AMOUNT]
     if rtl:
         widths.reverse()
-    money_usable = COL_AMOUNT - 2 * PAD
+    money_usable = COL_AMOUNT - 2 * PAD - MONEY_GUTTER
+    price_usable = COL_PRICE - 2 * PAD - MONEY_GUTTER
     qty_usable = COL_QTY - 2 * PAD
 
     def row(cells: list[Paragraph]) -> list[Paragraph]:
@@ -190,7 +215,7 @@ def _items_table(data: DocumentData) -> Flowable | None:
                     _p(name, BODY, rtl=rtl, align=edge),
                     _fitted(
                         _number(line.unit_price) if line.show_money else "",
-                        money_usable,
+                        price_usable,
                         rtl=rtl,
                         align=outer,
                     ),
@@ -235,8 +260,8 @@ def _items_table(data: DocumentData) -> Flowable | None:
     table = Table(body, colWidths=widths)
     style: list[tuple] = [
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("TOPPADDING", (0, 0), (-1, -1), 1.3),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 1.3),
+        ("TOPPADDING", (0, 0), (-1, -1), 1.8),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 1.8),
         ("LEFTPADDING", (0, 0), (-1, -1), PAD),
         ("RIGHTPADDING", (0, 0), (-1, -1), PAD),
         # thin separator below the headings
@@ -290,8 +315,8 @@ def _summary_table(data: DocumentData) -> Flowable | None:
     table = Table(body, colWidths=[CONTENT_WIDTH * 0.58, CONTENT_WIDTH * 0.42])
     style: list[tuple] = [
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("TOPPADDING", (0, 0), (-1, -1), 1.2),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 1.2),
+        ("TOPPADDING", (0, 0), (-1, -1), 1.6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 1.6),
         ("LEFTPADDING", (0, 0), (-1, -1), PAD),
         ("RIGHTPADDING", (0, 0), (-1, -1), PAD),
     ]
@@ -329,8 +354,8 @@ def _discount_line(data: DocumentData) -> Flowable | None:
         TableStyle(
             [
                 ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-                ("TOPPADDING", (0, 0), (-1, -1), 1.2),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 1.2),
+                ("TOPPADDING", (0, 0), (-1, -1), 1.6),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 1.6),
                 ("LEFTPADDING", (0, 0), (-1, -1), PAD),
                 ("RIGHTPADDING", (0, 0), (-1, -1), PAD),
             ]
@@ -369,9 +394,12 @@ def _payment_box(data: DocumentData) -> Flowable | None:
 
     body: list[list[Paragraph]] = []
     for name, value, bold in rows:
+        # The total itself is a step bigger than the received/change rows so
+        # the eye lands on it first, inside the same box and columns.
+        size = TOTAL if bold else BODY
         cells = [
-            _p(name, BODY, rtl=rtl, bold=bold, align=edge),
-            _fitted(value, usable, rtl=rtl, bold=bold, align=outer),
+            _p(name, size, rtl=rtl, bold=bold, align=edge),
+            _fitted(value, usable, rtl=rtl, bold=bold, align=outer, size=size),
         ]
         body.append(list(reversed(cells)) if rtl else cells)
 
@@ -383,8 +411,8 @@ def _payment_box(data: DocumentData) -> Flowable | None:
                 ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
                 ("BOX", (0, 0), (-1, -1), 0.8, "black"),
                 ("ROUNDEDCORNERS", [2.5, 2.5, 2.5, 2.5]),
-                ("TOPPADDING", (0, 0), (-1, -1), 2.4),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 2.4),
+                ("TOPPADDING", (0, 0), (-1, -1), 3.0),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 3.0),
                 ("LEFTPADDING", (0, 0), (-1, -1), 3.0),
                 ("RIGHTPADDING", (0, 0), (-1, -1), 3.0),
             ]
