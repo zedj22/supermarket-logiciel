@@ -1,0 +1,53 @@
+# Build-time ignore list for `license_manager/Dockerfile.render`.
+#
+# Docker reads `<Dockerfile>.dockerignore` from the Dockerfile's own directory,
+# and patterns are matched against the build context — which is `new_app/`
+# (the API needs `backend/`, the dashboard needs `license_manager/dashboard/`).
+#
+# This is an exclusion list, not an allowlist: the Dockerfile copies only the
+# paths it needs. The rules below keep credentials, host build output, tests and
+# unrelated POS artifacts out of the context entirely, so they cannot be copied
+# by accident and the context stays small on Render's builder.
+
+**/.git
+**/.git/**
+**/.env
+**/.env.*
+**/.venv
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.ruff_cache
+**/node_modules
+**/.next
+**/tests
+**/logs
+**/backups
+**/data
+**/.DS_Store
+**/appsettings*.json
+**/tsconfig.tsbuildinfo
+
+# Credentials and key material: never part of any image.
+**/application_default_credentials.json
+**/*service-account*.json
+**/*-key*.json
+**/LICENSE_API_CODE_ENC_SECRET
+**/LICENSE_API_SIGNING_SECRET
+**/*.pem
+
+# Staging does not carry the PRODUCTION verification keys or release record.
+# (They are public material, but nothing in this image may reference them.)
+backend/app/licensing/verification_keys.json
+backend/app/licensing/release_metadata.json
+
+# Unrelated POS application sources and their build outputs.
+lib/
+windows/
+test/
+installer/
+docs/
+
+# Documentation and local tooling noise.
+**/*.md
+**/.DS_Store

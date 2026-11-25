@@ -1,0 +1,85 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --canvas: 220 20% 97%;
+    --panel: 0 0% 100%;
+    --elevated: 220 22% 99%;
+    --line: 220 16% 89%;
+    --ink: 222 35% 12%;
+    --muted: 220 10% 44%;
+    --accent: 174 78% 24%;
+    --accent-soft: 172 60% 94%;
+    --accent-ink: 174 85% 15%;
+    --positive: 158 68% 30%;
+    --warning: 32 88% 38%;
+    --danger: 356 70% 44%;
+    --shadow: 222 40% 20%;
+  }
+
+  .dark {
+    --canvas: 220 26% 7%;
+    --panel: 219 24% 10%;
+    --elevated: 219 22% 13%;
+    --line: 217 18% 20%;
+    --ink: 210 30% 94%;
+    --muted: 215 14% 62%;
+    --accent: 172 66% 47%;
+    --accent-soft: 174 40% 16%;
+    --accent-ink: 172 80% 84%;
+    --positive: 158 62% 48%;
+    --warning: 38 92% 60%;
+    --danger: 356 76% 62%;
+    --shadow: 222 60% 2%;
+  }
+
+  html {
+    color-scheme: light;
+  }
+
+  html.dark {
+    color-scheme: dark;
+  }
+
+  body {
+    @apply bg-canvas text-ink antialiased;
+    font-feature-settings: "cv11", "ss01";
+    text-rendering: optimizeLegibility;
+  }
+
+  ::selection {
+    @apply bg-accent-soft text-accent-ink;
+  }
+
+  :focus-visible {
+    @apply outline-none ring-2 ring-accent/70 ring-offset-2 ring-offset-canvas;
+  }
+}
+
+@layer components {
+  .card {
+    @apply rounded-xl border border-line bg-panel shadow-card;
+  }
+
+  .field {
+    @apply w-full rounded-lg border border-line bg-elevated px-3 py-2 text-sm text-ink placeholder:text-muted/70 focus-visible:ring-2 focus-visible:ring-accent/60;
+  }
+
+  .label {
+    @apply mb-1.5 block text-xs font-medium uppercase tracking-wide text-muted;
+  }
+
+  .table-head {
+    @apply border-b border-line bg-elevated/70 text-left text-[11px] font-semibold uppercase tracking-wider text-muted;
+  }
+
+  .table-cell {
+    @apply whitespace-nowrap px-4 py-3 text-sm;
+  }
+
+  .scroll-thin {
+    scrollbar-width: thin;
+  }
+}

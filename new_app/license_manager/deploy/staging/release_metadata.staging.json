@@ -1,0 +1,7 @@
+{
+  "format": "supermarket-pro/release-keys",
+  "keys": {
+    "stg-2026-11": "sha256:17cd03c990828e4081d16782e5a13cf965d0269d923442b0e6d005514dc056ad"
+  },
+  "version": 1
+}

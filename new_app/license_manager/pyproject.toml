@@ -1,0 +1,40 @@
+[project]
+name = "klickpos-license-manager"
+version = "1.0.0"
+description = "Private administrator License API for KlickPOS lifetime licenses"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "pydantic>=2.7",
+    "cryptography>=42",
+    "structlog>=24",
+    # Transitive requirements of the customer licensing package (app.core.*).
+    "sqlalchemy>=2.0.0,<2.1",
+    "pydantic-settings>=2.1.0",
+    "firebase-admin>=6.5",
+    "google-cloud-firestore>=2.16",
+    "google-cloud-secret-manager>=2.20",
+]
+
+# Lint configuration mirrors the customer backend's (new_app/backend/pyproject.toml)
+# so the two halves of the product are held to the same standard.
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+extend-exclude = ["tests/fakes.py"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+# These two modules must adjust sys.path before importing the customer's
+# licensing code, so their imports legitimately follow executable statements.
+"service/shared.py" = ["E402"]
+"tests/conftest.py" = ["E402", "I001"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = [".", "../backend"]
+filterwarnings = ["ignore::UserWarning"]

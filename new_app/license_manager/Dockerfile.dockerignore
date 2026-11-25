@@ -1,0 +1,30 @@
+# Build-time ignore list for `new_app/license_manager/Dockerfile`.
+#
+# Docker reads `<Dockerfile>.dockerignore` from the Dockerfile's own directory,
+# so this applies when the build context is `new_app/` (the context must contain
+# `backend/`, which the API imports read-only).
+#
+# Keep the API image free of credentials, local state and anything client-side.
+
+**/.git
+**/.git/**
+**/.env
+**/.env.*
+**/.venv
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.ruff_cache
+**/node_modules
+**/.next
+**/tests
+**/logs
+**/backups
+**/data
+**/.DS_Store
+**/appsettings*.json
+**/application_default_credentials.json
+**/*service-account*.json
+**/*-key*.json
+!backend/app/licensing/verification_keys.json
+!backend/customer_package.json

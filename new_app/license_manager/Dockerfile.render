@@ -1,0 +1,199 @@
+# KlickPOS License Manager — combined Staging image (Render Web Service).
+#
+# One container runs BOTH processes (docs/render-staging.md §10):
+#
+#   Next.js standalone dashboard  → 0.0.0.0:$PORT   (the only public port)
+#   FastAPI (uvicorn)             → 127.0.0.1:8000  (loopback, never published)
+#
+# Build from `new_app/` — the API imports the customer licensing contract
+# read-only from `new_app/backend`, and the Dockerfile needs both trees:
+#
+#   docker build -f license_manager/Dockerfile.render \
+#     --build-arg NEXT_PUBLIC_FIREBASE_API_KEY=… \
+#     --build-arg NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=… \
+#     --build-arg NEXT_PUBLIC_FIREBASE_PROJECT_ID=… \
+#     --build-arg NEXT_PUBLIC_FIREBASE_APP_ID=… \
+#     -t klickpos-license-staging:local new_app
+#
+# Nothing secret is baked in. The Ed25519 seed and the AES-256-GCM key are
+# read at runtime from read-only files under LICENSE_API_SECRET_DIR (Render
+# Secret Files); the service account JSON is read by google-auth from the path
+# in GOOGLE_APPLICATION_CREDENTIALS. No `.env`, `.next` cache, node_modules,
+# service-account JSON, keystore or AES secret is copied into the image.
+#
+# The production images (`license_manager/Dockerfile`, `dashboard/Dockerfile`)
+# are untouched and unrelated to this file.
+#
+# syntax=docker/dockerfile:1.7
+
+# Pinned base components: the Python image supplies the API runtime (Debian
+# bookworm, glibc), the Node image supplies both the dashboard build and the
+# single `node` binary the runtime needs. Same Debian release on both sides, so
+# the copied binary links against the libs the Python image already has.
+ARG PYTHON_IMAGE=python:3.12.11-slim-bookworm
+ARG NODE_IMAGE=node:22.20.0-bookworm-slim
+
+# --------------------------------------------------------------------------- #
+# 1. Python runtime dependencies
+# --------------------------------------------------------------------------- #
+FROM ${PYTHON_IMAGE} AS python-deps
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+WORKDIR /install
+# Runtime-only set (pytest and friends live in requirements.txt, not here).
+COPY license_manager/requirements-runtime.txt ./requirements-runtime.txt
+RUN pip install --no-cache-dir --prefix=/install/deps -r requirements-runtime.txt
+
+# --------------------------------------------------------------------------- #
+# 2. Dashboard dependencies (lockfile only, so this layer caches)
+# --------------------------------------------------------------------------- #
+FROM ${NODE_IMAGE} AS dashboard-deps
+
+WORKDIR /app
+ENV NEXT_TELEMETRY_DISABLED=1
+
+COPY license_manager/dashboard/package.json license_manager/dashboard/package-lock.json ./
+RUN npm ci --no-audit --no-fund
+
+# --------------------------------------------------------------------------- #
+# 3. Dashboard build (Next.js standalone output)
+# --------------------------------------------------------------------------- #
+FROM ${NODE_IMAGE} AS dashboard-build
+
+WORKDIR /app
+ENV NEXT_TELEMETRY_DISABLED=1
+
+COPY --from=dashboard-deps /app/node_modules ./node_modules
+COPY license_manager/dashboard/package.json license_manager/dashboard/package-lock.json ./
+
+# Source paths only — never `COPY license_manager/dashboard/ ./`: a
+# whole-directory copy would write over the node_modules from the previous
+# stage. (`dashboard/` below is a destination in the build stage; sources carry
+# the `license_manager/` prefix because the build context is `new_app/`.) `next-env.d.ts` is
+# deliberately absent: Next writes it itself at build time and it is
+# git-ignored, so requiring it would break a build from a clean clone.
+COPY license_manager/dashboard/next.config.ts license_manager/dashboard/tsconfig.json ./
+COPY license_manager/dashboard/postcss.config.mjs license_manager/dashboard/tailwind.config.ts ./
+COPY license_manager/dashboard/app ./app
+COPY license_manager/dashboard/components ./components
+COPY license_manager/dashboard/lib ./lib
+# `prebuild` (scripts/public-build-env.mjs) refuses an incomplete public
+# Firebase configuration, so it must be present.
+COPY license_manager/dashboard/scripts ./scripts
+
+# Public Firebase web configuration — inlined by Next at build time, therefore
+# required HERE and not only at `docker run`. These values are public by design;
+# a seed, AES key, service-account JSON or other server-only value must never
+# appear as a build argument (build args are recorded in the image history).
+ARG NEXT_PUBLIC_FIREBASE_API_KEY
+ARG NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN
+ARG NEXT_PUBLIC_FIREBASE_PROJECT_ID
+ARG NEXT_PUBLIC_FIREBASE_APP_ID
+ARG NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID
+ARG NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET
+ARG NEXT_PUBLIC_FIREBASE_APPCHECK_SITE_KEY
+ARG NEXT_PUBLIC_FIREBASE_APPCHECK_DEBUG_TOKEN
+ARG NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST
+ARG NEXT_PUBLIC_API_BASE_URL
+
+ENV NEXT_PUBLIC_FIREBASE_API_KEY=$NEXT_PUBLIC_FIREBASE_API_KEY \
+    NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=$NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN \
+    NEXT_PUBLIC_FIREBASE_PROJECT_ID=$NEXT_PUBLIC_FIREBASE_PROJECT_ID \
+    NEXT_PUBLIC_FIREBASE_APP_ID=$NEXT_PUBLIC_FIREBASE_APP_ID \
+    NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=$NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID \
+    NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=$NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET \
+    NEXT_PUBLIC_FIREBASE_APPCHECK_SITE_KEY=$NEXT_PUBLIC_FIREBASE_APPCHECK_SITE_KEY \
+    NEXT_PUBLIC_FIREBASE_APPCHECK_DEBUG_TOKEN=$NEXT_PUBLIC_FIREBASE_APPCHECK_DEBUG_TOKEN \
+    NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST=$NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST \
+    NEXT_PUBLIC_API_BASE_URL=$NEXT_PUBLIC_API_BASE_URL
+
+RUN npm run build
+
+# --------------------------------------------------------------------------- #
+# 4. The `node` binary only (the dashboard's standalone server needs nothing
+#    else from the Node image: no npm, no corepack, no yarn).
+# --------------------------------------------------------------------------- #
+FROM ${NODE_IMAGE} AS node-runtime
+
+# --------------------------------------------------------------------------- #
+# 5. Runtime: both processes, one container
+# --------------------------------------------------------------------------- #
+FROM ${PYTHON_IMAGE} AS runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app/license_manager:/app/backend \
+    NODE_ENV=production \
+    NEXT_TELEMETRY_DISABLED=1 \
+    PORT=8080 \
+    HOSTNAME=0.0.0.0 \
+    LICENSE_API_LOG_JSON=1
+
+# Non-root. Nothing in this layout writes to disk: secrets are mounted
+# read-only, Next only reads its bundle, the API writes only to Firestore.
+#
+# Render mounts Secret Files at /etc/secrets with read access granted through
+# group 1000 ("Using Secrets with Docker"), so the runtime user joins that
+# group. The group is created only when the base image does not already define
+# it; the user's UID (10001) and primary group (license) are unchanged, and the
+# process still runs as `license`, never as root.
+RUN if ! getent group 1000 >/dev/null; then groupadd --gid 1000 render-secrets; fi \
+    && groupadd --system --gid 10001 license \
+    && useradd --system --uid 10001 --gid license --home-dir /app license \
+    && usermod -a -G 1000 license
+
+WORKDIR /app
+
+COPY --from=python-deps /install/deps /usr/local
+
+# The copied `node` binary is dynamically linked against libstdc++; the Python
+# slim base does not guarantee it, so it is installed explicitly (nothing else
+# from the Node image — no npm, no corepack — comes along).
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libstdc++6 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
+
+# pip is a build tool and is never used at runtime; dropping it shrinks the
+# image and its attack surface (the same reasoning as the production image).
+RUN python -m pip uninstall -y pip
+
+# The customer licensing contract, read-only (bootstrap.py resolves
+# `new_app/backend` as `<service>/../../backend`, i.e. /app/backend).
+COPY backend/app ./backend/app
+COPY backend/tools ./backend/tools
+COPY license_manager/service ./license_manager/service
+COPY license_manager/pyproject.toml ./license_manager/pyproject.toml
+
+# Startup validation (fail-closed) and the process supervisor.
+COPY license_manager/scripts/render_startup_check.py ./license_manager/scripts/render_startup_check.py
+COPY license_manager/deploy/render/entrypoint.sh ./license_manager/deploy/render/entrypoint.sh
+RUN chmod 0755 ./license_manager/deploy/render/entrypoint.sh
+
+# Staging's own PUBLIC verification keys — and nothing else from deploy/.
+# The configured path is
+#   /app/license_manager/deploy/staging/verification_keys.staging.json
+# The production key files are excluded by Dockerfile.render.dockerignore and
+# are never referenced by this image.
+COPY license_manager/deploy/staging ./license_manager/deploy/staging
+
+# Next.js standalone server plus its static assets.
+COPY --from=dashboard-build /app/.next/standalone ./dashboard
+COPY --from=dashboard-build /app/.next/static ./dashboard/.next/static
+
+RUN chown -R license:license /app
+
+USER license
+
+# Documentation only: Render routes its single public port to $PORT; the API's
+# 127.0.0.1:8000 is unreachable from outside the container.
+EXPOSE 8080
+
+# PID 1 is the supervisor: it validates configuration, starts uvicorn, waits for
+# /healthz, starts Next on $PORT, and exits non-zero if either process dies.
+CMD ["/app/license_manager/deploy/render/entrypoint.sh"]

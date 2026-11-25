@@ -1,0 +1,16 @@
+# KlickPOS License Manager API — LOCAL DEVELOPMENT + TEST dependencies.
+#
+# The production image does NOT use this file: `Dockerfile` installs
+# `requirements-runtime.txt` only, so the test tooling below never ships to
+# Cloud Run.
+#
+#   pip install -r requirements-runtime.txt   # exactly what the container has
+#   pip install -r requirements.txt           # container set + test tooling
+#
+# Test-only, verified unused by `service/` and `scripts/`:
+#   * pytest (+ its own pluggy / iniconfig) — the test runner;
+#   * httpx — required by starlette's `TestClient`, used only in `tests/`.
+-r requirements-runtime.txt
+
+pytest>=8
+httpx>=0.27

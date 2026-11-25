@@ -1,0 +1,23 @@
+# Only used when the build context is `dashboard/` itself
+# (`docker build -f Dockerfile dashboard`). The documented build uses
+# `license_manager/` as the context, where `../.dockerignore` applies instead.
+#
+# These patterns are relative to this directory, which is why the parent ignore
+# file needs `dashboard/` prefixes for the very same paths.
+
+node_modules
+.next
+out
+coverage
+tsconfig.tsbuildinfo
+tests
+vitest.config.ts
+vitest.setup.ts
+.env
+.env.*
+*.pem
+*.key
+*.log
+.DS_Store
+Dockerfile
+.dockerignore

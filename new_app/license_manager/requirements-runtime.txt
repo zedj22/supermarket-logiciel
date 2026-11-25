@@ -1,0 +1,31 @@
+# KlickPOS License Manager API — PRODUCTION RUNTIME dependencies.
+#
+# This is the only requirements file the API image installs (see `Dockerfile`).
+# Nothing here is test-only: every package below is imported by the running
+# service or by the customer licensing contract it loads.
+#
+# Local development and the test suite install `requirements.txt`, which is
+# `-r requirements-runtime.txt` plus the test-only packages.
+#
+# The licensing contract (canonical JSON, Ed25519, SMP1 encoding/verification)
+# comes from the customer backend and needs no extra package beyond
+# `cryptography`, which is already a backend dependency.
+#
+# Pin these to the versions your Cloud Run build resolves; they are listed
+# unpinned on purpose so the deploy step can reconcile with the backend's
+# existing pins.
+fastapi>=0.115
+uvicorn[standard]>=0.30
+pydantic>=2.7
+cryptography>=42
+structlog>=24
+# Required *transitively* by importing the customer's licensing contract:
+# `app/licensing/__init__.py` -> `app.core.exceptions` imports sqlalchemy, and
+# `app.core.config` imports pydantic-settings. Pinned to the backend's ranges.
+sqlalchemy>=2.0.0,<2.1
+pydantic-settings>=2.1.0
+# Firebase Authentication (ID tokens, App Check) and Firestore.
+firebase-admin>=6.5
+google-cloud-firestore>=2.16
+# Production signing seed + activation-code encryption key.
+google-cloud-secret-manager>=2.20

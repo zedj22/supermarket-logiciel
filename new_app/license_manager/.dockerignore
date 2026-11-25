@@ -1,0 +1,47 @@
+# Build context for the dashboard image.
+#
+# The build context is `new_app/license_manager/` (see dashboard/Dockerfile), so
+# every pattern here is matched against paths relative to THAT directory. A bare
+# `node_modules` or `.next` would only match a directory directly under the
+# context root and would therefore NOT exclude `dashboard/node_modules` — the
+# mistake that produced a 785 MB context and, worse, merged the host dependency
+# tree over the image's own `node_modules` during `COPY dashboard/ ./`.
+
+# Start from "nothing", then re-admit only the dashboard application source.
+*
+!dashboard
+!dashboard/**
+*.md
+
+# Host build output and dependencies: `npm ci` runs inside the image, and the
+# standalone build is produced there too. Copying the host's copies both bloats
+# the context and corrupts the image's node_modules (BuildKit must chmod files
+# that belong to an immutable lower layer -> "read-only file system").
+dashboard/node_modules
+dashboard/.next
+dashboard/out
+dashboard/coverage
+dashboard/tsconfig.tsbuildinfo
+
+# Tests and their tooling are not part of a production build.
+dashboard/tests
+dashboard/vitest.config.ts
+dashboard/vitest.setup.ts
+
+# Secrets and local configuration never enter a build context.
+dashboard/.env
+dashboard/.env.*
+dashboard/*.pem
+dashboard/*.key
+**/application_default_credentials.json
+**/*service-account*.json
+
+# Local noise.
+dashboard/*.log
+dashboard/.DS_Store
+**/__pycache__
+**/*.pyc
+
+# The image is built from this file, not from a copy inside the context.
+dashboard/Dockerfile
+dashboard/.dockerignore

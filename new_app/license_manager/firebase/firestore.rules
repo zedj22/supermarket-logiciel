@@ -1,0 +1,33 @@
+rules_version = '2';
+
+// KlickPOS License Manager — Firestore security rules.
+//
+// The License API is the ONLY writer and the only reader. It authenticates with
+// a service account (Firebase Admin SDK / Application Default Credentials), and
+// the Admin SDK **bypasses these rules entirely**. Therefore the correct rule
+// set for every document this project owns is "deny everyone".
+//
+// Consequences of this file, by design:
+//   * the Next.js dashboard must never use the Firebase *web* SDK against
+//     Firestore (no `firebase/firestore` reads) — it calls the License API;
+//   * an XSS in the dashboard cannot enumerate customers, hardware digests,
+//     activation codes or the audit log;
+//   * there is no rule to "get wrong" as new collections are added.
+//
+// Deploy with:  firebase deploy --only firestore:rules  (from this directory)
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Explicit per-collection denials document intent (and keep the pattern if
+    // a future phase ever needs a scoped exception).
+    match /customers/{customer_id} { allow read, write: if false; }
+    match /devices/{hw_hash}       { allow read, write: if false; }
+    match /licenses/{license_id}   { allow read, write: if false; }
+    match /audit_log/{event_id}    { allow read, write: if false; }
+
+    // Catch-all: any collection added later is denied by default.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
