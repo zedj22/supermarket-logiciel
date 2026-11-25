@@ -497,10 +497,38 @@ def main(argv: list[str] | None = None) -> int:
     database_env_path = database_env_file(data_dir)
 
     try:
-        from app.core.config import PLACEHOLDER_SECRET_VALUES, settings
+        from app.core.config import (
+            PLACEHOLDER_SECRET_VALUES,
+            STAGING_VERIFICATION_KEYS_FILE_NAME,
+            settings,
+        )
     except Exception as exc:  # noqa: BLE001 - any settings failure is fatal
         return _fatal(
             f"configuration could not be loaded ({exc.__class__.__name__}): {exc}",
+            EXIT_CONFIG_INVALID,
+        )
+
+    # C-2 (Phase 0-A): the production launcher pins the production trust
+    # profile explicitly.  `Settings` already refuses `APP_ENV=production` with
+    # the staging profile (or with a staging keys-file override); these two
+    # checks repeat the rule here so the launcher states its intent in one
+    # place and fails with an actionable message (exit 4) rather than a generic
+    # validation error.  The staging workflow never goes through this file: it
+    # starts uvicorn directly with `APP_ENV=development`.
+    if settings.LICENSE_TRUST_PROFILE != "production":
+        return _fatal(
+            "LICENSE_TRUST_PROFILE must be 'production' for the production "
+            f"launcher (got {settings.LICENSE_TRUST_PROFILE!r}); the staging "
+            "trust profile is only for the isolated staging workflow",
+            EXIT_CONFIG_INVALID,
+        )
+    if Path(settings.LICENSE_VERIFICATION_KEYS_FILE).name == (
+        STAGING_VERIFICATION_KEYS_FILE_NAME
+    ):
+        return _fatal(
+            "LICENSE_VERIFICATION_KEYS_FILE must not point at the staging "
+            "registry in production; use the packaged "
+            "app/licensing/verification_keys.json",
             EXIT_CONFIG_INVALID,
         )
 

@@ -33,12 +33,37 @@ def package_roots() -> list[Path]:
     return [BACKEND_ROOT / entry for entry in manifest()["include_roots"]]
 
 
+def excluded_paths() -> list[str]:
+    """Manifest-declared files omitted from the payload by the copy step.
+
+    Unlike ``must_exclude`` (patterns that must never be *present* in the
+    package), ``exclude_paths`` names files that legitimately live in the
+    development workspace — the staging public registry — and are removed by
+    the packaging copy step (``installer/stage_payload.ps1``) before the
+    payload is verified.
+    """
+    return list(manifest().get("exclude_paths", []))
+
+
+def package_relative(path: Path) -> str | None:
+    """Posix path relative to ``new_app/backend``, or ``None`` when outside."""
+    try:
+        return path.relative_to(BACKEND_ROOT).as_posix()
+    except ValueError:
+        return None
+
+
 def shipped_files() -> list[Path]:
+    omitted = set(excluded_paths())
     files: list[Path] = []
     for root in package_roots():
         for path in root.rglob("*"):
-            if path.is_file() and "__pycache__" not in path.parts:
-                files.append(path)
+            if not path.is_file() or "__pycache__" in path.parts:
+                continue
+            relative = package_relative(path)
+            if relative is not None and relative in omitted:
+                continue
+            files.append(path)
     return files
 
 
@@ -248,3 +273,107 @@ def test_the_shipped_release_record_matches_the_shipped_keys() -> None:
     assert set(recorded) == set(shipped)
     for key_id, public in shipped.items():
         assert recorded[key_id] == public_fingerprint(public)
+
+
+# ── C-2 (Phase 0-A): the staging registry never ships ──────────────────────
+
+STAGING_KEYS_FILE = BACKEND_ROOT / "app" / "licensing" / "verification_keys.staging.json"
+STAGING_RELATIVE_PATH = "app/licensing/verification_keys.staging.json"
+PRODUCTION_KEYS_FILE = BACKEND_ROOT / "app" / "licensing" / "verification_keys.json"
+RELEASE_RECORD_FILE = BACKEND_ROOT / "app" / "licensing" / "release_metadata.json"
+STAGING_KEY_ID = "stg-2026-11"
+
+
+def test_the_manifest_declares_the_staging_registry_exclusion() -> None:
+    """The exclusion is declared for both the copy and the verify step."""
+    document = manifest()
+
+    assert STAGING_RELATIVE_PATH in document["exclude_paths"]
+    assert "verification_keys.staging.json" in document["must_exclude"]
+    assert "verification_keys.staging.json" in document["forbidden_filenames"]
+
+
+def test_the_staging_public_key_is_absent_from_shipped_files() -> None:
+    shipped = shipped_files()
+
+    assert STAGING_KEYS_FILE not in shipped
+    assert [path for path in shipped if path.name == "verification_keys.staging.json"] == []
+    # The key stays in the development workspace for the staging workflow.
+    assert STAGING_KEYS_FILE.is_file()
+
+
+def test_the_staging_key_cannot_enter_the_package_through_another_path() -> None:
+    shipped = shipped_files()
+
+    # (a) the excluded file name appears nowhere in the package tree
+    assert [label(path) for path in shipped if path.name == STAGING_KEYS_FILE.name] == []
+
+    # (b) no shipped JSON registry publishes the staging key id under any name
+    offenders: list[str] = []
+    for path in shipped:
+        if path.suffix.lower() != ".json":
+            continue
+        try:
+            document = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, ValueError):
+            continue
+        if isinstance(document, dict) and STAGING_KEY_ID in document:
+            offenders.append(label(path))
+
+    assert offenders == []
+
+
+def test_the_production_keys_and_release_record_are_still_shipped() -> None:
+    shipped = shipped_files()
+    document = manifest()
+
+    assert PRODUCTION_KEYS_FILE in shipped
+    assert RELEASE_RECORD_FILE in shipped
+    assert "app/licensing/verification_keys.json" in document["must_include"]
+    assert "app/licensing/release_metadata.json" in document["must_include"]
+
+    keys = load_verification_keys(PRODUCTION_KEYS_FILE)
+    assert keys, "the production registry must keep shipping its public key"
+    assert STAGING_KEY_ID not in keys
+
+
+def test_no_shipped_file_carries_private_signing_material() -> None:
+    """Beyond forbidden_content: no signing-secret field or seed file ships."""
+    markers = ("seed_b64", "-----BEGIN", '"private":')
+    offenders: list[tuple[str, str]] = []
+
+    for path in shipped_files():
+        if path.suffix.lower() not in {".json", ".py", ".md", ".txt"}:
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        offenders.extend(
+            (label(path), marker) for marker in markers if marker in text
+        )
+
+    assert offenders == []
+
+
+def test_the_stage_payload_script_enforces_the_manifest_exclusions() -> None:
+    """C-2: the copy step applies `exclude_paths`, it does not only verify them.
+
+    The Python checks above model the payload from the manifest. This test pins
+    the other half: the real packager (`installer/stage_payload.ps1`) reads the
+    manifest *before* copying and removes every declared path from the staged
+    backend tree, failing closed if one survives. The full packager is not run
+    here (it assembles ~500 MB of vendor artefacts); it is syntax-checked and
+    exercised by the release pipeline.
+    """
+    script = REPO_ROOT / "installer" / "stage_payload.ps1"
+    assert script.is_file()
+    text = script.read_text(encoding="utf-8")
+
+    copy_marker = text.index("[stage] copying backend")
+    assert text.index("exclude_paths") > copy_marker, "manifest must load before the copy"
+    assert "$packageExcludes" in text
+    assert "Remove-Item -LiteralPath $excluded -Force" in text
+    assert "customer package exclusion failed" in text
+    # The verification pass still runs over the staged tree afterwards.
+    assert "[stage] verifying customer_package.json boundary" in text

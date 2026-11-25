@@ -1,5 +1,8 @@
 {
   "format": "supermarket-pro/release-keys",
-  "keys": {},
+  "keys": {
+    "prod-2026-11": "sha256:574cbf39084e341fb1722333f1a52efb6e837f13cfbc567cb8fb4977222e3fd1",
+    "test-2026": "sha256:f3769d4006e2dba85378293be270aefbed33dc5b1349abe38a49dfbef6e0039e"
+  },
   "version": 1
 }

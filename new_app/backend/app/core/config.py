@@ -30,6 +30,14 @@ BACKEND_ROOT = Path(__file__).resolve().parents[2]
 #: on-write behaviour of the pre-R1 layout.
 DATA_SUBDIRS: tuple[str, ...] = ("config", "license", "data", "backups", "logs")
 
+#: File name of the staging-only public registry kept beside the packaged
+#: production keys (``app/licensing/verification_keys.staging.json``).  It
+#: exists for the isolated staging workflow (``new_app/staging``, which runs
+#: with ``APP_ENV=development``) and must never become a production trust
+#: anchor — neither by profile nor by an explicit keys-file override.  The
+#: License Manager's own staging copy carries the same file name.
+STAGING_VERIFICATION_KEYS_FILE_NAME = "verification_keys.staging.json"
+
 
 class DataDirectoryError(RuntimeError):
     """The configured production data directory cannot be created or used.
@@ -297,6 +305,21 @@ class Settings(BaseSettings):
     TRIAL_DAYS: int = 10
     LICENSE_VERIFICATION_KEYS_FILE: str = ""
 
+    # LICENSE_TRUST_PROFILE selects WHICH packaged public-key registry is
+    # trusted when LICENSE_VERIFICATION_KEYS_FILE is left empty:
+    #
+    #   "production" (default) -> app/licensing/verification_keys.json
+    #   "staging"              -> app/licensing/verification_keys.staging.json
+    #
+    # Both files carry PUBLIC Ed25519 keys only.  A staging build is the
+    # only thing that selects "staging", so the official build keeps its
+    # exact production trust set (the default is byte-for-byte the old
+    # behaviour).  This never lets an activation code or a server choose
+    # a key: the registry is fixed at startup and an unknown key id still
+    # fails closed with `license_invalid_key`.  An explicit
+    # LICENSE_VERIFICATION_KEYS_FILE always wins, exactly as before.
+    LICENSE_TRUST_PROFILE: Literal["production", "staging"] = "production"
+
     # NOTE (R1): these path validators run in definition order.
     # `_resolve_data_dir` first, so every later validator sees an
     # absolute DATA_DIR (or the empty development default).
@@ -383,10 +406,52 @@ class Settings(BaseSettings):
     def _resolve_verification_keys_file(self) -> Settings:
         raw = (self.LICENSE_VERIFICATION_KEYS_FILE or "").strip()
         if not raw:
+            name = (
+                "verification_keys.staging.json"
+                if self.LICENSE_TRUST_PROFILE == "staging"
+                else "verification_keys.json"
+            )
             self.LICENSE_VERIFICATION_KEYS_FILE = str(
-                Path(__file__).resolve().parents[1]
-                / "licensing"
-                / "verification_keys.json"
+                Path(__file__).resolve().parents[1] / "licensing" / name
+            )
+        return self
+
+    # C-2 (Phase 0-A): production must never trust the staging registry.
+    #
+    # The staging profile exists for the isolated staging workflow, which runs
+    # with APP_ENV=development.  A production install that selected it — or
+    # that pointed LICENSE_VERIFICATION_KEYS_FILE at the staging registry —
+    # would quietly accept activation codes signed with the staging key, and
+    # the only symptom would be a customer whose POS reports no licence.  The
+    # process therefore refuses to start instead.
+    #
+    # Two checks, both fail-closed:
+    #
+    # * the profile itself must be "production" — an omitted value already
+    #   defaults to it, so a missing variable stays safe, and a profile value
+    #   in the environment or the dotenv file cannot bypass the rule;
+    # * an explicit keys-file override may not resolve to a file named
+    #   ``verification_keys.staging.json`` (the packaged staging registry and
+    #   the License Manager's staging copy both carry that name).  An explicit
+    #   path is otherwise still honoured, exactly as before.
+    @model_validator(mode="after")
+    def _reject_staging_trust_in_production(self) -> Settings:
+        if self.APP_ENV != "production":
+            return self
+        if self.LICENSE_TRUST_PROFILE != "production":
+            raise ValueError(
+                "LICENSE_TRUST_PROFILE must be 'production' when "
+                f"APP_ENV=production (got {self.LICENSE_TRUST_PROFILE!r}); the "
+                "staging trust profile is only for the isolated staging "
+                "workflow (APP_ENV=development)"
+            )
+        configured = (self.LICENSE_VERIFICATION_KEYS_FILE or "").strip()
+        if configured and Path(configured).name == STAGING_VERIFICATION_KEYS_FILE_NAME:
+            raise ValueError(
+                "LICENSE_VERIFICATION_KEYS_FILE may not point at the staging "
+                "registry when APP_ENV=production: ship the production "
+                "verification_keys.json produced by `license_generator "
+                "provision-release`"
             )
         return self
 

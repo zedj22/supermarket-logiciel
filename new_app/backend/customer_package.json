@@ -57,6 +57,7 @@
     "../test/",
     "signing_keystore.json",
     "issuance_log.jsonl",
+    "verification_keys.staging.json",
     ".env",
     ".env.example",
     "data/",
@@ -72,6 +73,7 @@
   "forbidden_filenames": [
     "signing_keystore.json",
     "issuance_log.jsonl",
+    "verification_keys.staging.json",
     ".env"
   ],
 
@@ -93,9 +95,14 @@
     "issuance_log.jsonl"
   ],
 
+  "exclude_paths": [
+    "app/licensing/verification_keys.staging.json"
+  ],
+
   "notes": {
     "enforcement": "backend/tools/license_generator/ is owner-only and never part of the customer distribution (pyproject packages only app*).",
     "keys": "Only PUBLIC Ed25519 material ships: verification_keys.json (base64 of 32 raw bytes) and release_metadata.json (sha256 fingerprints).",
+    "staging_keys": "verification_keys.staging.json is the staging-only PUBLIC registry (key id stg-2026-11). It stays in the development workspace for the isolated staging workflow and is excluded from every customer payload by exclude_paths (copy step) and by must_exclude/forbidden_filenames (verification step). A production install additionally refuses the staging trust profile at startup (app/core/config.py).",
     "install_key": "app/services/backup_manifest.py builds an Ed25519 key from the per-install backup signing key held in <DATA_DIR>; that key is generated at runtime and never appears in the package, which is why it is not a forbidden-content marker.",
     "state": "<LICENSE_STATE_DIR> and <DATA_DIR> are customer state created at runtime, never package contents.",
     "tests": "Developer tests and helper scripts are excluded from both roots."

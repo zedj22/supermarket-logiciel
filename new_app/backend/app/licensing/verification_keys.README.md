@@ -32,6 +32,41 @@ raw public-key bytes (RFC 8032 Ed25519):
   shipped yet": every activation attempt fails closed. It is impossible
   for an empty file to authorize a license.
 
+## Staging trust profile (isolated test builds)
+
+`verification_keys.staging.json` is a second, **staging-only** registry that
+lives next to this file. It holds the public key of key id `stg-2026-11` and
+is selected only when `LICENSE_TRUST_PROFILE=staging` is set:
+
+   * `LICENSE_TRUST_PROFILE=production` (default) → `verification_keys.json`
+   * `LICENSE_TRUST_PROFILE=staging` → `verification_keys.staging.json`
+
+`LICENSE_VERIFICATION_KEYS_FILE` still wins when it is set explicitly. The
+default keeps the official build's trust set unchanged, and neither registry
+lets an activation code or a server choose a key: an unknown key id fails
+closed with `license_invalid_key` in both profiles. The staging build is
+assembled by `new_app/staging/build_staging_bundle.ps1` and never touches the
+production registry, executable or Installer.
+
+### The staging registry never ships (C-2, Phase 0-A)
+
+`verification_keys.staging.json` is a **development-workspace** file only. It
+stays beside this one so the isolated staging workflow keeps working, but it is
+excluded from every customer payload twice over:
+
+* `customer_package.json` lists it in `exclude_paths`, which
+  `installer/stage_payload.ps1` applies during the copy step (and then fails
+  closed if the file is somehow still present), and in `must_exclude` /
+  `forbidden_filenames`, which the payload verification step rejects;
+* `app/core/config.py` refuses to build `Settings` when `APP_ENV=production`
+  and `LICENSE_TRUST_PROFILE` is not `production`, and refuses an explicit
+  `LICENSE_VERIFICATION_KEYS_FILE` named `verification_keys.staging.json`.
+  The production launcher (`run_production.py`) repeats the check and exits 4.
+
+The staging profile therefore remains usable only in the staging workflow
+(`APP_ENV=development`), and an official install can never trust 
+`stg-2026-11`.
+
 ## Production provisioning (release process)
 
 1. The offline **License Generator** (`new_app/backend/tools/license_generator`,
